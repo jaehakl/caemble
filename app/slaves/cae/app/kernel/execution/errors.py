@@ -18,12 +18,13 @@ class SolverProtocolError(SolverExecutorError):
 
 
 class RemoteSolverError(SolverExecutorError):
-    def __init__(self, locator: str, error: RemoteError) -> None:
+    def __init__(self, locator: str, error: RemoteError, *, cleanup_error: str | None = None) -> None:
         self.locator = locator
         self.remote = error
         super().__init__(
             f"solver {locator} raised {error.module}.{error.name}: {error.message}\n"
             f"Remote traceback:\n{error.traceback}"
+            + (f"\nChild cleanup: {cleanup_error}" if cleanup_error else "")
         )
 
 

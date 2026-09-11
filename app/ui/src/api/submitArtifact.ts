@@ -15,7 +15,7 @@ export async function submitArtifact(
     client: CaembleClient
     artifact: BuildArtifact
     experimentId: number | null
-    preflightMode?: 'brief' | 'full'
+    preflight?: boolean
     requestId: string
     readItem: (item: BuildArtifactItem) => Promise<Uint8Array>
     signal?: AbortSignal
@@ -31,8 +31,8 @@ export async function submitArtifact(
   const batch = await batches.create({
     request_id: options.requestId,
     experiment_id: options.experimentId,
-    ...(options.preflightMode
-      ? { preflight: true, execution_mode: options.preflightMode, source_bundle: artifact.source_bundle }
+    ...(options.preflight
+      ? { preflight: true, source_bundle: artifact.source_bundle }
       : {}),
     experiment_source_hash: artifact.source_hash,
     mode: artifact.mode,

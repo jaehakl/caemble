@@ -78,7 +78,7 @@ export function fieldScalar(
     indices[axis] = xyz[index]
   })
   indices[field.grid.sampleAxis] = sample
-  let squared = 0
+  let squared = 0, realSquared = 0, imaginarySquared = 0, dot = 0
   for (let c = component < 0 ? 0 : component; c < (component < 0 ? field.components.length : component + 1); c++) {
     indices[field.grid.componentAxis] = c
     const value = field.accessor.get(indices)
@@ -87,12 +87,21 @@ export function fieldScalar(
     const im = typeof value === 'number' ? 0 : value.im
     if (!Number.isFinite(re) || !Number.isFinite(im)) throw new Error('장 데이터에 유효하지 않은 값이 있습니다.')
     if (component >= 0) {
+      if (representation === 'peak' && field.sampleTicks[sample] === 0) return Math.abs(re)
       if (representation === 're') return re
       if (representation === 'im') return im
       if (representation === 'arg') return re === 0 && im === 0 ? NaN : Math.atan2(im, re)
       return Math.hypot(re, im)
     }
     squared += re * re + im * im
+    realSquared += re * re
+    imaginarySquared += im * im
+    dot += re * im
+  }
+  if (representation === 'peak') {
+    // Largest eigenvalue of the real/imaginary Gram matrix: max |Re(F exp(iφ))|².
+    if (field.sampleTicks[sample] === 0) return Math.sqrt(realSquared)
+    return Math.sqrt((realSquared + imaginarySquared + Math.hypot(realSquared - imaginarySquared, 2 * dot)) / 2)
   }
   return Math.sqrt(squared)
 }
@@ -186,7 +195,8 @@ export function oscillationSlice(
 ) {
   const scene = fieldSlice(field, identity, normal, index, sample, component, 're', [0, 0], 1)
   const [u, v] = [0, 1, 2].filter((axis) => axis !== normal)
-  const phasors = new Float32Array(field.spatial[u].ticks.length * field.spatial[v].ticks.length * 2)
+  const componentCount = component < 0 ? field.components.length : 1
+  const phasors = new Float32Array(field.spatial[u].ticks.length * field.spatial[v].ticks.length * componentCount * 2)
   let offset = 0
   for (let j = 0; j < field.spatial[v].ticks.length; j++)
     for (let i = 0; i < field.spatial[u].ticks.length; i++) {
@@ -194,10 +204,13 @@ export function oscillationSlice(
       xyz[normal] = index
       xyz[u] = i
       xyz[v] = j
-      phasors[offset++] = fieldScalar(field, xyz, sample, component, 're')
-      phasors[offset++] = fieldScalar(field, xyz, sample, component, 'im')
+      for (let c = 0; c < componentCount; c++) {
+        const selected = component < 0 ? c : component
+        phasors[offset++] = fieldScalar(field, xyz, sample, selected, 're')
+        phasors[offset++] = fieldScalar(field, xyz, sample, selected, 'im')
+      }
     }
-  return { scene, phasors }
+  return { scene, phasors, componentCount, magnitude: component < 0 }
 }
 
 export function oscillateSlice(
@@ -215,7 +228,12 @@ export function oscillateSlice(
     geometries: cached.scene.geometries.map((geometry) => {
       const colors = new Float32Array(geometry.colors.length)
       for (let vertex = 0; vertex < colors.length; vertex += 16) {
-        const value = cached.phasors[offset++] * cosine - cached.phasors[offset++] * sine
+        let value = 0
+        for (let c = 0; c < cached.componentCount; c++) {
+          const instantaneous = cached.phasors[offset++] * cosine - cached.phasors[offset++] * sine
+          value = cached.magnitude ? value + instantaneous * instantaneous : instantaneous
+        }
+        if (cached.magnitude) value = Math.sqrt(value)
         const t = range[1] === range[0] ? 0.5 : Math.max(0, Math.min(1, (value - range[0]) / (range[1] - range[0])))
         for (let corner = 0; corner < 4; corner++)
           colors.set([t, 1 - Math.abs(2 * t - 1), 1 - t, opacity], vertex + corner * 4)

@@ -19,7 +19,6 @@ class BatchCreateRequest(BaseModel):
     request_id: UUID
     experiment_id: int | None = Field(default=None, gt=0)
     preflight: bool = False
-    execution_mode: Literal["brief", "full"] = "full"
     source_bundle: dict | None = None
     experiment_source_hash: str
     mode: Literal["generate", "candidate", "measurement"]
@@ -42,8 +41,8 @@ class BatchCreateRequest(BaseModel):
                 raise ValueError("Preflight requires one unsaved candidate.")
             if self.storage_version != 1 or not isinstance(self.source_bundle, dict):
                 raise ValueError("Preflight requires a source bundle and object storage transport.")
-        elif self.experiment_id is None or self.execution_mode != "full" or self.source_bundle is not None:
-            raise ValueError("Saved batches require an Experiment and Full execution.")
+        elif self.experiment_id is None or self.source_bundle is not None:
+            raise ValueError("Saved batches require an Experiment and the original execution settings.")
         if [item.index for item in self.items] != list(range(1, len(self.items) + 1)):
             raise ValueError("Artifact item indexes must be contiguous and start at one.")
         ids = [item.measurement_id for item in self.items if item.measurement_id is not None]

@@ -269,30 +269,12 @@ ABI 3만 실행합니다. Solver는 `SolverInvocation`을 받고 `SolverResult`�
 반환하며 `StatePatch`, `FieldValue`, `BundleValue` 같은 독립적인 값을 사용합니다.
 이전 ABI adapter나 `SolverContext` 호환 실행 경로는 제공하지 않습니다.
 
-## Preflight 약식 실행 정책
+## Preflight 임시 실행
 
 Catalog와 Draft의 임시 실행은 기존 BuiltMeasurement·`simulate.py`·RecordedData
-경계를 공유합니다. `SolverInvocation.execution_mode`는 `brief` 또는 `full`이며
-일반 실행의 기본값은 `full`입니다. Solver output/Catalog 계약을 변경하지 않습니다.
-
-Solver는 `SolverImplementation(abi_version=3, run=run,
-prepare_brief=prepare_brief, brief_policy_version="1")`로 약식 정책을 제공합니다.
-`prepare_brief(invocation)`은 normalized config의 복사본을 반환하는 동기 함수입니다.
-공통 child 실행기가 `brief`에서만 한 번 호출하며, hook이 없으면 원래 설정을
-사용합니다. 원래 config를 수정하거나 반복 호출마다 축소를 누적하지 않습니다.
-Runtime에 Solver 이름 분기나 구현의 eager import를 추가하지 않습니다.
-
-약식은 정확도 목표 없이 실제 output을 만드는 실행 정책입니다. 필수 성분,
-명시적인 고정 shape, domain 의미와 artifact 출처는 유지하고, 가변 표본 수는
-축소할 수 있습니다. 실제 shape·좌표·시간을 기록하며 가짜 값으로 채우지 않습니다.
-적용 config와 정책 버전은 Runtime이 실행 trace에 기록합니다. 설정 탐색이나
-Solver 자동 재실행은 하지 않습니다. 수치적 실패는 기존 오류 경로로 종료합니다.
-
-FDTD는 main/buffer/PML cell size를 정확히 4배로 적용합니다. Ray는 ray 수를
-1/100로 줄이되 최소 1개를 사용합니다. Structural은 mesh를 유지하고 transient의
-dt를 `max(기존 dt, duration / 100)`으로 정합니다. 연성 window와 입력 시점을
-넘지 않으며 기존 실행 내부 수렴 처리는 유지합니다. 다른 해석은 원래 설정을
-사용합니다. 이 값들은 계산량이나 정확도 보장치가 아닙니다.
+경계를 공유하며 현재 Candidate 설정을 그대로 실행합니다. 별도의 실행 모드나
+Solver 설정 변환 hook은 제공하지 않습니다. 설정 탐색이나 자동 재실행도 하지 않습니다.
+이전 약식 요청은 지원 종료 오류로 거부하며 현재 설정 실행으로 자동 전환하지 않습니다.
 
 API는 `/cae/preflights`로 한 후보를 등록하고 기존 batch upload/commit/status/cancel
 경로를 공유합니다. `/cae/preflights/{id}/result`는 고정된 결과 계약과 임시

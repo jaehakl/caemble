@@ -19,7 +19,6 @@ export const caeBatchSchema = z
     id: z.string(),
     experiment_id: z.number().int().nullable(),
     preflight: z.boolean().optional(),
-    execution_mode: z.enum(['brief', 'full']).optional(),
     request_id: z.string().optional(),
     mode: z.enum(['generate', 'candidate', 'measurement']),
     total: z.number().int(),
@@ -63,7 +62,6 @@ export type CaeBatchRequest = Readonly<{
   request_id: string
   experiment_id: number | null
   preflight?: boolean
-  execution_mode?: 'brief' | 'full'
   source_bundle?: Readonly<{ files: Readonly<Record<string, string>> }>
   experiment_source_hash: string
   mode: 'generate' | 'candidate' | 'measurement'

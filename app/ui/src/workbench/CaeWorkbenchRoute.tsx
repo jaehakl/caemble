@@ -282,15 +282,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     predictionState,
     preflightControls: (
       <div className="flex items-center gap-2 px-2 text-xs">
-          <select
-            aria-label="Preflight 실행 모드"
-            value={preflight.mode}
-            disabled={preflight.busy}
-            onChange={(event) => preflight.setMode(event.target.value as 'brief' | 'full')}
-          >
-            <option value="brief">약식</option>
-            <option value="full">정식 (Full)</option>
-          </select>
           <button
             type="button"
             className="rounded border px-3 py-1"
@@ -523,7 +514,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     <div className="flex h-full min-h-0 flex-col">
       {preview ? (
         <div className="border-b p-2 text-xs">
-          {preview.payload.execution_mode === 'brief' ? '약식 결과' : '정식 (Full) 결과'} · 실행 당시 Geometry / Vars
+          임시 결과 · 실행 당시 Geometry / Vars
         </div>
       ) : null}
       <div className="min-h-0 flex-1">

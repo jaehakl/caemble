@@ -30,6 +30,8 @@ async def finalize_stored_item(db, batch_id, user_id, index, body):
     await serialize_events(db)
     batch = await require_batch(db, batch_id, user_id, lock=True)
     cae = await db.get(CaeBatch, batch.id)
+    if cae.spec.get("execution_mode") == "brief":
+        raise HTTPException(409, "Brief execution is no longer supported. Start a new Preflight.")
     if batch.state != "uploading" or cae.spec.get("storage_version") != 1:
         raise HTTPException(409, "Batch is not accepting object-backed inputs.")
     job = await db.scalar(select(Job).where(Job.batch_id == batch.id, Job.item_index == index).with_for_update())
@@ -49,7 +51,7 @@ async def finalize_stored_item(db, batch_id, user_id, index, body):
             raise HTTPException(413, "Large inputs must be uploaded directly to object storage.")
     await bind_objects(db, body, user_id=user_id, experiment_id=cae.experiment_id, job_id=job.id)
     payload = {"measurement": item["measurement"], "storage_version": 1,
-               **({"execution_mode": cae.spec["execution_mode"], "preflight": True} if cae.spec.get("preflight") else {}),
+               **({"preflight": True} if cae.spec.get("preflight") else {}),
                **({"artifact": stored} if external else {})}
     if job.input is not None:
         if job.input != payload:

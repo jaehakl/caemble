@@ -19,6 +19,8 @@ async def run_measurement(
     attachments: list[Attachment],
     context: ServerJobContext,
 ) -> dict[str, Any]:
+    if message.get("execution_mode") == "brief":
+        raise ProtocolError("Brief execution is no longer supported. Start a new Preflight with the current settings.")
     from app.kernel.transport.object_storage import externalize_record, read_object, resolve_input
     if "artifact" in message:
         artifact = await read_object(context, message["artifact"])
@@ -36,7 +38,6 @@ async def run_measurement(
         max_run_seconds=DEFAULT_MAX_RUN_SECONDS,
         job_id=context.job_id,
         on_progress=progress,
-        execution_mode=message.get("execution_mode", "full"),
     )
     try:
         run.start()
@@ -61,6 +62,6 @@ async def run_measurement(
                 raise CaeError(item["error"]["code"], item["error"]["message"])
             if item["kind"] == "complete":
                 return {"recordSequences": item["recordSequences"],
-                        **({"executionMode": run.execution_mode, "executionTrace": run.trace} if message.get("preflight") else {})}
+                        **({"executionTrace": run.trace} if message.get("preflight") else {})}
     finally:
         await run.close()

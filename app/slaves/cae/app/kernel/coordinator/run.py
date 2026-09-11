@@ -28,11 +28,7 @@ class CaeRun:
         max_run_seconds: int,
         job_id: str,
         on_progress: Callable[[Any], Awaitable[None]] | None = None,
-        execution_mode: str = "full",
     ) -> None:
-        if execution_mode not in {"brief", "full"}:
-            raise ValueError("Unknown execution mode")
-        self.execution_mode = execution_mode
         self.measurement = copy.deepcopy(measurement)
         manifest = self.measurement["experiment"]["simulationProgram"]
         source = manifest["pythonSource"]

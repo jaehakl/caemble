@@ -517,7 +517,13 @@ class SpawnSolverExecutor:
                             raise SolverProtocolError(
                                 f"solver {locator} child sent an invalid error"
                             )
-                        await self._require_clean_exit(locator, process)
+                        try:
+                            await self._require_clean_exit(locator, process)
+                        except (SolverProtocolError, SolverProcessExitedError) as cleanup_error:
+                            log(f"solver child cleanup failed locator={locator}: {cleanup_error}")
+                            raise RemoteSolverError(
+                                locator, message.payload, cleanup_error=str(cleanup_error)
+                            ) from cleanup_error
                         raise RemoteSolverError(locator, message.payload)
                     else:
                         raise SolverProtocolError(

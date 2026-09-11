@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { RecordedResultContract } from '@/contracts/results'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
@@ -62,24 +63,25 @@ function FieldControls({
   const [oscillationFixed, setOscillationFixed] = useState<readonly [number, number] | null>(null)
   const index = Math.min(sliceIndex, field.spatial[normal].ticks.length - 1)
   const sample = Math.min(sampleIndex, field.sampleTicks.length - 1)
-  const component = componentIndex >= field.components.length ? (oscillating ? 0 : -1) : componentIndex
+  const component = componentIndex >= field.components.length ? -1 : componentIndex
   useEffect(() => {
     setIndex(index)
     setSample(sample)
     setComponent(component)
     if (field.grid.sampleKind !== 'frequency' || rule.result.dtype !== 'complex64') setOscillating(false)
   }, [field, rule, index, sample, component])
-  const fixed = oscillating ? oscillationFixed : staticFixed
-  const setFixed = oscillating ? setOscillationFixed : setStaticFixed
+  const [magnitudeFixed, setMagnitudeFixed] = useState<readonly [number, number] | null>(null)
+  const fixed = oscillating ? component < 0 ? magnitudeFixed : oscillationFixed : staticFixed
+  const setFixed = oscillating ? component < 0 ? setMagnitudeFixed : setOscillationFixed : setStaticFixed
   const spectral = field.grid.sampleKind === 'frequency'
   const complex = rule.result.dtype === 'complex64'
   const projection = oscillating ? 're' : component < 0 ? 'abs' : complex ? representation : 're'
   const rendered = useMemo(() => {
     try {
-      const limits = fieldRange(field, sample, component, oscillating ? 'abs' : projection)
+      const limits = fieldRange(field, sample, component, oscillating ? 'peak' : projection)
       if (!oscillating) return { range: limits, zero: false }
       const amplitude = limits[1]
-      return { range: [-(amplitude || 1), amplitude || 1] as const, zero: amplitude === 0 }
+      return { range: [component < 0 ? 0 : -(amplitude || 1), amplitude || 1] as const, zero: amplitude === 0 }
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
@@ -104,7 +106,7 @@ function FieldControls({
   }, [field, props.name, normal, index, sample, component, projection, range, opacity, rendered.error, cached, phase])
   const label =
     component < 0
-      ? '전체 크기'
+      ? oscillating ? '전체 크기 · 순간값' : '전체 크기'
       : `${field.components[component]} · ${oscillating ? '진동값' : projection === 'abs' ? '진폭' : projection === 're' ? '실수부' : projection === 'im' ? '허수부' : '위상'}`
   const unit = projection === 'arg' ? 'rad' : rule.result.unit
   const current = field.sampleTicks[sample]
@@ -120,7 +122,6 @@ function FieldControls({
               onChange={(event) => {
                 const next = event.target.value === 'oscillating'
                 setOscillating(next)
-                if (next && component < 0) setComponent(0)
               }}
             >
               <option value="static">정적</option>
@@ -175,7 +176,7 @@ function FieldControls({
         <label>
           성분{' '}
           <select value={component} onChange={(event) => setComponent(Number(event.target.value))}>
-            {!oscillating ? <option value={-1}>전체 크기</option> : null}
+            <option value={-1}>{oscillating ? '전체 크기 · 순간값' : '전체 크기'}</option>
             {field.components.map((name, i) => (
               <option key={name} value={i}>
                 {name}
@@ -183,6 +184,7 @@ function FieldControls({
             ))}
           </select>
         </label>
+        {spectral && complex ? <FieldFormulaTooltip label="성분 수식 도움말" unit={rule.result.unit} /> : null}
         {complex && component >= 0 && !oscillating ? (
           <label>
             표현{' '}
@@ -223,11 +225,12 @@ function FieldControls({
                 aria-label={end ? '색상 최댓값' : '색상 최솟값'}
                 className="w-24 border"
                 type="number"
+                min={oscillating && component < 0 ? 0 : undefined}
                 value={fixed[end]}
                 onChange={(event) => {
                   const next: [number, number] = [...fixed]
                   next[end] = Number(event.target.value)
-                  if (Number.isFinite(next[end])) setFixed(next)
+                  if (Number.isFinite(next[end]) && !(oscillating && component < 0 && next[end] < 0)) setFixed(next)
                 }}
               />
             ))}
@@ -246,6 +249,7 @@ function FieldControls({
         <span>
           {label} [{unit}] · {current.toPrecision(6)} {spectral ? 'Hz' : 's'}
         </span>
+        {spectral && complex ? <FieldFormulaTooltip label="범례 수식 도움말" unit={rule.result.unit} /> : null}
         <span>{range[0].toPrecision(4)}</span>
         <span className="h-3 w-32" style={{ background: 'linear-gradient(to right, blue, #80ff80, red)' }} />
         <span>{range[1].toPrecision(4)}</span>
@@ -265,5 +269,27 @@ function FieldControls({
         </div>
       )}
     </div>
+  )
+}
+
+
+function FieldFormulaTooltip({ label, unit }: { label: string; unit?: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" aria-label={label} className="rounded border px-1 text-xs">수식 ⓘ</button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm space-y-1">
+          <p>F는 전기장 E 또는 자기장 H이며, i는 X·Y·Z 성분입니다. 단위: {unit}.</p>
+          <p>정적 전체 크기: √Σᵢ|Fᵢ|²</p>
+          <p>성분 순간값: Fᵢ(φ) = Re(Fᵢ) cosφ − Im(Fᵢ) sinφ</p>
+          <p>순간 전체 크기: √(Fₓ(φ)² + Fᵧ(φ)² + Fz(φ)²)</p>
+          <p>φ = 2πft (라디안). 화면 위상은 도(°)로 표시합니다.</p>
+          <p>순간 전체 크기는 음수가 없고 반 주기마다 반복됩니다. 광강도나 원래 펄스의 시간 이력이 아닙니다.</p>
+          <p>진동 전체 크기의 자동 범례는 공간 전체·한 주기의 최대 순간값으로 고정됩니다. 0 Hz는 실수부만 사용합니다.</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

@@ -121,19 +121,4 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     return SolverResult(state_patch=patch, artifacts=build_outputs(invocation.config, invocation.descriptor, model, solution, motion, history_complete=history_complete), observations={"time": float(solution.time), "iterations": int(solution.iterations), "relativeResidual": float(solution.residual), "couplingResidual": float(coupling_residual), "couplingConverged": bool(converged), "strainEnergy": float(solution.strain_energy), "kineticEnergy": float(solution.kinetic_energy)})
 
 
-def prepare_brief(invocation):
-    from copy import deepcopy
-    config = deepcopy(dict(invocation.config))
-    if parameter(config["parameters"]["analysis"]) != "transient":
-        return config
-    for rule in config["initializations"]:
-        if rule["methodId"] != "fea.time":
-            continue
-        values = rule["parameters"]
-        dt = max(float(parameter(values["dt"])), float(parameter(values["duration"])) / 100)
-        value = values["dt"]
-        values["dt"] = {**value, "value": dt} if isinstance(value, dict) else dt
-    return config
-
-
-implementation = SolverImplementation(abi_version=3, run=run, prepare_brief=prepare_brief)
+implementation = SolverImplementation(abi_version=3, run=run)

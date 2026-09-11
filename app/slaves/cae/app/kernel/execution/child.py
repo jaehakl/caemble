@@ -120,18 +120,7 @@ async def _invoke(
         raise TypeError(f"solver {locator} must export an ABI 3 SolverImplementation")
     if implementation.abi_version != expected_abi_version:
         raise TypeError(f"solver {locator} implementation ABI does not match Catalog ABI {expected_abi_version}")
-    from dataclasses import replace
-    if invocation.execution_mode not in {"brief", "full"}:
-        raise ValueError("Unknown execution mode")
-    if invocation.execution_mode == "brief" and implementation.prepare_brief is not None:
-        invocation = replace(invocation, config=implementation.prepare_brief(invocation))
     result = await implementation.run(invocation)
     if not isinstance(result, SolverResult):
         raise TypeError(f"solver {locator} must return SolverResult")
-    import json
-    return replace(result, execution_metadata={
-        "mode": invocation.execution_mode,
-        "policyVersion": implementation.brief_policy_version if invocation.execution_mode == "brief" and implementation.prepare_brief else None,
-        "config": json.loads(json.dumps(invocation.config, allow_nan=False,
-            default=lambda value: {"re": value.real, "im": value.imag} if isinstance(value, complex) else value.tolist())),
-    })
+    return result

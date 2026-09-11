@@ -138,8 +138,8 @@ async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: l
 async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
     if job.input.get("preflight"):
         from storage.service import bind_objects
-        if packet.get("executionMode") != job.input["execution_mode"]:
-            raise ValueError("Preflight execution mode was not acknowledged. Restart the updated CAE worker.")
+        if job.input.get("execution_mode") == "brief":
+            raise ValueError("Brief execution is no longer supported. Start a new Preflight.")
         staged = (await db.scalars(select(JobRecord).where(
             JobRecord.job_id == job.id, JobRecord.attempt_count == job.attempt_count
         ).order_by(JobRecord.sequence))).all()

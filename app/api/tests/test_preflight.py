@@ -19,7 +19,7 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
     def job(self):
         return SimpleNamespace(id="11111111-1111-4111-8111-111111111111", user_id="owner", batch_id="batch",
             state="succeeded", attempt_count=1, finished_at=utcnow(), artifact_metadata={}, progress=[],
-            input={"preflight": True, "execution_mode": "brief", "storage_version": 1,
+            input={"preflight": True, "storage_version": 1,
                 "measurement": {"varsHash": "vars", "experiment": {"simulationProgram": {
                     "recordedData": {"field": {"dtype": "complex64"}},
                     "resultContracts": {"field": {"visualization": {"kind": "structured-field"}}},
@@ -28,8 +28,10 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
     def test_request_rejects_saved_or_multi_candidate_preflight(self):
         request = dict(request_id="11111111-1111-4111-8111-111111111111", experiment_source_hash="source",
             mode="candidate", catalog_revision="catalog", builder_version="2", storage_version=1,
-            preflight=True, execution_mode="brief", source_bundle={"files": {"simulate.py": "pass"}},
+            preflight=True, source_bundle={"files": {"simulate.py": "pass"}},
             items=[{"index": 1, "input_hash": "a" * 64, "byte_length": 100}])
+        with self.assertRaises(ValueError):
+            BatchCreateRequest(**{**request, "execution_mode": "brief"})
         self.assertIsNone(BatchCreateRequest(**request).experiment_id)
         with self.assertRaises(ValueError):
             BatchCreateRequest(**{**request, "experiment_id": 1})
@@ -59,7 +61,7 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
         staged = [record, JobRecord(job_id=job.id, attempt_count=1, sequence=2, name="large", payload=large)]
         db.scalars.return_value = SimpleNamespace(all=lambda: list(staged))
         with patch("storage.service.bind_objects", AsyncMock()):
-            result = await complete_job(db, job, {"recordSequences": [1, 2], "executionMode": "brief", "executionTrace": [{"execution": {"mode": "brief"}}]})
+            result = await complete_job(db, job, {"recordSequences": [1, 2], "executionTrace": []})
         self.assertEqual(result, {"preflight_id": "batch"})
         self.assertEqual(db.add.call_count, 1)  # Only JobRecord, never Measurement/RecordedData.
         expected = {"field": value, "large": large}

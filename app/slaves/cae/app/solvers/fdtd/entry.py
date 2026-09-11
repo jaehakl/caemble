@@ -47,21 +47,6 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     )
 
 
-def prepare_brief(invocation):
-    from copy import deepcopy
-    config = deepcopy(dict(invocation.config))
-    parameters = [config["parameters"]]
-    parameters.extend(rule["parameters"] for rule in config["initializations"]
-                      if rule["methodId"] in {"fdtd.main-region", "fdtd.buffer-region"})
-    for values in parameters:
-        for name in ("cellSizeX", "cellSizeY", "cellSizeZ", "cellSize", "pmlCellSize"):
-            if name not in values:
-                continue
-            value = values[name]
-            values[name] = {**value, "value": value["value"] * 4} if isinstance(value, dict) else value * 4
-    return config
-
-
-implementation = SolverImplementation(abi_version=3, run=run, prepare_brief=prepare_brief)
+implementation = SolverImplementation(abi_version=3, run=run)
 
 __all__ = ["implementation"]

@@ -36,7 +36,6 @@ const document = {
 } as unknown as CadDocumentController
 const payload = {
   id: 'batch',
-  execution_mode: 'brief',
   expires_at: '2099-01-01T00:00:00Z',
   source_hash: 'source',
   vars_hash: '{}',
@@ -56,7 +55,7 @@ beforeEach(() => {
   })
 })
 
-it('submits a temporary brief candidate, retains its snapshot, and supports Full', async () => {
+it('submits a temporary candidate with unchanged settings and retains its snapshot', async () => {
   const { result, rerender } = renderHook(({ doc, key }) => usePreflight(experiment, doc, key), {
     initialProps: { doc: document, key: 'first' },
   })
@@ -65,7 +64,7 @@ it('submits a temporary brief candidate, retains its snapshot, and supports Full
   })
   expect(mocks.submit.mock.calls[0][0]).toMatchObject({
     experimentId: null,
-    preflightMode: 'brief',
+    preflight: true,
     artifact: { mode: 'candidate' },
   })
   expect(result.current.result?.document).toBe(document)
@@ -73,11 +72,10 @@ it('submits a temporary brief candidate, retains its snapshot, and supports Full
   expect(result.current.result?.document).toBe(document)
   rerender({ doc: document, key: 'measurement-2' })
   expect(result.current.result).toBeNull()
-  act(() => result.current.setMode('full'))
   await act(async () => {
     await result.current.run()
   })
-  expect(mocks.submit.mock.lastCall?.[0].preflightMode).toBe('full')
+  expect(mocks.submit.mock.lastCall?.[0].preflight).toBe(true)
 })
 
 it('isolates one failed result download', async () => {

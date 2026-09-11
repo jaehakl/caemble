@@ -16,7 +16,6 @@ import { materialVarsHash } from '@/lib/material/resolution'
 
 type PreflightResult = Readonly<{
   id: string
-  execution_mode: 'brief' | 'full'
   expires_at: string
   source_hash: string
   vars_hash: string
@@ -30,7 +29,6 @@ export function usePreflight(
   document: CadDocumentController,
   selectionKey: unknown,
 ) {
-  const [mode, setMode] = useState<'brief' | 'full'>('brief')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -111,7 +109,7 @@ export function usePreflight(
         client: browserClient,
         artifact,
         experimentId: null,
-        preflightMode: mode,
+        preflight: true,
         requestId: crypto.randomUUID(),
         readItem: async () => bytes,
         signal,
@@ -229,8 +227,6 @@ export function usePreflight(
     }
   }
   return {
-    mode,
-    setMode,
     busy,
     status,
     error,

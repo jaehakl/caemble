@@ -109,7 +109,7 @@ it('starts paused, seeks and resets frequency, stops on details/static/unmount a
     />,
   )
   fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'oscillating' } })
-  expect(screen.getByLabelText(/^성분/)).toHaveValue('0')
+  expect(screen.getByRole('combobox', { name: /^성분/ })).toHaveValue('-1')
   expect(screen.getByLabelText('진동 위상')).toHaveValue('0')
   expect(callbacks.size).toBe(0)
   fireEvent.click(screen.getByRole('button', { name: '재생' }))
@@ -120,7 +120,7 @@ it('starts paused, seeks and resets frequency, stops on details/static/unmount a
     active.forEach((callback) => callback(now))
   })
   expect(screen.getByLabelText('진동 위상')).toHaveValue('90')
-  fireEvent.change(screen.getByLabelText(/^성분/), { target: { value: '1' } })
+  fireEvent.change(screen.getByRole('combobox', { name: /^성분/ }), { target: { value: '1' } })
   expect(screen.getByLabelText('진동 위상')).toHaveValue('90')
   expect(screen.getByText(/영장/)).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('진동 위상'), { target: { value: '180' } })
@@ -157,6 +157,7 @@ it('keeps separate static and oscillation manual ranges and resets a different r
   fireEvent.click(screen.getByLabelText('색상 범위 고정'))
   fireEvent.change(screen.getByLabelText('색상 최댓값'), { target: { value: '12' } })
   fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'oscillating' } })
+  fireEvent.change(screen.getByRole('combobox', { name: /^성분/ }), { target: { value: '0' } })
   expect(screen.getByLabelText('색상 범위 고정')).not.toBeChecked()
   fireEvent.click(screen.getByLabelText('색상 범위 고정'))
   expect(screen.getByLabelText('색상 최솟값')).toHaveValue(-5)
@@ -193,4 +194,52 @@ it('preserves oscillation settings but stops playback and clamps the sample on d
   rerender(<StructuredFieldResult {...props} data={{ field: smaller }} />)
   expect(screen.getByLabelText('주파수 / 진공 파장')).toHaveValue('0')
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+
+it.each([
+  { label: 'in-phase linear', re: [3, 4, 0], im: [0, 0, 0], peak: 5, values: [5, 0, 5, 5], frequency: 1 },
+  { label: 'phase-shifted elliptical', re: [2, 0, 0], im: [0, 1, 0], peak: 2, values: [2, 1, 2, 2], frequency: 1 },
+  { label: 'circular', re: [1, 0, 0], im: [0, 1, 0], peak: 1, values: [1, 1, 1, 1], frequency: 1 },
+  { label: 'non-orthogonal phasors', re: [3, 0, 0], im: [4, 0, 0], peak: 5, values: [3, 4, 3, 3], frequency: 1 },
+  { label: 'DC', re: [3, 4, 0], im: [20, 0, 0], peak: 5, values: [5, 5, 5, 5], frequency: 0 },
+  { label: 'zero field', re: [0, 0, 0], im: [0, 0, 0], peak: 0, values: [0, 0, 0, 0], frequency: 1 },
+])('computes instantaneous vector magnitude and analytic maximum: $label', ({ re, im, peak, values, frequency }) => {
+  const data = createDataTensor(schema, {
+    value: [[[[re.map((value, i) => ({ re: value, im: im[i] }))]]]],
+    axes: [{ ticks: [frequency] }, ...[0, 1, 2].map(() => ({ ticks: [0], bounds: [-1, 1] as const }))],
+  })
+  const field = structuredField(schema, data, contract.visualization, 'm')
+  expect(fieldRange(field, 0, -1, 'peak')[1]).toBeCloseTo(peak)
+  const cache = oscillationSlice(field, 'magnitude', 2, 0, 0, -1)
+  expect(cache.phasors.length).toBe(6)
+  for (const [index, phase] of [0, 90, 180, 360].entries()) {
+    const scene = oscillateSlice(cache, frequency === 0 ? 0 : phase, [0, peak || 1], 0.8)
+    expect(scene.geometries[0].colors[0] * (peak || 1)).toBeCloseTo(values[index], 5)
+    expect(scene.geometries[0].positions).toBe(cache.scene.geometries[0].positions)
+    expect(scene.geometries[0].indices).toBe(cache.scene.geometries[0].indices)
+  }
+})
+
+it('retains total magnitude and phase, separates manual ranges, and opens formula help with keyboard focus', async () => {
+  render(<StructuredFieldResult name="field" contract={contract} rules={rules} data={{ field: tensor }} displayUnit="m" renderViewer={() => <div>scene</div>} />)
+  fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'oscillating' } })
+  expect(screen.getByRole('combobox', { name: /^성분/ })).toHaveValue('-1')
+  fireEvent.change(screen.getByLabelText('진동 위상'), { target: { value: '90' } })
+  fireEvent.click(screen.getByLabelText('색상 범위 고정'))
+  expect(screen.getByLabelText('색상 최솟값')).toHaveValue(0)
+  const maximum = (screen.getByLabelText('색상 최댓값') as HTMLInputElement).value
+  fireEvent.change(screen.getByLabelText('진동 위상'), { target: { value: '180' } })
+  expect(screen.getByLabelText('색상 최댓값')).toHaveValue(Number(maximum))
+  fireEvent.change(screen.getByLabelText('색상 최솟값'), { target: { value: '-1' } })
+  expect(screen.getByLabelText('색상 최솟값')).toHaveValue(0)
+  fireEvent.change(screen.getByLabelText('색상 최댓값'), { target: { value: '12' } })
+  fireEvent.change(screen.getByRole('combobox', { name: /^성분/ }), { target: { value: '0' } })
+  expect(screen.getByLabelText('색상 범위 고정')).not.toBeChecked()
+  expect(screen.getByLabelText('진동 위상')).toHaveValue('180')
+  fireEvent.change(screen.getByRole('combobox', { name: /^성분/ }), { target: { value: '-1' } })
+  expect(screen.getByLabelText('색상 최댓값')).toHaveValue(12)
+  fireEvent.focus(screen.getByRole('button', { name: '성분 수식 도움말' }))
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('Re(Fᵢ) cosφ − Im(Fᵢ) sinφ')
+  expect(screen.getByRole('tooltip')).toHaveTextContent('φ = 2πft')
 })

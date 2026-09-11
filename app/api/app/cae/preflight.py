@@ -34,7 +34,7 @@ async def preflight_result(db, batch_id, user_id):
         raise HTTPException(410, "이 Preflight의 결과 기록이 유실되어 조회할 수 없습니다.")
     program = job.input["measurement"]["experiment"]["simulationProgram"]
     return {
-        "id": batch.id, "execution_mode": job.input["execution_mode"],
+        "id": batch.id,
         "expires_at": job.finished_at + timedelta(hours=24),
         "source_hash": cae.spec["source_hash"], "source_bundle": cae.spec["source_bundle"],
         "vars_hash": job.input["measurement"]["varsHash"],

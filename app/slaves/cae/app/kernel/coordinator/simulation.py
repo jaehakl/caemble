@@ -112,7 +112,6 @@ class SimulationApi:
                 report,
                 timeout=float(self._run.max_run_seconds),
                 executor=self._executor,
-                execution_mode=self._run.execution_mode,
                 resources=SolverResourceServices(
                     geometry_cache_path=self._geometry_cache.name,
                 ),
@@ -160,7 +159,6 @@ class SimulationApi:
                 "finishedAt": finished_at,
                 "durationMs": int((time.perf_counter() - started) * 1000),
                 "observations": dict(result.observations),
-                "execution": dict(result.execution_metadata),
             }
         )
         return {

@@ -87,7 +87,7 @@ async def create_batch(
         "mode": request.mode, "source_hash": request.experiment_source_hash,
         "catalog_revision": request.catalog_revision, "builder_version": request.builder_version,
         "storage_version": request.storage_version,
-        "preflight": request.preflight, "execution_mode": request.execution_mode,
+        "preflight": request.preflight,
         **({"source_bundle": request.source_bundle} if request.preflight else {}),
     }))
     for item in request.items:
@@ -122,7 +122,6 @@ async def batch_snapshot(
         "experiment_id": cae.experiment_id,
         "mode": cae.spec["mode"],
         "preflight": cae.spec.get("preflight", False),
-        "execution_mode": cae.spec.get("execution_mode", "full"),
         "total": batch.total,
         "created_count": batch.created_count,
         "uploaded_count": batch.uploaded_count,
