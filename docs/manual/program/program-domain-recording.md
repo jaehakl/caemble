@@ -18,4 +18,33 @@ Viewer의 공통 결과 선택 영역에서 Geometry와 모든 논리적 결과�
 
 데이터 전송은 기존 tensor dtype·shape·axes 및 inline/attachment 형식을 사용합니다. 확장된 dotted tensor leaf와 ExperimentRecord ID는 Calculation에서 그대로 참조합니다. 논리적 결과의 계약 metadata는 tensor leaf가 아니며 CalculationData 후처리는 유지됩니다.
 
-[Structural Optical Results 공식 예제](/?help=examples&item=caemble:experiment/caemble/verified/structural-optical-results@1.0.0)는 한 Experiment에서 displacement·stress-field·reaction과 서로 다른 이름의 ray 결과 두 개를 기록합니다.
+[Structural Optical Results 공식 예제](/?help=examples&item=caemble:experiment/caemble/verified/structural-optical-results@2.0.0)는 한 Experiment에서 displacement·stress-field·reaction과 서로 다른 이름의 ray 결과 두 개를 기록합니다.
+
+## 변형 형상과 시간 이력
+
+tet4 displacement 결과는 변형 표시와 자동 확대가 기본입니다. 자동 확대는 전체
+시간 구간의 최대 변위를 원래 mesh bounding box 대각선의 10%로 맞춥니다.
+화면에 표시되는 배율은 좌표에만 적용되며 물리 값과 색상 범례는 바뀌지 않습니다.
+`실제 크기 1×` 또는 `직접 입력`으로 배율을 바꾸고, `원형 윤곽 비교`로 기준 mesh를
+함께 볼 수 있습니다. 변형 표시에서는 원래 Geometry의 불투명 면을 숨깁니다.
+
+stress 결과는 같은 Task와 domain, 절점 ID, 연결성, 좌표계가 확인된 정적 displacement를
+선택해 변형 형상 위에 표시합니다. 후보가 하나면 자동 연결하며, 일부 영역 mesh나
+서로 다른 domain은 배열 크기가 같아도 연결하지 않습니다. 과거 기록에 절점 ID가
+없으면 해당 결과 자체의 변형은 볼 수 있지만 다른 stress 결과와 연결하지 않습니다.
+
+시간 이력은 mesh와 모든 절점의 변위가 함께 기록된 결과에서 재생합니다. 일반 표면
+평균 history나 최종 displacement만으로 전체 구조 애니메이션을 복원하지 않습니다.
+재생은 첫 프레임에서 정지한 상태로 시작합니다. 기본 속도는 전체 구간을 5초에
+보여주며 실제 시간 대비 배속을 표시합니다. 슬라이더와 이전·다음 프레임으로 저장된
+시점을 선택하고, 재생·일시정지, 반복과 속도를 조절할 수 있습니다. 시간 보간은 하지
+않습니다. 색상 범위와 자동 배율은 전체 구간에 고정되며 최종 stress를 과거 시점의
+응력으로 표시하지 않습니다.
+
+직접 확인하려면 Catalog의 **structural-analysis-modes** 예제를 새로 빌드·실행한 뒤
+`transientAnimation` 결과를 선택합니다. 예제의 Task output과 `simulate.py`에는
+전체 절점 이력을 기록하는 선언이 포함되어 있습니다. 초기 자동 확대, 실제 크기 1×,
+원형 윤곽 비교, 시간 슬라이더와 재생을 차례로 확인하세요. 재생 중 카메라를 이동해도
+자동으로 맞춤이 반복되지 않아야 하고, Measurement를 바꾸면 재생과 선택이 초기화되어야
+합니다. `transientMesh`는 마지막 상태, `transient`는 기존 표면 history를 비교하는 데
+사용합니다. 상세한 output 문법은 현재 Catalog 계약과 이 예제 소스를 기준으로 확인하세요.

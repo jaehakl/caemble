@@ -37,6 +37,9 @@ export type ResultVisualization = Readonly<{
   kind: 'tensor' | 'bundle' | 'mesh-field' | 'structured-field' | 'polyline'
   coordinateSpace?: 'experiment'
   valuePath?: string
+  fieldPath?: string
+  nodeIdsPath?: string
+  time?: Readonly<{ path: string; axis: number; nodeAxis: number; componentAxis: number }>
   spatialAxes?: readonly number[]
   components?: readonly string[]
   valueKind?: 'displacement' | 'stress'
@@ -48,7 +51,7 @@ export type ResultVisualization = Readonly<{
 export type KernelArtifactDataSpec = (KernelDataSpec | KernelStructuredBundleSpec) &
   Readonly<{
     visualization?: ResultVisualization
-    recording?: 'mesh-field' | 'structured-field'
+    recording?: 'mesh-field' | 'mesh-series' | 'structured-field'
   }>
 
 export type KernelValueSpec = KernelDataSpec &

@@ -95,6 +95,50 @@ function fixture(stress = false) {
 }
 
 describe('recorded mesh fields', () => {
+  it('restores a domain-bound time history from frozen member and axis semantics', () => {
+    const input = fixture()
+    const rules = input.rules.map((rule) => ({ ...rule, label: rule.label.replace('field.', 'field.field.') }))
+    const data = Object.fromEntries(
+      Object.entries(input.data).map(([name, value]) => [name.replace('field.', 'field.field.'), value]),
+    ) as Record<string, unknown>
+    const history = [Array.from({ length: 4 }, () => [0, 0, 0]), Array.from({ length: 4 }, () => [0.001, 0, 0])]
+    for (const [label, value, shape, unit] of [
+      ['field.times', [0, 0.01], [2], 's'],
+      ['field.values', history, [2, 4, 3], 'm'],
+      ['field.field.domain.metadata.nodeIds', [10, 20, 30, 40], [4], undefined],
+    ] as const) {
+      const schema = {
+        ...(unit
+          ? { dtype: 'float64', unit, quantityKind: unit === 's' ? 'Time' : 'Length', tensorOrder: 0 }
+          : { dtype: 'int32' }),
+        axes: shape.map((length) => ({ length })),
+      } as DataSchema
+      rules.push({ label, methodId: 'test', target: [], parameters: {}, result: schema })
+      data[label] = createDataTensor(schema, {
+        value,
+        ...(label === 'field.values'
+          ? { axes: [{ ticks: [0, 0.01] }, { ticks: [10, 20, 30, 40] }, { implicitOrdinal: true as const }] }
+          : {}),
+      })
+    }
+    const contracts: RecordedResultContracts = {
+      field: {
+        ...input.contracts.field,
+        visualization: {
+          ...input.contracts.field.visualization,
+          fieldPath: 'field',
+          valuePath: 'values',
+          nodeIdsPath: 'field.domain.metadata.nodeIds',
+          time: { path: 'times', axis: 0, nodeAxis: 1, componentAxis: 2 },
+        },
+      },
+    }
+    const parsed = parseRecordedMeshFields(rules, data as RecordedData, contracts)
+    expect(parsed.errors).toEqual([])
+    expect(parsed.fields[0].times).toEqual(new Float64Array([0, 0.01]))
+    expect(parsed.fields[0].historyValues?.slice(12, 15)).toEqual(new Float64Array([0.001, 0, 0]))
+    expect(parsed.fields[0].nodeIds).toEqual(new Int32Array([10, 20, 30, 40]))
+  })
   it('restores mesh identity, values, semantic metadata and exterior faces', () => {
     const input = fixture()
     const result = parseRecordedMeshFields(input.rules, input.data, input.contracts)

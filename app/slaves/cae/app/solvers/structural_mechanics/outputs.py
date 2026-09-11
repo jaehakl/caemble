@@ -16,6 +16,10 @@ def configure_history(model, outputs):
     lookup = {int(node): index for index, node in enumerate(model.node_ids)}
     selected = []
     for output in outputs:
+        if output["methodId"] == "fea.displacement-history":
+            physical_count = len(model.points) if model.physical_node_count is None else int(model.physical_node_count)
+            selected.extend(index for index in range(physical_count) if index not in selected)
+            continue
         if output["methodId"] != "fea.history":
             continue
         parameters = output.get("parameters", {})
@@ -432,6 +436,30 @@ def build_outputs(config, descriptor, model, solution, motion=None, *, history_c
         definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == method)
         data = definition["data"]
         request = model.result_requests.get(key, {})
+        if method == "fea.displacement-history":
+            if parameter(config["parameters"].get("analysis", "static")) != "transient":
+                raise ValueError("displacement history requires transient analysis")
+            if set(domain.cells) != {"tet4"}:
+                raise ValueError("displacement history requires a tet4 volume mesh")
+            node_ids = np.asarray(domain.metadata["nodeIds"], dtype=np.int32)
+            stored_nodes = np.arange(len(model.points)) if model.history_nodes is None else model.history_nodes
+            if not set(map(int, node_ids)).issubset(set(map(int, model.node_ids[stored_nodes]))):
+                raise ValueError("displacement history requires every physical mesh node in stored history")
+            history = history_members(model, solution, node_ids)
+            times = np.asarray(history.get("times", []), dtype=float)
+            values = np.asarray(history.get("displacement", []), dtype=float)
+            if values.shape != (len(times), len(node_ids), 3):
+                raise ValueError("displacement history requires every physical mesh node at every time")
+            if not len(times) or not np.all(np.isfinite(times)) or not np.all(np.diff(times) > 0) or not np.all(np.isfinite(values)):
+                raise ValueError("displacement history requires finite values and strictly increasing times")
+            field_data = data["members"]["field"]
+            field = FieldValue(domain, "node", field_data["quantityKind"], field_data["unit"], values[-1], field_data.get("basis"), ("x", "y", "z"))
+            artifacts[key] = BundleValue(definition["artifactType"], {
+                "field": field,
+                "times": {"value": times, "axes": [{"ticks": times}]},
+                "values": {"value": values, "axes": [{"ticks": times}, {"ticks": node_ids}, {"implicitOrdinal": True}]},
+            })
+            continue
         if method in ("fea.displacement", "fea.rotation", "fea.reaction") or (method == "fea.reaction-moment" and not request.get("regions")):
             rotations = physical_rotation_vectors(model, solution.displacement, solution.orientations)
             values = {

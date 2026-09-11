@@ -5,7 +5,7 @@ import type { RecordedResultContract } from '@/contracts/results'
 import type { KernelTaskConfig } from './kernelContract'
 
 /** The common tet volume serialization, not a Solver-specific output declaration. */
-function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string): RecordedDataSpecNode {
+function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string, nodeIds = false): RecordedDataSpecNode {
   const integer = (name: string, length?: number) => ({
     dtype: 'int32' as const,
     axes: [{ name }, ...(length === undefined ? [] : [{ length }])],
@@ -24,6 +24,7 @@ function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string): Recorded
       points: { dtype: 'float64', quantityKind: 'Length', unit: lengthUnit, axes: [{ name: 'node' }, { length: 3 }] },
       cells: { tet4: integer('cell', 4) },
       metadata: {
+        ...(nodeIds ? { nodeIds: integer('node') } : {}),
         boundaryFaces: integer('face', 3),
         cellRegions: integer('cell'),
         regionIds: strings('region'),
@@ -85,7 +86,18 @@ export function resolveRecordedResult(
     throw new CadModelError(`${path} output has no semantic Catalog contract.`)
   const { visualization, recording, ...data } = method.data
   let schema: RecordedDataSpecNode = 'resourceKind' in data ? data.members : (data as RecordedDataSpec)
-  if (recording === 'mesh-field') schema = meshFieldSchema(data as RecordedDataSpec, descriptor.referenceLengthUnit)
+  if (recording === 'mesh-field')
+    schema = meshFieldSchema(
+      data as RecordedDataSpec,
+      descriptor.referenceLengthUnit,
+      Boolean(visualization.nodeIdsPath),
+    )
+  if (recording === 'mesh-series' && 'resourceKind' in data) {
+    schema = {
+      ...data.members,
+      field: meshFieldSchema(data.members.field as RecordedDataSpec, descriptor.referenceLengthUnit, true),
+    } as RecordedDataSpecNode
+  }
   if (recording === 'structured-field') {
     const values = data as RecordedDataSpec
     schema = {

@@ -111,7 +111,7 @@ export function WorkbenchViewer({
       ) : null}
       <CadViewer
         activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
-        experiment={sceneDocument}
+        experiment={deformationScale > 0 ? null : sceneDocument}
         onFindSelectionSource={onFindSelectionSource}
         onRenderEnd={experimentDocument.handleRenderEnd}
         onRenderError={experimentDocument.handleRenderError}
@@ -188,6 +188,7 @@ export function WorkbenchViewer({
           <MeshFieldResult
             key={selectedView}
             field={selectedField}
+            displacementFields={mesh.fields}
             displayUnit={displayUnit}
             renderViewer={(data, view) => renderScene(data, view.deformationScale)}
           />

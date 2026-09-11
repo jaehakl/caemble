@@ -229,7 +229,7 @@ const kernelOutputMethodSchema = kernelMethodSchema.extend({
   data: kernelArtifactDataSpecSchema.and(
     z.object({
       visualization: resultVisualizationSchema,
-      recording: z.enum(['mesh-field', 'structured-field']).optional(),
+      recording: z.enum(['mesh-field', 'mesh-series', 'structured-field']).optional(),
     }),
   ),
 })

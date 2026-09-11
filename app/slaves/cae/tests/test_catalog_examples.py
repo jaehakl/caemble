@@ -232,6 +232,10 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert recorded["transient.times"][-1] == pytest.approx(.002)
             assert np.max(np.abs(recorded["harmonic.displacementReal"])) > 0
             assert np.max(np.abs(recorded["transientMesh.values"])) > 0
+            animation = recorded["transientAnimation.values"]
+            np.testing.assert_array_equal(recorded["transientAnimation.times"], recorded["transient.times"])
+            assert animation.shape[1:] == recorded["transientAnimation.field.domain.points"].shape
+            np.testing.assert_allclose(animation[-1], recorded["transientMesh.values"])
         if key == "structural-nonlinear-materials":
             assert np.max(recorded["plastic_stress.equivalentPlasticStrain"]) > 0
             for task, force in {"plastic": [35e6, 0, 0], "contact": [0, 0, -200], "laminate": [10000, 0, 0]}.items():

@@ -5,6 +5,12 @@ import { createDataTensorAccessor, type DataTensorAccessor } from '@/lib/cad/mod
 export type RecordedMeshField = Readonly<{
   label: string
   identity: string
+  task?: string
+  coordinateSpace?: string
+  nodeIds?: Int32Array
+  times?: Float64Array
+  timeUnit?: UcumUnit
+  historyValues?: Float64Array
   lengthUnit: UcumUnit
   valueUnit: UcumUnit
   quantity: string
@@ -38,6 +44,7 @@ export type MeshFieldView = Readonly<{
   clipAxis: -1 | 0 | 1 | 2
   clipFraction: number
   deformationScale: number
+  compareOriginal?: boolean
 }>
 
 const tetFaces = [
@@ -77,11 +84,13 @@ export function parseRecordedMeshFields(
           ? createDataTensorAccessor(rule.result, value as Parameters<typeof createDataTensorAccessor>[1], path)
           : undefined
       }
-      if (read('domain.kind')?.at(0) !== 'unstructured-mesh') continue
-      const points = read('domain.points')
-      const cells = read('domain.cells.tet4')
-      const values = read('values')
-      const location = read('location')?.at(0)
+      const semantic = contracts[label].visualization
+      const readField = (member: string) => read(semantic.fieldPath ? `${semantic.fieldPath}.${member}` : member)
+      if (readField('domain.kind')?.at(0) !== 'unstructured-mesh') continue
+      const points = readField('domain.points')
+      const cells = readField('domain.cells.tet4')
+      const values = readField('values')
+      const location = readField('location')?.at(0)
       if (!points || !cells || !values) throw new Error('The recorded field requires points, tet4 cells and values.')
       if (points.shape.length !== 2 || points.shape[1] !== 3 || cells.shape.length !== 2 || cells.shape[1] !== 4) {
         throw new Error('Mesh coordinates must be N×3 and tet4 connectivity M×4.')
@@ -113,7 +122,7 @@ export function parseRecordedMeshFields(
           else faces.set(key, { nodes, cell, count: 1 })
         }
       }
-      const declaredBoundary = read('domain.metadata.boundaryFaces')
+      const declaredBoundary = readField('domain.metadata.boundaryFaces')
       if (declaredBoundary && (declaredBoundary.shape.length !== 2 || declaredBoundary.shape[1] !== 3))
         throw new Error('Recorded boundary faces must have shape B×3.')
       const boundary = declaredBoundary
@@ -124,12 +133,12 @@ export function parseRecordedMeshFields(
             return { nodes, cell: face.cell }
           })
         : [...faces.values()].filter((face) => face.count === 1)
-      const regionIds = read('domain.metadata.regionIds')
-      const regions = read('domain.metadata.cellRegions')
-      const supports = read('domain.metadata.supportNodes')
-      const loadPoints = read('domain.metadata.loadPoints')
-      const loadVectors = read('domain.metadata.loadVectors')
-      const components = read('components')
+      const regionIds = readField('domain.metadata.regionIds')
+      const regions = readField('domain.metadata.cellRegions')
+      const supports = readField('domain.metadata.supportNodes')
+      const loadPoints = readField('domain.metadata.loadPoints')
+      const loadVectors = readField('domain.metadata.loadVectors')
+      const components = readField('components')
       if (regions && (regions.shape.length !== 1 || regions.size !== cells.shape[0]))
         throw new Error('Material region codes must match the volume cells.')
       for (let index = 0; index < (regions?.size ?? 0); index += 1) {
@@ -153,13 +162,97 @@ export function parseRecordedMeshFields(
       }
       if (components && components.size !== componentCount)
         throw new Error('Recorded component labels do not match the field values.')
+      if (semantic.valueKind === 'displacement') {
+        if (location !== 'node' || componentCount !== 3)
+          throw new Error('Deformation requires three displacement components at every node.')
+        convertUcumValue(
+          1,
+          String(readField('valueUnit')?.at(0)) as UcumUnit,
+          String(readField('domain.lengthUnit')?.at(0)) as UcumUnit,
+          'Recorded displacement',
+        )
+      }
+      const nodeIdsTensor = semantic.nodeIdsPath ? read(semantic.nodeIdsPath) : undefined
+      if (
+        nodeIdsTensor &&
+        (nodeIdsTensor.shape.length !== 1 ||
+          Array.from({ length: nodeIdsTensor.size }, (_, index) => Number(nodeIdsTensor.at(index))).some(
+            (value) => !Number.isInteger(value) || value < -2147483648 || value > 2147483647,
+          ))
+      )
+        throw new Error('Recorded node IDs must be int32 identifiers.')
+      const nodeIds = nodeIdsTensor
+        ? Int32Array.from({ length: nodeIdsTensor.size }, (_, index) => Number(nodeIdsTensor.at(index)))
+        : undefined
+      if (
+        semantic.nodeIdsPath &&
+        (!nodeIds || nodeIds.length !== points.shape[0] || new Set(nodeIds).size !== nodeIds.length)
+      )
+        throw new Error('Recorded node IDs must uniquely identify every mesh point.')
+      let times: Float64Array | undefined
+      let historyValues: Float64Array | undefined
+      let timeUnit: UcumUnit | undefined
+      if (semantic.time) {
+        const timeline = read(semantic.time.path)
+        const history = read(semantic.valuePath ?? 'values')
+        const { axis: timeAxis, nodeAxis, componentAxis } = semantic.time
+        if (
+          !timeline ||
+          !history ||
+          timeline.shape.length !== 1 ||
+          !timeline.size ||
+          history.shape.length !== 3 ||
+          new Set([timeAxis, nodeAxis, componentAxis]).size !== 3 ||
+          history.shape[timeAxis] !== timeline.size ||
+          history.shape[nodeAxis] !== count ||
+          history.shape[componentAxis] !== 3 ||
+          !nodeIds ||
+          location !== 'node' ||
+          semantic.valueKind !== 'displacement'
+        )
+          throw new Error('Animation requires a complete time × mesh node × displacement component history.')
+        timeUnit = byLabel.get(`${label}.${semantic.time.path}`)?.result.unit as UcumUnit
+        convertUcumValue(1, timeUnit, 's', 'Animation time')
+        times = Float64Array.from({ length: timeline.size }, (_, index) => Number(timeline.at(index)))
+        if (!times.every((value, index) => Number.isFinite(value) && (index === 0 || value > times![index - 1])))
+          throw new Error('Animation times must be finite and strictly increasing.')
+        const recordedNodes = history.tensor.axes?.[nodeAxis]?.ticks
+        if (
+          recordedNodes &&
+          (recordedNodes.length !== nodeIds.length || recordedNodes.some((id, index) => Number(id) !== nodeIds[index]))
+        )
+          throw new Error('Animation node coordinates do not match the reference mesh IDs.')
+        const historyUnit = byLabel.get(`${label}.${semantic.valuePath ?? 'values'}`)?.result.unit as UcumUnit
+        const historyScale = convertUcumValue(
+          1,
+          historyUnit,
+          String(readField('valueUnit')?.at(0)) as UcumUnit,
+          'Animation values',
+        )
+        historyValues = Float64Array.from({ length: history.size }, (_, index) => {
+          const indices = [0, 0, 0]
+          indices[timeAxis] = Math.floor(index / (count * 3))
+          indices[nodeAxis] = Math.floor(index / 3) % count
+          indices[componentAxis] = index % 3
+          return Number(history.get(indices)) * historyScale
+        })
+        if (!historyValues.every(Number.isFinite)) throw new Error('Animation contains non-finite displacements.')
+      }
       fields.push(
         Object.freeze({
           label,
-          identity: String(read('domain.identity')?.at(0) ?? label),
-          lengthUnit: String(read('domain.lengthUnit')?.at(0) ?? 'm') as UcumUnit,
-          valueUnit: String(read('valueUnit')?.at(0) ?? byLabel.get(`${label}.values`)?.result.unit ?? '1') as UcumUnit,
-          quantity: String(read('quantity')?.at(0) ?? ''),
+          task: contracts[label].task,
+          coordinateSpace: semantic.coordinateSpace,
+          nodeIds,
+          times,
+          timeUnit,
+          historyValues,
+          identity: String(readField('domain.identity')?.at(0) ?? label),
+          lengthUnit: String(readField('domain.lengthUnit')?.at(0) ?? 'm') as UcumUnit,
+          valueUnit: String(
+            readField('valueUnit')?.at(0) ?? byLabel.get(`${label}.values`)?.result.unit ?? '1',
+          ) as UcumUnit,
+          quantity: String(readField('quantity')?.at(0) ?? ''),
           valueKind: contracts[label].visualization.valueKind,
           location,
           points: pointValues,
@@ -198,15 +291,19 @@ export function createMeshFieldRenderData(
   field: RecordedMeshField,
   view: MeshFieldView,
   displayUnit = field.lengthUnit,
+  displacement: RecordedMeshField | undefined = field.valueKind === 'displacement' ? field : undefined,
+  range?: readonly [number, number],
+  topology?: readonly MeshRenderGeometry[],
 ) {
   const lengthScale = convertUcumValue(1, field.lengthUnit, displayUnit, 'Mesh display length')
   const displacementScale =
-    field.componentCount === 3 && field.location === 'node' && field.valueKind === 'displacement'
-      ? convertUcumValue(1, field.valueUnit, displayUnit, 'Mesh displacement') * view.deformationScale
+    displacement?.componentCount === 3 && displacement.location === 'node' && displacement.valueKind === 'displacement'
+      ? convertUcumValue(1, displacement.valueUnit, displayUnit, 'Mesh displacement') * view.deformationScale
       : 0
   const points = Float64Array.from(
     field.points,
-    (coordinate, index) => coordinate * lengthScale + (displacementScale ? field.values[index] * displacementScale : 0),
+    (coordinate, index) =>
+      coordinate * lengthScale + (displacementScale ? displacement!.values[index] * displacementScale : 0),
   )
   const bounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
   for (let index = 0; index < points.length; index += 1) {
@@ -233,6 +330,7 @@ export function createMeshFieldRenderData(
     minimum = Math.min(minimum, value)
     maximum = Math.max(maximum, value)
   })
+  if (range) [minimum, maximum] = range
   const axis = view.clipAxis
   const cut = axis < 0 ? Infinity : bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * view.clipFraction
   const geometries: MeshRenderGeometry[] = []
@@ -247,7 +345,10 @@ export function createMeshFieldRenderData(
       primitive,
       positions: Float32Array.from(buffer.positions),
       colors: Float32Array.from(buffer.colors),
-      indices: Uint16Array.from(buffer.indices),
+      indices:
+        topology?.[geometries.length]?.indices.length === buffer.indices.length
+          ? topology[geometries.length].indices
+          : Uint16Array.from(buffer.indices),
     })
     buffer.positions = []
     buffer.colors = []
@@ -332,6 +433,16 @@ export function createMeshFieldRenderData(
           Math.atan2(b.point[v] - center[1], b.point[u] - center[0]),
       )
       emitPolygon(intersections, cell)
+    }
+  }
+  if (view.compareOriginal && displacementScale) {
+    for (let face = 0; face < field.boundaryCells.length; face++) {
+      const triangle = [0, 1, 2].map((index) => {
+        const node = field.boundaryFaces[face * 3 + index]
+        return { point: [0, 1, 2].map((axis) => field.points[node * 3 + axis] * lengthScale), value: 0 }
+      })
+      for (let edge = 0; edge < 3; edge++)
+        emit('lines', [triangle[edge], triangle[(edge + 1) % 3]], 0, [0.55, 0.55, 0.55])
     }
   }
   if (view.overlays) {

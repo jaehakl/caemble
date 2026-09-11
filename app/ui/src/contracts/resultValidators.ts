@@ -6,6 +6,17 @@ export const resultVisualizationSchema = z
     kind: z.enum(['tensor', 'bundle', 'mesh-field', 'structured-field', 'polyline']),
     coordinateSpace: z.literal('experiment').optional(),
     valuePath: z.string().optional(),
+    fieldPath: z.string().optional(),
+    nodeIdsPath: z.string().optional(),
+    time: z
+      .object({
+        path: z.string(),
+        axis: z.number().int().nonnegative(),
+        nodeAxis: z.number().int().nonnegative(),
+        componentAxis: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
     spatialAxes: z.array(z.number().int().nonnegative()).optional(),
     components: z.array(z.string()).optional(),
     valueKind: z.enum(['displacement', 'stress']).optional(),

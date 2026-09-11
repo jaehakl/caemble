@@ -32,7 +32,7 @@ def test_public_plane_stress_recovers_the_thickness_constraint_reaction(kind, pl
     solution.displacement[:, 0] = .01 * points[:, 0]
     solution.stresses[0] = element_response(kind, points[:, :2], solution.displacement[:, :2].ravel(), material["C"], .2, plane)[1]
     config = {"outputs": [{"methodId": "fea.stress", "key": "stress", "parameters": {}}]}
-    artifact = build_outputs(config, solver_catalog.descriptor("structural-mechanics", "3.0.0"), model, solution)["stress"]
+    artifact = build_outputs(config, solver_catalog.descriptor("structural-mechanics", "4.0.0"), model, solution)["stress"]
     actual = artifact.members["stress"]["value"]
     if plane == "strain":
         # epsilon_zz=0으로 가둔 두께의 Poisson 반응: sigma_zz=nu*(sigma_xx+sigma_yy).
@@ -54,7 +54,7 @@ def test_tilted_shell_stress_basis_preserves_the_physical_tensor_through_public_
     solution.displacement[:, :3] = .01 * reference[:, :1] * rotation[:, 0]
     solution.stresses[0] = shell4_response(points, solution.displacement.ravel(), section)
     config = {"outputs": [{"methodId": "fea.stress", "key": "stress", "parameters": {}}]}
-    field = build_outputs(config, solver_catalog.descriptor("structural-mechanics", "3.0.0"), model, solution)["stress"]
+    field = build_outputs(config, solver_catalog.descriptor("structural-mechanics", "4.0.0"), model, solution)["stress"]
     resources = ResourceStore()
     try:
         result = resources.resolve(resources.ingest(field))

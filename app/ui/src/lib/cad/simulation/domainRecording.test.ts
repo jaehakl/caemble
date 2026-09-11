@@ -23,7 +23,7 @@ sys.path.insert(0,sys.argv[1])
 from caemble_catalog import open_catalog
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
-    data=catalog.runtime_slice(solvers=[('structural-mechanics','3.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
+    data=catalog.runtime_slice(solvers=[('structural-mechanics','4.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),
@@ -35,10 +35,11 @@ with open_catalog() as catalog:
     const tasks = {
       solid: {
         kind: 'caemble-kernel-task' as const,
-        kernel: { name: 'structural-mechanics', version: '3.0.0' },
+        kernel: { name: 'structural-mechanics', version: '4.0.0' },
         config: {
           outputs: [
             { key: 'motion', methodId: 'fea.displacement' },
+            { key: 'animation', methodId: 'fea.displacement-history' },
             { key: 'modes', methodId: 'fea.modes' },
           ],
         },
@@ -51,6 +52,10 @@ with open_catalog() as catalog:
     expect(frozen.catalogRevision).toBe(fixture.catalog.catalogRevision)
     const reference = resolveRecordedOutputReferences({ task: 'solid', output: 'motion' }, tasks, 'recordedData.motion')
     expect(reference).toHaveProperty('domain.cells.tet4')
+    expect(reference).toHaveProperty('domain.metadata.nodeIds')
+    const animation = resolveRecordedResult({ task: 'solid', output: 'animation' }, tasks, 'animation')
+    expect(animation.schema).toHaveProperty('field.domain.metadata.nodeIds')
+    expect(animation.visualization.time).toEqual({ path: 'times', axis: 0, nodeAxis: 1, componentAxis: 2 })
     expect(canonicalRecordedDataTree({ motion: reference })).toHaveProperty('motion.values.tensorOrder', 1)
     expect(resolveRecordedOutputReferences({ task: 'solid', output: 'modes' }, tasks, 'modes')).toHaveProperty(
       'frequencies',

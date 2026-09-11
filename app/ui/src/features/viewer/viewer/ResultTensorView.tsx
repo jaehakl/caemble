@@ -74,6 +74,11 @@ export function ResultTensorView({
   }, [rule, value, axes, indices, contract])
   return (
     <div className="h-full overflow-auto p-3" data-result-visualization={contract.visualization.kind}>
+      {contract.visualization.kind === 'bundle' ? (
+        <p className="mb-3 text-xs text-slate-500">
+          구성 데이터의 상세 보기입니다. 구조 변형 재생에는 mesh와 전체 절점의 시간 이력이 연결된 결과가 필요합니다.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3 text-xs">
         {members.length > 1 ? (
           <label>

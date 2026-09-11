@@ -114,7 +114,7 @@ class CatalogV3Tests(unittest.TestCase):
         expected = {
             "dc-current-density": "1.0.0", "steady-state-heat": "1.0.0",
             "ray-tracing": "1.0.0", "fdtd": "3.0.0",
-            "structural-mechanics": "3.0.0",
+            "structural-mechanics": "4.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -127,9 +127,9 @@ class CatalogV3Tests(unittest.TestCase):
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                expected_version = "3.0.0" if example["repository"] == "fea" or example["key"] == "gold-fcc-fresnel" else "1.0.0" if example["key"] == "structural-optical-results" else "4.0.0"
+                expected_version = "3.0.0" if example["key"] == "gold-fcc-fresnel" else "2.0.0" if example["key"] == "structural-optical-results" else "4.0.0"
                 self.assertEqual(example["version"], expected_version)
-                previous = "1.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
+                previous = "3.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:
@@ -137,7 +137,7 @@ class CatalogV3Tests(unittest.TestCase):
 
     def test_structural_contract_owns_mesh_and_uses_semantic_boundaries(self) -> None:
         with open_catalog() as catalog:
-            descriptor = catalog.get_solver_manifest("structural-mechanics", "3.0.0")["descriptor"]
+            descriptor = catalog.get_solver_manifest("structural-mechanics", "4.0.0")["descriptor"]
             penalty = catalog.quantity_kind("mechanics.NormalContactStiffness")
         self.assertEqual(descriptor["parameters"]["spatialResolution"]["data"]["unit"], "m")
         initializations = {method["methodId"]: method for method in descriptor["methods"]["initializations"]}
@@ -183,7 +183,7 @@ class CatalogV3Tests(unittest.TestCase):
                     self.assertIn("fea.body", source, path)
                     self.assertNotRegex(source, r"\b(?:connectivity|nodeIds|nodeIdStart)\s*:")
                     self.assertLess(len(source.splitlines()), 1000, path)
-                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "3.0.0")])
+                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "4.0.0")])
 
     def test_new_solver_cli_defaults_to_abi_v3(self) -> None:
         arguments = build_parser().parse_args(

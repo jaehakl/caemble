@@ -1,17 +1,27 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import {
+  automaticDeformationScale,
+  matchMeshDisplacement,
+  meshHistoryBounds,
+  meshHistoryRange,
+} from './meshDeformation'
+import { MeshPlayback } from './MeshPlayback'
 import JscadViewer from './JscadViewer'
 import { createMeshFieldRenderData, meshMaterialColors, type MeshFieldView, type RecordedMeshField } from './meshFields'
 import type { JscadViewerLayer } from './model'
 
+const noFields: readonly RecordedMeshField[] = Object.freeze([])
 const noLayers: readonly JscadViewerLayer[] = Object.freeze([])
 
 export function MeshFieldResult({
   field,
+  displacementFields = noFields,
   onRendered,
   renderViewer,
   displayUnit = field.lengthUnit,
 }: {
   field: RecordedMeshField
+  displacementFields?: readonly RecordedMeshField[]
   onRendered?: () => void
   displayUnit?: typeof field.lengthUnit
   renderViewer?: (data: ReturnType<typeof createMeshFieldRenderData>, view: MeshFieldView) => ReactNode
@@ -24,16 +34,78 @@ export function MeshFieldResult({
     clipFraction: 0.5,
     deformationScale: 0,
   })
+  const candidates = useMemo(
+    () =>
+      field.valueKind === 'stress'
+        ? displacementFields.flatMap((candidate) => {
+            const matched = matchMeshDisplacement(field, candidate)
+            return matched ? [matched] : []
+          })
+        : [],
+    [field, displacementFields],
+  )
+  const [selectedDisplacement, setSelectedDisplacement] = useState<string | null>(null)
+  const displacement =
+    field.valueKind === 'displacement'
+      ? field
+      : selectedDisplacement !== null
+        ? candidates.find((candidate) => candidate.label === selectedDisplacement)
+        : candidates.length === 1
+          ? candidates[0]
+          : undefined
+  const [deformed, setDeformed] = useState(true)
+  const [scaleMode, setScaleMode] = useState('auto')
+  const [manualScale, setManualScale] = useState(1)
+  const [frame, setFrame] = useState(0)
+  const canDeform = Boolean(displacement?.location === 'node' && displacement.componentCount === 3)
+  const autoScale = useMemo(() => (displacement ? automaticDeformationScale(displacement) : 1), [displacement])
+  const deformationScale =
+    canDeform && deformed ? (scaleMode === 'auto' ? autoScale : scaleMode === 'actual' ? 1 : manualScale) : 0
+  const currentField = useMemo(
+    () =>
+      field.historyValues
+        ? {
+            ...field,
+            values: field.historyValues.subarray(frame * field.points.length, (frame + 1) * field.points.length),
+          }
+        : field,
+    [field, frame],
+  )
+  const frameDisplacement = displacement === field ? currentField : displacement
+  const range = useMemo(
+    () => (field.times ? meshHistoryRange(field, view.component) : undefined),
+    [field, view.component],
+  )
+  const animationBounds = useMemo(
+    () => (field.times ? meshHistoryBounds(field, deformationScale, displayUnit) : undefined),
+    [field, deformationScale, displayUnit],
+  )
+  const animationTopology = useMemo(
+    () =>
+      field.times && view.clipAxis < 0
+        ? createMeshFieldRenderData(field, { ...view, deformationScale }, displayUnit).geometries
+        : undefined,
+    [field, view, deformationScale, displayUnit],
+  )
+  const effectiveView = { ...view, deformationScale }
   const [error, setError] = useState<string | null>(null)
   const rendered = useMemo(() => {
     try {
-      return { data: createMeshFieldRenderData(field, view, displayUnit), error: null }
+      const data = createMeshFieldRenderData(
+        currentField,
+        { ...view, deformationScale },
+        displayUnit,
+        frameDisplacement,
+        range,
+        animationTopology,
+      )
+      if (animationBounds) data.bounds = animationBounds
+      return { data, error: null }
     } catch (error) {
       return { data: null, error: error instanceof Error ? error.message : String(error) }
     }
-  }, [field, view, displayUnit])
+  }, [currentField, view, deformationScale, displayUnit, frameDisplacement, range, animationBounds, animationTopology])
   const onRender = useCallback(() => {}, [])
-  const canDeform = field.location === 'node' && field.componentCount === 3 && field.valueKind === 'displacement'
   const component = typeof view.component === 'number' ? field.components[view.component] : view.component
   return (
     <article
@@ -119,22 +191,77 @@ export function MeshFieldResult({
             {rendered.data?.cut.toPrecision(4)} {field.lengthUnit}
           </label>
         ) : null}
-        {canDeform ? (
+        {field.valueKind === 'stress' ? (
           <label>
-            Displacement scale{' '}
-            <input
-              aria-label={`${field.label} displacement scale`}
-              className="w-20 rounded border p-1"
-              type="number"
-              min={0}
-              step={1}
-              value={view.deformationScale}
-              onChange={(event) => setView({ ...view, deformationScale: Math.max(0, Number(event.target.value)) })}
-            />
-            ×
+            변위 결과{' '}
+            <select
+              aria-label="Deformation result"
+              value={displacement?.label ?? ''}
+              onChange={(event) => setSelectedDisplacement(event.target.value)}
+            >
+              <option value="">{candidates.length ? '선택 안 함' : '호환되는 정적 변위 없음'}</option>
+              {candidates.map((candidate) => (
+                <option key={candidate.label} value={candidate.label}>
+                  {candidate.label}
+                </option>
+              ))}
+            </select>
           </label>
         ) : null}
+        {canDeform ? (
+          <>
+            <label>
+              형상{' '}
+              <select
+                value={deformed ? 'deformed' : 'original'}
+                onChange={(event) => setDeformed(event.target.value === 'deformed')}
+              >
+                <option value="original">원형</option>
+                <option value="deformed">변형</option>
+              </select>
+            </label>
+            <label>
+              변형 배율{' '}
+              <select value={scaleMode} onChange={(event) => setScaleMode(event.target.value)}>
+                <option value="auto">자동 확대</option>
+                <option value="actual">실제 크기 1×</option>
+                <option value="manual">직접 입력</option>
+              </select>
+            </label>
+            {scaleMode === 'manual' ? (
+              <input
+                aria-label={`${field.label} displacement scale`}
+                className="w-20 rounded border p-1"
+                type="number"
+                min={0}
+                step="any"
+                value={manualScale}
+                onChange={(event) => {
+                  const value = Number(event.target.value)
+                  if (Number.isFinite(value) && value >= 0) setManualScale(value)
+                }}
+              />
+            ) : null}
+            <strong>표시 배율 {deformationScale.toPrecision(4)}×</strong>
+            <label>
+              <input
+                type="checkbox"
+                checked={view.compareOriginal ?? false}
+                onChange={(event) => setView({ ...view, compareOriginal: event.target.checked })}
+              />{' '}
+              원형 윤곽 비교
+            </label>
+          </>
+        ) : null}
       </div>
+      {field.times ? (
+        <MeshPlayback times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
+      ) : null}
+      {field.valueKind === 'displacement' && !field.times ? (
+        <p className="my-2 text-xs text-slate-500">
+          단일 상태의 변위입니다. 애니메이션에는 mesh와 전체 절점의 시간 이력이 필요합니다.
+        </p>
+      ) : null}
       {rendered.error || error ? (
         <p role="alert" className="rounded bg-rose-50 p-3 text-xs text-rose-700">
           {rendered.error ?? error}
@@ -143,7 +270,7 @@ export function MeshFieldResult({
       {rendered.data ? (
         <div className="h-[480px] overflow-hidden rounded border border-slate-200">
           {renderViewer ? (
-            renderViewer(rendered.data, view)
+            renderViewer(rendered.data, effectiveView)
           ) : (
             <JscadViewer
               layers={noLayers}
