@@ -44,7 +44,7 @@ async def create_batch(
     await serialize_events(db)
     request_data = request.model_dump(mode="json")
     if not request.preflight:
-        for key in ("preflight", "execution_mode", "source_bundle"):
+        for key in ("preflight", "source_bundle"):
             request_data.pop(key)
     request_hash = hashlib.sha256(
         json.dumps(request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
