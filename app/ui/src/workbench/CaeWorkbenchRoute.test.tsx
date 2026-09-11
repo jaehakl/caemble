@@ -3,17 +3,28 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
+
+const mocks = vi.hoisted(() => ({
+  measurement: null as { id: number; recorded_at: string | null } | null,
+  viewerMounts: 0,
+}))
 
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({ user: null, isAuthenticated: false, isPending: false, queryScope: 'guest' }),
 }))
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
-    experimentDocument: {},
+    experimentDocument: { resultSessionKey: 'session' },
     workspaceSession: {},
-    selection: { recordedData: {}, flatRecordedData: {}, recordedSchemas: {}, recordedRules: {}, measurement: null },
+    selection: {
+      recordedData: {},
+      flatRecordedData: {},
+      recordedSchemas: {},
+      recordedRules: {},
+      measurement: mocks.measurement,
+    },
     selectionContext: { calculationId: null },
     measurementActions: {},
     calculationDataActions: {},
@@ -76,17 +87,20 @@ vi.mock('./WorkbenchShellContainer', () => ({
     menubar,
     ribbon,
     left,
+    viewer,
     right,
   }: {
     menubar: ReactNode
     ribbon: ReactNode
     left: ReactNode
+    viewer: ReactNode
     right: ReactNode
   }) => (
     <>
       {menubar}
       {ribbon}
       <aside aria-label="Left pane">{left}</aside>
+      <main>{viewer}</main>
       <aside aria-label="Right pane">{right}</aside>
     </>
   ),
@@ -139,7 +153,18 @@ vi.mock('@/features/cae-workbench/editors', () => ({
   SourcePathPickerDialog: () => null,
 }))
 vi.mock('@/features/experiment', () => ({ ExperimentManager: () => null }))
-vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({ WorkbenchViewer: () => null }))
+vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({
+  WorkbenchViewer: ({ autoSelectResult }: { autoSelectResult?: boolean }) => {
+    const [mount] = useState(() => ++mocks.viewerMounts)
+    return (
+      <div
+        data-auto-select-result={String(Boolean(autoSelectResult))}
+        data-mount={mount}
+        data-testid="workbench-viewer"
+      />
+    )
+  },
+}))
 vi.mock('@/features/runtime-console', () => ({ createRuntimeConsoleStore: () => ({}), RuntimeConsoleView: () => null }))
 vi.mock('./CalculationWorkbenchContainer', () => ({ CalculationWorkbenchContainer: () => null }))
 vi.mock('@/features/cae/CaeBatchPanel', () => ({ CaeBatchPanel: () => null }))
@@ -148,6 +173,11 @@ vi.mock('@/features/launchers/LaunchersPage', () => ({ LaunchersWorkspace: () =>
 vi.mock('@/features/cae-workbench/CaeWorkbenchDialogs', () => ({ CaeWorkbenchDialogs: () => null }))
 vi.mock('@/features/cae-workbench/AdminWorkspace', () => ({ AdminWorkspace: () => null }))
 vi.mock('@/features/cae-workbench/WorkbenchDetails', () => ({ ExperimentDetail: () => null }))
+
+beforeEach(() => {
+  mocks.measurement = null
+  mocks.viewerMounts = 0
+})
 
 describe('Workbench portal navigation', () => {
   it('uses Help for Material Model while preserving portal state across section changes', async () => {
@@ -186,5 +216,32 @@ describe('Workbench portal navigation', () => {
     const restored = within(await screen.findByRole('region', { name: 'Help workspace' }))
     expect(await restored.findByText('materials')).toBeInTheDocument()
     expect(restored.getByText('test.response@1')).toBeInTheDocument()
+  })
+})
+
+describe('Workbench Viewer result updates', () => {
+  it('updates selected Measurements through the existing Viewer instance', () => {
+    const queryClient = new QueryClient()
+    const route = () => (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(route())
+    expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-auto-select-result', 'false')
+    expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-mount', '1')
+
+    mocks.measurement = { id: 41, recorded_at: '2026-09-11T00:00:00Z' }
+    rerender(route())
+    expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-auto-select-result', 'true')
+    expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-mount', '1')
+
+    mocks.measurement = { id: 42, recorded_at: '2026-09-11T00:01:00Z' }
+    rerender(route())
+    expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-auto-select-result', 'true')
+    expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-mount', '1')
+    expect(mocks.viewerMounts).toBe(1)
   })
 })

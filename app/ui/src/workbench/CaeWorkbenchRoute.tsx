@@ -528,8 +528,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           onToggleViewerExpanded={() =>
             page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
           }
-          key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${workbench.selection.measurement?.id ?? 'geometry'}:${preflight.viewerEpoch}`}
-          autoSelectResult={Boolean(preview)}
+          key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
+          autoSelectResult={Boolean(preview || workbench.selection.measurement)}
           resultContracts={preview?.payload.result_contracts ?? workbench.selection.resultContracts}
           resultErrors={preview?.errors ?? workbench.selection.resultErrors}
           resultSourceHash={preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash}
