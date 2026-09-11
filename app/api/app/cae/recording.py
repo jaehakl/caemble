@@ -14,6 +14,7 @@ from gpstation.service.state import utcnow
 
 INLINE_BYTES = 64 * 1024
 NUMERIC_FORMATS = {
+    "complex64": "ff",
     "float16": "e",
     "float32": "f",
     "float64": "d",
@@ -75,7 +76,7 @@ def persist_record(schema: dict, value: dict, attachments: dict[str, bytes]) -> 
         if dtype == "string":
             inline = json.loads(raw.decode("utf-8"))
         else:
-            values = [item[0] for item in struct.iter_unpack("<" + NUMERIC_FORMATS[dtype], raw)]
+            values = [{"re": item[0], "im": item[1]} if dtype == "complex64" else item[0] for item in struct.iter_unpack("<" + NUMERIC_FORMATS[dtype], raw)]
             if dtype == "bool":
                 values = [bool(item) for item in values]
             inline = values[0] if not shape else values

@@ -21,6 +21,7 @@ export const calculationInputDtypes = [
   'float16',
   'float32',
   'float64',
+  'complex64',
 ] as const satisfies readonly DataDType[]
 
 export const calculationDtypes = ['float32', 'float64', 'int8', 'int16', 'int32', 'uint8', 'uint16', 'uint32'] as const
@@ -43,7 +44,12 @@ export type CalculationInputAxis = Readonly<{
 export type CalculationInputLeaf = Readonly<{
   dtype: CalculationInputDtype
   shape: readonly number[]
-  data: boolean | string | number | readonly (boolean | string | number)[]
+  data:
+    | boolean
+    | string
+    | number
+    | Readonly<{ re: number; im: number }>
+    | readonly (boolean | string | number | Readonly<{ re: number; im: number }>)[]
   axes: readonly CalculationInputAxis[]
   quantityKind?: string
   tensorOrder: number

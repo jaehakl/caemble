@@ -114,14 +114,17 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
     const externalShape = shape.slice(0, shape.length - (leaf.tensorOrder as number))
     validateInputAxes(leaf.axes, externalShape, `Calculation input ${path}.axes`)
     const size = shape.reduce((product, length) => product * length, 1)
+    const validScalar = (item: unknown) => leaf.dtype === 'complex64'
+      ? typeof item === 'object' && item !== null && 're' in item && 'im' in item && typeof item.re === 'number' && typeof item.im === 'number' && Number.isFinite(Math.fround(item.re)) && Number.isFinite(Math.fround(item.im))
+      : ['boolean', 'string', 'number'].includes(typeof item)
     if (shape.length === 0) {
-      if (!['boolean', 'string', 'number'].includes(typeof leaf.data)) {
+      if (!validScalar(leaf.data)) {
         throw new Error(`Calculation input ${path}.data must be scalar.`)
       }
     } else if (
       !Array.isArray(leaf.data) ||
       leaf.data.length !== size ||
-      leaf.data.some((item) => !['boolean', 'string', 'number'].includes(typeof item))
+      leaf.data.some((item) => !validScalar(item))
     ) {
       throw new Error(`Calculation input ${path}.data must contain ${size} row-major scalar values.`)
     }

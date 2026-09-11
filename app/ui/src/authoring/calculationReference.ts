@@ -17,7 +17,8 @@ export const calculationAuthoringReference = {
   contract: {
     export: 'One synchronous default-export function with one identifier parameter.',
     import: "Only named imports from 'mathjs' are allowed.",
-    input: 'A read-only dotted-path map of ExperimentRecord-backed RecordedData tensor leaves.',
+    input:
+      'A read-only dotted-path map of ExperimentRecord-backed RecordedData tensor leaves. complex64 elements arrive as Math.js Complex; JSON snapshots use { re, im }. Project with re, im, abs or arg for real outputs.',
     dependencies:
       "Use only fixed record.member, record['dotted.path'], static object destructuring, or traceable const aliases. Dynamic keys, enumeration, spread, reassignment, and passing or returning the whole record are rejected when saving.",
     output: 'Return { dtype, data, axes? }; shape is inferred from rank-0/1/2 finite real data.',

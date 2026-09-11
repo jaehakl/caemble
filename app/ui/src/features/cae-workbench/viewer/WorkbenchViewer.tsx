@@ -1,3 +1,5 @@
+import { StructuredFieldResult } from '@/features/viewer/viewer/StructuredFieldResult'
+import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
 import { useMemo, useState } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
@@ -90,7 +92,12 @@ export function WorkbenchViewer({
   const canOverlayGeometry =
     frameMatches && (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
   const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
-  const displayUnit = sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? 'm'
+  const gridAxis = selectedContract?.visualization.grid?.xyzAxes[0]
+  const gridUnit =
+    gridAxis === undefined
+      ? undefined
+      : recordedRules.find((rule) => rule.label === selectedView)?.result.axes?.[gridAxis]?.unit
+  const displayUnit = sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? gridUnit ?? 'm'
   const selectedLines = polylines.bundles.filter(
     (bundle) =>
       bundle.id === selectedView ||
@@ -102,6 +109,7 @@ export function WorkbenchViewer({
   const renderScene = (
     meshRenderData?: Parameters<NonNullable<Parameters<typeof MeshFieldResult>[0]['renderViewer']>>[0],
     deformationScale = 0,
+    heatmapRenderData?: HeatmapRenderData,
   ) => (
     <>
       {deformationScale > 0 && selectedLines.length ? (
@@ -120,6 +128,7 @@ export function WorkbenchViewer({
         onSelectionSourcePathsChange={onSelectionSourcePathsChange}
         polylines={deformationScale > 0 ? [] : selectedLines}
         meshRenderData={meshRenderData}
+        heatmapRenderData={heatmapRenderData}
         meshIdentity={selectedField?.identity}
         displayUnit={displayUnit}
         selectionQuery={selectionQuery}
@@ -191,6 +200,16 @@ export function WorkbenchViewer({
             displacementFields={mesh.fields}
             displayUnit={displayUnit}
             renderViewer={(data, view) => renderScene(data, view.deformationScale)}
+          />
+        ) : selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid ? (
+          <StructuredFieldResult
+            key={selectedView}
+            name={selectedView}
+            contract={selectedContract}
+            rules={recordedRules}
+            data={recordedData}
+            displayUnit={displayUnit}
+            renderViewer={(data) => renderScene(undefined, 0, data)}
           />
         ) : selectedContract && !['mesh-field', 'polyline'].includes(selectedContract.visualization.kind) ? (
           <ResultTensorView

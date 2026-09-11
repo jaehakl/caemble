@@ -201,10 +201,11 @@ export function readRecordedValue(
   outerIndices: readonly number[],
   componentSelection = 'norm',
 ): boolean | string | number {
+  if (tensor.dtype === 'complex64') throw new Error('복소수는 진폭·실수부·허수부·위상을 명시적으로 선택해야 합니다.')
   if (outerIndices.length !== tensor.axes.length) {
     throw new Error(`Recorded tensor requires ${tensor.axes.length} outer indices.`)
   }
-  if (tensor.tensorOrder === 0) return tensor.accessor.get(outerIndices)
+  if (tensor.tensorOrder === 0) return tensor.accessor.get(outerIndices) as boolean | string | number
   if (componentSelection.startsWith('component:')) {
     const components = componentSelection.slice('component:'.length).split(',').map(Number)
     if (
@@ -213,7 +214,7 @@ export function readRecordedValue(
     ) {
       throw new Error('Recorded tensor component selection is invalid.')
     }
-    return tensor.accessor.get([...outerIndices, ...components])
+    return tensor.accessor.get([...outerIndices, ...components]) as boolean | string | number
   }
   let squared = 0
   const componentCount = 3 ** tensor.tensorOrder

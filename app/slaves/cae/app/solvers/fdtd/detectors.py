@@ -7,14 +7,14 @@ from typing import Any
 import numpy as np
 import torch
 
-from app.kernel.api import BundleValue
-
-
-from app.kernel.api import SolverInvocation
+from app.kernel.api import FieldValue, StructuredGridValue, SolverInvocation
 from app.kernel.api.world import task_scene
 from .setup import (
-    PreparedDomain, _target_part, _positive_float, _positive_int,
-    _nonnegative_float, axis_aligned_box_bounds, detector_indices,
+    PreparedDomain,
+    _target_part,
+    _positive_int,
+    axis_aligned_box_bounds,
+    detector_indices,
 )
 
 
@@ -24,6 +24,7 @@ class DetectorRegion:
     y: np.ndarray[Any, np.dtype[np.int64]]
     x: np.ndarray[Any, np.dtype[np.int64]]
     ticks: tuple[np.ndarray[Any, np.dtype[np.float64]], ...]
+    bounds: tuple[tuple[float, float], ...] | None = None
 
     def __post_init__(self) -> None:
         if self.z.size == 0 or self.y.size == 0 or self.x.size == 0:
@@ -62,20 +63,11 @@ class TimeDetector:
         )
         self.times.append(time)
 
-    def artifact(self) -> BundleValue:
+    def artifact(self) -> FieldValue:
         values = np.stack(self.samples).astype(np.float32, copy=False)
-        return BundleValue(
-            self.artifact_type,
-            {
-                "field": _field_member(
-                    values,
-                    np.asarray(self.times, dtype=np.float64),
-                    self.region.ticks,
-                    self.field_kind,
-                    "time",
-                    "s",
-                )
-            },
+        return _field_member(
+            values, np.asarray(self.times, dtype=np.float64), self.region.ticks,
+            self.field_kind, "time", "s", self.region.bounds,
         )
 
 
@@ -120,77 +112,60 @@ class SpectralDetector:
         self.accumulator.add_(phase.reshape((-1, 1, 1, 1, 1)) * sampled.unsqueeze(0))
         self.sample_count += 1
 
-    def artifact(self) -> BundleValue:
+    def artifact(self) -> FieldValue:
         if self.sample_count == 0:
             raise ValueError("spectral detector received no samples")
-        values = (self.accumulator / self.sample_count).detach().cpu()
-        axes = (self.frequencies, *self.region.ticks)
-        return BundleValue(
-            self.artifact_type,
-            {
-                "real": _field_member(
-                    values.real.to(torch.float32).numpy(),
-                    axes[0],
-                    axes[1:],
-                    self.field_kind,
-                    "frequency",
-                    "Hz",
-                ),
-                "imag": _field_member(
-                    values.imag.to(torch.float32).numpy(),
-                    axes[0],
-                    axes[1:],
-                    self.field_kind,
-                    "frequency",
-                    "Hz",
-                ),
-            },
+        values = (self.accumulator / self.sample_count).detach().cpu().numpy()
+        return _field_member(
+            values, self.frequencies, self.region.ticks,
+            self.field_kind, "frequency", "Hz", self.region.bounds,
         )
 
 
-def requested_frequencies(start: float, stop: float, step: float, dt: float) -> np.ndarray:
-    if not all(math.isfinite(value) for value in (start, stop, step)):
-        raise ValueError("spectral frequency range must be finite")
-    if start < 0 or stop < start or step <= 0:
-        raise ValueError("frequency range must satisfy 0 <= start <= stop and step > 0")
+def requested_frequencies(values: Any, dt: float) -> np.ndarray:
+    frequencies = np.asarray(values, dtype=np.float64)
+    if (
+        frequencies.ndim != 1 or frequencies.size == 0
+        or np.any(~np.isfinite(frequencies)) or np.any(frequencies < 0)
+    ):
+        raise ValueError("frequencies must be a nonempty tensor of finite non-negative Hz values")
     nyquist = 0.5 / dt
-    if stop > nyquist:
-        raise ValueError(f"frequencyStop {stop:g} Hz exceeds the {nyquist:g} Hz Nyquist limit")
-    count = math.floor(math.nextafter((stop - start) / step, math.inf)) + 1
-    return start + np.arange(count, dtype=np.float64) * step
+    if np.any(frequencies > nyquist):
+        raise ValueError(f"frequencies exceed the {nyquist:g} Hz Nyquist limit")
+    return frequencies
 
 
 def _field_member(
-    values: np.ndarray[Any, np.dtype[np.float32]],
+    values: np.ndarray[Any, np.dtype[np.float32] | np.dtype[np.complex64]],
     first_ticks: np.ndarray[Any, np.dtype[np.float64]],
     spatial_ticks: tuple[np.ndarray[Any, np.dtype[np.float64]], ...],
     field_kind: str,
     first_axis: str,
     first_unit: str,
-) -> dict[str, Any]:
+    bounds: tuple[tuple[float, float], ...] | None = None,
+) -> FieldValue:
     quantity_kind = (
         "electromagnetism.ElectricFieldStrength"
         if field_kind == "electric"
         else "electromagnetism.MagneticFieldStrength"
     )
     unit = "V.m-1" if field_kind == "electric" else "A.m-1"
-    return {
-        "value": values,
-        "axes": [
-            {"name": first_axis, "unit": first_unit, "ticks": first_ticks},
-            {"name": "z", "unit": "m", "ticks": spatial_ticks[0]},
-            {"name": "y", "unit": "m", "ticks": spatial_ticks[1]},
-            {"name": "x", "unit": "m", "ticks": spatial_ticks[2]},
-        ],
-        "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-        "components": [
-            "Ex" if field_kind == "electric" else "Hx",
-            "Ey" if field_kind == "electric" else "Hy",
-            "Ez" if field_kind == "electric" else "Hz",
-        ],
-        "quantityKind": quantity_kind,
-        "unit": unit,
-    }
+    return FieldValue(
+        domain=StructuredGridValue(
+            shape=tuple(len(axis) for axis in spatial_ticks),
+            axes=spatial_ticks,
+            unit="m",
+            metadata={"bounds": bounds} if bounds is not None else {},
+        ),
+        location="cell",
+        quantity_kind=quantity_kind,
+        unit=unit,
+        values=values,
+        basis=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        components=tuple(("E" if field_kind == "electric" else "H") + axis for axis in "xyz"),
+        metadata={"sampleAxes": [{"name": first_axis, "unit": first_unit, "ticks": first_ticks}]},
+    )
+
 
 
 __all__ = [
@@ -202,14 +177,14 @@ __all__ = [
 
 
 _OUTPUT_TYPES = {
-    "fdtd.time-electric-field": ("caemble.fdtd/time-electric-field@1", "electric"),
-    "fdtd.time-magnetic-field": ("caemble.fdtd/time-magnetic-field@1", "magnetic"),
+    "fdtd.time-electric-field": ("caemble.fdtd/time-electric-field@2", "electric"),
+    "fdtd.time-magnetic-field": ("caemble.fdtd/time-magnetic-field@2", "magnetic"),
     "fdtd.spectral-electric-field": (
-        "caemble.fdtd/spectral-electric-field@1",
+        "caemble.fdtd/spectral-electric-field@2",
         "electric",
     ),
     "fdtd.spectral-magnetic-field": (
-        "caemble.fdtd/spectral-magnetic-field@1",
+        "caemble.fdtd/spectral-magnetic-field@2",
         "magnetic",
     ),
 }
@@ -262,6 +237,7 @@ async def prepare_detectors(
                 np.asarray(domain_ticks[1], dtype=np.float64)[y],
                 np.asarray(domain_ticks[0], dtype=np.float64)[x],
             ),
+            tuple(bounds[axis] for axis in (2, 1, 0)),
         )
         artifact_type, field_kind = _OUTPUT_TYPES[method]
         if method.startswith("fdtd.time-"):
@@ -284,9 +260,7 @@ async def prepare_detectors(
                     field_kind,
                     region,
                     frequencies=requested_frequencies(
-                        _nonnegative_float(parameters["frequencyStart"], "frequencyStart"),
-                        _nonnegative_float(parameters["frequencyStop"], "frequencyStop"),
-                        _positive_float(parameters["frequencyStep"], "frequencyStep"),
+                        parameters["frequencies"]["value"],
                         prepared.dt,
                     ),
                 )

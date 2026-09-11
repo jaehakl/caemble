@@ -17,6 +17,19 @@ export const resultVisualizationSchema = z
       })
       .strict()
       .optional(),
+    grid: z
+      .object({
+        xyzAxes: z.tuple([
+          z.number().int().nonnegative(),
+          z.number().int().nonnegative(),
+          z.number().int().nonnegative(),
+        ]),
+        sampleAxis: z.number().int().nonnegative(),
+        sampleKind: z.enum(['frequency', 'time']),
+        componentAxis: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
     spatialAxes: z.array(z.number().int().nonnegative()).optional(),
     components: z.array(z.string()).optional(),
     valueKind: z.enum(['displacement', 'stress']).optional(),

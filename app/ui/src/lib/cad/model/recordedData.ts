@@ -1,6 +1,7 @@
 import {
   type CartesianBasis,
   type DataDType,
+  type Complex64Value,
   type QuantityKindName,
   type RecordedData,
   type RecordedDataRule,
@@ -10,7 +11,7 @@ import { getQuantityKindComponentShape, getQuantityKindTensorOrder } from '../..
 import type { UcumUnit } from './units'
 
 export type ResolvedRecordedTensor = Readonly<{
-  value: boolean | string | number | readonly unknown[]
+  value: boolean | string | number | Complex64Value | readonly unknown[]
   accessor: DataTensorAccessor
   componentShape: readonly 3[]
   tensorOrder: number

@@ -13,7 +13,7 @@ Report fixture identity/hash, source hash, dependency names, compile/run status,
 
 Executable synthetic test (PowerShell 7, from the repository root; use an empty .work/calculation directory). reference show returns a structured example field with the exact source, complete input and expected normalized output used by the automated tests. Write UTF-8 without a BOM:
 
-~~~powershell
+```powershell
 npm --prefix app/ui run build:cli
 $caembleCli = (Resolve-Path app/ui/dist-cli/caemble.cjs).Path
 node $caembleCli calculation init .work/calculation
@@ -23,34 +23,45 @@ $example.example.input | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath .w
 node $caembleCli calculation check .work/calculation/calculation.js
 $fixtureRun = node $caembleCli calculation run .work/calculation/calculation.js --fixture .work/calculation/input.json --out .work/fixture-result.json --json | ConvertFrom-Json
 if ($fixtureRun.output.data -ne $example.example.expected.data) { throw 'Synthetic mean fixture failed.' }
-~~~
+```
 
 The mean fixture expects the scalar 5. The line and heatmap references have their own full source/input/expected values. check applies source policy and JavaScript/JSDoc type checks without execution. run also resolves fixed dependencies against the selected input, executes with a timeout and validates output. Neither command saves a Calculation or CalculationData.
 
 For a real local simulation result, inspect its actual record contract first. Update the source to use those exact record names and physically meaningful operations; the synthetic 'signal' name is not a promised Catalog output:
 
-~~~powershell
+```powershell
 node $caembleCli data inspect --result .work/local-results/1
 node $caembleCli agent context calculation --source .work/calculation --result .work/local-results/1
 # Edit calculation.js for these records and assert the expected numerical result.
 node $caembleCli calculation run .work/calculation/calculation.js --result .work/local-results/1 --out .work/local-calculation.json
 node $caembleCli png calculation .work/local-calculation.json --out .work/local-calculation.png
 node $caembleCli data export --result .work/local-results/1 --out .work/result-export
-~~~
+```
 
 The local data export directory contains the Record values, binary attachments and exact built input with its source bundle and hashes. It remains readable after moving the complete directory: use --result with that directory for inspect, slice, Calculation or PNG. Export does not rebuild or run a Solver.
 
 For a server Measurement, select IDs from experiment list and completed batch/Measurement metadata; do not substitute arbitrary IDs. Configure the API .env and run doctor --api. When editing an existing Calculation, first calculation pull <id> --out <empty-directory> and retain its revision in caemble.json.
 
-~~~powershell
+```powershell
 $experimentId = 'REPLACE_WITH_SERVER_EXPERIMENT_ID'
 $measurementId = 'REPLACE_WITH_RECORDED_MEASUREMENT_ID'
 node $caembleCli agent context calculation --source .work/calculation --experiment $experimentId --measurement $measurementId
 node $caembleCli calculation run .work/calculation/calculation.js --measurement $measurementId --out .work/server-calculation.json
 node $caembleCli calculation run .work/server-calculation.json.source.js --fixture .work/server-calculation.json.input.json --out .work/replay.json
 node $caembleCli calculation push .work/calculation --experiment $experimentId --measurement $measurementId
-~~~
+```
 
 Each run with --out writes the result envelope plus adjacent .input.json and .source.js files. Keep all three: source_hash identifies the exact saved source bytes, input_hash identifies the serialized complete normalized input, and provenance records the selected fixture, local result or remote Measurement. Compare source_hash, input_hash and output between the server capture and offline replay before treating them as the same computation. The replay uses the captured source file even if the editable draft has changed. A fixture alone has no remote provenance; retain the original result envelope with it.
 
 push is a server write and performs a fresh preflight using the required server --measurement; offline success cannot replace this step. The Measurement must belong to the target Experiment and have recorded data. A stale revision returns a conflict: pull/reconcile before saving again. To persist calculated results for saved Calculation/Measurement pairs, inspect calculation-data missing --experiment <id> first, then explicitly calculation-data run --experiment <id> --calculation <id> --measurement <id>. This last command writes CalculationData.
+
+## Complex RecordedData
+
+`complex64` input elements are Math.js Complex values inside the Calculation.
+An offline JSON snapshot retains each element as `{ re, im }`; execution restores
+Math.js Complex without changing the logical shape. Import `re`, `im`, `abs` or
+`arg` from `mathjs` to produce a finite real chart/table output explicitly.
+`Number(complex)` is not a real-part conversion. A zero-amplitude phase is undefined.
+For spectral fields select the requested sample using recorded frequency-axis ticks,
+not a wavelength embedded in the result name. The current Gold FCC Catalog example
+includes two Fresnel Calculations using this selection on the same three records.

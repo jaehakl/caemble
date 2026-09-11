@@ -31,6 +31,7 @@ export type VarsSchemaEntry = Readonly<{
   max: number
 }>
 export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
+export type Complex64Value = Readonly<{ re: number; im: number }>
 export type DataDType =
   | 'bool'
   | 'string'
@@ -45,9 +46,10 @@ export type DataDType =
   | 'float16'
   | 'float32'
   | 'float64'
+  | 'complex64'
 export type FloatDataDType = Extract<DataDType, `float${number}`>
 export type NonFloatDataDType = Exclude<DataDType, FloatDataDType>
-export type IntegerDataDType = Exclude<NonFloatDataDType, 'bool' | 'string'>
+export type IntegerDataDType = Exclude<NonFloatDataDType, 'bool' | 'string' | 'complex64'>
 export type UcumUnit = string
 // <generated:quantity-kind-types>
 export interface CatalogQuantityKindMap {}
@@ -94,10 +96,10 @@ export type DataSchemaAxis = DataSchemaAxisBase &
 export type DataAxis = DataSchemaAxis & Readonly<{ length: number }>
 type DataTypeMetadata = Readonly<
   | ({
-      dtype: FloatDataDType
+      dtype: FloatDataDType | 'complex64'
     } & (QuantityMetadata<ScalarQuantityKindName> | QuantityMetadata<TensorQuantityKindName>))
   | {
-      dtype: NonFloatDataDType
+      dtype: Exclude<NonFloatDataDType, 'complex64'>
       unit?: never
       quantityKind?: never
       basis?: never
@@ -109,7 +111,7 @@ export type DataSchema = Readonly<{
   DataTypeMetadata
 export type DataValueDescriptor = Readonly<{
   axes?: readonly DataAxis[]
-  value: boolean | string | number | readonly unknown[]
+  value: boolean | string | number | Complex64Value | readonly unknown[]
 }> &
   DataTypeMetadata
 export type MatrixValue = readonly (readonly number[])[]
@@ -120,6 +122,7 @@ export type RecordedDataResultAxis = DataSchemaAxis
 export type RecordedDataResult = DataSchema
 export type RecordedDataAxis = Readonly<{
   ticks?: readonly (number | string)[]
+  bounds?: readonly [number, number]
   implicitOrdinal?: true
 }>
 export type DataTensor = Readonly<{
@@ -132,7 +135,7 @@ export type DataTensor = Readonly<{
 }>
 export type PersistedDataTensor = DataTensor & Readonly<{ tensorEncodingVersion: 1 }>
 export type DataTensorInput = Readonly<{
-  value: boolean | string | number | readonly unknown[]
+  value: boolean | string | number | Complex64Value | readonly unknown[]
   axes?: readonly RecordedDataAxis[]
 }>
 export type RecordedDataTensor = DataTensor | PersistedDataTensor

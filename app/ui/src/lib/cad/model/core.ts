@@ -2,6 +2,7 @@ import type { Tensor, Vars, Vec3 } from './types'
 import { CadModelError } from './errors'
 import type {
   DataDType,
+  Complex64Value,
   DataValueDescriptor,
   ScalarValue,
 } from './descriptor'
@@ -26,6 +27,7 @@ export { Mat } from './descriptor'
 export type {
   DataAxis,
   DataDType,
+  Complex64Value,
   DataSchema,
   DataSchemaAxis,
   DataTensor,
@@ -82,7 +84,7 @@ export function isFloatDType(dtype: DataDType) {
 }
 
 export function normalizeDataElement(value: unknown, _dtype: DataDType, _path: string) {
-  return value as boolean | string | number
+  return value as boolean | string | number | Complex64Value
 }
 
 export function normalizeDataValue(
@@ -90,8 +92,8 @@ export function normalizeDataValue(
   _shape: readonly number[],
   _dtype: DataDType,
   _path: string,
-): boolean | string | number | readonly unknown[] {
-  return value as boolean | string | number | readonly unknown[]
+): boolean | string | number | Complex64Value | readonly unknown[] {
+  return value as boolean | string | number | Complex64Value | readonly unknown[]
 }
 
 export function normalizeDataValueDescriptor(value: unknown, _path = 'Data value descriptor'): DataValueDescriptor {

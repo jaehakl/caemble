@@ -23,6 +23,7 @@ async function fixture() {
   await mkdir(path.join(artifact, 'items'), { recursive: true })
   await mkdir(path.join(result, 'records'), { recursive: true })
   const schema = {
+    complex: { dtype: 'complex64', tensorOrder: 0, quantityKind: 'Length', unit: 'm', axes: [{ name: 'samples' }] },
     signal: { dtype: 'float64', tensorOrder: 0, quantityKind: 'Length', unit: 'm', axes: [{ name: 'samples' }] },
     label: { dtype: 'string', tensorOrder: 0 },
     vector: {
@@ -37,6 +38,17 @@ async function fixture() {
     flags: { dtype: 'bool', tensorOrder: 0, axes: [{ name: 'samples' }] },
   }
   const values: Record<string, RecordedDataTensor> = {
+    complex: {
+      shape: [2],
+      axes: [{ ticks: [1, 2] }],
+      storage: {
+        kind: 'inline',
+        value: [
+          { re: 3, im: 4 },
+          { re: -2, im: 5 },
+        ],
+      },
+    },
     signal: {
       shape: [3],
       axes: [{ ticks: ['first', 'second', 'third'] }],
@@ -63,7 +75,7 @@ async function fixture() {
     flags: { shape: [3], axes: [{ implicitOrdinal: true }], storage: { kind: 'inline', value: [true, false, true] } },
   }
   const attachments = []
-  for (const name of ['signal', 'small', 'integer', 'flags']) {
+  for (const name of ['signal', 'small', 'integer', 'flags', 'complex']) {
     const tensor = values[name]
     const bytes = createDataTensorAccessor(schema[name as keyof typeof schema] as DataSchema, tensor).rawBytes()
     const slices = [bytes.slice(0, 3), bytes.slice(3)]
@@ -132,6 +144,10 @@ describe('local CAE result adapter', () => {
     const root = path.dirname(artifact)
     const output = path.join(root, 'export')
     const expected = await createLocalCalculationInput(result)
+    expect(expected['group.complex'].data).toEqual([
+      { re: 3, im: 4 },
+      { re: -2, im: 5 },
+    ])
     const expectedBinary = await readFile(path.join(result, 'records/signal-1.bin'))
     const exported = await dataCommand('data', 'export', {
       environment: {

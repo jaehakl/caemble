@@ -350,7 +350,7 @@ def test_spectral_detector_returns_requested_frequency_raw_dft_real_and_imaginar
         np.asarray([0]),
         (np.asarray([0.0]), np.asarray([0.0]), np.asarray([0.0])),
     )
-    frequencies = requested_frequencies(0.25, 0.25, 0.25, dt=1.0)
+    frequencies = requested_frequencies([0.25], dt=1.0)
     detector = SpectralDetector(
         "spectrum",
         "fdtd/spectral-field",
@@ -366,8 +366,8 @@ def test_spectral_detector_returns_requested_frequency_raw_dft_real_and_imaginar
         detector.capture(float(time), values)
 
     artifact = detector.artifact()
-    real = artifact.members["real"]["value"]
-    imaginary = artifact.members["imag"]["value"]
+    real = artifact.values.real
+    imaginary = artifact.values.imag
     np.testing.assert_allclose(real[0, 0, 0, 0], [0.5, 0.0, 0.0], atol=1e-6)
     np.testing.assert_allclose(imaginary[0, 0, 0, 0], [-1.0, 0.0, 0.0], atol=1e-6)
 
@@ -388,9 +388,9 @@ def test_time_detector_keeps_stride_samples_and_off_stride_final_sample() -> Non
             final=step == 3,
         )
 
-    member = detector.artifact().members["field"]
-    np.testing.assert_allclose(member["axes"][0]["ticks"], [0.0, 0.2, 0.3])
-    np.testing.assert_allclose(member["value"][:, 0, 0, 0, 0], [0.0, 2.0, 3.0])
+    member = detector.artifact()
+    np.testing.assert_allclose(member.metadata["sampleAxes"][0]["ticks"], [0.0, 0.2, 0.3])
+    np.testing.assert_allclose(member.values[:, 0, 0, 0, 0], [0.0, 2.0, 3.0])
 
 
 def test_electric_and_magnetic_fields_are_interpolated_to_cell_centers() -> None:

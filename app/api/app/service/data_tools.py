@@ -419,6 +419,7 @@ def slice_recorded_tensor(data: Any, dtype: str, offset: int, count: int) -> dic
 
 
 _DTYPE_FORMATS = {
+    "complex64": "ff",
     "bool": "?",
     "int8": "b",
     "uint8": "B",
@@ -445,6 +446,8 @@ def _decode_base64_slice(encoded: str, format_code: str, offset: int, count: int
     decoded = base64.b64decode(encoded[character_start:character_end])
     local_start = byte_start - (character_start // 4) * 3
     selected = decoded[local_start : local_start + count * item_size]
+    if format_code == "ff":
+        return [{"re": re, "im": im} for re, im in struct.iter_unpack("<ff", selected)]
     return list(struct.unpack(f"<{count}{format_code}", selected))
 
 

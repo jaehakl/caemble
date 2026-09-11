@@ -17,6 +17,7 @@ export function ResultTensorView({
 }) {
   const members = rules.filter((rule) => rule.label === name || rule.label.startsWith(`${name}.`))
   const preferred = contract.visualization.valuePath ? `${name}.${contract.visualization.valuePath}` : name
+  const [representation, setRepresentation] = useState('abs')
   const [member, setMember] = useState(preferred)
   const rule = members.find((item) => item.label === member) ?? members[0]
   const [indices, setIndices] = useState<Record<number, number>>({})
@@ -39,7 +40,16 @@ export function ResultTensorView({
           position[selected[dimension]] = flat % shape[dimension]
           flat = Math.floor(flat / shape[dimension])
         }
-        return accessor.get(position)
+        const value = accessor.get(position)
+        if (typeof value !== 'object') return value
+        if (representation === 're') return value.re
+        if (representation === 'im') return value.im
+        if (representation === 'arg') {
+          if (value.re === 0 && value.im === 0)
+            throw new Error('진폭 0인 표본의 위상은 미정의입니다. 다른 표현을 선택하세요.')
+          return Math.atan2(value.im, value.re)
+        }
+        return Math.hypot(value.re, value.im)
       })
       const tensorAxes = selected.map(
         (axis) => accessor.tensor.axes?.[axis] ?? { ticks: Array.from({ length: accessor.shape[axis] }, (_, i) => i) },
@@ -48,7 +58,13 @@ export function ResultTensorView({
       const slicedRule = {
         ...rule,
         result: {
-          ...rule.result,
+          ...(rule.result.dtype === 'complex64'
+            ? {
+                ...rule.result,
+                dtype: 'float32' as const,
+                ...(representation === 'arg' ? { unit: 'rad' as const, quantityKind: 'PlaneAngle' } : {}),
+              }
+            : rule.result),
           tensorOrder: 0,
           axes: selected.map((axis) => rule.result.axes?.[axis] ?? { name: `component ${axis}` }),
         },
@@ -71,7 +87,7 @@ export function ResultTensorView({
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
-  }, [rule, value, axes, indices, contract])
+  }, [rule, value, axes, indices, contract, representation])
   return (
     <div className="h-full overflow-auto p-3" data-result-visualization={contract.visualization.kind}>
       {contract.visualization.kind === 'bundle' ? (
@@ -80,6 +96,17 @@ export function ResultTensorView({
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-3 text-xs">
+        {rule?.result.dtype === 'complex64' ? (
+          <label>
+            복소수 표현{' '}
+            <select value={representation} onChange={(event) => setRepresentation(event.target.value)}>
+              <option value="abs">진폭</option>
+              <option value="re">실수부</option>
+              <option value="im">허수부</option>
+              <option value="arg">위상 (rad)</option>
+            </select>
+          </label>
+        ) : null}
         {members.length > 1 ? (
           <label>
             데이터{' '}

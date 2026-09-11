@@ -29,6 +29,7 @@ const dataDTypes = new Set([
   'float16',
   'float32',
   'float64',
+  'complex64',
 ])
 const integerRanges: Readonly<Record<string, readonly [number, number]>> = Object.freeze({
   int8: [-128, 127],
@@ -89,6 +90,10 @@ function validateBasis(value: unknown, path: string, issues: KernelContractIssue
 }
 
 function validateElement(value: unknown, dtype: string, path: string, issues: KernelContractIssue[]) {
+  if (dtype === 'complex64') {
+    if (!isRecord(value) || typeof value.re !== 'number' || typeof value.im !== 'number' || !Number.isFinite(Math.fround(value.re)) || !Number.isFinite(Math.fround(value.im))) addIssue(issues, path, 'must contain finite float32 re and im values.')
+    return
+  }
   if (dtype === 'bool') {
     if (typeof value !== 'boolean') addIssue(issues, path, 'must be a bool value.')
     return
@@ -165,7 +170,7 @@ function validateValue(
   issues: KernelContractIssue[],
 ) {
   const descriptor = isRecord(value) ? value : undefined
-  const float = spec.dtype === 'float16' || spec.dtype === 'float32' || spec.dtype === 'float64'
+  const float = spec.dtype === 'float16' || spec.dtype === 'float32' || spec.dtype === 'float64' || spec.dtype === 'complex64'
   if ((float || spec.axes !== undefined) && !descriptor) {
     addIssue(issues, path, 'must be an explicit dtype descriptor.')
     return
@@ -517,7 +522,7 @@ function validateRecordedSchema(
     addIssue(issues, `${path}.dtype`, 'is not supported.')
     return
   }
-  const float = node.dtype.startsWith('float')
+  const float = node.dtype.startsWith('float') || node.dtype === 'complex64'
   if (float) {
     const kind = quantityKind(catalog, node.quantityKind)
     if (!kind) {

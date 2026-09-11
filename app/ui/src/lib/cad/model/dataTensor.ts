@@ -1,5 +1,6 @@
 import type {
   DataDType,
+  Complex64Value,
   DataSchema,
   DataTensor,
   DataTensorInput,
@@ -25,6 +26,7 @@ const numericByteWidths: Readonly<Record<Exclude<DataDType, 'string'>, number>> 
   float16: 2,
   float32: 4,
   float64: 8,
+  complex64: 8,
 })
 
 export type DataTensorAccessor = Readonly<{
@@ -33,9 +35,9 @@ export type DataTensorAccessor = Readonly<{
   strides: readonly number[]
   size: number
   byteLength: number
-  at: (flatIndex: number) => boolean | string | number
-  get: (indices: readonly number[]) => boolean | string | number
-  materialize: () => boolean | string | number | readonly unknown[]
+  at: (flatIndex: number) => boolean | string | number | Complex64Value
+  get: (indices: readonly number[]) => boolean | string | number | Complex64Value
+  materialize: () => boolean | string | number | Complex64Value | readonly unknown[]
   rawBytes: () => Uint8Array
 }>
 
@@ -64,10 +66,10 @@ function inferShape(value: unknown): readonly number[] {
   return Object.freeze([value.length, ...(value.length === 0 ? [] : inferShape(value[0]))])
 }
 
-function flattenValue(value: unknown, shape: readonly number[]): readonly (boolean | string | number)[] {
-  const flat: (boolean | string | number)[] = []
+function flattenValue(value: unknown, shape: readonly number[]): readonly (boolean | string | number | Complex64Value)[] {
+  const flat: (boolean | string | number | Complex64Value)[] = []
   const visit = (item: unknown, depth: number) => {
-    if (depth === shape.length) flat.push(item as boolean | string | number)
+    if (depth === shape.length) flat.push(item as boolean | string | number | Complex64Value)
     else (item as readonly unknown[]).forEach((child) => visit(child, depth + 1))
   }
   visit(value, 0)
@@ -122,6 +124,13 @@ function encodeRaw(value: unknown, shape: readonly number[], dtype: DataDType): 
       case 'float16': view.setUint16(offset, float16Bits(number), true); break
       case 'float32': view.setFloat32(offset, number, true); break
       case 'float64': view.setFloat64(offset, number, true); break
+      case 'complex64': {
+        const value = item as Complex64Value
+        if (!value || typeof value.re !== 'number' || typeof value.im !== 'number' || !Number.isFinite(Math.fround(value.re)) || !Number.isFinite(Math.fround(value.im))) throw new Error('complex64 requires finite float32 { re, im } elements.')
+        view.setFloat32(offset, value.re, true)
+        view.setFloat32(offset + 4, value.im, true)
+        break
+      }
     }
   })
   return bytes
@@ -151,7 +160,10 @@ function tensorInput(schema: DataSchema, value: DataTensorInput) {
   const shape = inferShape(value.value)
   const axes = tensorAxes(schema, value, shape)
   const rawBytes = encodeRaw(value.value, shape, schema.dtype)
-  return { shape, axes, value: value.value, rawBytes }
+  const normalizeComplex = (item: unknown): unknown => Array.isArray(item)
+    ? item.map(normalizeComplex)
+    : { re: Math.fround((item as Complex64Value).re), im: Math.fround((item as Complex64Value).im) }
+  return { shape, axes, value: schema.dtype === 'complex64' ? normalizeComplex(value.value) : value.value, rawBytes }
 }
 
 export function createDataTensor(schema: DataSchema, value: DataTensorInput, _path = 'DataTensor'): DataTensor {
@@ -224,7 +236,7 @@ function inlineAt(value: unknown, shape: readonly number[], strides: readonly nu
     remaining %= strides[index]
     item = (item as readonly unknown[])[coordinate]
   })
-  return item as boolean | string | number
+  return item as boolean | string | number | Complex64Value
 }
 
 function readRawNumber(dtype: Exclude<DataDType, 'string'>, bytes: Uint8Array, index: number) {
@@ -243,6 +255,7 @@ function readRawNumber(dtype: Exclude<DataDType, 'string'>, bytes: Uint8Array, i
     case 'float16': return float16Number(view.getUint16(0, true))
     case 'float32': return view.getFloat32(0, true)
     case 'float64': return view.getFloat64(0, true)
+    case 'complex64': return { re: view.getFloat32(0, true), im: view.getFloat32(4, true) }
   }
 }
 
@@ -256,11 +269,11 @@ export function createDataTensorAccessor(schema: DataSchema, value: RecordedData
     : schema.dtype === 'string'
       ? JSON.parse(new TextDecoder().decode(rawBytes))
       : undefined
-  const at = (flatIndex: number): boolean | string | number => inlineValue === undefined
+  const at = (flatIndex: number): boolean | string | number | Complex64Value => inlineValue === undefined || schema.dtype === 'complex64'
     ? readRawNumber(schema.dtype as Exclude<DataDType, 'string'>, rawBytes, flatIndex)
     : inlineAt(inlineValue, tensor.shape, strides, flatIndex)
   const get = (indices: readonly number[]) => at(indices.reduce((flatIndex, index, dimension) => flatIndex + index * strides[dimension], 0))
-  const materialize = (depth = 0, indices: number[] = []): boolean | string | number | readonly unknown[] => {
+  const materialize = (depth = 0, indices: number[] = []): boolean | string | number | Complex64Value | readonly unknown[] => {
     if (depth === tensor.shape.length) return get(indices)
     return Object.freeze(Array.from({ length: tensor.shape[depth] }, (_, index) => materialize(depth + 1, [...indices, index])))
   }

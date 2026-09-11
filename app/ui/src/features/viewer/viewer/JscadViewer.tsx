@@ -1,3 +1,4 @@
+import type { HeatmapRenderData } from './structuredField'
 import { measurements } from '@jscad/modeling'
 import { cameraClipping, panCamera } from './cameraClipping'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -90,6 +91,7 @@ type JscadViewerProps = {
   polylines?: readonly PolylineBundle[]
   meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
   meshIdentity?: string
+  heatmapRenderData?: HeatmapRenderData
   viewerExpanded?: boolean
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   visibleSources?: readonly CadViewerSource[]
@@ -129,7 +131,7 @@ function drawRayPaths(regl: ReglCommandBuilder) {
     },
   })
 }
-function drawRecordedMesh(regl: ReglCommandBuilder) {
+function drawRecordedMesh(regl: ReglCommandBuilder, transparent = false) {
   return regl({
     primitive: regl.prop('primitive'),
     vert: `
@@ -151,7 +153,11 @@ function drawRecordedMesh(regl: ReglCommandBuilder) {
       depthBias: (_context: unknown, props: { primitive: string }) => (props.primitive === 'lines' ? 2e-5 : 1e-5),
     },
     elements: regl.prop('indices'),
-    depth: { enable: true, func: 'lequal' },
+    depth: { enable: true, func: 'lequal', mask: !transparent },
+    blend: {
+      enable: transparent,
+      func: { srcRGB: 'src alpha', dstRGB: 'one minus src alpha', srcAlpha: 'one', dstAlpha: 'one minus src alpha' },
+    },
     cull: { enable: false },
   })
 }
@@ -299,6 +305,7 @@ function JscadViewer({
   polylines = [],
   meshRenderData,
   meshIdentity,
+  heatmapRenderData,
   selectionQuery = null,
   selectionSourceStatus = {},
   viewerExpanded,
@@ -355,7 +362,19 @@ function JscadViewer({
     () => meshRenderData?.geometries.map((geometry) => ({ ...geometry, visuals: meshVisualsRef.current })) ?? [],
     [meshRenderData],
   )
-  const resultIdentity = JSON.stringify([meshIdentity, polylines.map((bundle) => bundle.id)])
+  const heatmapEntities = useMemo(
+    () =>
+      heatmapRenderData?.geometries.map((geometry) => ({
+        ...geometry,
+        visuals: { drawCmd: 'drawHeatmap', show: true, transparent: true },
+      })) ?? [],
+    [heatmapRenderData],
+  )
+  const resultIdentity = JSON.stringify([
+    meshIdentity,
+    heatmapRenderData?.identity,
+    polylines.map((bundle) => bundle.id),
+  ])
   const lastFittedResultRef = useRef<string | null>(null)
   const geometryBounds = useMemo(() => {
     const boxes = displayLayers.flatMap((layer) =>
@@ -371,6 +390,7 @@ function JscadViewer({
     const boxes = [
       ...geometryBounds,
       ...(meshRenderData ? [[meshRenderData.bounds.min, meshRenderData.bounds.max]] : []),
+      ...(heatmapRenderData ? [[heatmapRenderData.bounds.min, heatmapRenderData.bounds.max]] : []),
     ]
     for (const [lower, upper] of boxes)
       for (let axis = 0; axis < 3; axis++) {
@@ -383,7 +403,7 @@ function JscadViewer({
         max[index % 3] = Math.max(max[index % 3], value)
       })
     return min.every(Number.isFinite) && max.every(Number.isFinite) ? ([min, max] as const) : null
-  }, [geometryBounds, meshRenderData, rayPathGeometries])
+  }, [geometryBounds, meshRenderData, heatmapRenderData, rayPathGeometries])
   const sceneBoundsRef = useRef(sceneBounds)
   sceneBoundsRef.current = sceneBounds
   const raySegmentCount = polylines.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
@@ -496,6 +516,7 @@ function JscadViewer({
         drawMesh: renderer.drawCommands.drawMesh,
         drawRayPaths,
         drawRecordedMesh,
+        drawHeatmap: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, true),
       },
       entities: [],
       glOptions: { canvas },
@@ -644,6 +665,7 @@ function JscadViewer({
         ...referenceEntitiesRef.current,
         ...geometryEntities,
         ...meshEntities,
+        ...heatmapEntities,
         ...rayPathEntities,
       ]
       if (shouldFit) {
@@ -686,6 +708,8 @@ function JscadViewer({
     parts,
     meshEntities,
     meshIdentity,
+    heatmapRenderData,
+    heatmapEntities,
     meshRenderData,
     rayPathEntities,
     renderScene,
@@ -994,7 +1018,7 @@ function JscadViewer({
           </div>
         ) : null}
 
-        {parts.length === 0 && rayPathCount === 0 && !meshRenderData ? (
+        {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmapRenderData ? (
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500">
             {emptyMessage}
           </div>

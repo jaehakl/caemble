@@ -4,6 +4,7 @@ export type ExperimentSourceBundle = Readonly<{
 
 export type RecordedDataAxis = Readonly<{
   ticks?: readonly (number | string)[]
+  bounds?: readonly [number, number]
   implicitOrdinal?: true
 }>
 

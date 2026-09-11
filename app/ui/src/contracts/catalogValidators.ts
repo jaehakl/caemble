@@ -157,7 +157,7 @@ const kernelDataAxisSchema = z.union([
 ])
 const kernelDataFields = { axes: z.array(kernelDataAxisSchema).optional() }
 const kernelFloatDataFields = {
-  dtype: z.enum(['float16', 'float32', 'float64']),
+  dtype: z.enum(['float16', 'float32', 'float64', 'complex64']),
   unit: z.string(),
   quantityKind: z.string(),
   basis: kernelCartesianBasisSchema.optional(),

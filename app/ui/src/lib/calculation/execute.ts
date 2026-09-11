@@ -25,6 +25,16 @@ export function executeCalculation(
   emitLog: (message: string) => void,
 ) {
   assertCalculationInput(input)
+  input = Object.fromEntries(
+    Object.entries(input).map(([path, leaf]) => {
+      if (leaf.dtype !== 'complex64') return [path, leaf]
+      const complex = (value: unknown) => {
+        const { re, im } = value as { re: number; im: number }
+        return (CALCULATION_MATHJS_RUNTIME.complex as (re: number, im: number) => { re: number; im: number })(re, im)
+      }
+      return [path, { ...leaf, data: Array.isArray(leaf.data) ? leaf.data.map(complex) : complex(leaf.data) }]
+    }),
+  )
   freezeInput(input)
   const module = { exports: {} as Record<string, unknown> }
   const requireMathJs = (specifier: string) => {

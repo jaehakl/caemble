@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import numpy as np
+
 from app.kernel.api.errors import CaeError
 from app.kernel.api.values import (
     BundleValue,
@@ -46,17 +48,7 @@ def materialize_record_value(
     if isinstance(value, FieldValue):
         if "dtype" in schema:
             if isinstance(value.domain, StructuredGridValue):
-                spacings = value.domain.metadata.get("spacings")
-                return {
-                    "value": value.values,
-                    "axes": [
-                        {
-                            "ticks": axis,
-                            **({"spacing": spacings[index]} if spacings is not None else {}),
-                        }
-                        for index, axis in enumerate(value.domain.axes)
-                    ],
-                }
+                return {"value": value.values, "axes": _structured_field_axes(value, schema)}
             axes = schema.get("axes", [])
             if any("ticks" not in axis and (axis.get("unit") or axis.get("quantityKind") or
                    axis.get("name") in ("time", "frequency", "sample")) for axis in axes):
@@ -66,11 +58,7 @@ def materialize_record_value(
             ]}
         field_values = value.values
         if isinstance(value.domain, StructuredGridValue):
-            spacings = value.domain.metadata.get("spacings")
-            field_values = {"value": value.values, "axes": [
-                {"ticks": axis, **({"spacing": spacings[index]} if spacings is not None else {})}
-                for index, axis in enumerate(value.domain.axes)
-            ]}
+            field_values = {"value": value.values, "axes": _structured_field_axes(value, schema.get("values", {}))}
         value = {
             "domain": value.domain,
             "location": str(value.location),
@@ -150,3 +138,38 @@ def materialize_record_value(
             for item in value
         )
     return value
+
+
+def _structured_field_axes(value: FieldValue, schema: Mapping[str, Any]) -> list[dict[str, Any]]:
+    domain = value.domain
+    spacings = domain.metadata.get("spacings")
+    bounds = domain.metadata.get("bounds")
+    spatial_axes = [
+        {"ticks": axis,
+         **({"spacing": spacings[index]} if spacings is not None else {}),
+         **({"bounds": bounds[index]} if bounds is not None else {})}
+        for index, axis in enumerate(domain.axes)
+    ]
+    samples = value.metadata.get("sampleAxes")
+    if samples is None:
+        return spatial_axes
+    # Sample coordinates are not spatial domain axes (Hz/s must never become metres).
+    if not isinstance(samples, (list, tuple)) or not samples:
+        raise CaeError("invalid_record", "Field sampleAxes must be a nonempty sequence")
+    schema_axes = schema.get("axes", ())
+    if len(schema_axes) != len(samples) + len(spatial_axes):
+        raise CaeError("invalid_record", "Field sample and spatial axes do not match the recording schema")
+    recorded = []
+    for index, axis in enumerate(samples):
+        if not isinstance(axis, Mapping) or "ticks" not in axis:
+            raise CaeError("invalid_record", "Field sample axis must contain coordinates")
+        ticks = np.asarray(axis["ticks"])
+        if ticks.ndim != 1 or not np.issubdtype(ticks.dtype, np.number) or not np.all(np.isfinite(ticks)):
+            raise CaeError("invalid_record", "Field sample coordinates must be finite numeric vectors")
+        if axis.get("unit") != schema_axes[index].get("unit") or axis.get("name") != schema_axes[index].get("name"):
+            raise CaeError("invalid_record", "Field sample axis meaning differs from the recording schema")
+        recorded.append(dict(axis))
+    expected = tuple(len(axis["ticks"]) for axis in recorded) + domain.shape
+    if value.values.shape[:len(expected)] != expected:
+        raise CaeError("invalid_record", "Field sample and spatial coordinates do not match its values")
+    return recorded + spatial_axes

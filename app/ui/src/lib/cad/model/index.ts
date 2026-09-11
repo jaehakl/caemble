@@ -20,6 +20,7 @@ export type {
   CartesianBasis,
   DataAxis,
   DataDType,
+  Complex64Value,
   DataSchema,
   DataSchemaAxis,
   DataTensor,

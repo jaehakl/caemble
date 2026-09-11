@@ -1,6 +1,6 @@
 export type KernelArtifactType = `${string}@${number}`
 
-type KernelFloatDType = 'float16' | 'float32' | 'float64'
+type KernelFloatDType = 'float16' | 'float32' | 'float64' | 'complex64'
 type KernelNonFloatDType =
   'bool' | 'string' | 'int8' | 'int16' | 'int32' | 'int64' | 'uint8' | 'uint16' | 'uint32' | 'uint64'
 type KernelVec3 = readonly [number, number, number]
@@ -40,6 +40,12 @@ export type ResultVisualization = Readonly<{
   fieldPath?: string
   nodeIdsPath?: string
   time?: Readonly<{ path: string; axis: number; nodeAxis: number; componentAxis: number }>
+  grid?: Readonly<{
+    xyzAxes: readonly [number, number, number]
+    sampleAxis: number
+    sampleKind: 'frequency' | 'time'
+    componentAxis: number
+  }>
   spatialAxes?: readonly number[]
   components?: readonly string[]
   valueKind?: 'displacement' | 'stress'

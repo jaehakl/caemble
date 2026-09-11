@@ -395,8 +395,9 @@ Catalog 데이터 변경은 Draft SQLite와 catalogctl로 수행하며 계약의
 
 mesh-field recording projection은 메쉬·연결·Field와 provenance를 기존 tensor
 leaf로 보존합니다. structured-field는 기록된 실제 공간 좌표 축을 사용합니다.
-Float leaf에는 QuantityKind·unit·필요한 basis를 고정하며 복소수는 명시적인
-실수부·허수부 leaf로 기록합니다. inline/attachment wire ABI는 유지합니다.
+실수 및 complex64 leaf에는 QuantityKind·unit·필요한 basis를 고정합니다.
+complex64는 원소당 8바이트의 little-endian float32 re/im 교차 저장이며 inline은
+원소별 `{ re, im }`입니다. 복소수 표현은 논리 shape의 추가 축이 아닙니다.
 고정된 결과 계약은 Experiment 저장 및 조회와 로컬 export에 함께 포함됩니다.
 이는 checkpoint 복원 기능을 추가하지 않습니다.
 

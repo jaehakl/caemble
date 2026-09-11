@@ -1,3 +1,4 @@
+import type { HeatmapRenderData } from './structuredField'
 import type { createMeshFieldRenderData } from './meshFields'
 import { useCallback, useMemo, useState } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
@@ -22,6 +23,7 @@ export type CadViewerProps = {
   polylines?: readonly PolylineBundle[]
   meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
   meshIdentity?: string
+  heatmapRenderData?: HeatmapRenderData
   displayUnit?: UcumUnit
   selectionQuery?: CadViewerSelectionQuery | null
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
@@ -41,6 +43,7 @@ export function CadViewer({
   polylines,
   meshRenderData,
   meshIdentity,
+  heatmapRenderData,
   displayUnit,
   selectionQuery,
   selectionSourceStatus,
@@ -75,6 +78,7 @@ export function CadViewer({
         polylines={polylines}
         meshRenderData={meshRenderData}
         meshIdentity={meshIdentity}
+        heatmapRenderData={heatmapRenderData}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         visibleSources={content.visibleSources}

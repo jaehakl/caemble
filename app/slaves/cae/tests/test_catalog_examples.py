@@ -128,8 +128,8 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert set(run.recorded_names) == {"displacement", "stress", "reaction", "opticalTrajectories", "secondaryTrajectories", "detectorPower"}
             assert np.max(np.abs(recorded["stress.values"])) > 0
             assert np.max(np.abs(recorded["displacement.values"])) > 0
-        if "timeElectricField.field" in recorded:
-            assert np.max(np.abs(recorded["timeElectricField.field"])) > 0
+        if "timeElectricField" in recorded:
+            assert np.max(np.abs(recorded["timeElectricField"])) > 0
         # Recorded mesh topology, physical locations and CAD region provenance are
         # checked independently of the mesher's generated numbering.
         meshes = {}

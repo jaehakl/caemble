@@ -60,7 +60,7 @@ interface CalculationInputAxis {
 interface CalculationInputLeaf {
   readonly dtype: ${calculationInputDtypes.map((dtype) => `'${dtype}'`).join(' | ')}
   readonly shape: readonly number[]
-  readonly data: boolean | string | number | readonly (boolean | string | number)[]
+  readonly data: boolean | string | number | MathJsComplex | readonly (boolean | string | number | MathJsComplex)[]
   readonly axes: readonly CalculationInputAxis[]
   readonly quantityKind?: string
   readonly tensorOrder: number

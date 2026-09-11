@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from app.methods.geometry import GeometryService
-from app.kernel.api import SolverImplementation, SolverInvocation, BundleValue
+from app.kernel.api import SolverImplementation, SolverInvocation
 from app.kernel.catalog import SolverCatalog
 from app.solvers.fdtd import entry, formulation
 from app.solvers.fdtd.materials import build_update_coefficients
@@ -73,9 +73,9 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
     plasma_frequency: float,
 ) -> None:
     catalog = SolverCatalog.discover()
-    descriptor = catalog.descriptor("fdtd", "3.0.0")
-    locator = catalog.locator("fdtd", "3.0.0")
-    assert catalog.abi_version("fdtd", "3.0.0") == 3
+    descriptor = catalog.descriptor("fdtd", "4.0.0")
+    locator = catalog.locator("fdtd", "4.0.0")
+    assert catalog.abi_version("fdtd", "4.0.0") == 3
     assert locator == "app.solvers.fdtd.entry:implementation"
 
     module_name, attribute = locator.split(":", maxsplit=1)
@@ -214,9 +214,7 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
                     "strideX": 1,
                     "strideY": 2,
                     "strideZ": 2,
-                    "frequencyStart": {"value": 5e7},
-                    "frequencyStop": {"value": 5e7},
-                    "frequencyStep": {"value": 1e7},
+                    "frequencies": {"value": [5e7]},
                 },
             },
         ],
@@ -289,41 +287,31 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
         method["methodId"]: method
         for method in descriptor["methods"]["outputs"]
     }
-    time_bundle = result.artifacts["timeElectric"]
-    assert isinstance(time_bundle, BundleValue)
-    assert time_bundle.bundle_type == output_contracts["fdtd.time-electric-field"]["artifactType"]
-    assert set(time_bundle.members) == {"field"}
-    time_field = time_bundle.members["field"]
+    time_field = result.artifacts["timeElectric"]
     time_steps = result.observations["timeSteps"]
     expected_time_samples = 1 + time_steps // 2 + int(time_steps % 2 != 0)
-    assert time_field["value"].shape == (expected_time_samples, 2, 2, 2, 3)
-    assert time_field["value"].dtype == np.float32
-    assert [axis["name"] for axis in time_field["axes"]] == ["time", "z", "y", "x"]
-    assert all(np.asarray(axis["ticks"]).dtype == np.float64 for axis in time_field["axes"])
-    assert np.all(np.isfinite(time_field["value"]))
-    assert np.any(np.abs(time_field["value"]) > 0)
-    time_contract = output_contracts["fdtd.time-electric-field"]["data"]["members"]["field"]
-    assert time_field["quantityKind"] == time_contract["quantityKind"]
-    assert time_field["unit"] == time_contract["unit"]
+    assert time_field.values.shape == (expected_time_samples, 2, 2, 2, 3)
+    assert time_field.values.dtype == np.float32
+    assert time_field.metadata["sampleAxes"][0]["name"] == "time"
+    assert time_field.domain.shape == (2, 2, 2)
+    assert all(axis.dtype == np.float64 for axis in time_field.domain.axes)
+    assert np.all(np.isfinite(time_field.values))
+    assert np.any(np.abs(time_field.values) > 0)
+    time_contract = output_contracts["fdtd.time-electric-field"]["data"]
+    assert time_field.quantity_kind == time_contract["quantityKind"]
+    assert time_field.unit == time_contract["unit"]
 
-    spectral_bundle = result.artifacts["spectralMagnetic"]
-    assert isinstance(spectral_bundle, BundleValue)
-    assert (
-        spectral_bundle.bundle_type
-        == output_contracts["fdtd.spectral-magnetic-field"]["artifactType"]
-    )
-    assert set(spectral_bundle.members) == {"real", "imag"}
-    spectral_contract = output_contracts["fdtd.spectral-magnetic-field"]["data"]["members"]
-    for name in ("real", "imag"):
-        member = spectral_bundle.members[name]
-        assert member["value"].shape == (1, 2, 2, 2, 3)
-        assert member["value"].dtype == np.float32
-        assert [axis["name"] for axis in member["axes"]] == ["frequency", "z", "y", "x"]
-        assert np.asarray(member["axes"][0]["ticks"]) == pytest.approx([5e7])
-        assert np.all(np.isfinite(member["value"]))
-        assert member["quantityKind"] == spectral_contract[name]["quantityKind"]
-        assert member["unit"] == spectral_contract[name]["unit"]
-    assert np.any(np.abs(spectral_bundle.members["real"]["value"]) > 0)
+    member = result.artifacts["spectralMagnetic"]
+    spectral_contract = output_contracts["fdtd.spectral-magnetic-field"]["data"]
+    assert member.values.shape == (1, 2, 2, 2, 3)
+    assert member.values.dtype == np.complex64
+    assert member.metadata["sampleAxes"][0]["name"] == "frequency"
+    assert member.domain.shape == (2, 2, 2)
+    assert np.asarray(member.metadata["sampleAxes"][0]["ticks"]) == pytest.approx([5e7])
+    assert np.all(np.isfinite(member.values))
+    assert member.quantity_kind == spectral_contract["quantityKind"]
+    assert member.unit == spectral_contract["unit"]
+    assert np.any(np.abs(member.values) > 0)
     assert any(
         block.kind == "buffer" for block in prepared.domain.blocks.values()
     )

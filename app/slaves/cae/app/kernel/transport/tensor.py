@@ -15,6 +15,7 @@ _DTYPES: dict[str, np.dtype[Any]] = {
     "float16": np.dtype("<f2"),
     "float32": np.dtype("<f4"),
     "float64": np.dtype("<f8"),
+    "complex64": np.dtype("<c8"),
     "int8": np.dtype("i1"),
     "uint8": np.dtype("u1"),
     "int16": np.dtype("<i2"),
@@ -91,6 +92,8 @@ def encode_tensor(
         len(raw) <= INLINE_LIMIT_BYTES
     ):
         inline_value = encoded.item() if encoded.ndim == 0 else encoded.tolist()
+        if dtype_name == "complex64":
+            inline_value = np.array([{ "re": float(v.real), "im": float(v.imag) } for v in encoded.flat], dtype=object).reshape(encoded.shape).tolist()
         if dtype_name == "bool":
             inline_value = bool(inline_value) if encoded.ndim == 0 else encoded.astype(np.bool_).tolist()
         return _inline_tensor(shape, axes, inline_value), [], len(raw)
