@@ -6,13 +6,25 @@ import type {
   RecordedDataRecord,
 } from '@/api'
 import { recordedDataSnapshot, recordedDataTreeSnapshot } from '@/features/measurement/recordedData'
-import { createDataTensor, createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
-import type { RecordedData, RecordedDataRule, RecordedDataTensor } from '@/lib/cad/model/descriptor'
+import {
+  createDataTensor,
+  createDataTensorAccessor,
+  isDataTensor,
+  type DataTensorAccessor,
+} from '@/lib/cad/model/dataTensor'
+import type {
+  Complex64Value,
+  DataDType,
+  RecordedData,
+  RecordedDataRule,
+  RecordedDataTensor,
+} from '@/lib/cad/model/descriptor'
 import { flattenVarsTensor, varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import type { Tensor, Vars } from '@/lib/cad/model/types'
 import type { VarsSchemaEntry } from '@/lib/cad/model/vars'
 import {
   predictionNumericDtypes,
+  predictionTensorValueCount,
   type PredictionNumericDtype,
   type PredictionTensorLayout,
   type PredictionTensorSample,
@@ -46,6 +58,50 @@ function requireFlatNumbers(values: readonly unknown[], label: string) {
       return value
     }),
   )
+}
+
+function predictionRecordedValues(accessor: DataTensorAccessor, dtype: DataDType, label: string) {
+  if (dtype !== 'complex64') {
+    return requireFlatNumbers(
+      Array.from({ length: accessor.size }, (_item, index) => accessor.at(index)),
+      label,
+    )
+  }
+  const values: number[] = []
+  for (let index = 0; index < accessor.size; index += 1) {
+    const value = accessor.at(index) as Complex64Value
+    if (
+      !value ||
+      typeof value.re !== 'number' ||
+      typeof value.im !== 'number' ||
+      !Number.isFinite(value.re) ||
+      !Number.isFinite(value.im)
+    ) {
+      throw new Error(`${label}에 유효하지 않은 complex64 값이 있습니다.`)
+    }
+    values.push(value.re, value.im)
+  }
+  return Object.freeze(values)
+}
+
+function complexTensorFromComponents(
+  values: readonly number[],
+  shape: readonly number[],
+  label: string,
+): Complex64Value | readonly unknown[] {
+  let offset = 0
+  const build = (depth: number): Complex64Value | readonly unknown[] => {
+    if (depth < shape.length) {
+      return Object.freeze(Array.from({ length: shape[depth] }, () => build(depth + 1)))
+    }
+    const re = Math.fround(values[offset++])
+    const im = Math.fround(values[offset++])
+    if (!Number.isFinite(re) || !Number.isFinite(im)) {
+      throw new Error(`${label}의 예측 complex64 값이 유효하지 않습니다.`)
+    }
+    return Object.freeze({ re, im })
+  }
+  return build(0)
 }
 
 export function predictionVarsLayouts(schema: VarsSchema): readonly PredictionTensorLayout[] {
@@ -123,10 +179,7 @@ export function predictionRecordedSamples(
     const accessor = createDataTensorAccessor(rule.result, tensor, rule.label)
     return Object.freeze({
       layout,
-      values: requireFlatNumbers(
-        Array.from({ length: accessor.size }, (_item, index) => accessor.at(index)),
-        rule.label,
-      ),
+      values: predictionRecordedValues(accessor, rule.result.dtype, rule.label),
     })
   })
   return Object.freeze({ rules: snapshot.rules, samples: Object.freeze(samples) })
@@ -141,10 +194,7 @@ export function predictionRecordedRowSample(row: RecordedDataRecord): Prediction
   const accessor = createDataTensorAccessor(rule.result, tensor, rule.label)
   return Object.freeze({
     layout,
-    values: requireFlatNumbers(
-      Array.from({ length: accessor.size }, (_item, index) => accessor.at(index)),
-      rule.label,
-    ),
+    values: predictionRecordedValues(accessor, rule.result.dtype, rule.label),
   })
 }
 
@@ -177,12 +227,15 @@ export function predictedRecordedData(
       rules.map((rule) => {
         const sample = sampleMap.get(rule.label)
         if (!sample) throw new Error(`${rule.label} RecordedData Prediction 값이 없습니다.`)
-        requireNumericDtype(rule.result.dtype, rule.label)
+        const dtype = requireNumericDtype(rule.result.dtype, rule.label)
+        if (sample.layout.dtype !== dtype) {
+          throw new Error(`${rule.label} RecordedData Prediction dtype이 현재 계약과 맞지 않습니다.`)
+        }
         if (sample.layout.shape.some((length) => !Number.isSafeInteger(length) || length < 0)) {
           throw new Error(`${rule.label} RecordedData Prediction shape가 올바르지 않습니다.`)
         }
-        const expectedSize = sample.layout.shape.reduce((size, length) => size * length, 1)
-        if (!Number.isSafeInteger(expectedSize) || sample.values.length !== expectedSize) {
+        const expectedSize = predictionTensorValueCount(sample.layout)
+        if (sample.values.length !== expectedSize) {
           throw new Error(`${rule.label} RecordedData Prediction 값이 shape와 맞지 않습니다.`)
         }
         const integerRange = calculationIntegerRanges[rule.result.dtype]
@@ -193,7 +246,10 @@ export function predictedRecordedData(
               ? Math.fround(member)
               : member,
         )
-        const value = varsTensorFromFlat(normalizedValues, sample.layout.shape)
+        const value =
+          dtype === 'complex64'
+            ? complexTensorFromComponents(normalizedValues, sample.layout.shape, rule.label)
+            : varsTensorFromFlat(normalizedValues, sample.layout.shape)
         const tensorOrder = (rule.result as typeof rule.result & Readonly<{ tensorOrder?: number }>).tensorOrder ?? 0
         const externalShape = sample.layout.shape.slice(0, sample.layout.shape.length - tensorOrder)
         const axes = (rule.result.axes ?? []).map((axis, index) => {

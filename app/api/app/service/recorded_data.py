@@ -1,7 +1,7 @@
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import ExperimentRecord, Measurement, RecordedData

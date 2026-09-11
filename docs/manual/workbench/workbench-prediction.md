@@ -33,7 +33,7 @@ Measurement, RecordedData 또는 CalculationData가 바뀌면 Prediction은 변�
 
 Auto k는 포함된 행 수 `n`에 대해 `round(sqrt(n))`을 사용하되 1–15와 실제 cohort 크기 안으로 제한합니다. Manual k는 1–`n` 범위의 정수만 허용합니다. **Distance**는 가까운 이웃에 더 큰 weight를 주고, **Uniform**은 실제 선택된 이웃을 동일하게 평균합니다. Forward 거리는 varsSchema 범위로, Inverse 거리는 cohort의 표준편차로 정규화됩니다.
 
-회귀 모델은 브라우저 Prediction Worker의 Float64 배열에만 만들어지며 PCA나 summary 값으로 대체하지 않습니다. 모델 하나의 numeric cell은 **1천만 개**, persistent array는 **192 MiB**, 전체 working set은 **256 MiB**가 상한입니다. 하나라도 초과하면 모델을 만들지 않고 메모리 오류를 표시합니다. 이 경우 선택 Calculation 수를 줄이거나 RecordedData·CalculationData tensor 크기를 줄인 뒤 새로고침하세요. 실제 사용량은 **Model Details**에서 확인할 수 있습니다.
+회귀 모델은 브라우저 Prediction Worker의 Float64 배열에만 만들어지며 PCA나 summary 값으로 대체하지 않습니다. `complex64` RecordedData는 논리 shape와 axes를 유지한 채 원소마다 실수부와 허수부 두 성분으로 펼쳐 모델링하고, Forward 예측 뒤 원래 complex64 tensor로 복원하여 Calculation에 전달합니다. 따라서 complex64 원소 하나는 numeric cell 두 개로 계산됩니다. 모델 하나의 numeric cell은 **1천만 개**, persistent array는 **192 MiB**, 전체 working set은 **256 MiB**가 상한입니다. 하나라도 초과하면 모델을 만들지 않고 메모리 오류를 표시합니다. 이 경우 선택 Calculation 수를 줄이거나 RecordedData·CalculationData tensor 크기를 줄인 뒤 새로고침하세요. 실제 사용량은 **Model Details**에서 확인할 수 있습니다.
 
 ### Farthest Sample & Run
 

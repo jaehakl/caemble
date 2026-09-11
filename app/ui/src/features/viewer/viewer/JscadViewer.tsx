@@ -364,11 +364,16 @@ function JscadViewer({
     () => meshRenderData?.geometries.map((geometry) => ({ ...geometry, visuals: meshVisualsRef.current })) ?? [],
     [meshRenderData],
   )
+  const heatmapVisualsRef = useRef<Record<string, unknown>>({
+    drawCmd: 'drawHeatmap',
+    show: true,
+    transparent: true,
+  })
   const heatmapEntities = useMemo(
     () =>
       heatmapRenderData?.geometries.map((geometry) => ({
         ...geometry,
-        visuals: { drawCmd: 'drawHeatmap', show: true, transparent: true },
+        visuals: heatmapVisualsRef.current,
       })) ?? [],
     [heatmapRenderData],
   )
@@ -463,6 +468,7 @@ function JscadViewer({
     if (!canvas) return
     delete rayPathVisualsRef.current.cacheId
     delete meshVisualsRef.current.cacheId
+    delete heatmapVisualsRef.current.cacheId
 
     const perspectiveCamera = renderer.cameras.perspective
     const orbit = renderer.controls.orbit
@@ -581,8 +587,7 @@ function JscadViewer({
 
     const sceneChanged = lastFittedPartsRef.current !== parts || lastFittedResultRef.current !== resultIdentity
     const shouldFit =
-      Boolean(sceneBounds) &&
-      (lastFittedResultRef.current === null || (!preserveCameraOnUpdate && sceneChanged))
+      Boolean(sceneBounds) && (lastFittedResultRef.current === null || (!preserveCameraOnUpdate && sceneChanged))
     if (sceneBounds) {
       const diameter = Math.max(
         Math.hypot(...sceneBounds[1].map((value, axis) => value - sceneBounds[0][axis])),

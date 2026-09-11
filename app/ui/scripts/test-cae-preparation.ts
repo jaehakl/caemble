@@ -8,7 +8,6 @@ import { compileCatalogExample, readCatalogExamples } from './catalog-example-su
 import { prepareCaeMeasurement, type CaePreparationRequest } from '../src/platform/node/build'
 import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
-import { analysisGeometryProfile } from '../src/lib/cad/evaluation/precision'
 import { buildMeasurement, measurementMaterialSnapshot } from '../src/lib/cad/execution/measurement'
 import { resolveSceneMaterials } from '../src/lib/material/document'
 import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
@@ -37,12 +36,7 @@ try {
         ),
       ]),
     )
-    const evaluated = executeCompiledDocument(
-      compiled,
-      vars,
-      example.sourceBundle.files['simulate.py'],
-      analysisGeometryProfile,
-    )
+    const evaluated = executeCompiledDocument(compiled, vars, example.sourceBundle.files['simulate.py'])
     const taskNames = Object.keys(evaluated.taskScenes).sort()
     const expected = buildMeasurement(
       {
@@ -73,6 +67,17 @@ try {
     })
     const actual = JSON.parse(readFileSync(output, 'utf8'))
     assert.deepEqual(actual.measurement, JSON.parse(JSON.stringify(expected)), example.key)
+    assert.equal(
+      actual.measurement.experiment.scene.evaluationProfile,
+      undefined,
+      `${example.key}: default build must preserve authored Geometry resolution`,
+    )
+    for (const [taskName, taskScene] of Object.entries(actual.measurement.experiment.taskScenes))
+      assert.equal(
+        taskScene.evaluationProfile,
+        undefined,
+        `${example.key}/${taskName}: default build must preserve authored Geometry resolution`,
+      )
     assert.deepEqual(actual.measurement.experiment.variables, vars)
     assert.deepEqual(
       measurementMaterialSnapshot(actual.measurement),

@@ -151,6 +151,9 @@ export function createPredictionSamplingSession(options: PredictionSamplingOptio
   let activeComponentCount = 0
   const activeLayoutIndexes: number[] = []
   options.layouts.forEach((layout, layoutIndex) => {
+    if (layout.dtype === 'complex64') {
+      throw new PredictionModelError('invalid-data', `Sampling Vars ${layout.key}는 complex64일 수 없습니다.`)
+    }
     const range = options.ranges[layout.key]
     if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
       throw new PredictionModelError('invalid-data', `Sampling 범위 ${layout.key}가 올바르지 않습니다.`)

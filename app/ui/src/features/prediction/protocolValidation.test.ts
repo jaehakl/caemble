@@ -17,6 +17,12 @@ const layout: PredictionTensorLayout = {
   maximum: 100,
 }
 const sample: PredictionTensorSample = { layout, values: [25] }
+const complexLayout: PredictionTensorLayout = {
+  key: 'field',
+  dtype: 'complex64',
+  shape: [2],
+  axes: [{ name: 'sample', ticks: [0, 1] }],
+}
 const buildOptions: PredictionCohortOptions = {
   direction: 'inverse',
   fingerprint: 'fingerprint-v1',
@@ -88,6 +94,106 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Prediction Worker protocol validation', () => {
+  it('accepts interleaved complex64 training values and requires two components per logical element', () => {
+    const request = {
+      type: 'build-model',
+      requestId: 'complex-request',
+      modelId: 'forward:field',
+      generation: 1,
+      fingerprint: 'complex-fingerprint',
+      options: {
+        direction: 'forward',
+        fingerprint: 'complex-fingerprint',
+        inputKeys: ['temperature'],
+        outputKeys: ['field'],
+        outputDtypes: { field: 'complex64' },
+        rows: [
+          {
+            measurementId: 1,
+            inputs: [sample],
+            outputs: [{ layout: complexLayout, values: [1, 2, 3, 4] }],
+          },
+        ],
+      },
+    } as const
+
+    expect(parsePredictionWorkerRequest(request).type).toBe('build-model')
+    expect(() =>
+      parsePredictionWorkerRequest({
+        ...request,
+        options: {
+          ...request.options,
+          rows: [{ ...request.options.rows[0], outputs: [{ layout: complexLayout, values: [1, 2] }] }],
+        },
+      }),
+    ).toThrow(/values/i)
+
+    const response = {
+      type: 'prediction',
+      requestId: 'complex-request',
+      modelId: 'forward:field',
+      generation: 1,
+      fingerprint: 'complex-fingerprint',
+      result: {
+        direction: 'forward',
+        fingerprint: 'complex-fingerprint',
+        output: [{ layout: complexLayout, values: [1, 2, 3, 4] }],
+        neighbors: [],
+        extrapolatedInputKeys: [],
+        constantInputKeysChanged: [],
+        queryDiagnostics: [],
+      },
+    } as const
+    expect(parsePredictionWorkerResponse(response).type).toBe('prediction')
+    expect(() =>
+      parsePredictionWorkerResponse({
+        ...response,
+        result: { ...response.result, output: [{ layout: complexLayout, values: [1, 2, 3] }] },
+      }),
+    ).toThrow(/values/i)
+    expect(() =>
+      parsePredictionWorkerResponse({
+        ...response,
+        result: { ...response.result, output: [{ layout: complexLayout, values: [1, 2, Number.NaN, 4] }] },
+      }),
+    ).toThrow(/finite/i)
+  })
+
+  it('allows non-finite training sentinels but keeps queries and responses finite', () => {
+    expect(
+      parsePredictionWorkerRequest({
+        ...buildRequest,
+        options: {
+          ...buildOptions,
+          inputKeys: ['temperature'],
+          outputKeys: ['vars'],
+          rows: [{ measurementId: 1, inputs: [{ ...sample, values: [Number.NaN] }], outputs: [sample] }],
+        },
+      }).type,
+    ).toBe('build-model')
+    expect(() =>
+      parsePredictionWorkerRequest({
+        ...buildRequest,
+        options: {
+          ...buildOptions,
+          inputKeys: ['temperature'],
+          outputKeys: ['vars'],
+          rows: [{ measurementId: 1, inputs: [{ ...sample, values: [Number.POSITIVE_INFINITY] }], outputs: [sample] }],
+        },
+      }),
+    ).toThrow(/NaN exclusion/i)
+    expect(() =>
+      parsePredictionWorkerRequest({
+        type: 'predict',
+        requestId: 'non-finite-query',
+        modelId: 'inverse',
+        generation: 1,
+        fingerprint: 'fingerprint-v1',
+        query: [{ ...sample, values: [Number.NaN] }],
+      }),
+    ).toThrow(/finite/i)
+  })
+
   it('accepts a complete model profile, preserves extensions, and retains its typed array', () => {
     const response = parsePredictionWorkerResponseForRequest(
       {

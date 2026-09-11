@@ -56,6 +56,7 @@ assert.deepEqual(calculationInputDtypes, [
   'float16',
   'float32',
   'float64',
+  'complex64',
 ])
 for (const name of [
   'Atomics',

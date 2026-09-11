@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { predictionNumericDtypes } from './knn'
+import { predictionNumericDtypes, predictionTensorValueCount } from './knn'
 import type { PredictionWorkerRequest, PredictionWorkerResponse } from './protocol'
 
 const nonnegativeIntegerSchema = z.number().int().nonnegative()
@@ -15,6 +15,12 @@ function isFiniteNumberArray(value: unknown): value is readonly number[] {
 }
 
 const finiteNumberArraySchema = z.custom<readonly number[]>(isFiniteNumberArray, 'Expected an array of finite numbers.')
+const trainingNumberArraySchema = z.custom<readonly number[]>(
+  (value) =>
+    Array.isArray(value) &&
+    value.every((item) => typeof item === 'number' && (Number.isFinite(item) || Number.isNaN(item))),
+  'Expected an array of finite numbers or NaN exclusion markers.',
+)
 const float64ArraySchema = z.custom<Float64Array>(
   (value) => value instanceof Float64Array && value.every((item) => Number.isFinite(item)),
   'Expected a Float64Array containing finite numbers.',
@@ -76,35 +82,39 @@ const predictionTensorLayoutSchema = z
     })
   })
 
-const predictionTensorSampleSchema = z
-  .object({
-    layout: predictionTensorLayoutSchema,
-    values: finiteNumberArraySchema,
-  })
-  .passthrough()
-  .superRefine((sample, context) => {
-    let size = 1
-    for (const length of sample.layout.shape) {
-      if (!Number.isSafeInteger(size * length)) {
+function tensorSampleSchema(valuesSchema: z.ZodType<readonly number[]>) {
+  return z
+    .object({
+      layout: predictionTensorLayoutSchema,
+      values: valuesSchema,
+    })
+    .passthrough()
+    .superRefine((sample, context) => {
+      let size: number
+      try {
+        size = predictionTensorValueCount(sample.layout)
+      } catch {
         context.addIssue({ code: 'custom', path: ['layout', 'shape'], message: 'Tensor shape is too large.' })
         return
       }
-      size *= length
-    }
-    if (sample.values.length !== size) {
-      context.addIssue({
-        code: 'custom',
-        path: ['values'],
-        message: 'Tensor values must match the declared shape.',
-      })
-    }
-  })
+      if (sample.values.length !== size) {
+        context.addIssue({
+          code: 'custom',
+          path: ['values'],
+          message: 'Tensor values must match the declared shape and dtype.',
+        })
+      }
+    })
+}
+
+const predictionTensorSampleSchema = tensorSampleSchema(finiteNumberArraySchema)
+const predictionTrainingTensorSampleSchema = tensorSampleSchema(trainingNumberArraySchema)
 
 const predictionTrainingRowSchema = z
   .object({
     measurementId: positiveIntegerSchema,
-    inputs: z.array(predictionTensorSampleSchema),
-    outputs: z.array(predictionTensorSampleSchema),
+    inputs: z.array(predictionTrainingTensorSampleSchema),
+    outputs: z.array(predictionTrainingTensorSampleSchema),
   })
   .passthrough()
 

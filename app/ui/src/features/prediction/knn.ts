@@ -6,6 +6,7 @@ export const predictionNumericDtypes = [
   'float16',
   'float32',
   'float64',
+  'complex64',
   'int8',
   'int16',
   'int32',
@@ -201,11 +202,20 @@ function tensorElementCount(shape: readonly number[]) {
   }, 1)
 }
 
+export function predictionTensorValueCount(layout: PredictionTensorLayout) {
+  const elementCount = tensorElementCount(layout.shape)
+  const componentCount = layout.dtype === 'complex64' ? 2 : 1
+  if (!Number.isSafeInteger(elementCount * componentCount)) {
+    throw new PredictionModelError('invalid-data', 'Prediction tensor shape is too large.')
+  }
+  return elementCount * componentCount
+}
+
 function validateLayout(layout: PredictionTensorLayout) {
   if (!layout.key.trim() || !numericDtypeSet.has(layout.dtype)) {
     throw new PredictionModelError('invalid-data', 'Prediction tensor key or dtype is invalid.')
   }
-  tensorElementCount(layout.shape)
+  predictionTensorValueCount(layout)
   const tensorOrder = layout.tensorOrder ?? 0
   if (!Number.isSafeInteger(tensorOrder) || tensorOrder < 0 || tensorOrder > layout.shape.length) {
     throw new PredictionModelError('invalid-data', `Prediction tensor ${layout.key} has an invalid tensorOrder.`)
@@ -314,7 +324,7 @@ function orderedSamples(
     }
     let elementCount: number
     try {
-      elementCount = tensorElementCount(sample.layout.shape)
+      elementCount = predictionTensorValueCount(sample.layout)
     } catch (cause: unknown) {
       return {
         reason: 'invalid-tensor' as const,
@@ -657,7 +667,7 @@ export function selectPredictionCohort(options: PredictionCohortOptions): Predic
 
 function blockOffsets(layouts: readonly PredictionTensorLayout[]) {
   const offsets = [0]
-  layouts.forEach((layout) => offsets.push(offsets[offsets.length - 1] + tensorElementCount(layout.shape)))
+  layouts.forEach((layout) => offsets.push(offsets[offsets.length - 1] + predictionTensorValueCount(layout)))
   return offsets
 }
 
@@ -955,7 +965,8 @@ function float16Number(value: number) {
 
 function postprocessPrediction(value: number, layout: PredictionTensorLayout, direction: PredictionDirection) {
   let result = value
-  if (direction === 'forward') {
+  if (layout.dtype === 'complex64') result = Math.fround(result)
+  else if (direction === 'forward') {
     const range = integerRanges[layout.dtype]
     if (range) result = Math.min(range[1], Math.max(range[0], Math.round(result)))
     else if (layout.dtype === 'float32') result = Math.fround(result)

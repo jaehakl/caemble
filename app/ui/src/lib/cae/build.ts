@@ -9,7 +9,7 @@ import { generateRandomVars } from '@/lib/cad/model/vars'
 import type { Vars } from '@/lib/cad/model/types'
 import { assertExperimentAuthoringSemantics } from '@/lib/cad/simulation/authoringSemantics'
 import { resolveSceneMaterials } from '@/lib/material/document'
-import { analysisGeometryProfile, type GeometryEvaluationProfile } from '@/lib/cad/evaluation/precision'
+import type { GeometryEvaluationProfile } from '@/lib/cad/evaluation/precision'
 
 export type CaePreparationRequest = Readonly<{
   source_bundle: ExperimentSourceBundle
@@ -41,12 +41,7 @@ export function evaluateBuildInput(request: CaePreparationRequest, compiled: Com
           ]),
         )
       : generateRandomVars(varsSchema))
-  return executeCompiledDocument(
-    compiled,
-    vars,
-    request.source_bundle.files['simulate.py'],
-    request.geometry_precision ?? analysisGeometryProfile,
-  )
+  return executeCompiledDocument(compiled, vars, request.source_bundle.files['simulate.py'], request.geometry_precision)
 }
 
 export async function buildEvaluatedMeasurement(

@@ -58,6 +58,10 @@ describe('analysis canonical sampling', () => {
     )
     const groups = { surfaceGroup: { hole: ['bracket.hole/surface/1'] } }
     const before = await canonicalGeometryScene(evaluateCadScene(root, groups))
+    const authored = before.roots[0].node
+    expect(authored.kind).toBe('boolean')
+    if (authored.kind !== 'boolean') throw new Error('Expected Boolean node')
+    expect(authored.children[1]).toMatchObject({ kind: 'primitive', parameters: { segments: 8 } })
     const after = await canonicalGeometryScene(
       evaluateCadScene(root, groups, 'Experiment', 'm', analysisGeometryProfile),
     )

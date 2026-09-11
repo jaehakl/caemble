@@ -33,12 +33,17 @@ import {
   predictionFingerprint,
   predictionForwardRefreshState,
   predictionForwardResultIsCurrent,
+  predictionRecordedRowSample,
   predictionRecordedSamples,
   predictionRecordedSamplesMatchRules,
   predictionVarsLayouts,
   predictionVarsSamples,
 } from '../src/features/prediction/data'
 import { compatibleVarsResetValues } from '../src/features/calculation/varsTensor'
+import { createCalculationInput } from '../src/lib/calculation/input'
+import { executeCalculation } from '../src/lib/calculation/execute'
+import { analyzeCalculationSource } from '../src/lib/calculation/sourcePolicy'
+import { transformCalculationSource } from '../src/lib/calculation/transform'
 import {
   acceptPredictionSamplingCenter,
   createPredictionSamplingSession,
@@ -93,6 +98,17 @@ const samplingCreated = createPredictionSamplingSession({
   ranges: samplingRanges,
   centers: [samplingCenter, samplingCenter, [scalar('x', 11), tensor('field', [5, 5], [2])]],
 })
+assert.throws(
+  () =>
+    createPredictionSamplingSession({
+      fingerprint: 'complex-sampling',
+      totalAttempts: 1,
+      layouts: [{ key: 'field', dtype: 'complex64', shape: [] }],
+      ranges: { field: { min: 0, max: 1 } },
+      centers: [],
+    }),
+  (error: unknown) => error instanceof PredictionModelError && error.code === 'invalid-data',
+)
 assert.equal(samplingCreated.profile.existingCenterCount, 1)
 assert.equal(samplingCreated.profile.activeBlockCount, 2)
 assert.equal(samplingCreated.profile.activeComponentCount, 3)
@@ -985,8 +1001,49 @@ assert.throws(() => predictionVarsSamples({ alpha: 3, beta: [1] }, varsSchema))
 const encodedBytes = Buffer.alloc(16)
 encodedBytes.writeDoubleLE(3.5, 0)
 encodedBytes.writeDoubleLE(-2.25, 8)
+const complexBytes = Buffer.alloc(32)
+;[
+  [1, -2],
+  [3, -4],
+  [5, -6],
+  [7, -8],
+].forEach(([re, im], index) => {
+  complexBytes.writeFloatLE(re, index * 8)
+  complexBytes.writeFloatLE(im, index * 8 + 4)
+})
 const recordedTree = {
   group: {
+    complexScalar: {
+      experiment_record_id: 13,
+      quantity_kind: 'Length',
+      tensor_order: 0,
+      dtype: 'complex64',
+      data_schema: { dtype: 'complex64', quantityKind: 'Length', unit: 'm' },
+      data: {
+        shape: [],
+        storage: { kind: 'inline', value: { re: 3, im: 4 } },
+      },
+    },
+    complexEncoded: {
+      experiment_record_id: 14,
+      quantity_kind: 'Length',
+      tensor_order: 0,
+      dtype: 'complex64',
+      data_schema: {
+        dtype: 'complex64',
+        quantityKind: 'Length',
+        unit: 'm',
+        axes: [
+          { name: 'row', ticks: [0, 1] },
+          { name: 'column', ticks: [10, 20] },
+        ],
+      },
+      data: {
+        shape: [2, 2],
+        axes: [{ ticks: [0, 1] }, { ticks: [10, 20] }],
+        storage: { kind: 'base64', data: complexBytes.toString('base64'), byteLength: complexBytes.byteLength },
+      },
+    },
     inline: {
       experiment_record_id: 11,
       quantity_kind: null,
@@ -1014,6 +1071,12 @@ const recordedTree = {
   },
 } as const satisfies MeasurementRecordedData
 const recordedSamples = predictionRecordedSamples(recordedTree, 41)
+const complexRecordedRowSample = predictionRecordedRowSample({
+  ...recordedTree.group.complexScalar,
+  measurement_id: 41,
+  name: 'group.complexScalar',
+})
+assert.deepEqual(complexRecordedRowSample.values, [3, 4])
 assert.equal(predictionRecordedSamplesMatchRules(recordedSamples.samples, recordedSamples.rules), true)
 const incompatibleRecordedRules = recordedSamples.rules.map((rule, index) =>
   index === 0 ? { ...rule, result: { ...rule.result, unit: 'incompatible-unit' } } : rule,
@@ -1023,11 +1086,82 @@ const recordedByKey = new Map(recordedSamples.samples.map((sample) => [sample.la
 assert.deepEqual(recordedByKey.get('group.inline')?.layout.axes?.[0].ticks, [0, 1])
 assert.deepEqual(recordedByKey.get('group.inline')?.values, [1.5, 2.5])
 assert.deepEqual(recordedByKey.get('group.encoded')?.values, [3.5, -2.25])
+assert.deepEqual(recordedByKey.get('group.complexScalar')?.values, [3, 4])
+assert.deepEqual(recordedByKey.get('group.complexEncoded')?.layout.shape, [2, 2])
+assert.deepEqual(recordedByKey.get('group.complexEncoded')?.values, [1, -2, 3, -4, 5, -6, 7, -8])
 const reconstructedRecorded = predictedRecordedData(recordedSamples.samples, recordedSamples.rules)
 const reconstructedInline = reconstructedRecorded['group.inline']
 assert.ok(isDataTensor(reconstructedInline))
 const inlineRule = recordedSamples.rules.find((rule) => rule.label === 'group.inline')!
 assert.deepEqual(createDataTensorAccessor(inlineRule.result, reconstructedInline).materialize(), [1.5, 2.5])
+const complexEncodedRule = recordedSamples.rules.find((rule) => rule.label === 'group.complexEncoded')!
+const reconstructedComplexEncoded = reconstructedRecorded['group.complexEncoded']
+assert.ok(isDataTensor(reconstructedComplexEncoded))
+assert.deepEqual(createDataTensorAccessor(complexEncodedRule.result, reconstructedComplexEncoded).materialize(), [
+  [
+    { re: 1, im: -2 },
+    { re: 3, im: -4 },
+  ],
+  [
+    { re: 5, im: -6 },
+    { re: 7, im: -8 },
+  ],
+])
+
+const complexScalarRule = recordedSamples.rules.find((rule) => rule.label === 'group.complexScalar')!
+const complexScalarLayout = recordedByKey.get('group.complexScalar')!.layout
+const complexModel = buildPredictionKnnModel({
+  direction: 'forward',
+  fingerprint: 'complex-forward-v1',
+  k: 2,
+  weighting: 'uniform',
+  inputScaling: 'range',
+  inputKeys: ['x'],
+  outputKeys: ['group.complexScalar'],
+  outputDtypes: { 'group.complexScalar': 'complex64' },
+  rows: [
+    row(1, [scalar('x', 0, { minimum: 0, maximum: 10 })], [{ layout: complexScalarLayout, values: [2, 4] }]),
+    row(2, [scalar('x', 10, { minimum: 0, maximum: 10 })], [{ layout: complexScalarLayout, values: [6, 8] }]),
+  ],
+})
+assert.equal(complexModel.outputSize, 2)
+const complexCohortWithInvalidRow = selectPredictionCohort({
+  direction: 'forward',
+  fingerprint: 'complex-invalid-row',
+  inputKeys: ['x'],
+  outputKeys: ['group.complexScalar'],
+  rows: [
+    row(1, [scalar('x', 0)], [{ layout: complexScalarLayout, values: [2, 4] }]),
+    row(2, [scalar('x', 10)], [{ layout: complexScalarLayout, values: [Number.NaN, 8] }]),
+  ],
+})
+assert.equal(complexCohortWithInvalidRow.summary.includedRows, 1)
+assert.equal(complexCohortWithInvalidRow.summary.excluded['invalid-tensor'], 1)
+const complexPrediction = predictWithKnn(complexModel, [scalar('x', 5, { minimum: 0, maximum: 10 })])
+assert.deepEqual(complexPrediction.output[0].values, [4, 6])
+const predictedComplexRecorded = predictedRecordedData(complexPrediction.output, [complexScalarRule])
+const predictedComplexTensor = predictedComplexRecorded['group.complexScalar']
+assert.ok(isDataTensor(predictedComplexTensor))
+assert.deepEqual(createDataTensorAccessor(complexScalarRule.result, predictedComplexTensor).materialize(), {
+  re: 4,
+  im: 6,
+})
+const calculationInput = createCalculationInput([complexScalarRule], predictedComplexRecorded)
+const complexMagnitudeSource = `import { abs } from 'mathjs'
+export default function calculate(input) {
+  return { dtype: 'float64', data: abs(input['group.complexScalar'].data) }
+}`
+const complexMagnitude = executeCalculation(
+  transformCalculationSource(
+    complexMagnitudeSource,
+    'complex-forward-calculation',
+    analyzeCalculationSource(complexMagnitudeSource),
+  ),
+  calculationInput,
+  () => {},
+)
+assert.equal(complexMagnitude.dtype, 'float64')
+assert.ok(Math.abs((complexMagnitude.data as number) - Math.sqrt(52)) < 1e-12)
 const ordinalFallbacks: { axisIndex: number; blockKey: string; length: number }[] = []
 predictedRecordedData(
   recordedSamples.samples.map((sample) =>

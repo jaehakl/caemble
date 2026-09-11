@@ -5,6 +5,7 @@ export {
   predictionLayoutSignature,
   predictionModelIsStale,
   predictionNumericDtypes,
+  predictionTensorValueCount,
   selectPredictionCohort,
   PredictionModelError,
   PREDICTION_NUMERIC_CELL_LIMIT,
