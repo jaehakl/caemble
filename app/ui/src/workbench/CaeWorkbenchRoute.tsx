@@ -15,7 +15,8 @@ import {
 } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
-import { ExperimentManager } from '@/features/experiment'
+import { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSaveWorkflow'
+import { ExperimentWorkspace } from '@/features/cae-workbench/chrome/ExperimentWorkspace'
 import { calculationAccessPolicy, type CalculationSaveState } from '@/features/calculation'
 import type {
   PredictionWorkspaceChromeState,
@@ -111,6 +112,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     hasUnsavedCalculationWork: calculationDirty,
     allowAdminSection: auth.isPending ? null : Boolean(auth.user?.roles.includes('admin')),
   })
+  const viewerCaptureRef = useRef<HTMLDivElement | null>(null)
+  const saveWorkflow = useExperimentSaveWorkflow(workbench, preflight, viewerCaptureRef, page.setDialog)
   const setLayout = page.setLayout
   const { inspectedBatchId, inspectBatch } = useCaeBatches()
   const [settingTab, setSettingTab] = useState('launchers')
@@ -127,14 +130,14 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       const params = new URLSearchParams(location.search)
       for (const key of ['help', 'item', 'anchor']) params.delete(key)
       target.searchParams.forEach((value, key) => params.set(key, value))
-      navigate({ pathname: '/', search: `?${params}`, hash: '' })
+      navigate({ pathname: '/workbench', search: `?${params}`, hash: '' })
     },
     [location.search, navigate],
   )
   const closeHelp = useCallback(() => {
     const params = new URLSearchParams(location.search)
     for (const key of ['help', 'item', 'anchor']) params.delete(key)
-    navigate({ pathname: '/', search: params.toString() ? `?${params}` : '', hash: '' })
+    navigate({ pathname: '/workbench', search: params.toString() ? `?${params}` : '', hash: '' })
   }, [location.search, navigate])
   useEffect(() => {
     if (!page.initialized) return
@@ -280,8 +283,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     setDialog: page.setDialog,
     workbench,
     predictionState,
+    requestExperimentSave: () => {
+      void saveWorkflow.save()
+    },
+    requestExperimentSaveAs: () => {
+      void saveWorkflow.saveAs()
+    },
+    fileBusy: saveWorkflow.busy || preflight.busy,
     preflightControls: (
       <div className="flex items-center gap-2 px-2 text-xs">
+        <label className="flex items-center gap-1">
+          <input
+            type="checkbox"
+            checked={saveWorkflow.includePreflight && Boolean(saveWorkflow.preflightId)}
+            disabled={!saveWorkflow.preflightId || saveWorkflow.busy}
+            onChange={(event) => saveWorkflow.setIncludePreflight(event.target.checked)}
+          />
+          Preflight 결과 함께 저장
+        </label>
         <button
           type="button"
           className="rounded border px-3 py-1"
@@ -319,30 +338,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const activeRecordedRules = workbench.selection.recordedRules
 
   const leftPane =
-    page.activeSection === 'experiment' ? (
-      <ExperimentManager
-        authenticated={auth.isAuthenticated}
-        busy={workbench.saving !== null || workbench.measurementActions.busy || workbench.calculationDataActions.busy}
-        compact
-        selectedId={workbench.experimentId}
-        user={auth.user}
-        onDeleteSelected={() => {
-          workbench.detachDeletedExperiment()
-        }}
-        onOpenSaved={(row) =>
-          page.guardReplacement(async () => {
-            await workbench.loadExperiment(row)
-            page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
-          })
-        }
-        onOpenExample={(sourceBundle, name, description, calculations) =>
-          page.guardReplacement(() => {
-            workbench.newExperiment(sourceBundle, name, description, calculations)
-            page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
-          })
-        }
-      />
-    ) : page.activeSection === 'measurement' ? null : page.activeSection === 'prediction' ? (
+    page.activeSection === 'experiment' ? null : page.activeSection === 'measurement' ? null : page.activeSection ===
+      'prediction' ? (
       <div
         key="prediction-vars"
         className="h-full min-h-0 overflow-hidden bg-background p-2"
@@ -418,6 +415,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                   controller={workbench.experimentDocument}
                   disabled={
                     !page.initialized ||
+                    saveWorkflow.busy ||
                     Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
                     workbench.measurementActions.busy ||
                     workbench.calculationDataActions.busy ||
@@ -515,6 +513,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
+          captureRef={viewerCaptureRef}
           activeExperimentTaskName={page.activeExperimentFile}
           experiment={preview?.experiment ?? workbench.experiment}
           experimentDocument={preview?.document ?? workbench.experimentDocument}
@@ -581,6 +580,20 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 }
               />
             </div>
+          ) : page.activeSection === 'experiment' ? (
+            <ExperimentWorkspace
+              menubar={menubar}
+              ribbon={ribbon}
+              viewer={viewerPane}
+              editor={rightPane}
+              bottom={bottomDock}
+              expanded={page.viewerExpanded}
+              bottomVisible={page.bottomMode !== 'hidden'}
+              bottomRatio={page.layout.bottomHeightRatio}
+              onBottomRatioChange={(bottomHeightRatio) =>
+                page.setLayout((current) => ({ ...current, bottomHeightRatio }))
+              }
+            />
           ) : page.activeSection === 'measurement' ? (
             <CalculationWorkbenchContainer
               authenticated={auth.isAuthenticated}
@@ -717,7 +730,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         )}
       </footer>
 
-      <CaeWorkbenchDialogs dialog={page.dialog} setDialog={page.setDialog} workbench={workbench} />
+      <CaeWorkbenchDialogs
+        dialog={page.dialog}
+        setDialog={page.setDialog}
+        workbench={workbench}
+        user={auth.user}
+        saveWorkflow={saveWorkflow}
+        guardReplacement={page.guardReplacement}
+        onSaved={preflight.clear}
+      />
       <SourcePathPickerDialog
         locations={sourcePathPicker?.locations ?? []}
         open={sourcePathPicker !== null}

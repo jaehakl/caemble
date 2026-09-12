@@ -103,6 +103,7 @@ class ExperimentSourceBundle(BaseModel):
 
 
 class ExperimentBase(OwnedTimestampFields):
+    thumbnail_url: Optional[str] = None
     user_id: str
     namespace: str
     repository_slug: str
@@ -151,6 +152,9 @@ class CalculationDefinition(BaseModel):
 
 
 class SaveExperimentRequest(BaseModel):
+    requestId: Optional[str] = Field(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    preflightBatchId: Optional[str] = Field(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    thumbnail: Optional[str] = Field(default=None, max_length=700000)
     mode: str
     namespace: str
     repository: str

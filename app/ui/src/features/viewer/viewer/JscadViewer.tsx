@@ -466,6 +466,16 @@ function JscadViewer({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    const capture = () => {
+      renderScene()
+    }
+    canvas.addEventListener('caemble-before-capture', capture)
+    return () => canvas.removeEventListener('caemble-before-capture', capture)
+  }, [renderScene])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
     delete rayPathVisualsRef.current.cacheId
     delete meshVisualsRef.current.cacheId
     delete heatmapVisualsRef.current.cacheId
@@ -527,7 +537,7 @@ function JscadViewer({
         drawHeatmap: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, true),
       },
       entities: [],
-      glOptions: { canvas },
+      glOptions: { canvas, attributes: { preserveDrawingBuffer: true } },
       rendering: { background: [0.98, 0.99, 1, 1] },
     }
 
@@ -793,19 +803,21 @@ function JscadViewer({
 
   return (
     <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
-      <ViewerToolbar
-        availableSources={availableSources}
-        meshMode={Boolean(meshRenderData) && parts.length === 0}
-        pickMode={pickMode}
-        visibleSources={visibleSources}
-        onPickModeChange={setPickMode}
-        onSetCameraView={setCameraView}
-        onToggleSource={onToggleSource}
-        onToggleViewerExpanded={onToggleViewerExpanded}
-        onToggleXray={() => setXrayEnabled((current) => !current)}
-        viewerExpanded={viewerExpanded}
-        xrayEnabled={xrayEnabled}
-      />
+      <div data-capture-exclude>
+        <ViewerToolbar
+          availableSources={availableSources}
+          meshMode={Boolean(meshRenderData) && parts.length === 0}
+          pickMode={pickMode}
+          visibleSources={visibleSources}
+          onPickModeChange={setPickMode}
+          onSetCameraView={setCameraView}
+          onToggleSource={onToggleSource}
+          onToggleViewerExpanded={onToggleViewerExpanded}
+          onToggleXray={() => setXrayEnabled((current) => !current)}
+          viewerExpanded={viewerExpanded}
+          xrayEnabled={xrayEnabled}
+        />
+      </div>
 
       <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <canvas
@@ -1029,7 +1041,10 @@ function JscadViewer({
         ) : null}
 
         {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmapRenderData ? (
-          <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500">
+          <div
+            data-viewer-empty="true"
+            className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500"
+          >
             {emptyMessage}
           </div>
         ) : null}

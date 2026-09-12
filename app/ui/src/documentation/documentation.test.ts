@@ -23,7 +23,7 @@ describe('shared documentation sources', () => {
       publicDocuments.map(({ id, section, anchor, aliases }) => ({ id, section, anchor, aliases: aliases ?? [] })),
     ).toEqual(navigation)
     for (const page of manualDocsKnowledge) {
-      expect(page.href).toBe(`/?help=manual&item=${page.id}`)
+      expect(page.href).toBe(`/workbench?help=manual&item=${page.id}`)
     }
   })
 
@@ -80,7 +80,7 @@ describe('shared documentation sources', () => {
       for (const match of text.replace(/`[^`\n]+`/g, '').matchAll(/\]\(([^\s)]+)\)/g)) {
         const href = match[1]
         if (/^[a-z][a-z\d+.-]*:/i.test(href)) continue
-        if (href.startsWith('/?help=')) {
+        if (href.startsWith('/workbench?help=') || href.startsWith('/?help=')) {
           const url = new URL(href, 'https://caemble.invalid')
           if (
             url.searchParams.get('help') === 'manual' &&

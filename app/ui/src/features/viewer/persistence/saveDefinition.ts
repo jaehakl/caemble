@@ -35,6 +35,7 @@ export async function saveCadDefinition({
   resultContracts,
   calculations,
   values,
+  assets,
 }: {
   document: CadSourceDocument
   mode: ExperimentSaveMode
@@ -44,6 +45,7 @@ export async function saveCadDefinition({
   records: readonly ExperimentRecordContract[]
   resultContracts: RecordedResultContracts
   values: DefinitionFormValues
+  assets?: { requestId?: string; preflightBatchId?: string; thumbnail?: string }
 }): Promise<
   SaveExperimentResponse & {
     sourceBundle: ExperimentSourceBundle
@@ -59,6 +61,7 @@ export async function saveCadDefinition({
     baseBundle === null ? Promise.resolve(undefined) : experimentSourceBundleHash(baseBundle),
   ])
   const result = await dbTables.Experiment.save({
+    ...assets,
     namespace: values.namespace,
     repository: values.repository,
     key: values.key,

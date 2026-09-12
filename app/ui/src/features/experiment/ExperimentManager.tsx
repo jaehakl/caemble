@@ -1,9 +1,9 @@
 import type { CalculationDefinition } from '@/api'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { LoaderCircle, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { dbTables, type SavedExperimentRecord, type UserData } from '@/api'
+import { type UserData } from '@/api'
 import { catalogApi, type CatalogExperimentListItem } from '@/api/catalog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { privateQueryScope } from '@/features/auth/queryKeys'
 import { catalogExperimentsQueryOptions } from '@/features/catalog/queryOptions'
-import { invalidateExperimentMutation } from './queryInvalidation'
+import { useDeleteExperiment } from './useDeleteExperiment'
 import type { SavedExperiment } from '@/features/cae-workbench/types'
 import { experimentManagerListing } from './managerListing'
 import { availableExperimentsQueryOptions } from './queryOptions'
@@ -43,7 +43,6 @@ export function ExperimentManager({
   onOpenSaved,
   onDeleteSelected,
 }: ExperimentManagerProps) {
-  const queryClient = useQueryClient()
   const [selectedTab, setSelectedTab] = useState<string | null>(null)
   const [filters, setFilters] = useState<Record<string, { search: string; repository: string }>>({})
   const [loadingExample, setLoadingExample] = useState<string | null>(null)
@@ -115,38 +114,7 @@ export function ExperimentManager({
     }
   }, [activeQuery.isFetching, activeQuery.isSuccess, filterKey, repositories, repository, search])
 
-  const deleteMutation = useMutation({
-    mutationFn: async (row: SavedExperimentRecord) => {
-      const usage = (await dbTables.Experiment.usage([row.id])).items[0]
-      const counts = usage?.derivedCounts ?? row.derivedCounts
-      const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
-      const detail = linked
-        ? `\n연결 데이터 ${linked.toLocaleString()}개도 함께 삭제됩니다 (Measurement ${counts!.measurements}, RecordedData ${counts!.recordedData}, Calculation ${counts!.calculations}).`
-        : ''
-      const demoDetail = row.isDemo
-        ? '\n공개 Demo에서 즉시 제거되며, 다음 정상 Demo가 대표 Demo로 승격될 수 있습니다.'
-        : ''
-      const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
-      if (
-        !window.confirm(
-          `${row.namespace}/${row.repository_slug}/${row.experiment_key}@${version}을 영구 삭제할까요?${detail}${demoDetail}`,
-        )
-      ) {
-        return false
-      }
-      await dbTables.Experiment.deleteRows([row.id])
-      return true
-    },
-    onSuccess: async (deleted, row) => {
-      if (!deleted) return
-      if (row.id === selectedId) onDeleteSelected?.(row as SavedExperiment)
-      await invalidateExperimentMutation(queryClient, queryScope, row.id)
-      toast.success('Experiment Version을 삭제했습니다.')
-    },
-    onError: (cause: unknown) => {
-      toast.error(cause instanceof Error ? cause.message : 'Experiment Version을 삭제하지 못했습니다.')
-    },
-  })
+  const deleteMutation = useDeleteExperiment(queryScope, selectedId, onDeleteSelected)
 
   const openExample = async (experiment: CatalogExperimentListItem) => {
     setLoadingExample(experiment.coordinate)

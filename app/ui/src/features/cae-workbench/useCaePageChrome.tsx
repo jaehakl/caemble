@@ -6,7 +6,6 @@ import {
   Database,
   Download,
   FlaskConical,
-  GitBranch,
   MessageCircle,
   Info,
   Pencil,
@@ -71,6 +70,9 @@ export function useCaePageChrome({
   workbench,
   predictionState,
   preflightControls,
+  requestExperimentSave,
+  requestExperimentSaveAs,
+  fileBusy = false,
 }: {
   analysisTab: AnalysisTabId
   authenticated: boolean
@@ -93,6 +95,9 @@ export function useCaePageChrome({
   workbench: CaeWorkbenchState
   predictionState: PredictionRibbonState
   preflightControls?: ReactNode
+  requestExperimentSave?: () => void
+  requestExperimentSaveAs?: () => void
+  fileBusy?: boolean
 }) {
   const [repeatCountInput, setRepeatCountInput] = useState('10')
   const repeatCount = Number(repeatCountInput)
@@ -173,6 +178,13 @@ export function useCaePageChrome({
             setActiveSection('experiment')
           }),
       },
+      examples: { id: 'examples', label: 'Examples', icon: <Beaker />, onSelect: () => setDialog('examples') },
+      loadExperiment: {
+        id: 'load-experiment',
+        label: 'Load',
+        icon: <Download />,
+        onSelect: () => setDialog('load-experiment'),
+      },
       saveExperiment: {
         id: 'save-experiment',
         label: 'Save',
@@ -182,7 +194,6 @@ export function useCaePageChrome({
           !workbench.experiment ||
           !workbench.experimentSourceValidated ||
           Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
-          (workbench.sourceLocked && workbench.experimentDirty) ||
           workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
@@ -192,31 +203,8 @@ export function useCaePageChrome({
               ? sourceValidationReason
               : workbench.experimentRecord && !workbench.experimentManageable
                 ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
-                : workbench.sourceLocked && workbench.experimentDirty
-                  ? 'Measurement가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.'
-                  : sourceLockReason,
-        onSelect: () => setDialog('save-experiment'),
-      },
-      saveExperimentVersion: {
-        id: 'save-experiment-version',
-        label: 'New Version',
-        icon: <GitBranch />,
-        disabled:
-          !authenticated ||
-          !workbench.experimentRecord ||
-          !workbench.experimentSourceValidated ||
-          !workbench.experimentManageable ||
-          workbench.saving !== null,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.experimentRecord
-            ? '먼저 Experiment를 저장하세요.'
-            : !workbench.experimentSourceValidated
-              ? sourceValidationReason
-              : !workbench.experimentManageable
-                ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
                 : sourceLockReason,
-        onSelect: () => setDialog('save-experiment-version'),
+        onSelect: requestExperimentSave ?? (() => setDialog('save-experiment-as')),
       },
       saveExperimentAs: {
         id: 'save-experiment-as',
@@ -231,7 +219,7 @@ export function useCaePageChrome({
             : !workbench.experimentSourceValidated
               ? sourceValidationReason
               : sourceLockReason,
-        onSelect: () => setDialog('save-experiment-as'),
+        onSelect: requestExperimentSaveAs ?? (() => setDialog('save-experiment-as')),
       },
       generateCandidate: {
         id: 'generate-candidate',
@@ -574,8 +562,12 @@ export function useCaePageChrome({
       settingRefresh: { id: 'setting-refresh', label: 'Refresh', icon: <RefreshCw />, onSelect: refreshRuntime },
     }
 
+    if (fileBusy) {
+      for (const name of ['newExperiment', 'examples', 'loadExperiment', 'saveExperiment', 'saveExperimentAs'])
+        defined[name] = { ...defined[name], disabled: true }
+    }
     if (!sourceLockReason) return defined
-    const locked = new Set(['newExperiment', 'saveExperiment', 'saveExperimentVersion', 'saveExperimentAs'])
+    const locked = new Set(['newExperiment', 'examples', 'loadExperiment', 'saveExperiment', 'saveExperimentAs'])
     return Object.fromEntries(
       Object.entries(defined).map(([key, action]) => [
         key,
@@ -583,6 +575,9 @@ export function useCaePageChrome({
       ]),
     )
   }, [
+    requestExperimentSave,
+    requestExperimentSaveAs,
+    fileBusy,
     authenticated,
     dataReadable,
     calculationDirty,
@@ -621,9 +616,10 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions
               actions={[
                 actions.newExperiment,
+                actions.examples,
+                actions.loadExperiment,
                 ...(workbench.experimentIsDemo ? [actions.editDemoCopy] : []),
                 actions.saveExperiment,
-                actions.saveExperimentVersion,
                 actions.saveExperimentAs,
               ]}
             />
@@ -631,7 +627,9 @@ export function useCaePageChrome({
           <WorkbenchRibbonGroup label="Candidate">
             <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
           </WorkbenchRibbonGroup>
-          {preflightControls ? <WorkbenchRibbonGroup label="Preflight">{preflightControls}</WorkbenchRibbonGroup> : null}
+          {preflightControls ? (
+            <WorkbenchRibbonGroup label="Preflight">{preflightControls}</WorkbenchRibbonGroup>
+          ) : null}
           <WorkbenchRibbonGroup label="Geometry">
             <GeometryAuthoringRibbon state={experimentAuthoringState} />
           </WorkbenchRibbonGroup>

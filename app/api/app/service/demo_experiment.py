@@ -72,6 +72,7 @@ def _summary(
         "version_patch": experiment.version_patch,
         "name": experiment.name,
         "description": experiment.description,
+        "thumbnail_url": experiment.thumbnail_url,
         "source_bundle": experiment.source_bundle,
         "source_hash": experiment.source_hash,
         "repository": experiment.repository_slug,
@@ -113,11 +114,18 @@ async def available_experiments(db: AsyncSession, *, user: UserData | None) -> d
                 )
             ).all()
         )
-    counts = await _prediction_counts(db, [*demo_ids, *(row.id for row in mine_rows)])
-    return {
+    from service.experiment import _derived_counts
+
+    ids = [*demo_ids, *(row.id for row in mine_rows)]
+    derived = await _derived_counts(db, ids)
+    counts = await _prediction_counts(db, ids)
+    result = {
         "mine": [_summary(row, counts[row.id], demo=demos_by_id.get(row.id)) for row in mine_rows],
         "demos": [_summary(row, counts[row.id], demo=demo) for demo, row in demo_rows],
     }
+    for row in [*result["mine"], *result["demos"]]:
+        row["derivedCounts"] = derived[row["id"]]
+    return result
 
 
 async def demo_experiment_candidates(db: AsyncSession) -> dict[str, Any]:

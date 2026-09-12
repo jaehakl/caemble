@@ -160,7 +160,7 @@ export function HelpWorkspace({
         if (href.startsWith('/docs')) {
           const url = new URL(href, window.location.origin)
           target = legacyDocsHref(url.search, url.hash)
-        } else if (href.startsWith('/?help=')) target = href
+        } else if (href.startsWith('/?help=') || href.startsWith('/workbench?help=')) target = href
         else if (href.startsWith('#') && document)
           target = helpHref(
             'manual',

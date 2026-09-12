@@ -1,4 +1,11 @@
-export type WorkbenchDialog = 'account' | 'save-experiment' | 'save-experiment-version' | 'save-experiment-as' | null
+export type WorkbenchDialog =
+  | 'account'
+  | 'save-experiment'
+  | 'save-experiment-version'
+  | 'save-experiment-as'
+  | 'load-experiment'
+  | 'examples'
+  | null
 
 export type PendingConfirmation = Readonly<{
   title: string

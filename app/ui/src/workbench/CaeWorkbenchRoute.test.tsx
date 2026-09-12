@@ -35,7 +35,7 @@ vi.mock('./useCaePageSession', async () => {
   return {
     useCaePageSession: () => {
       const [layout, setLayout] = useState(defaultWorkbenchLayoutState)
-      return { ...layout, setLayout, initialized: true }
+      return { ...layout, layout, setLayout, initialized: true }
     },
   }
 })
@@ -188,9 +188,9 @@ describe('Workbench portal navigation', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
-    const left = within(screen.getByRole('complementary', { name: 'Left pane' }))
     expect(screen.queryByRole('button', { name: 'material' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
+    const left = within(screen.getByRole('complementary', { name: 'Left pane' }))
     fireEvent.change(await left.findByLabelText('Candidate variable'), { target: { value: '11' } })
     fireEvent.click(screen.getByRole('button', { name: 'help' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Material Model' }))

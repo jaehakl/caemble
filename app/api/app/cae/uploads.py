@@ -318,6 +318,11 @@ async def expire_uploads(db: AsyncSession) -> int:
 
 
 async def measurement_artifact(db: AsyncSession, measurement_id: int, user_id: str) -> dict:
+    from db import MeasurementSnapshot
+    snapshot = await db.scalar(select(MeasurementSnapshot).join(Measurement).where(
+        MeasurementSnapshot.measurement_id == measurement_id, Measurement.user_id == user_id))
+    if snapshot is not None:
+        return snapshot.artifact
     row = (await db.execute(select(Job, CaeBatch).join(
         Measurement, Measurement.job_id == Job.id
     ).join(CaeBatch, CaeBatch.batch_id == Job.batch_id).where(
@@ -333,6 +338,11 @@ async def measurement_artifact(db: AsyncSession, measurement_id: int, user_id: s
 
 
 async def measurement_artifact_info(db: AsyncSession, measurement_id: int, user_id: str) -> dict:
+    from db import MeasurementSnapshot
+    snapshot = await db.scalar(select(MeasurementSnapshot).join(Measurement).where(
+        MeasurementSnapshot.measurement_id == measurement_id, Measurement.user_id == user_id))
+    if snapshot is not None:
+        return {"measurement_id": measurement_id, **snapshot.metadata_json}
     row = (await db.execute(select(Job, CaeBatch).join(
         Measurement, Measurement.job_id == Job.id
     ).join(CaeBatch, CaeBatch.batch_id == Job.batch_id).where(

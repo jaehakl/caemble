@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from box_grid_fixtures import box_schema, box_tensor
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select
@@ -30,9 +31,9 @@ DEFINITIONS = [
     {"name": "평균", "description": "예제", "source_code": "export default record => record.signal"},
     {"name": "Second", "source_code": "export default record => record.signal"},
 ]
-RECORD = {"name": "signal", "quantity_kind": None, "tensor_order": 0, "dtype": "float64", "data_schema": {"dtype": "float64"}}
+RECORD = {"name": "signal", "quantity_kind": "Dimensionless", "tensor_order": 0, "dtype": "float64", "data_schema": box_schema()}
 CREATE = dict(mode="create", namespace="calc-owner", repository="copies", key="original", name="Original",
-              sourceBundle={"files": {"experiment.tsx": "export default null"}}, bundleHash="server-computes-hash", records=[RECORD], result_contracts={"signal": {"task": "fixture", "output": "signal", "solver": {"name": "fixture", "version": "1.0.0"}, "artifactType": "fixture@1", "catalogRevision": "fixture", "visualization": {"kind": "tensor"}, "schema": {"dtype": "float64", "tensorOrder": 0}}})
+              sourceBundle={"files": {"experiment.tsx": "export default null"}}, bundleHash="server-computes-hash", records=[RECORD], result_contracts={"signal": {"task": "fixture", "output": "signal", "solver": {"name": "fixture", "version": "1.0.0"}, "artifactType": "fixture@1", "catalogRevision": "fixture", "visualization": {"kind": "tensor"}, "schema": box_schema()}})
 
 
 class ExperimentCalculationRequestTests(unittest.TestCase):
@@ -84,7 +85,7 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     db.add(measurement)
                     await db.flush()
                     record = await db.scalar(select(ExperimentRecord).where(ExperimentRecord.experiment_id == original["id"]))
-                    db.add(RecordedData(user_id=owner_id, measurement_id=measurement.id, experiment_record_id=record.id, data=3))
+                    db.add(RecordedData(user_id=owner_id, measurement_id=measurement.id, experiment_record_id=record.id, data=box_tensor()))
                     await db.commit()
                     layout = {"dtype": "float64", "shape": [], "axes": []}
                     await upsert_calculations(db, [CalculationBase(

@@ -508,18 +508,25 @@ export function useCaeWorkbenchState(
   )
 
   const saveExperiment = useCallback(
-    async (values: DefinitionFormValues, mode: ExperimentSaveMode) => {
+    async (
+      values: DefinitionFormValues,
+      mode: ExperimentSaveMode,
+      options?: {
+        target?: SavedExperiment | null
+        requestId?: string
+        preflightBatchId?: string
+        thumbnail?: string
+      },
+    ) => {
       if (!authenticated || !user) throw new Error('로그인이 필요합니다.')
       if (!experiment) throw new Error('저장할 Experiment source가 없습니다.')
       if (!experimentSourceValidated) {
         throw new Error('현재 Experiment source 의미 검사가 완료되지 않아 저장할 수 없습니다.')
       }
-      if (mode !== 'create' && !experimentRecord) throw new Error('먼저 Save As로 Experiment를 저장하세요.')
-      const manageable = experimentRecord && (experimentRecord.user_id === user.id || user.roles.includes('admin'))
+      const target = options?.target ?? experimentRecord
+      if (mode !== 'create' && !target) throw new Error('먼저 Save As로 Experiment를 저장하세요.')
+      const manageable = target && (target.user_id === user.id || user.roles.includes('admin'))
       if (mode !== 'create' && !manageable) throw new Error('이 Experiment는 Save As로 저장하세요.')
-      if (mode === 'overwrite' && experimentRecord?.sourceLocked && experimentDirty) {
-        throw new Error('Measurement가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.')
-      }
       setSaving('experiment')
       const sourceSequence = requestSequence.current
       const savedDocument = experiment
@@ -528,8 +535,15 @@ export function useCaeWorkbenchState(
           document: savedDocument,
           calculations: editing.calculations,
           mode,
-          savedSourceBundle: experimentId ? baselineExperimentBundle : null,
-          selectedId: experimentId,
+          savedSourceBundle: options?.target
+            ? options.target.source_bundle
+            : experimentId
+              ? baselineExperimentBundle
+              : null,
+          selectedId: mode === 'create' ? experimentId : (target?.id ?? null),
+          assets: options
+            ? { requestId: options.requestId, thumbnail: options.thumbnail, preflightBatchId: options.preflightBatchId }
+            : undefined,
           resultContracts: experimentDocument.simulationProgram?.resultContracts ?? {},
           records: experimentRecordContracts(experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})),
           values,
@@ -557,6 +571,7 @@ export function useCaeWorkbenchState(
           coordinate: result.coordinate,
           bundleHash: result.bundleHash,
           sourceLocked: result.sourceLocked,
+          thumbnail_url: result.thumbnail_url,
           derivedCounts: result.derivedCounts,
         }
         await invalidate(result.id)
@@ -567,6 +582,10 @@ export function useCaeWorkbenchState(
           record: row,
           baselineBundle: savedDocument.sourceBundle,
         })
+        if (result.measurementId) {
+          setPendingMeasurementId(result.measurementId)
+          setSelectionRestoreStatus('restoring')
+        }
         return result
       } finally {
         setSaving(null)
@@ -577,7 +596,6 @@ export function useCaeWorkbenchState(
       editing.calculations,
       baselineExperimentBundle,
       experiment,
-      experimentDirty,
       experimentId,
       experimentRecord,
       experimentSourceValidated,

@@ -20,6 +20,9 @@ export type ExperimentRecordContract = Readonly<{
 }>
 
 type ExperimentMetadata = Readonly<{
+  requestId?: string
+  preflightBatchId?: string
+  thumbnail?: string
   namespace: string
   repository: string
   key: string
@@ -44,6 +47,8 @@ export type SaveExperimentRequest = ExperimentMetadata &
   )
 
 export type SaveExperimentResponse = Readonly<{
+  measurementId?: number | null
+  thumbnail_url?: string | null
   id: number
   action: 'create' | 'overwrite' | 'new_version'
   namespace: string
@@ -66,6 +71,7 @@ export type ExperimentUsageResponse = Readonly<{
 }>
 
 export type SavedExperimentRecord = Readonly<{
+  thumbnail_url?: string | null
   id: number
   created_at?: string | null
   updated_at?: string | null

@@ -1,6 +1,6 @@
 import { StructuredFieldResult } from '@/features/viewer/viewer/StructuredFieldResult'
 import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
 import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
@@ -36,6 +36,7 @@ export function WorkbenchViewer({
   loading = false,
   downloadProgress,
   autoSelectResult = false,
+  captureRef,
 }: {
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
@@ -57,6 +58,7 @@ export function WorkbenchViewer({
   loading?: boolean
   downloadProgress?: Readonly<{ completed: number; total: number }> | null
   autoSelectResult?: boolean
+  captureRef?: Ref<HTMLDivElement>
 }) {
   const visual = useMemo(() => visualizationData(visualizations), [visualizations])
   const resultContracts = useMemo(
@@ -286,7 +288,7 @@ export function WorkbenchViewer({
           현재 Geometry와 저장 결과의 source 또는 Vars 좌표가 달라 Geometry Overlay를 표시하지 않습니다.
         </p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={captureRef} className="min-h-0 flex-1 overflow-auto">
         {selectedView && !selectedContract ? (
           <p role="alert" className="p-3 text-red-700">
             {selectedView}: 새 실행에 선택한 결과가 없습니다.

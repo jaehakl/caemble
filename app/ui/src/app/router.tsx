@@ -2,12 +2,24 @@ import { createBrowserRouter, Navigate, useLocation } from 'react-router'
 import { legacyDocsHref } from '@/documentation/helpNavigation'
 import { RouteErrorPage } from '@/features/error/RouteErrorPage'
 
-export const appRoutePaths = ['index', 'docs', '*'] as const
+export const appRoutePaths = ['index', 'showcase', 'workbench', 'docs', '*'] as const
 
 export function createAppRouter() {
   return createBrowserRouter([
     {
       path: '/',
+      lazy: () => import('@/routes/StartRoute'),
+      ErrorBoundary: RouteErrorPage,
+      hydrateFallbackElement: <div role="status">로그인 상태를 확인하는 중…</div>,
+    },
+    {
+      path: '/showcase',
+      lazy: () => import('@/routes/ShowcaseRoute'),
+      ErrorBoundary: RouteErrorPage,
+      hydrateFallbackElement: <div role="status">Showcase를 불러오는 중…</div>,
+    },
+    {
+      path: '/workbench',
       lazy: () => import('@/routes/CaeRoute'),
       ErrorBoundary: RouteErrorPage,
       hydrateFallbackElement: (

@@ -292,6 +292,9 @@ async def save_experiment(
     user: Any,
 ) -> dict[str, Any]:
     try:
+        if request.requestId or request.thumbnail is not None or request.preflightBatchId:
+            from service.experiment_save_assets import save_with_assets
+            return await save_with_assets(db, request, user)
         return await _save_experiment(db, request, user=user)
     except Exception:
         await db.rollback()
@@ -303,6 +306,7 @@ async def _save_experiment(
     request: SaveExperimentRequest,
     *,
     user: Any,
+    commit: bool = True,
 ) -> dict[str, Any]:
     source_bundle = _source_bundle_payload(request.sourceBundle)
     source_hash = _bundle_hash(source_bundle)
@@ -399,6 +403,8 @@ async def _save_experiment(
         if request.mode == "overwrite":
             await require_no_active_batches(db, [experiment.id])
             counts = (await _derived_counts(db, [experiment.id]))[experiment.id]
+            if not commit and counts["measurements"]:
+                raise _bad("Measurement가 있습니다. Save As에서 새 버전으로 저장하세요.", code=status.HTTP_409_CONFLICT)
             if source_hash != experiment.source_hash and _source_locked(counts):
                 raise _bad(
                     {
@@ -523,7 +529,8 @@ async def _save_experiment(
             ))
         await db.flush()
         counts = (await _derived_counts(db, [experiment.id]))[experiment.id]
-        await db.commit()
+        if commit:
+            await db.commit()
     except IntegrityError as error:
         await db.rollback()
         raise _bad("Experiment coordinate and version already exists.", code=status.HTTP_409_CONFLICT) from error
@@ -626,6 +633,7 @@ async def experiment_versions(
                 "version_patch": row.version_patch,
                 "name": row.name,
                 "description": row.description,
+                "thumbnail_url": row.thumbnail_url,
                 "source_bundle": row.source_bundle,
                 "source_hash": row.source_hash,
                 "repository": row.repository_slug,

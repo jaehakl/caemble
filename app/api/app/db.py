@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Text,
     UniqueConstraint,
@@ -141,6 +142,7 @@ class Experiment(TimestampMixin, Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_bundle: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result_contracts: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_hash: Mapped[str] = mapped_column(Text, nullable=False)
     code_embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(768),
@@ -278,6 +280,29 @@ class Measurement(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class ExperimentThumbnail(Base):
+    __tablename__ = "experiment_thumbnails"
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ExperimentSaveReceipt(Base):
+    __tablename__ = "experiment_save_receipts"
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    request_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class MeasurementSnapshot(Base):
+    __tablename__ = "measurement_snapshots"
+    measurement_id: Mapped[int] = mapped_column(ForeignKey("measurements.id", ondelete="CASCADE"), primary_key=True)
+    artifact: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    execution_trace: Mapped[list] = mapped_column(JSONB, nullable=False)
 
 
 class MeasurementVisualization(TimestampMixin, Base):

@@ -38,6 +38,7 @@ export const savedExperimentRecordSchema = z
     version_patch: z.number().int().nonnegative(),
     name: z.string(),
     description: z.string().nullable().optional(),
+    thumbnail_url: z.string().nullable().optional(),
     source_bundle: experimentSourceBundleSchema,
     source_hash: z.string(),
     repository: z.string().optional(),
@@ -55,6 +56,8 @@ export const savedExperimentRecordSchema = z
 
 const saveExperimentResponseSchema = z
   .object({
+    measurementId: databaseIdSchema.nullable().optional(),
+    thumbnail_url: z.string().nullable().optional(),
     id: databaseIdSchema,
     action: z.enum(['create', 'overwrite', 'new_version']),
     namespace: z.string(),

@@ -7,7 +7,7 @@ export function helpHref(kind: HelpKindId, item?: string | null, anchor?: string
   const params = new URLSearchParams({ help: kind })
   if (item) params.set('item', item)
   if (anchor) params.set('anchor', anchor)
-  return `/?${params}`
+  return `/workbench?${params}`
 }
 
 /** Resolve old public addresses without keeping a second documentation UI. */
