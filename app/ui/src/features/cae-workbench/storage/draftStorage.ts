@@ -7,7 +7,6 @@ import {
   analysisTabIds,
   bottomDockModes,
   defaultWorkbenchLayoutState,
-  experimentRightTabIds,
   measurementRightTabIds,
   workbenchSectionIds,
 } from '../types'
@@ -75,7 +74,6 @@ const storedDraftBaseSchema = z
           bottomHeightRatio: ratioSchema.catch(defaultWorkbenchLayoutState.bottomHeightRatio),
           viewerExpanded: z.boolean(),
           rightTabs: z.object({
-            experiment: z.enum(experimentRightTabIds).catch(defaultWorkbenchLayoutState.rightTabs.experiment),
             measurement: z.enum(measurementRightTabIds).catch(defaultWorkbenchLayoutState.rightTabs.measurement),
           }),
           analysisTab: z.enum(analysisTabIds).catch(defaultWorkbenchLayoutState.analysisTab),

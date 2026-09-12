@@ -1,14 +1,13 @@
 import { usePreflight } from '@/features/measurement/usePreflight'
 import { Rows3 } from 'lucide-react'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
 import { NotFoundView } from '@/features/error/NotFoundView'
 import {
   defaultWorkbenchSections,
   WorkbenchBottomDock,
+  WorkbenchConsoleLayout,
   WorkbenchMenubar,
   WorkbenchRibbon,
 } from '@/features/cae-workbench/chrome'
@@ -24,7 +23,7 @@ import type {
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
-import { createRuntimeConsoleStore, RuntimeConsoleView } from '@/features/runtime-console'
+import { createRuntimeConsoleStore, RuntimeConsoleSummary, RuntimeConsoleView } from '@/features/runtime-console'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { useSelectionSourceNavigation } from '@/features/cae-workbench/viewer/useSelectionSourceNavigation'
 import { WorkbenchShellProvider } from '@/workbench/state/workbenchShellStore'
@@ -34,7 +33,6 @@ import type { AnalysisCommand } from '@/features/analysis/AnalysisPage'
 import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
 import { useCaeBatchConsole } from '@/features/cae/useCaeBatchConsole'
 import { CaeWorkbenchDialogs } from '@/features/cae-workbench/CaeWorkbenchDialogs'
-import { ExperimentDetail } from '@/features/cae-workbench/WorkbenchDetails'
 import {
   useCaePageChrome,
   type AnalysisRibbonCommand,
@@ -275,7 +273,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const contextualRightPane =
     page.activeSection === 'experiment' ? (
-      <div className="flex h-full min-h-0 flex-col">
+      <div aria-label="Experiment source workspace" className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b p-2 text-xs">
           {preflight.result ? (
             <button type="button" onClick={preflight.clear}>
@@ -289,43 +287,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             </span>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1">
-          <PaneTabs
-            label="Experiment"
-            options={[
-              { id: 'source', label: 'Source' },
-              { id: 'detail', label: 'Detail' },
-            ]}
-            value={page.rightTabs.experiment}
-            onValueChange={(experiment) =>
-              page.setLayout((current) => ({
-                ...current,
-                rightTabs: { ...current.rightTabs, experiment: experiment as 'source' | 'detail' },
-              }))
+        <div className="min-h-0 w-full min-w-0 flex-1">
+          <ExperimentEditor
+            controller={workbench.experimentDocument}
+            disabled={
+              !page.initialized ||
+              saveWorkflow.busy ||
+              Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
+              workbench.measurementActions.busy ||
+              workbench.calculationDataActions.busy ||
+              workbench.saving !== null
             }
-            panels={{
-              source: (
-                <ExperimentEditor
-                  controller={workbench.experimentDocument}
-                  disabled={
-                    !page.initialized ||
-                    saveWorkflow.busy ||
-                    Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
-                    workbench.measurementActions.busy ||
-                    workbench.calculationDataActions.busy ||
-                    workbench.saving !== null
-                  }
-                  document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
-                  initialActiveFile={page.activeExperimentFile}
-                  onActiveFileChange={page.setActiveExperimentFile}
-                  onAuthoringStateChange={setExperimentAuthoringState}
-                  onSourceRevealRequestHandled={handleSourceRevealRequestHandled}
-                  onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
-                  sourceRevealRequest={sourceRevealRequest}
-                />
-              ),
-              detail: <ExperimentDetail workbench={workbench} />,
-            }}
+            document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
+            initialActiveFile={page.activeExperimentFile}
+            onActiveFileChange={page.setActiveExperimentFile}
+            onAuthoringStateChange={setExperimentAuthoringState}
+            onSourceRevealRequestHandled={handleSourceRevealRequestHandled}
+            onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
+            sourceRevealRequest={sourceRevealRequest}
           />
         </div>
       </div>
@@ -346,7 +325,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     ) : null
 
   const rightPane = (
-    <div className="h-full min-h-0 overflow-hidden">
+    <div className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden">
       <div
         className={page.activeSection === 'prediction' ? 'hidden' : 'h-full min-h-0'}
         hidden={page.activeSection === 'prediction'}
@@ -430,152 +409,88 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       mode={page.bottomMode}
       onModeChange={(bottomMode) => page.setLayout((current) => ({ ...current, bottomMode }))}
       console={<RuntimeConsoleView store={runtimeConsole} />}
+      summary={<RuntimeConsoleSummary store={runtimeConsole} />}
     />
   )
 
   return (
     <main className="flex h-full min-h-[560px] min-w-[1280px] flex-col overflow-hidden bg-background text-foreground">
-      <div aria-busy={!page.initialized} className="relative min-h-0 flex-1" inert={!page.initialized}>
-        <div className="h-full min-h-0">
-          {page.activeSection === 'experiment' ? (
-            <ExperimentWorkspace
-              menubar={menubar}
-              ribbon={ribbon}
-              viewer={viewerPane}
-              editor={rightPane}
-              bottom={bottomDock}
-              expanded={page.viewerExpanded}
-              bottomVisible={page.bottomMode !== 'hidden'}
-              bottomRatio={page.layout.bottomHeightRatio}
-              onBottomRatioChange={(bottomHeightRatio) =>
-                page.setLayout((current) => ({ ...current, bottomHeightRatio }))
-              }
-            />
-          ) : page.activeSection === 'measurement' ? (
-            <CalculationWorkbenchContainer
-              authenticated={auth.isAuthenticated}
-              dataReadable={experimentDataReadable}
-              bottom={bottomDock}
-              busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
-              calculationDataBusy={workbench.calculationDataActions.busy}
-              candidateEditingDisabled={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
-              candidateSessionKey={`${workbench.experimentId ?? 'none'}`}
-              candidateVars={workbench.candidateVars}
-              contextPending={workbench.selectionRestoring}
-              persistable={calculationAccess.persistable}
-              sourceEditable={calculationAccess.sourceEditable}
-              experimentId={workbench.experimentId}
-              measurementId={workbench.selection.measurement?.id ?? null}
-              measurementLoading={workbench.selection.loading}
-              measurementSelectionPending={workbench.selectionRestoring}
-              menubar={menubar}
-              onActivity={runtimeConsole.append}
-              onCandidateVariableChange={workbench.setCandidateVariable}
-              onCalculationSelectionChange={workbench.selectCalculation}
-              onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
-              onDirtyChange={setCalculationDirty}
-              onRequestLogin={requestAccount}
-              onSaveStateChange={setCalculationSaveState}
-              onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
-              onClearMeasurement={workbench.selection.clearMeasurement}
-              onUsageChanged={workbench.refreshExperimentUsage}
-              publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}
-              recordedData={activeFlatRecordedData}
-              recordedRules={activeRecordedRules}
-              ribbon={ribbon}
-              saveCommand={calculationSaveCommand}
-              selectedCalculationId={workbench.selectionContext.calculationId}
-              varsSchema={workbench.experimentDocument.varsSchema}
-              viewer={viewerPane}
-            />
-          ) : (
-            <WorkbenchShellContainer
-              bottom={bottomDock}
-              className="h-full min-h-0"
-              left={leftPane}
-              leftLabel={`${page.activeSection} 목록 및 설정`}
-              menubar={menubar}
-              ribbon={ribbon}
-              right={rightPane}
-              rightLabel={`${page.activeSection} Detail`}
-              viewer={viewerPane}
-            />
-          )}
-        </div>
-        {!page.initialized ? (
-          <div
-            aria-label="작업공간 복원 중"
-            className="absolute inset-0 z-50 flex items-center justify-center bg-background/55 text-sm font-medium backdrop-blur-[1px]"
-            role="status"
-          >
-            로컬 작업공간을 복원하는 중입니다.
+      <WorkbenchConsoleLayout
+        console={bottomDock}
+        heightRatio={page.layout.bottomHeightRatio}
+        mode={page.bottomMode}
+        onHeightRatioChange={(bottomHeightRatio) => page.setLayout((current) => ({ ...current, bottomHeightRatio }))}
+      >
+        <div aria-busy={!page.initialized} className="relative h-full min-h-0" inert={!page.initialized}>
+          <div className="h-full min-h-0">
+            {page.activeSection === 'experiment' ? (
+              <ExperimentWorkspace
+                menubar={menubar}
+                ribbon={ribbon}
+                viewer={viewerPane}
+                editor={rightPane}
+                expanded={page.viewerExpanded}
+              />
+            ) : page.activeSection === 'measurement' ? (
+              <CalculationWorkbenchContainer
+                authenticated={auth.isAuthenticated}
+                dataReadable={experimentDataReadable}
+                busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
+                calculationDataBusy={workbench.calculationDataActions.busy}
+                candidateEditingDisabled={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
+                candidateSessionKey={`${workbench.experimentId ?? 'none'}`}
+                candidateVars={workbench.candidateVars}
+                contextPending={workbench.selectionRestoring}
+                persistable={calculationAccess.persistable}
+                sourceEditable={calculationAccess.sourceEditable}
+                experimentId={workbench.experimentId}
+                measurementId={workbench.selection.measurement?.id ?? null}
+                measurementLoading={workbench.selection.loading}
+                measurementSelectionPending={workbench.selectionRestoring}
+                menubar={menubar}
+                onActivity={runtimeConsole.append}
+                onCandidateVariableChange={workbench.setCandidateVariable}
+                onCalculationSelectionChange={workbench.selectCalculation}
+                onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
+                onDirtyChange={setCalculationDirty}
+                onRequestLogin={requestAccount}
+                onSaveStateChange={setCalculationSaveState}
+                onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
+                onClearMeasurement={workbench.selection.clearMeasurement}
+                onUsageChanged={workbench.refreshExperimentUsage}
+                publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}
+                recordedData={activeFlatRecordedData}
+                recordedRules={activeRecordedRules}
+                ribbon={ribbon}
+                saveCommand={calculationSaveCommand}
+                selectedCalculationId={workbench.selectionContext.calculationId}
+                varsSchema={workbench.experimentDocument.varsSchema}
+                viewer={viewerPane}
+              />
+            ) : (
+              <WorkbenchShellContainer
+                className="h-full min-h-0"
+                left={leftPane}
+                leftLabel={`${page.activeSection} 목록 및 설정`}
+                menubar={menubar}
+                ribbon={ribbon}
+                right={rightPane}
+                rightLabel={`${page.activeSection} Detail`}
+                viewer={viewerPane}
+              />
+            )}
           </div>
-        ) : null}
-      </div>
-      <footer className="flex h-7 shrink-0 items-center justify-between gap-3 overflow-hidden border-t bg-muted/35 px-3 text-[11px] whitespace-nowrap text-muted-foreground">
-        <span className="flex min-w-0 items-center gap-2 truncate">
-          <Badge className="h-5 max-w-[38vw] truncate rounded-sm px-1.5 font-mono">
-            {workbench.experimentCoordinate ?? 'local Experiment'}
-          </Badge>
-          {workbench.experimentVersion ? (
-            <Badge className="h-5 rounded-sm px-1.5">v{workbench.experimentVersion}</Badge>
-          ) : null}
-          {workbench.experimentIsDemo ? (
-            <Badge className="h-5 rounded-sm bg-primary px-1.5 text-primary-foreground">
-              {workbench.experimentManageable
-                ? 'Demo · 관리자 편집 가능'
-                : page.activeSection === 'measurement'
-                  ? 'Demo · 원본 데이터 읽기 전용 · Calculation 로컬 미리보기'
-                  : 'Demo · 읽기 전용'}
-            </Badge>
-          ) : null}
-          {workbench.experimentDirty ? (
-            <Badge className="h-5 rounded-sm bg-destructive px-1.5 text-white">Dirty</Badge>
-          ) : null}
-          {workbench.sourceLocked ? (
-            <Badge className="h-5 rounded-sm bg-amber-600 px-1.5 text-white">Locked</Badge>
-          ) : null}
-          {!workbench.hasTasks ? (
-            <Badge className="h-5 rounded-sm bg-muted px-1.5">Preview only · Task 없음</Badge>
-          ) : null}
-          <Badge className="h-5 rounded-sm px-1.5">
-            {workbench.selection.measurement
-              ? `Measurement #${workbench.selection.measurement.id} · ${workbench.selection.measurement.recorded_at ? 'Recorded' : 'Prepared'}`
-              : 'Candidate preview'}
-          </Badge>
-        </span>
-        {workbench.measurementActions.busy ? (
-          <span className="flex items-center gap-2">
-            {workbench.measurementActions.stage}
-            {workbench.measurementActions.cancelable ? (
-              <button
-                className="font-medium text-destructive"
-                type="button"
-                onClick={workbench.measurementActions.cancel}
-              >
-                취소
-              </button>
-            ) : null}
-          </span>
-        ) : workbench.calculationDataActions.busy ? (
-          <span className="flex items-center gap-2">
-            {workbench.calculationDataActions.progress?.stage}
-            <button
-              className="font-medium text-destructive"
-              type="button"
-              onClick={workbench.calculationDataActions.cancel}
+          {!page.initialized ? (
+            <div
+              aria-label="작업공간 복원 중"
+              className="absolute inset-0 z-50 flex items-center justify-center bg-background/55 text-sm font-medium backdrop-blur-[1px]"
+              role="status"
             >
-              취소
-            </button>
-          </span>
-        ) : (
-          <span>
-            {auth.isAuthenticated
-              ? auth.user?.display_name || auth.user?.email || 'Signed in'
-              : 'Local editing · 서버 기능은 로그인 필요'}
-          </span>
-        )}
-      </footer>
+              로컬 작업공간을 복원하는 중입니다.
+            </div>
+          ) : null}
+        </div>
+      </WorkbenchConsoleLayout>
 
       <CaeWorkbenchDialogs
         dialog={page.dialog}
@@ -610,44 +525,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         }}
       />
     </main>
-  )
-}
-
-function PaneTabs({
-  label,
-  onValueChange,
-  options,
-  panels,
-  value,
-}: {
-  label: string
-  onValueChange: (value: string) => void
-  options: readonly Readonly<{ id: string; label: string }>[]
-  panels: Readonly<Record<string, ReactNode>>
-  value: string
-}) {
-  return (
-    <Tabs className="flex h-full min-h-0 flex-col" value={value} onValueChange={onValueChange}>
-      <div className="flex h-9 shrink-0 items-center border-b px-2">
-        <TabsList aria-label={`${label} Detail 보기`} className="h-7">
-          {options.map((option) => (
-            <TabsTrigger className="h-6 px-2 text-xs" key={option.id} value={option.id}>
-              {option.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </div>
-      {options.map((option) => (
-        <TabsContent
-          className="mt-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
-          forceMount
-          key={option.id}
-          value={option.id}
-        >
-          {panels[option.id]}
-        </TabsContent>
-      ))}
-    </Tabs>
   )
 }
 

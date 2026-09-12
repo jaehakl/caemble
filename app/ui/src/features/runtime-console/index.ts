@@ -1,4 +1,4 @@
-export { RuntimeConsoleView } from './RuntimeConsoleView'
+export { RuntimeConsoleSummary, RuntimeConsoleView } from './RuntimeConsoleView'
 export {
   createRuntimeConsoleStore,
   RUNTIME_CONSOLE_MAX_BYTES,

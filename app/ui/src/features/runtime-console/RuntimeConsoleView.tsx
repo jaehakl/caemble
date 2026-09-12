@@ -48,11 +48,11 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
   }, [autoScroll, events])
 
   return (
-    <section aria-label="Runtime Console" className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2 text-xs">
+    <section aria-label="Runtime Console" className="flex h-full min-h-0 flex-col bg-white text-slate-900">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs">
         <select
           aria-label="Source 필터"
-          className="h-8 rounded border border-zinc-700 bg-zinc-900 px-2"
+          className="h-8 rounded border border-slate-300 bg-white px-2"
           value={source}
           onChange={(event) => setSource(event.target.value as RuntimeActivitySource | 'all')}
         >
@@ -65,7 +65,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
         </select>
         <select
           aria-label="Level 필터"
-          className="h-8 rounded border border-zinc-700 bg-zinc-900 px-2"
+          className="h-8 rounded border border-slate-300 bg-white px-2"
           value={level}
           onChange={(event) => setLevel(event.target.value as RuntimeActivityLevel | 'all')}
         >
@@ -76,7 +76,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
         </select>
         <input
           aria-label="Runtime Console 검색"
-          className="h-8 min-w-44 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+          className="h-8 min-w-44 flex-1 rounded border border-slate-300 bg-white px-2 outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
           placeholder="메시지, phase, ID 검색"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -85,12 +85,12 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
           <input checked={autoScroll} type="checkbox" onChange={(event) => setAutoScroll(event.target.checked)} />
           자동 스크롤
         </label>
-        <span className="text-zinc-400">
+        <span className="text-slate-500">
           {snapshot.events.length} · {(snapshot.byteLength / 1024).toFixed(1)} KiB
         </span>
         <Button
           aria-label="Runtime Console 지우기"
-          className="text-zinc-200 hover:bg-zinc-800 hover:text-white"
+          className="text-slate-600 hover:bg-slate-200 hover:text-slate-900"
           disabled={!snapshot.events.length}
           size="sm"
           type="button"
@@ -103,7 +103,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
       </div>
       <div className="min-h-0 flex-1 overflow-auto font-mono text-xs" role="log" aria-live="polite">
         {events.length ? (
-          <ol aria-label="Runtime Console 이벤트" className="divide-y divide-zinc-900">
+          <ol aria-label="Runtime Console 이벤트" className="divide-y divide-slate-100">
             {events.map((event, index) => {
               const expanded = expandedEventIds.has(event.id)
               const contentId = `runtime-console-event-${index}`
@@ -116,7 +116,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
                     aria-controls={contentId}
                     aria-expanded={expanded}
                     aria-label={`${event.message} 이벤트 ${expanded ? '접기' : '펼치기'}`}
-                    className="mt-px flex size-4 items-center justify-center rounded text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:outline-none"
+                    className="mt-px flex size-4 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:outline-none"
                     type="button"
                     onClick={() =>
                       setExpandedEventIds((current) => {
@@ -132,7 +132,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
                       className={`size-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
                     />
                   </button>
-                  <span className="whitespace-nowrap text-zinc-400">{sourceLabels[event.source]}</span>
+                  <span className="whitespace-nowrap text-slate-500">{sourceLabels[event.source]}</span>
                   <div className="flex min-w-0 items-start gap-2" id={contentId}>
                     <p
                       className={
@@ -141,11 +141,11 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
                           : 'min-w-0 flex-1 truncate whitespace-nowrap'
                       }
                     >
-                      {event.phase ? <span className="mr-2 text-zinc-500">[{event.phase}]</span> : null}
+                      {event.phase ? <span className="mr-2 text-slate-400">[{event.phase}]</span> : null}
                       {event.message}
                     </p>
                     {event.progress !== undefined ? (
-                      <div className="flex shrink-0 items-center gap-2 text-zinc-400">
+                      <div className="flex shrink-0 items-center gap-2 text-slate-500">
                         <progress
                           aria-label={`${event.message} 진행률`}
                           className="h-1.5 w-28 accent-orange-500"
@@ -161,12 +161,44 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
             })}
           </ol>
         ) : (
-          <p className="px-3 py-6 text-center text-zinc-500">
+          <p className="px-3 py-6 text-center text-slate-400">
             {snapshot.events.length ? '필터와 일치하는 이벤트가 없습니다.' : 'Runtime 이벤트가 없습니다.'}
           </p>
         )}
         <div ref={endRef} />
       </div>
     </section>
+  )
+}
+
+export function RuntimeConsoleSummary({ store }: { store: RuntimeConsoleStore }) {
+  const { latestEvent } = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+
+  if (!latestEvent) {
+    return <span className="min-w-0 flex-1 truncate text-slate-400">Runtime 이벤트가 없습니다.</span>
+  }
+
+  return (
+    <span
+      aria-live="polite"
+      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      role="status"
+      title={`${sourceLabels[latestEvent.source]}${latestEvent.phase ? ` · [${latestEvent.phase}]` : ''} · ${latestEvent.message}`}
+    >
+      <span className="shrink-0 text-slate-500">{sourceLabels[latestEvent.source]}</span>
+      {latestEvent.phase ? <span className="shrink-0 text-slate-400">[{latestEvent.phase}]</span> : null}
+      <span className="min-w-0 flex-1 truncate text-slate-800">{latestEvent.message}</span>
+      {latestEvent.progress !== undefined ? (
+        <span className="flex shrink-0 items-center gap-2 text-slate-500">
+          <progress
+            aria-label={`${latestEvent.message} 진행률`}
+            className="h-1.5 w-28 accent-orange-500"
+            max={1}
+            value={latestEvent.progress}
+          />
+          <span className="w-8 text-right">{Math.round(latestEvent.progress * 100)}%</span>
+        </span>
+      ) : null}
+    </span>
   )
 }

@@ -9,6 +9,7 @@ export { EditorDock, type EditorDockTab } from './EditorDock'
 export { ResizableWorkbenchLayout } from './ResizableWorkbenchLayout'
 export { ResizableWorkbenchSplit } from './ResizableWorkbenchSplit'
 export { WorkbenchBottomDock } from './WorkbenchBottomDock'
+export { WorkbenchConsoleLayout } from './WorkbenchConsoleLayout'
 export { WorkbenchMenubar } from './WorkbenchMenubar'
 export {
   WorkbenchRibbon,

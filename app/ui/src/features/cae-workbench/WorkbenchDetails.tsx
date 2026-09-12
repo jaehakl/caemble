@@ -3,7 +3,13 @@ import { Badge } from '@/components/ui/badge'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { experimentTaskPaths } from '@/lib/cad/source'
 
-export function ExperimentDetail({ workbench }: { workbench: CaeWorkbenchState }) {
+export function ExperimentDetail({
+  workbench,
+  variant = 'panel',
+}: {
+  workbench: CaeWorkbenchState
+  variant?: 'panel' | 'dialog'
+}) {
   const record = workbench.experimentRecord
   const files = Object.keys(workbench.experiment?.sourceBundle.files ?? {}).sort()
   const tasks = workbench.experiment ? experimentTaskPaths(workbench.experiment.sourceBundle) : []
@@ -11,11 +17,22 @@ export function ExperimentDetail({ workbench }: { workbench: CaeWorkbenchState }
   const diagnostics = workbench.experimentDocument.diagnostics
 
   return (
-    <section aria-label="Experiment Detail" className="h-full overflow-auto bg-background p-4">
+    <section
+      aria-label="Experiment Detail"
+      className={variant === 'panel' ? 'h-full overflow-auto bg-background p-4' : 'bg-background p-5'}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-semibold tracking-wide text-primary uppercase">Experiment Detail</p>
-          <h2 className="mt-1 truncate text-lg font-semibold">{workbench.experimentName}</h2>
+          {variant === 'panel' ? (
+            <p className="text-xs font-semibold tracking-wide text-primary uppercase">Experiment Detail</p>
+          ) : null}
+          <h2
+            className={
+              variant === 'panel' ? 'mt-1 truncate text-lg font-semibold' : 'text-xl font-semibold break-words'
+            }
+          >
+            {workbench.experimentName}
+          </h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {workbench.experimentDescription || '등록된 설명이 없습니다.'}
           </p>

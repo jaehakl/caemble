@@ -2,11 +2,11 @@ import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWor
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 
 export function ExperimentPreview({ workbench }: { workbench: CaeWorkbenchState }) {
-  if (!workbench.experimentId)
+  if (!workbench.experiment)
     return <p className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Experiment를 선택하세요.</p>
   return (
     <WorkbenchViewer
-      key={`${workbench.experimentId}:${workbench.experimentDocument.resultSessionKey ?? ''}`}
+      key={`${workbench.workspaceSession}:${workbench.experimentDocument.resultSessionKey ?? ''}`}
       experiment={workbench.experiment}
       experimentDocument={workbench.experimentDocument}
       onFindSelectionSource={() => {}}

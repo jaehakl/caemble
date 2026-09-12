@@ -66,7 +66,6 @@ export function useSelectionSourceNavigation({
           ...current,
           activeExperimentFile: location.path,
           activeSection: 'experiment',
-          rightTabs: { ...current.rightTabs, experiment: 'source' },
           viewerExpanded: false,
         }))
       }

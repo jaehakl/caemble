@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { ResizeHandle } from '@/shared/layout/ResizeHandle'
 import { cn } from '@/lib/utils'
-import { workbenchLayoutLimits, type BottomDockMode } from '@/features/cae-workbench/types'
+import { workbenchLayoutLimits } from '@/features/cae-workbench/types'
 
 const handleSizePx = 8
 const columnMinimumPx = 190
@@ -18,7 +18,7 @@ const rowMinimumPx = 96
 
 type DragState = Readonly<{
   index: number
-  orientation: 'bottom' | 'horizontal' | 'vertical'
+  orientation: 'horizontal' | 'vertical'
   startClient: number
   startBeforePx: number
   startAfterPx: number
@@ -33,15 +33,11 @@ function normalizedRatios(values: readonly number[], fallback: readonly number[]
 }
 
 export function ResizableCalculationLayout({
-  bottom,
-  bottomHeightRatio,
-  bottomMode,
   calculationList,
   columnRatios,
   editor,
   measurementExplorer,
   onColumnRatiosChange,
-  onBottomHeightRatioChange,
   onRowRatiosChange,
   output,
   recordedDataSummary,
@@ -50,15 +46,11 @@ export function ResizableCalculationLayout({
   viewerExpanded = false,
   className,
 }: {
-  bottom: ReactNode
-  bottomHeightRatio: number
-  bottomMode: BottomDockMode
   calculationList: ReactNode
   columnRatios: readonly number[]
   editor: ReactNode
   measurementExplorer: ReactNode
   onColumnRatiosChange: (ratios: readonly number[]) => void
-  onBottomHeightRatioChange: (ratio: number) => void
   onRowRatiosChange: (ratios: readonly number[]) => void
   output: ReactNode
   recordedDataSummary: ReactNode
@@ -76,15 +68,6 @@ export function ResizableCalculationLayout({
   const availableHeight = Math.max(1, size.height - handleSizePx * 2)
   const columnPixels = columns.map((ratio) => ratio * availableWidth)
   const rowPixels = rows.map((ratio) => ratio * availableHeight)
-  const bottomMaximum = Math.max(
-    workbenchLayoutLimits.bottomMinHeightPx,
-    size.height - workbenchLayoutLimits.resizeHandlePx - workbenchLayoutLimits.viewerMinHeightPx,
-  )
-  const bottomHeight = Math.min(
-    bottomMaximum,
-    Math.max(workbenchLayoutLimits.bottomMinHeightPx, bottomHeightRatio * size.height),
-  )
-
   useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -104,15 +87,6 @@ export function ResizableCalculationLayout({
   useEffect(() => {
     if (!drag) return
     const move = (event: PointerEvent) => {
-      if (drag.orientation === 'bottom') {
-        onBottomHeightRatioChange(
-          Math.min(
-            bottomMaximum,
-            Math.max(workbenchLayoutLimits.bottomMinHeightPx, drag.startAfterPx - event.clientY + drag.startClient),
-          ) / size.height,
-        )
-        return
-      }
       const currentClient = drag.orientation === 'vertical' ? event.clientX : event.clientY
       const delta = currentClient - drag.startClient
       const pairTotal = drag.startBeforePx + drag.startAfterPx
@@ -141,16 +115,7 @@ export function ResizableCalculationLayout({
       window.removeEventListener('pointerup', stop)
       window.removeEventListener('pointercancel', stop)
     }
-  }, [
-    bottomMaximum,
-    columnPixels,
-    drag,
-    onBottomHeightRatioChange,
-    onColumnRatiosChange,
-    onRowRatiosChange,
-    rowPixels,
-    size.height,
-  ])
+  }, [columnPixels, drag, onColumnRatiosChange, onRowRatiosChange, rowPixels, size.height])
 
   const resizeWithKeyboard = (
     event: ReactKeyboardEvent<HTMLDivElement>,
@@ -196,25 +161,6 @@ export function ResizableCalculationLayout({
     })
   }
 
-  const resizeBottomWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 64 : 16
-    let next: number | null = null
-    if (event.key === 'ArrowDown') next = bottomHeight - step
-    if (event.key === 'ArrowUp') next = bottomHeight + step
-    if (event.key === 'Home') next = workbenchLayoutLimits.bottomMinHeightPx
-    if (event.key === 'End') next = bottomMaximum
-    if (next === null) return
-    event.preventDefault()
-    onBottomHeightRatioChange(
-      Math.min(bottomMaximum, Math.max(workbenchLayoutLimits.bottomMinHeightPx, next)) / size.height,
-    )
-  }
-
-  const viewerRows =
-    bottomMode === 'hidden'
-      ? `minmax(${workbenchLayoutLimits.viewerMinHeightPx}px, 1fr) ${workbenchLayoutLimits.bottomCollapsedHeightPx}px`
-      : `minmax(${workbenchLayoutLimits.viewerMinHeightPx}px, 1fr) ${handleSizePx}px ${bottomHeight}px`
-
   return (
     <div
       className={cn('grid min-h-0 flex-1 overflow-hidden bg-background', className)}
@@ -222,11 +168,7 @@ export function ResizableCalculationLayout({
       style={
         {
           gridTemplateColumns: `${columnPixels[0]}px ${handleSizePx}px ${columnPixels[1]}px ${handleSizePx}px ${columnPixels[2]}px ${handleSizePx}px minmax(${columnMinimumPx}px, ${columnPixels[3]}px)`,
-          minHeight: viewerExpanded
-            ? workbenchLayoutLimits.viewerMinHeightPx
-            : bottomMode === 'hidden'
-              ? workbenchLayoutLimits.viewerMinHeightPx + workbenchLayoutLimits.bottomCollapsedHeightPx
-              : workbenchLayoutLimits.viewerMinHeightPx + handleSizePx + workbenchLayoutLimits.bottomMinHeightPx,
+          minHeight: workbenchLayoutLimits.viewerMinHeightPx,
         } satisfies CSSProperties
       }
     >
@@ -263,35 +205,13 @@ export function ResizableCalculationLayout({
         />
       )}
       <section
-        aria-label="3D Viewer와 하단 도크"
-        className="grid min-h-0 min-w-0 overflow-hidden"
+        aria-label="3D Viewer"
+        className="min-h-0 min-w-0 overflow-hidden"
         style={{
           gridColumn: viewerExpanded ? '1 / 4' : undefined,
-          gridTemplateRows: viewerExpanded ? 'minmax(0, 1fr)' : viewerRows,
         }}
       >
-        <div className="min-h-0 min-w-0 overflow-hidden">{viewer}</div>
-        {!viewerExpanded && bottomMode !== 'hidden' ? (
-          <ResizeHandle
-            label="3D Viewer와 하단 도크 높이 조절"
-            orientation="horizontal"
-            onKeyDown={(event) => resizeBottomWithKeyboard(event)}
-            onPointerDown={(event) => {
-              if (event.button !== 0) return
-              event.preventDefault()
-              setDrag({
-                index: 0,
-                orientation: 'bottom',
-                startAfterPx: bottomHeight,
-                startBeforePx: size.height - handleSizePx - bottomHeight,
-                startClient: event.clientY,
-              })
-            }}
-          />
-        ) : null}
-        <div className="min-h-0 min-w-0 overflow-hidden" hidden={viewerExpanded}>
-          {bottom}
-        </div>
+        {viewer}
       </section>
       <ResizeHandle
         label="2번째 열 경계 조절"

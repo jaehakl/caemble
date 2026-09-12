@@ -66,7 +66,13 @@ vi.mock('@/features/cae-workbench/chrome', () => ({
       ))}
     </nav>
   ),
-  WorkbenchBottomDock: () => null,
+  WorkbenchBottomDock: ({ mode }: { mode: string }) => <output aria-label="Console mode">{mode}</output>,
+  WorkbenchConsoleLayout: ({ children, console: consoleContent }: { children: ReactNode; console: ReactNode }) => (
+    <>
+      {children}
+      {consoleContent}
+    </>
+  ),
   WorkbenchRibbon: ({
     activeSectionId,
     panels,
@@ -117,7 +123,7 @@ vi.mock('@/features/analysis/AnalysisPage', () => ({
 }))
 vi.mock('@/features/cae-workbench/dialogs', () => ({ ConfirmWorkbenchDialog: () => null }))
 vi.mock('@/features/cae-workbench/editors', () => ({
-  ExperimentEditor: () => null,
+  ExperimentEditor: () => <div data-testid="experiment-editor" />,
   SourcePathPickerDialog: () => null,
 }))
 vi.mock('@/features/experiment', () => ({ ExperimentManager: () => null }))
@@ -133,7 +139,11 @@ vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({
     )
   },
 }))
-vi.mock('@/features/runtime-console', () => ({ createRuntimeConsoleStore: () => ({}), RuntimeConsoleView: () => null }))
+vi.mock('@/features/runtime-console', () => ({
+  createRuntimeConsoleStore: () => ({}),
+  RuntimeConsoleSummary: () => null,
+  RuntimeConsoleView: () => null,
+}))
 vi.mock('./CalculationWorkbenchContainer', () => ({ CalculationWorkbenchContainer: () => null }))
 vi.mock('@/features/cae/CaeBatchPanel', () => ({ CaeBatchPanel: () => null }))
 vi.mock('@/features/jobs/JobsPage', () => ({ JobsWorkspace: () => null }))
@@ -148,6 +158,23 @@ beforeEach(() => {
 })
 
 describe('Workbench section navigation', () => {
+  it('fills the Experiment right pane with the Source editor and omits the retired Detail tabs', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    const sourceWorkspace = screen.getByLabelText('Experiment source workspace')
+    expect(sourceWorkspace).toHaveClass('w-full', 'min-w-0', 'flex-1')
+    expect(sourceWorkspace).toContainElement(screen.getByTestId('experiment-editor'))
+    expect(screen.queryByRole('tab', { name: 'Source' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Detail' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Experiment Detail')).not.toBeInTheDocument()
+  })
+
   it('keeps only authoring sections and preserves Prediction state across section changes', async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -156,6 +183,8 @@ describe('Workbench section navigation', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
+    expect(screen.getByLabelText('Console mode')).toHaveTextContent('hidden')
+    expect(screen.queryByText('Local editing · 서버 기능은 로그인 필요')).not.toBeInTheDocument()
     for (const retired of ['admin', 'lab', 'help', 'setting']) {
       expect(screen.queryByRole('button', { name: retired })).not.toBeInTheDocument()
     }

@@ -7,10 +7,10 @@ describe('createWorkbenchShellStore', () => {
     const first = createWorkbenchShellStore()
     const second = createWorkbenchShellStore()
 
-    first.getState().setDialog('examples')
+    first.getState().setDialog('templates')
     first.getState().setLayout((layout) => ({ ...layout, activeSection: 'analysis' }))
 
-    expect(first.getState().dialog).toBe('examples')
+    expect(first.getState().dialog).toBe('templates')
     expect(first.getState().layout.activeSection).toBe('analysis')
     expect(second.getState().dialog).toBeNull()
     expect(second.getState().layout).toEqual(defaultWorkbenchLayoutState)

@@ -2,10 +2,10 @@
 import type { UserData } from '@/api'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { SaveExperimentDialog } from '@/features/experiment/SaveExperimentDialog'
-import { LoadExperimentDialog } from '@/features/experiment/LoadExperimentDialog'
-import { ExamplesDialog } from '@/features/experiment/ExamplesDialog'
+import { TemplatesDialog } from '@/features/experiment/TemplatesDialog'
 import type { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSaveWorkflow'
 import type { WorkbenchDialog } from './caePageTypes'
+import { ExperimentInfoDialog } from './dialogs'
 
 export function CaeWorkbenchDialogs({ dialog, setDialog, workbench, user, saveWorkflow, guardReplacement, onSaved }: {
   dialog: WorkbenchDialog; setDialog: Dispatch<SetStateAction<WorkbenchDialog>>; workbench: CaeWorkbenchState
@@ -18,10 +18,11 @@ export function CaeWorkbenchDialogs({ dialog, setDialog, workbench, user, saveWo
       capture={saveWorkflow.capture} captureError={saveWorkflow.captureError} includePreflight={saveWorkflow.includePreflight}
       setIncludePreflight={saveWorkflow.setIncludePreflight} preflightId={saveWorkflow.preflightId} preflightReason={saveWorkflow.preflightReason}
       onClose={() => setDialog(null)} onSaved={onSaved} /> : null}
-    {dialog === 'load-experiment' ? <LoadExperimentDialog user={user} current={workbench.experimentRecord} onClose={() => setDialog(null)}
-      onApply={(row) => { setDialog(null); guardReplacement(() => workbench.loadExperiment(row)) }} /> : null}
-    {dialog === 'examples' ? <ExamplesDialog onClose={() => setDialog(null)} onApply={(row) => {
+    {dialog === 'templates' ? <TemplatesDialog user={user} onClose={() => setDialog(null)} onApply={(row) => {
       setDialog(null); guardReplacement(() => workbench.newExperiment(row.sourceBundle, row.title, row.description, row.calculations))
     }} /> : null}
+    {dialog === 'experiment-info' ? (
+      <ExperimentInfoDialog workbench={workbench} onClose={() => setDialog(null)} />
+    ) : null}
   </>
 }

@@ -27,7 +27,6 @@ import type { CalculationSaveState } from '@/features/calculation'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
-import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 
@@ -145,15 +144,15 @@ export function useCaePageChrome({
         id: 'new-experiment',
         label: 'New',
         icon: <FlaskConical />,
-        onSelect: () =>
-          guardReplacement(() => {
-            workbench.newExperiment(
-              starterExperimentSourceBundle,
-              'Starter Experiment',
-              '로컬에서 즉시 편집할 수 있는 Starter Box Experiment입니다.',
-            )
-            setActiveSection('experiment')
-          }),
+        onSelect: () => setDialog('templates'),
+      },
+      experimentInfo: {
+        id: 'experiment-info',
+        label: 'Info',
+        icon: <Info />,
+        disabled: !workbench.experiment,
+        disabledReason: !workbench.experiment ? 'Experiment source가 없습니다.' : undefined,
+        onSelect: () => setDialog('experiment-info'),
       },
       editDemoCopy: {
         id: 'edit-demo-copy',
@@ -170,13 +169,6 @@ export function useCaePageChrome({
             workbench.newExperiment(demo.source_bundle, `${demo.name} Copy`, demo.description ?? '')
             setActiveSection('experiment')
           }),
-      },
-      examples: { id: 'examples', label: 'Examples', icon: <Beaker />, onSelect: () => setDialog('examples') },
-      loadExperiment: {
-        id: 'load-experiment',
-        label: 'Load',
-        icon: <Download />,
-        onSelect: () => setDialog('load-experiment'),
       },
       saveExperiment: {
         id: 'save-experiment',
@@ -522,11 +514,11 @@ export function useCaePageChrome({
     }
 
     if (fileBusy) {
-      for (const name of ['newExperiment', 'examples', 'loadExperiment', 'saveExperiment', 'saveExperimentAs'])
+      for (const name of ['newExperiment', 'saveExperiment', 'saveExperimentAs'])
         defined[name] = { ...defined[name], disabled: true }
     }
     if (!sourceLockReason) return defined
-    const locked = new Set(['newExperiment', 'examples', 'loadExperiment', 'saveExperiment', 'saveExperimentAs'])
+    const locked = new Set(['newExperiment', 'saveExperiment', 'saveExperimentAs'])
     return Object.fromEntries(
       Object.entries(defined).map(([key, action]) => [
         key,
@@ -574,13 +566,14 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions
               actions={[
                 actions.newExperiment,
-                actions.examples,
-                actions.loadExperiment,
                 ...(workbench.experimentIsDemo ? [actions.editDemoCopy] : []),
                 actions.saveExperiment,
                 actions.saveExperimentAs,
               ]}
             />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Info">
+            <WorkbenchRibbonActions actions={[actions.experimentInfo]} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Candidate">
             <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />

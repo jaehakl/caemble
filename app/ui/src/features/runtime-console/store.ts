@@ -23,6 +23,7 @@ const encoder = new TextEncoder()
 export type RuntimeConsoleSnapshot = Readonly<{
   events: readonly RuntimeActivityEvent[]
   byteLength: number
+  latestEvent: RuntimeActivityEvent | null
 }>
 
 export type RuntimeConsoleStore = Readonly<{
@@ -66,12 +67,20 @@ export function createRuntimeConsoleStore(dependencies: StoreDependencies = {}):
   const listeners = new Set<() => void>()
   let sequence = 0
   let sizes: number[] = []
-  let snapshot: RuntimeConsoleSnapshot = Object.freeze({ events: Object.freeze([]), byteLength: 0 })
+  let snapshot: RuntimeConsoleSnapshot = Object.freeze({
+    events: Object.freeze([]),
+    byteLength: 0,
+    latestEvent: null,
+  })
   const now = dependencies.now ?? Date.now
   const createId = dependencies.createId ?? (() => `runtime-${now()}-${++sequence}`)
 
-  const publish = (events: readonly RuntimeActivityEvent[], byteLength: number) => {
-    snapshot = Object.freeze({ events: Object.freeze(events), byteLength })
+  const publish = (
+    events: readonly RuntimeActivityEvent[],
+    byteLength: number,
+    latestEvent: RuntimeActivityEvent | null,
+  ) => {
+    snapshot = Object.freeze({ events: Object.freeze(events), byteLength, latestEvent })
     listeners.forEach((listener) => listener())
   }
 
@@ -100,26 +109,25 @@ export function createRuntimeConsoleStore(dependencies: StoreDependencies = {}):
     const nextEvents = [...snapshot.events]
     const nextSizes = [...sizes]
     if (replacementIndex >= 0) {
-      nextEvents[replacementIndex] = event
-      nextSizes[replacementIndex] = eventByteLength(event)
-    } else {
-      nextEvents.push(event)
-      nextSizes.push(eventByteLength(event))
+      nextEvents.splice(replacementIndex, 1)
+      nextSizes.splice(replacementIndex, 1)
     }
+    nextEvents.push(event)
+    nextSizes.push(eventByteLength(event))
     sizes = nextSizes
     let byteLength = sizes.reduce((total, size) => total + size, 0)
     while (nextEvents.length > RUNTIME_CONSOLE_MAX_EVENTS || byteLength > RUNTIME_CONSOLE_MAX_BYTES) {
       nextEvents.shift()
       byteLength -= sizes.shift() ?? 0
     }
-    publish(nextEvents, byteLength)
+    publish(nextEvents, byteLength, event)
     return event
   }
 
   const clear = () => {
     if (!snapshot.events.length) return
     sizes = []
-    publish([], 0)
+    publish([], 0, null)
   }
 
   return Object.freeze({

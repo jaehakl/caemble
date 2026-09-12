@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { MeasurementExplorer } from '@/features/measurement'
-import type { BottomDockMode, SavedMeasurement, WorkbenchCalculationSelection } from '@/features/cae-workbench/types'
+import type { SavedMeasurement, WorkbenchCalculationSelection } from '@/features/cae-workbench/types'
 import {
   analyzeCalculationDependencies,
   calculationExperimentRecordReference,
@@ -59,9 +59,6 @@ export type CalculationSaveState = Readonly<{
 export type CalculationWorkbenchProps = Readonly<{
   authenticated: boolean
   dataReadable: boolean
-  bottom: ReactNode
-  bottomHeightRatio: number
-  bottomMode: BottomDockMode
   busy: boolean
   calculationDataBusy: boolean
   candidateEditingDisabled: boolean
@@ -78,7 +75,6 @@ export type CalculationWorkbenchProps = Readonly<{
   menubar: ReactNode
   onActivity: RuntimeActivityCallback
   onCalculationSelectionChange: (selection: WorkbenchCalculationSelection) => boolean
-  onBottomHeightRatioChange: (ratio: number) => void
   onCandidateVariableChange: (key: string, value: Tensor) => void
   onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
   onDeleteMeasurements: (rows: readonly SavedMeasurement[]) => Promise<boolean>
@@ -106,9 +102,6 @@ export type CalculationWorkbenchProps = Readonly<{
 export function CalculationWorkbench({
   authenticated,
   dataReadable,
-  bottom,
-  bottomHeightRatio,
-  bottomMode,
   busy,
   calculationDataBusy,
   candidateEditingDisabled,
@@ -125,7 +118,6 @@ export function CalculationWorkbench({
   menubar,
   onActivity,
   onCalculationSelectionChange,
-  onBottomHeightRatioChange,
   onCandidateVariableChange,
   onColumnRatiosChange,
   onDeleteMeasurements,
@@ -746,9 +738,6 @@ export function CalculationWorkbench({
         {ribbon}
       </header>
       <ResizableCalculationLayout
-        bottom={bottom}
-        bottomHeightRatio={bottomHeightRatio}
-        bottomMode={bottomMode}
         calculationList={
           <section className="flex h-full min-h-0 flex-col gap-2 p-2" aria-label="Calculation 목록">
             <header className="flex shrink-0 items-center justify-between gap-2">
@@ -906,7 +895,6 @@ export function CalculationWorkbench({
           </section>
         }
         onColumnRatiosChange={(ratios) => onColumnRatiosChange(ratios as readonly [number, number, number, number])}
-        onBottomHeightRatioChange={onBottomHeightRatioChange}
         onRowRatiosChange={(ratios) => onRowRatiosChange(ratios as readonly [number, number, number])}
         output={
           <section className="flex h-full min-h-0 flex-col">

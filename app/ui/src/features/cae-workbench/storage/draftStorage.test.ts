@@ -44,6 +44,28 @@ describe('Workbench draft storage', () => {
     })
   })
 
+  it('ignores the retired Experiment Detail tab without discarding the saved layout', async () => {
+    const storageKey = workbenchDraftStorageKey('public')
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'public',
+        draft: {
+          ...draft,
+          layout: {
+            ...draft.layout,
+            rightTabs: { ...draft.layout.rightTabs, experiment: 'detail' },
+          },
+        },
+      }),
+    )
+
+    const restored = await loadWorkbenchDraft('public')
+    expect(restored?.layout.rightTabs).toEqual({ measurement: 'recorded-data' })
+    expect(restored?.experiment.name).toBe('Local draft')
+  })
+
   it.each(['material', 'admin', 'lab', 'help', 'setting'])(
     'restores the retired %s section as Experiment without discarding the draft',
     async (activeSection) => {
