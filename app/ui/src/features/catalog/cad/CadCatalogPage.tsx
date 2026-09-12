@@ -140,7 +140,7 @@ export function GeometryCatalog({
                 )}
                 <a
                   className="mt-2 inline-block font-medium text-primary underline underline-offset-4"
-                  href="/?help=manual&item=reference-geometry-transforms"
+                  href="/doc?help=manual&item=reference-geometry-transforms"
                 >
                   좌표계·identity·migration 계약 보기
                 </a>

@@ -1,19 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { helpHref, legacyDocsHref, readHelpLocation } from './helpNavigation'
-import { publicDocuments } from './public'
+import { helpHref, readHelpLocation } from './helpNavigation'
 import { searchDocsKnowledge } from './knowledge'
 
 describe('Help addresses and search', () => {
-  it('resolves every published document anchor and alias to its stable ID', () => {
-    for (const page of publicDocuments) {
-      for (const anchor of [page.anchor, ...(page.aliases ?? [])]) {
-        expect(legacyDocsHref(`?section=${page.section}`, `#${anchor}`)).toBe(helpHref('manual', page.id))
-      }
-    }
-    expect(legacyDocsHref('?section=solvers&item=experiment:demo%401', '')).toBe(helpHref('examples', 'demo@1'))
-    expect(legacyDocsHref('?section=materials&item=a%2Fb%401', '')).toBe(helpHref('materials', 'a/b@1'))
-    expect(legacyDocsHref('?section=unknown', '')).toBe('/workbench?help=home')
-    expect(legacyDocsHref('?section=program', '#missing')).toBe(helpHref('manual', 'missing'))
+  it('builds canonical Documentation addresses', () => {
+    expect(helpHref('home')).toBe('/doc?help=home')
+    expect(helpHref('examples', 'demo@1')).toBe('/doc?help=examples&item=demo%401')
+    expect(helpHref('materials', 'a/b@1')).toBe('/doc?help=materials&item=a%2Fb%401')
   })
   it('round trips encoded items and heading anchors and leaves ordinary workbench addresses alone', () => {
     const href = helpHref('manual', 'example', '한글 / heading')
@@ -34,7 +27,7 @@ describe('Help addresses and search', () => {
           title: '제목',
           summary: '요약',
           keywords: [],
-          href: '/workbench?help=manual&item=test',
+          href: '/doc?help=manual&item=test',
           content: '본문검색전용 문장',
         },
       ]).map((p) => p.id),

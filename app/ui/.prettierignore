@@ -96,7 +96,6 @@ src/features/ai/workbenchContext.ts
 src/features/analysis/analysis-engine.ts
 src/features/analysis/analysis-types.ts
 src/features/analysis/analysis.worker.ts
-src/features/cae-workbench/CaeUtilityDialogs.tsx
 src/features/cae-workbench/CaeWorkbenchDialogs.tsx
 src/features/cae-workbench/GeometryAuthoringRibbon.tsx
 src/features/jobs/JobsPage.tsx

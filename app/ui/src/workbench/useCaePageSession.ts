@@ -25,12 +25,10 @@ export function useCaePageSession(
     authPending,
     queryScope,
     hasUnsavedCalculationWork = false,
-    allowAdminSection = null,
   }: {
     authPending: boolean
     queryScope: PrivateQueryScope
     hasUnsavedCalculationWork?: boolean
-    allowAdminSection?: boolean | null
   },
 ) {
   const queryClient = useQueryClient()
@@ -69,11 +67,6 @@ export function useCaePageSession(
     persistenceAvailable,
     workbench,
   }
-
-  useEffect(() => {
-    if (allowAdminSection !== false || layout.activeSection !== 'admin') return
-    setLayout((current) => ({ ...current, activeSection: 'experiment' }))
-  }, [allowAdminSection, layout.activeSection, setLayout])
 
   useEffect(() => {
     if (navigationBlocker.state !== 'blocked') return

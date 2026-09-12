@@ -4,19 +4,30 @@ import { useAuth } from '@/features/auth/use-auth'
 import { caeBatches } from '@/api/cae'
 import type { CaeBatch } from '@/contracts/api/cae'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { useCaeBatches } from './CaeBatchProvider'
 import { describeCaeProgress } from './progress'
 import { resumeBrowserUpload } from './resumeUpload'
 
-export function CaeBatchPanel() {
+export function CaeBatchPanel({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { queryScope } = useAuth()
   // Account changes also discard local state from outstanding panel requests.
-  return <BatchPanel key={queryScope} />
+  return <BatchPanel className={className} compact={compact} key={queryScope} />
 }
 
-function BatchPanel() {
-  const { batches, connected, error, inspectedBatchId, loading, refresh, update, readPage, withProgress } =
-    useCaeBatches()
+function BatchPanel({ className, compact }: { className?: string; compact: boolean }) {
+  const {
+    batches,
+    connected,
+    error,
+    inspectBatch,
+    inspectedBatchId,
+    loading,
+    refresh,
+    update,
+    readPage,
+    withProgress,
+  } = useCaeBatches()
   const [selected, setSelected] = useState<string | null>(null)
   const selectionRef = useRef(selected)
   selectionRef.current = selected
@@ -43,7 +54,8 @@ function BatchPanel() {
     setSelected(inspectedBatchId)
     setDetail(null)
     setOffset(0)
-  }, [inspectedBatchId])
+    inspectBatch(null)
+  }, [inspectBatch, inspectedBatchId])
   useEffect(() => {
     if (!selected) return
     const controller = new AbortController()
@@ -109,7 +121,7 @@ function BatchPanel() {
   }
 
   return (
-    <section aria-label="CAE Jobs" className="h-full space-y-4 overflow-auto p-4">
+    <section aria-label="CAE Jobs" className={cn('h-full space-y-4 overflow-auto p-4', compact && 'p-3', className)}>
       <h2 className="font-semibold">CAE Jobs</h2>
       {!batches.length && !loading ? (
         <p className="text-sm text-muted-foreground">등록된 CAE 작업이 없습니다.</p>
@@ -129,8 +141,8 @@ function BatchPanel() {
           {actionError ?? error}
         </p>
       ) : null}
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <ul aria-label="CAE batch 목록" className="max-h-[55vh] space-y-2 overflow-y-auto">
+      <div className={cn('grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]', compact && 'sm:grid-cols-1')}>
+        <ul aria-label="CAE batch 목록" className={cn('max-h-[55vh] space-y-2 overflow-y-auto', compact && 'max-h-80')}>
           {batches.map((item) => (
             <li key={item.id}>
               <button
@@ -208,7 +220,10 @@ function BatchPanel() {
                   이 브라우저에 저장된 빌드 결과로 남은 업로드를 이어갑니다. 업로드가 모두 끝나면 작업이 시작됩니다.
                 </p>
               ) : null}
-              <ul aria-label="CAE 개별 작업" className="max-h-[42vh] space-y-2 overflow-y-auto">
+              <ul
+                aria-label="CAE 개별 작업"
+                className={cn('max-h-[42vh] space-y-2 overflow-y-auto', compact && 'max-h-80')}
+              >
                 {visibleJobs.map((job) => {
                   const progress = describeCaeProgress(job.progress)
                   return (

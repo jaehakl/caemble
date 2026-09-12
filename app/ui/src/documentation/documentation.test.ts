@@ -23,7 +23,7 @@ describe('shared documentation sources', () => {
       publicDocuments.map(({ id, section, anchor, aliases }) => ({ id, section, anchor, aliases: aliases ?? [] })),
     ).toEqual(navigation)
     for (const page of manualDocsKnowledge) {
-      expect(page.href).toBe(`/workbench?help=manual&item=${page.id}`)
+      expect(page.href).toBe(`/doc?help=manual&item=${page.id}`)
     }
   })
 
@@ -80,26 +80,13 @@ describe('shared documentation sources', () => {
       for (const match of text.replace(/`[^`\n]+`/g, '').matchAll(/\]\(([^\s)]+)\)/g)) {
         const href = match[1]
         if (/^[a-z][a-z\d+.-]*:/i.test(href)) continue
-        if (href.startsWith('/workbench?help=') || href.startsWith('/?help=')) {
+        if (href.startsWith('/doc?help=')) {
           const url = new URL(href, 'https://caemble.invalid')
           if (
             url.searchParams.get('help') === 'manual' &&
             !publicDocuments.some((page) => page.id === url.searchParams.get('item'))
           )
-            failures.push(`${file}: unknown Help document ${href}`)
-          continue
-        }
-        if (href.startsWith('/docs')) {
-          const url = new URL(href, 'https://caemble.invalid')
-          if (
-            url.hash &&
-            !publicDocuments.some(
-              (page) =>
-                page.section === url.searchParams.get('section') &&
-                [page.anchor, ...(page.aliases ?? [])].includes(decodeURIComponent(url.hash.slice(1))),
-            )
-          )
-            failures.push(`${file}: unknown web anchor ${href}`)
+            failures.push(`${file}: unknown Documentation document ${href}`)
           continue
         }
         if (href.startsWith('/')) continue

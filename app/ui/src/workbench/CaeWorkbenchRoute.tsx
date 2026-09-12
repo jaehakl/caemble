@@ -1,5 +1,4 @@
 import { usePreflight } from '@/features/measurement/usePreflight'
-import { useQueryClient } from '@tanstack/react-query'
 import { Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router'
@@ -26,37 +25,23 @@ import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkb
 import type { AnalysisTabId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { createRuntimeConsoleStore, RuntimeConsoleView } from '@/features/runtime-console'
-import { runtimeQueryKeys } from '@/features/runtime/queryKeys'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { useSelectionSourceNavigation } from '@/features/cae-workbench/viewer/useSelectionSourceNavigation'
 import { WorkbenchShellProvider } from '@/workbench/state/workbenchShellStore'
 import { CalculationWorkbenchContainer } from '@/workbench/CalculationWorkbenchContainer'
 import { WorkbenchShellContainer } from '@/workbench/WorkbenchShellContainer'
-import type { AiChatCommand } from '@/features/ai/AiChatPage'
 import type { AnalysisCommand } from '@/features/analysis/AnalysisPage'
-import { CaeBatchPanel } from '@/features/cae/CaeBatchPanel'
 import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
 import { useCaeBatchConsole } from '@/features/cae/useCaeBatchConsole'
-import { JobsWorkspace } from '@/features/jobs/JobsPage'
-import { LaunchersWorkspace } from '@/features/launchers/LaunchersPage'
 import { CaeWorkbenchDialogs } from '@/features/cae-workbench/CaeWorkbenchDialogs'
-import { AdminWorkspace } from '@/features/cae-workbench/AdminWorkspace'
 import { ExperimentDetail } from '@/features/cae-workbench/WorkbenchDetails'
-import { helpHref, readHelpLocation } from '@/documentation/helpNavigation'
-const HelpWorkspace = lazy(() =>
-  import('@/features/help/HelpWorkspace').then((module) => ({ default: module.HelpWorkspace })),
-)
 import {
   useCaePageChrome,
   type AnalysisRibbonCommand,
-  type LabRibbonCommand,
   type PredictionRibbonCommand,
 } from '@/features/cae-workbench/useCaePageChrome'
 import { useCaePageSession } from '@/workbench/useCaePageSession'
 
-const AiChatWorkspace = lazy(() =>
-  import('@/features/ai/AiChatPage').then((module) => ({ default: module.AiChatWorkspace })),
-)
 const AnalysisWorkspace = lazy(() =>
   import('@/features/analysis/AnalysisPage').then((module) => ({ default: module.AnalysisWorkspace })),
 )
@@ -84,9 +69,6 @@ function AuthenticatedCaePage() {
 function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const helpLocation = useMemo(() => readHelpLocation(location.search), [location.search])
-  const helpOpen = helpLocation !== null
-  const queryClient = useQueryClient()
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
   const preflight = usePreflight(
@@ -110,59 +92,21 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     authPending: auth.isPending,
     queryScope: auth.queryScope,
     hasUnsavedCalculationWork: calculationDirty,
-    allowAdminSection: auth.isPending ? null : Boolean(auth.user?.roles.includes('admin')),
   })
   const viewerCaptureRef = useRef<HTMLDivElement | null>(null)
   const saveWorkflow = useExperimentSaveWorkflow(workbench, preflight, viewerCaptureRef, page.setDialog)
   const setLayout = page.setLayout
-  const { inspectedBatchId, inspectBatch } = useCaeBatches()
-  const [settingTab, setSettingTab] = useState('launchers')
-  useCaeBatchConsole(runtimeConsole, page.bottomMode === 'console' && page.activeSection !== 'admin')
+  const { inspectedBatchId } = useCaeBatches()
+  useCaeBatchConsole(runtimeConsole, page.bottomMode === 'console')
   useEffect(() => {
     if (!inspectedBatchId) return
-    setSettingTab('cae-jobs')
-    setLayout((current) => ({ ...current, activeSection: 'setting' }))
-  }, [inspectedBatchId, setLayout])
-  const currentSection = page.activeSection === 'help' ? 'prediction' : page.activeSection
-  const navigateHelp = useCallback(
-    (href: string) => {
-      const target = new URL(href, window.location.origin)
-      const params = new URLSearchParams(location.search)
-      for (const key of ['help', 'item', 'anchor']) params.delete(key)
-      target.searchParams.forEach((value, key) => params.set(key, value))
-      navigate({ pathname: '/workbench', search: `?${params}`, hash: '' })
-    },
-    [location.search, navigate],
-  )
-  const closeHelp = useCallback(() => {
-    const params = new URLSearchParams(location.search)
-    for (const key of ['help', 'item', 'anchor']) params.delete(key)
-    navigate({ pathname: '/workbench', search: params.toString() ? `?${params}` : '', hash: '' })
-  }, [location.search, navigate])
-  useEffect(() => {
-    if (!page.initialized) return
-    if (page.activeSection === 'help') {
-      setLayout((current) => ({ ...current, activeSection: 'prediction' }))
-      if (!helpOpen) navigateHelp(helpHref(page.help.kind, page.help.item))
-    }
-    if (helpLocation && (page.help.kind !== helpLocation.kind || page.help.item !== helpLocation.item)) {
-      setLayout((current) => ({ ...current, help: { kind: helpLocation.kind, item: helpLocation.item } }))
-    }
-  }, [
-    page.initialized,
-    page.activeSection,
-    page.help.kind,
-    page.help.item,
-    helpOpen,
-    helpLocation,
-    setLayout,
-    navigateHelp,
-  ])
+    navigate('/settings')
+  }, [inspectedBatchId, navigate])
+  const currentSection = page.activeSection
   const guardReplacement = page.guardReplacement
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
   const [predictionVarsContainer, setPredictionVarsContainer] = useState<HTMLDivElement | null>(null)
-  const [chatSettingsContainer, setChatSettingsContainer] = useState<HTMLDivElement | null>(null)
   const [analysisCommand, setAnalysisCommand] = useState<AnalysisCommand | null>(null)
   const [predictionCommand, setPredictionCommand] = useState<PredictionWorkspaceCommand | null>(null)
   const [predictionState, setPredictionState] = useState<PredictionWorkspaceChromeState>({
@@ -173,8 +117,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     status: 'Prediction을 준비하는 중입니다.',
     validateDisabledReason: 'Prediction 결과가 필요합니다.',
   })
-  const [chatCommand, setChatCommand] = useState<AiChatCommand | null>(null)
-  const [labActivated, setLabActivated] = useState(false)
   const [predictionActivated, setPredictionActivated] = useState(false)
   const commandSequence = useRef(0)
   const selectionSourceFiles =
@@ -201,25 +143,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   })
 
   useEffect(() => {
-    if (page.activeSection === 'lab') setLabActivated(true)
     if (page.activeSection === 'prediction') setPredictionActivated(true)
   }, [page.activeSection])
 
   useEffect(() => {
     if (page.activeSection !== 'analysis') setAnalysisCommand(null)
     if (page.activeSection !== 'prediction') setPredictionCommand(null)
-    if (page.activeSection !== 'lab') setChatCommand(null)
   }, [page.activeSection])
 
   const setActiveSection = useCallback(
     (nextSection: WorkbenchSectionId) => {
-      if (nextSection === 'admin' && !auth.user?.roles.includes('admin')) return
-      if (nextSection === 'help') {
-        navigateHelp(helpHref(page.help.kind, page.help.item))
-        return
-      }
       const changeSection = () => {
-        if (helpOpen) closeHelp()
         setLayout((current) => ({ ...current, activeSection: nextSection }))
       }
       if (currentSection === 'measurement' && nextSection !== 'measurement' && calculationDirty) {
@@ -228,18 +162,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         changeSection()
       }
     },
-    [
-      auth.user?.roles,
-      calculationDirty,
-      currentSection,
-      guardReplacement,
-      setLayout,
-      helpOpen,
-      closeHelp,
-      navigateHelp,
-      page.help.kind,
-      page.help.item,
-    ],
+    [calculationDirty, currentSection, guardReplacement, setLayout],
   )
 
   const setAnalysisTab = useCallback(
@@ -249,18 +172,16 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const requestAnalysisCommand = useCallback((type: AnalysisRibbonCommand) => {
     setAnalysisCommand({ id: ++commandSequence.current, type })
   }, [])
-  const requestLabCommand = useCallback((type: LabRibbonCommand) => {
-    setChatCommand({ id: ++commandSequence.current, type })
-  }, [])
   const requestPredictionCommand = useCallback((type: PredictionRibbonCommand, sampleCount?: number) => {
     setPredictionCommand({ id: ++commandSequence.current, type, sampleCount })
   }, [])
   const requestCalculationSave = useCallback(() => {
     setCalculationSaveCommand((current) => current + 1)
   }, [])
-  const refreshRuntime = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: runtimeQueryKeys.all(auth.queryScope) })
-  }, [auth.queryScope, queryClient])
+  const requestAccount = useCallback(() => {
+    const returnTo = `${location.pathname}${location.search}`
+    navigate(`/account?returnTo=${encodeURIComponent(returnTo)}`)
+  }, [location.pathname, location.search, navigate])
 
   const chrome = useCaePageChrome({
     analysisTab: page.analysisTab,
@@ -270,12 +191,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     calculationSaveState,
     experimentAuthoringState,
     guardReplacement: page.guardReplacement,
-    refreshRuntime,
+    requestAccount,
     requestAnalysisCommand,
     requestCalculationSave,
     requestPredictionCommand,
     selectedCalculationId: workbench.selectionContext.calculationId,
-    requestLabCommand,
     requestRunSelected: page.requestRunSelected,
     runSafely: page.runSafely,
     setActiveSection,
@@ -308,7 +228,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             preflight.busy || !workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy
           }
           onClick={() => {
-            if (!auth.isAuthenticated) page.setDialog('account')
+            if (!auth.isAuthenticated) requestAccount()
             else void preflight.run()
           }}
         >
@@ -319,7 +239,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           className="rounded border px-3 py-1"
           disabled={preflight.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy}
           onClick={() => {
-            if (!auth.isAuthenticated) page.setDialog('account')
+            if (!auth.isAuthenticated) requestAccount()
             else void preflight.run(true)
           }}
         >
@@ -351,33 +271,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         className="h-full min-h-0 overflow-auto bg-background"
         ref={setAnalysisSettingsContainer}
       />
-    ) : page.activeSection === 'lab' ? (
-      <div key="chat-settings" className="h-full min-h-0 overflow-auto bg-background" ref={setChatSettingsContainer} />
-    ) : (
-      <PaneTabs
-        label="Setting"
-        options={[
-          { id: 'launchers', label: 'Launchers' },
-          { id: 'cae-jobs', label: 'CAE Jobs' },
-        ]}
-        value={settingTab}
-        onValueChange={(value) => {
-          setSettingTab(value)
-          inspectBatch(null)
-        }}
-        panels={{
-          launchers:
-            settingTab === 'launchers' ? (
-              <LaunchersWorkspace className="h-full" compact onRequestLogin={() => page.setDialog('account')} />
-            ) : null,
-          'cae-jobs': (
-            <p className="p-4 text-sm text-muted-foreground">
-              CAE 배치의 진행 상황을 확인하고 실패한 작업을 재시도하거나 배치를 취소할 수 있습니다.
-            </p>
-          ),
-        }}
-      />
-    )
+    ) : null
 
   const contextualRightPane =
     page.activeSection === 'experiment' ? (
@@ -445,21 +339,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           experimentId={workbench.experimentId}
           settingsContainer={analysisSettingsContainer}
           tab={page.analysisTab}
-          onRequestLogin={() => page.setDialog('account')}
+          onRequestLogin={requestAccount}
           onTabChange={setAnalysisTab}
         />
       </Suspense>
-    ) : page.activeSection === 'lab' ? null : settingTab === 'cae-jobs' ? (
-      <CaeBatchPanel />
-    ) : (
-      <JobsWorkspace className="h-full" compact onRequestLogin={() => page.setDialog('account')} />
-    )
+    ) : null
 
   const rightPane = (
     <div className="h-full min-h-0 overflow-hidden">
       <div
-        className={page.activeSection === 'lab' || page.activeSection === 'prediction' ? 'hidden' : 'h-full min-h-0'}
-        hidden={page.activeSection === 'lab' || page.activeSection === 'prediction'}
+        className={page.activeSection === 'prediction' ? 'hidden' : 'h-full min-h-0'}
+        hidden={page.activeSection === 'prediction'}
       >
         {contextualRightPane}
       </div>
@@ -482,24 +372,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                   page.setLayout((current) => ({ ...current, activeSection: 'prediction' }))
                 })
               }
-              onRequestLogin={() => page.setDialog('account')}
+              onRequestLogin={requestAccount}
               selectedCalculationId={workbench.selectionContext.calculationId}
               varsContainer={predictionVarsContainer}
               workbench={workbench}
-            />
-          </Suspense>
-        </div>
-      ) : null}
-      {labActivated ? (
-        <div
-          className={page.activeSection === 'lab' ? 'h-full min-h-0' : 'hidden'}
-          hidden={page.activeSection !== 'lab'}
-        >
-          <Suspense fallback={<PaneLoading label="AI Chat을 불러오는 중입니다." />}>
-            <AiChatWorkspace
-              command={chatCommand}
-              settingsContainer={chatSettingsContainer}
-              onRequestLogin={() => page.setDialog('account')}
             />
           </Suspense>
         </div>
@@ -543,16 +419,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   )
   const menubar = (
     <WorkbenchMenubar
-      activeSectionId={helpOpen ? 'help' : page.activeSection}
-      sections={defaultWorkbenchSections.filter(
-        (section) => section.id !== 'admin' || auth.user?.roles.includes('admin'),
-      )}
+      activeSectionId={page.activeSection}
+      sections={defaultWorkbenchSections}
       onActiveSectionChange={setActiveSection}
     />
   )
-  const ribbon = (
-    <WorkbenchRibbon activeSectionId={helpOpen ? 'help' : page.activeSection} panels={chrome.ribbonPanels} />
-  )
+  const ribbon = <WorkbenchRibbon activeSectionId={page.activeSection} panels={chrome.ribbonPanels} />
   const bottomDock = (
     <WorkbenchBottomDock
       mode={page.bottomMode}
@@ -562,25 +434,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   )
 
   return (
-    <main
-      className={`flex h-dvh min-h-[560px] flex-col overflow-hidden bg-background text-foreground ${helpOpen ? 'min-w-0' : 'min-w-[1280px]'}`}
-    >
+    <main className="flex h-full min-h-[560px] min-w-[1280px] flex-col overflow-hidden bg-background text-foreground">
       <div aria-busy={!page.initialized} className="relative min-h-0 flex-1" inert={!page.initialized}>
-        <div className={helpOpen ? 'hidden' : 'h-full min-h-0'} hidden={helpOpen}>
-          {page.activeSection === 'admin' && auth.user?.roles.includes('admin') ? (
-            <div className="flex h-full min-h-0 flex-col">
-              {menubar}
-              <AdminWorkspace
-                currentUser={auth.user}
-                onOpenExperiment={(row) =>
-                  page.guardReplacement(async () => {
-                    await workbench.loadExperiment(row)
-                    page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
-                  })
-                }
-              />
-            </div>
-          ) : page.activeSection === 'experiment' ? (
+        <div className="h-full min-h-0">
+          {page.activeSection === 'experiment' ? (
             <ExperimentWorkspace
               menubar={menubar}
               ribbon={ribbon}
@@ -617,7 +474,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               onCalculationSelectionChange={workbench.selectCalculation}
               onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
               onDirtyChange={setCalculationDirty}
-              onRequestLogin={() => page.setDialog('account')}
+              onRequestLogin={requestAccount}
               onSaveStateChange={setCalculationSaveState}
               onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
               onClearMeasurement={workbench.selection.clearMeasurement}
@@ -645,16 +502,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             />
           )}
         </div>
-        {helpOpen && helpLocation ? (
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="shrink-0 overflow-x-auto">{menubar}</div>
-            <div className="min-h-0 flex-1">
-              <Suspense fallback={<PaneLoading label="Help을 불러오는 중입니다." />}>
-                <HelpWorkspace {...helpLocation} onNavigate={navigateHelp} onClose={closeHelp} />
-              </Suspense>
-            </div>
-          </div>
-        ) : null}
         {!page.initialized ? (
           <div
             aria-label="작업공간 복원 중"

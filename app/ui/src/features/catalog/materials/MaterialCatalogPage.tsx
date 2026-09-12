@@ -155,7 +155,7 @@ export function MaterialModelDetail({
                 <Link
                   className="block rounded border p-2 text-xs hover:bg-primary/10"
                   key={`${requirement.solverName}@${requirement.solverVersion}:${requirement.role}:${index}`}
-                  to={`/?help=solvers&item=${encodeURIComponent(`${requirement.solverName}@${requirement.solverVersion}`)}`}
+                  to={`/doc?help=solvers&item=${encodeURIComponent(`${requirement.solverName}@${requirement.solverVersion}`)}`}
                 >
                   <code className="font-semibold text-primary">
                     {requirement.solverName}@{requirement.solverVersion}
@@ -203,7 +203,7 @@ function ModelParameterTree({
           {schema.quantityKind ? (
             <Link
               className="font-mono text-primary"
-              to={`/?help=quantity-kinds&item=${encodeURIComponent(schema.quantityKind)}`}
+              to={`/doc?help=quantity-kinds&item=${encodeURIComponent(schema.quantityKind)}`}
             >
               {schema.quantityKind}
             </Link>

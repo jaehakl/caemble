@@ -13,7 +13,7 @@ Work in the Caemble monorepo and read AGENTS.md first. The external agent owns i
 
 For a failure, retain stage, message, supplied file/range, source hash and job/measurement IDs. Follow diagnostic.experiment. Do not manufacture a line number for a policy failure that reports only a message. Rebuild after source or Catalog changes. A retry should refer to the same known input, or explicitly be a new experiment condition.
 
-Catalog data stays solely in app/catalog/caemble_catalog/catalog.sqlite3. Read it through the existing Catalog Python library; do not create a JSON/TS/Markdown copy or a separate Node SQLite adapter. User documentation is maintained as shared Markdown and displayed in Workbench Help and CLI; implementation and operations notes use the development and operations documents.
+Catalog data stays solely in app/catalog/caemble_catalog/catalog.sqlite3. Read it through the existing Catalog Python library; do not create a JSON/TS/Markdown copy or a separate Node SQLite adapter. User documentation is maintained as shared Markdown and displayed in Documentation and CLI; implementation and operations notes use the development and operations documents.
 
 Executable command sequence (PowerShell 7, from the repository root; Node >=24.14 and the checkout's CAE Python environment installed). Run each command only after the preceding command succeeds. Choose an actual Catalog Example key from the listing; quoted REPLACE values below are user selections, not Catalog identifiers. Output directories must be empty. Configure CAEMBLE_API_URL and a caemble-scope CAEMBLE_API_TOKEN in .env for server operations.
 

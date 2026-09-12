@@ -12,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
+import { useLocation } from 'react-router'
 import { dbTables, startGoogleLogin, type AccessKeyScope } from '@/api'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +29,7 @@ import { accessKeysQueryOptions } from '@/features/runtime/queryOptions'
 
 export function AccountWorkspace() {
   const auth = useAuth()
+  const location = useLocation()
   const logout = useLogout()
   const queryClient = useQueryClient()
   const [tokenName, setTokenName] = useState('')
@@ -36,6 +38,12 @@ export function AccountWorkspace() {
   const [createdSecret, setCreatedSecret] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const requestedReturnTo = new URLSearchParams(location.search).get('returnTo')
+  const requestedReturnUrl = requestedReturnTo ? new URL(requestedReturnTo, window.location.origin) : null
+  const returnTo =
+    requestedReturnUrl?.origin === window.location.origin
+      ? `${requestedReturnUrl.pathname}${requestedReturnUrl.search}${requestedReturnUrl.hash}`
+      : '/account'
   const tokens = useQuery(accessKeysQueryOptions(auth.queryScope, auth.isAuthenticated))
   const createToken = useMutation({
     mutationFn: () =>
@@ -85,12 +93,16 @@ export function AccountWorkspace() {
             </p>
           </CardHeader>
           <CardContent>
-            <Button className="w-full" size="lg" onClick={() => startGoogleLogin(window.location.href)}>
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={() => startGoogleLogin(new URL(returnTo, window.location.origin).href)}
+            >
               <Globe2 />
               Google로 계속하기
             </Button>
             <p className="mt-4 text-center text-xs leading-5 text-muted-foreground">
-              로그인 후 현재 CAE Workbench로 돌아옵니다.
+              로그인 후 요청한 Caemble 페이지로 돌아옵니다.
             </p>
           </CardContent>
         </Card>

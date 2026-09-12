@@ -6,7 +6,6 @@ import { LoadExperimentDialog } from '@/features/experiment/LoadExperimentDialog
 import { ExamplesDialog } from '@/features/experiment/ExamplesDialog'
 import type { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSaveWorkflow'
 import type { WorkbenchDialog } from './caePageTypes'
-import { CaeUtilityDialogs } from './CaeUtilityDialogs'
 
 export function CaeWorkbenchDialogs({ dialog, setDialog, workbench, user, saveWorkflow, guardReplacement, onSaved }: {
   dialog: WorkbenchDialog; setDialog: Dispatch<SetStateAction<WorkbenchDialog>>; workbench: CaeWorkbenchState
@@ -24,6 +23,5 @@ export function CaeWorkbenchDialogs({ dialog, setDialog, workbench, user, saveWo
     {dialog === 'examples' ? <ExamplesDialog onClose={() => setDialog(null)} onApply={(row) => {
       setDialog(null); guardReplacement(() => workbench.newExperiment(row.sourceBundle, row.title, row.description, row.calculations))
     }} /> : null}
-    <CaeUtilityDialogs dialog={dialog} setDialog={setDialog} />
   </>
 }

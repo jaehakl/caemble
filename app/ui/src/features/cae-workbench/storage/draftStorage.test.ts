@@ -44,28 +44,24 @@ describe('Workbench draft storage', () => {
     })
   })
 
-  it('restores the retired Material section as Help Material Model', async () => {
-    const storageKey = workbenchDraftStorageKey('public')
-    sessionStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
-        ownerScope: 'public',
-        draft: {
-          ...draft,
-          layout: {
-            ...draft.layout,
-            activeSection: 'material',
-            help: { kind: 'solvers', item: 'fdtd@2.0.0' },
-          },
-        },
-      }),
-    )
+  it.each(['material', 'admin', 'lab', 'help', 'setting'])(
+    'restores the retired %s section as Experiment without discarding the draft',
+    async (activeSection) => {
+      const storageKey = workbenchDraftStorageKey('public')
+      sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+          ownerScope: 'public',
+          draft: { ...draft, layout: { ...draft.layout, activeSection } },
+        }),
+      )
 
-    const restored = await loadWorkbenchDraft('public')
-    expect(restored?.layout.activeSection).toBe('help')
-    expect(restored?.layout.help).toEqual({ kind: 'materials', item: null })
-  })
+      const restored = await loadWorkbenchDraft('public')
+      expect(restored?.layout.activeSection).toBe('experiment')
+      expect(restored?.experiment.name).toBe('Local draft')
+    },
+  )
 
   it('round-trips a local draft and clears retired keys', async () => {
     sessionStorage.setItem('caemble:cae-workbench-draft', 'retired')

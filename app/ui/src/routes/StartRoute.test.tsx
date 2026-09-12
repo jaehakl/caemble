@@ -41,11 +41,8 @@ it('sends authenticated users to workbench', () => {
   mount()
   expect(screen.getByText('/workbench')).toBeInTheDocument()
 })
-it.each(['experiment=12', 'help=manual&item=workbench-quickstart'])(
-  'preserves legacy intent before auth: %s',
-  (query) => {
-    auth.isPending = true
-    mount(`/?${query}`)
-    expect(screen.getByText(`/workbench?${query}`)).toBeInTheDocument()
-  },
-)
+it('preserves an Experiment deep link before auth', () => {
+  auth.isPending = true
+  mount('/?experiment=12')
+  expect(screen.getByText('/workbench?experiment=12')).toBeInTheDocument()
+})

@@ -8,7 +8,6 @@ import {
   bottomDockModes,
   defaultWorkbenchLayoutState,
   experimentRightTabIds,
-  helpKindIds,
   measurementRightTabIds,
   workbenchSectionIds,
 } from '../types'
@@ -53,8 +52,8 @@ const storedDraftBaseSchema = z
       (value) => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return value
         const layout = value as Record<string, unknown>
-        if (layout.activeSection !== 'material') return value
-        return { ...layout, activeSection: 'help', help: { kind: 'materials', item: null } }
+        if (!['material', 'admin', 'lab', 'help', 'setting'].includes(String(layout.activeSection))) return value
+        return { ...layout, activeSection: 'experiment' }
       },
       z
         .object({
@@ -80,10 +79,6 @@ const storedDraftBaseSchema = z
             measurement: z.enum(measurementRightTabIds).catch(defaultWorkbenchLayoutState.rightTabs.measurement),
           }),
           analysisTab: z.enum(analysisTabIds).catch(defaultWorkbenchLayoutState.analysisTab),
-          help: z.object({
-            kind: z.enum(helpKindIds).catch(defaultWorkbenchLayoutState.help.kind),
-            item: z.string().nullable(),
-          }),
         })
         .passthrough(),
     ),

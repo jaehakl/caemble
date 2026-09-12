@@ -5,7 +5,7 @@ export function Component() {
   const auth = useAuth()
   const location = useLocation()
   const params = new URLSearchParams(location.search)
-  if (params.has('experiment') || params.has('help')) {
+  if (params.has('experiment')) {
     return <Navigate replace to={{ pathname: '/workbench', search: location.search, hash: location.hash }} />
   }
   if (auth.isPending)

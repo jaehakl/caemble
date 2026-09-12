@@ -12,7 +12,7 @@ describe('Workbench session policy', () => {
   it('preserves unrelated params and canonicalizes all retired Workbench params', () => {
     const next = writeWorkbenchUrlExperiment(
       new URLSearchParams(
-        'keep=yes&experiment=3&measurement=8&calculation=9&section=measurement&structure=3&sample=2&setup=1',
+        'keep=yes&experiment=3&measurement=8&calculation=9&section=measurement&structure=3&sample=2&setup=1&help=manual&item=old&anchor=title',
       ),
       7,
     )

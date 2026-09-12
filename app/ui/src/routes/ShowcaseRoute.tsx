@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import type { SavedExperimentRecord } from '@/api'
 import { useAuth } from '@/features/auth/use-auth'
@@ -13,7 +13,7 @@ export function Component() {
   const auth = useAuth()
   if (auth.isPending)
     return (
-      <div role="status" className="grid h-dvh place-items-center">
+      <div role="status" className="grid h-full place-items-center">
         로그인 상태를 확인하는 중…
       </div>
     )
@@ -50,13 +50,7 @@ function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     }
   }, [available.data, available.isSuccess, select])
   return (
-    <main className="flex min-h-dvh flex-col bg-background text-foreground lg:h-dvh lg:overflow-hidden">
-      <nav aria-label="페이지 이동" className="flex h-12 shrink-0 items-center justify-between border-b px-4">
-        <Link to="/">CAEMBLE</Link>
-        <Link className="rounded-md border px-3 py-1 text-sm" to="/workbench">
-          Workbench 열기
-        </Link>
-      </nav>
+    <main className="flex h-full min-h-0 flex-col bg-background text-foreground lg:overflow-hidden">
       <div className={`grid min-h-0 flex-1 ${expanded ? 'grid-cols-1' : 'lg:grid-cols-2'}`}>
         <div className={`${expanded ? 'hidden' : 'min-h-[400px] lg:min-h-0'} border-r`}>
           <ExperimentShowcase

@@ -14,7 +14,9 @@ export function writeWorkbenchUrlExperiment(current: URLSearchParams, experiment
   const next = new URLSearchParams(current)
   if (experimentId === null) next.delete('experiment')
   else next.set('experiment', String(experimentId))
-  ;['section', 'measurement', 'calculation', 'structure', 'sample', 'setup'].forEach((key) => next.delete(key))
+  ;['section', 'measurement', 'calculation', 'structure', 'sample', 'setup', 'help', 'item', 'anchor'].forEach((key) =>
+    next.delete(key),
+  )
   return next
 }
 

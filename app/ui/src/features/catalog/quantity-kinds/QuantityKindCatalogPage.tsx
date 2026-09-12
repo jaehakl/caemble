@@ -216,7 +216,7 @@ function QuantityDetail({
             <Link
               className="block rounded border p-2 font-mono text-xs text-primary hover:bg-primary/10"
               key={`${parameter.key}:${parameter.path}`}
-              to={`/?help=materials&item=${encodeURIComponent(parameter.key)}`}
+              to={`/doc?help=materials&item=${encodeURIComponent(parameter.key)}`}
             >
               {parameter.key}
               <span className="mt-1 block font-sans text-muted-foreground">
@@ -230,7 +230,7 @@ function QuantityDetail({
             <Link
               className="block rounded border p-2 text-xs hover:bg-primary/10"
               key={`${usage.solverName}@${usage.solverVersion}:${usage.path}:${index}`}
-              to={`/?help=solvers&item=${encodeURIComponent(`${usage.solverName}@${usage.solverVersion}`)}`}
+              to={`/doc?help=solvers&item=${encodeURIComponent(`${usage.solverName}@${usage.solverVersion}`)}`}
             >
               <code className="font-semibold text-primary">
                 {usage.solverName}@{usage.solverVersion}

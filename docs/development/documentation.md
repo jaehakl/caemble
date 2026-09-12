@@ -15,16 +15,16 @@ under `app/ui/src/authoring/guides.ts` to preserve its existing public contract.
 The web manual and CLI use the same resolved body. Keep IDs and web anchors stable
 when moving or renaming pages.
 
-Workbench Help is the only browser documentation surface. Its addresses are
-`/?help=home`, `/?help=manual&item=<document-id>`, and
-`/?help=<catalog-kind>&item=<catalog-key>`, with an optional `anchor` query for a
-heading within a document. The root router translates legacy `/docs` section,
-item, anchor and alias links; it does not mount a separate Docs page.
+Documentation is the browser documentation surface. Its addresses are
+`/doc?help=home`, `/doc?help=manual&item=<document-id>`, and
+`/doc?help=<catalog-kind>&item=<catalog-key>`, with an optional `anchor` query for
+a heading within a document. Historical `/docs` and Workbench Help addresses are
+unsupported.
 
 `documentation/helpNavigation.ts` owns address conversion and
 `documentation/knowledge.ts` connects searchable manual and Geometry content.
 `features/help/HelpWorkspace.tsx` presents task guides and lazy catalog views.
-Help navigation preserves the current Workbench panels and experiment address.
+Browser back and forward navigation changes content within the standalone route.
 
 `public.ts` registers authoring and manual pages for the web. `development.ts`
 registers development and operations pages for CLI access. Do not import that

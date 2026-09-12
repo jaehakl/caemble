@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MemoryRouter } from 'react-router'
@@ -41,14 +41,7 @@ vi.mock('./useCaePageSession', async () => {
 })
 vi.mock('@/features/calculation', () => ({ calculationAccessPolicy: () => ({}) }))
 vi.mock('@/features/cae-workbench/useCaePageChrome', () => ({
-  useCaePageChrome: ({ setHelpKind }: { setHelpKind: (kind: string) => void }) => ({
-    ribbonPanels: [
-      {
-        sectionId: 'help',
-        content: <button onClick={() => setHelpKind('materials')}>Material Model</button>,
-      },
-    ],
-  }),
+  useCaePageChrome: () => ({ ribbonPanels: [] }),
 }))
 vi.mock('@/features/cae-workbench/viewer/useSelectionSourceNavigation', () => ({
   useSelectionSourceNavigation: () => ({}),
@@ -57,7 +50,7 @@ vi.mock('@/features/cae/CaeBatchProvider', () => ({ useCaeBatches: () => ({ insp
 vi.mock('@/features/cae/useCaeBatchConsole', () => ({ useCaeBatchConsole: () => undefined }))
 vi.mock('@/lib/cad/model', () => ({ parsePolylineBundles: () => [] }))
 vi.mock('@/features/cae-workbench/chrome', () => ({
-  defaultWorkbenchSections: [{ id: 'prediction' }, { id: 'analysis' }, { id: 'lab' }, { id: 'help' }],
+  defaultWorkbenchSections: [{ id: 'experiment' }, { id: 'measurement' }, { id: 'prediction' }, { id: 'analysis' }],
   WorkbenchMenubar: ({
     sections,
     onActiveSectionChange,
@@ -122,31 +115,6 @@ vi.mock('@/features/analysis/AnalysisPage', () => ({
   AnalysisWorkspace: ({ settingsContainer }: { settingsContainer: HTMLDivElement | null }) =>
     settingsContainer ? createPortal(<section>Analysis settings</section>, settingsContainer) : null,
 }))
-vi.mock('@/features/ai/AiChatPage', () => ({
-  AiChatWorkspace: ({ settingsContainer }: { settingsContainer: HTMLDivElement | null }) =>
-    settingsContainer ? createPortal(<section>AI settings</section>, settingsContainer) : null,
-}))
-vi.mock('@/features/help/HelpWorkspace', () => ({
-  HelpWorkspace: ({
-    kind,
-    item,
-    onNavigate,
-    onClose,
-  }: {
-    kind: string
-    item: string | null
-    onNavigate: (href: string) => void
-    onClose: () => void
-  }) => (
-    <section aria-label="Help workspace">
-      <span>{kind}</span>
-      <span>{item}</span>
-      <button onClick={() => onNavigate('/?help=materials')}>Material Model</button>
-      <button onClick={() => onNavigate('/?help=materials&item=test.response%401')}>Select model</button>
-      <button onClick={onClose}>Close Help</button>
-    </section>
-  ),
-}))
 vi.mock('@/features/cae-workbench/dialogs', () => ({ ConfirmWorkbenchDialog: () => null }))
 vi.mock('@/features/cae-workbench/editors', () => ({
   ExperimentEditor: () => null,
@@ -179,8 +147,8 @@ beforeEach(() => {
   mocks.viewerMounts = 0
 })
 
-describe('Workbench portal navigation', () => {
-  it('uses Help for Material Model while preserving portal state across section changes', async () => {
+describe('Workbench section navigation', () => {
+  it('keeps only authoring sections and preserves Prediction state across section changes', async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <MemoryRouter>
@@ -188,34 +156,16 @@ describe('Workbench portal navigation', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
-    expect(screen.queryByRole('button', { name: 'material' })).not.toBeInTheDocument()
+    for (const retired of ['admin', 'lab', 'help', 'setting']) {
+      expect(screen.queryByRole('button', { name: retired })).not.toBeInTheDocument()
+    }
     fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
-    const left = within(screen.getByRole('complementary', { name: 'Left pane' }))
-    fireEvent.change(await left.findByLabelText('Candidate variable'), { target: { value: '11' } })
-    fireEvent.click(screen.getByRole('button', { name: 'help' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Material Model' }))
-    const help = within(await screen.findByRole('region', { name: 'Help workspace' }))
-    expect(await help.findByText('materials')).toBeInTheDocument()
-    fireEvent.click(help.getByRole('button', { name: 'Select model' }))
-    expect(await help.findByText('test.response@1')).toBeInTheDocument()
-    expect(left.getByLabelText('Candidate variable')).toHaveValue('11')
-    expect(left.getByLabelText('Candidate variable')).not.toBeVisible()
-    fireEvent.click(help.getByRole('button', { name: 'Close Help' }))
-    expect(left.getByLabelText('Candidate variable')).toHaveValue('11')
-    expect(left.getByLabelText('Candidate variable')).toBeVisible()
-
+    fireEvent.change(await screen.findByLabelText('Candidate variable'), { target: { value: '11' } })
     fireEvent.click(screen.getByRole('button', { name: 'analysis' }))
-    expect(await left.findByText('Analysis settings')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'lab' }))
-    expect(await left.findByText('AI settings')).toBeInTheDocument()
-    expect(left.queryByText('Analysis settings')).not.toBeInTheDocument()
+    expect(await screen.findByText('Analysis settings')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Candidate variable')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
-    await waitFor(() => expect(left.getByLabelText('Candidate variable')).toHaveValue('11'))
-    expect(left.queryByText('AI settings')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'help' }))
-    const restored = within(await screen.findByRole('region', { name: 'Help workspace' }))
-    expect(await restored.findByText('materials')).toBeInTheDocument()
-    expect(restored.getByText('test.response@1')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Candidate variable')).toHaveValue('11'))
   })
 })
 

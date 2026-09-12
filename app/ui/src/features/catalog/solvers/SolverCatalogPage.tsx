@@ -414,7 +414,7 @@ function SolverDetail({
                         </p>
                         <div className="flex flex-wrap gap-1">
                           {group.oneOf.map((key) => (
-                            <Link key={key} to={`/?help=materials&item=${encodeURIComponent(key)}`}>
+                            <Link key={key} to={`/doc?help=materials&item=${encodeURIComponent(key)}`}>
                               <Badge className="font-mono font-normal hover:bg-primary/15">{key}</Badge>
                             </Link>
                           ))}
@@ -502,7 +502,7 @@ function ArtifactRelations({
                   {peers.map((peer) => (
                     <Link
                       key={`${peer.solverName}@${peer.solverVersion}:${peer.label}`}
-                      to={`/?help=solvers&item=${encodeURIComponent(`${peer.solverName}@${peer.solverVersion}`)}`}
+                      to={`/doc?help=solvers&item=${encodeURIComponent(`${peer.solverName}@${peer.solverVersion}`)}`}
                     >
                       <Badge className="font-mono font-normal hover:bg-primary/15">
                         {peer.solverName}@{peer.solverVersion} · {peer.label}

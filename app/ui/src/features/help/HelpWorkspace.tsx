@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, BookOpenText, Menu, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpenText, Menu, Search } from 'lucide-react'
 import { createElement, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -9,7 +9,7 @@ import { CopyButton } from '@/components/CopyButton'
 import { catalogSearchQueryOptions } from '@/features/catalog/queryOptions'
 import { catalogSearchKnowledge, getDocsKnowledge, searchDocsKnowledge } from '@/documentation/knowledge'
 import { publicDocuments } from '@/documentation/public'
-import { helpHref, legacyDocsHref, type HelpKindId } from '@/documentation/helpNavigation'
+import { helpHref, type HelpKindId } from '@/documentation/helpNavigation'
 import { useDebouncedValue } from '@/shared/useDebouncedValue'
 
 const GeometryCatalog = lazy(() =>
@@ -76,13 +76,11 @@ export function HelpWorkspace({
   item,
   anchor,
   onNavigate,
-  onClose,
 }: {
   kind: HelpKindId
   item: string | null
   anchor: string | null
   onNavigate: (href: string) => void
-  onClose: () => void
 }) {
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -135,13 +133,13 @@ export function HelpWorkspace({
 
   const title =
     kind === 'home'
-      ? 'Help'
+      ? 'Documentation'
       : kind === 'manual'
         ? (document?.title ?? '매뉴얼')
         : catalogs.find((c) => c.kind === kind)?.label
   return (
     <section
-      aria-label="Workbench Help"
+      aria-label="Documentation"
       className="flex h-full min-h-0 flex-col bg-background text-foreground"
       onClickCapture={(event) => {
         if (
@@ -157,10 +155,7 @@ export function HelpWorkspace({
         const href = link?.getAttribute('href')
         if (!href || link?.getAttribute('target') === '_blank') return
         let target: string | undefined
-        if (href.startsWith('/docs')) {
-          const url = new URL(href, window.location.origin)
-          target = legacyDocsHref(url.search, url.hash)
-        } else if (href.startsWith('/?help=') || href.startsWith('/workbench?help=')) target = href
+        if (href.startsWith('/doc?help=')) target = href
         else if (href.startsWith('#') && document)
           target = helpHref(
             'manual',
@@ -180,7 +175,7 @@ export function HelpWorkspace({
     >
       <header className="flex shrink-0 items-center gap-3 border-b px-4 py-3">
         <Button
-          aria-label="Help 메뉴"
+          aria-label="Documentation 메뉴"
           className="lg:hidden"
           size="icon"
           variant="ghost"
@@ -191,12 +186,12 @@ export function HelpWorkspace({
         </Button>
         <button className="flex items-center gap-2 font-semibold" onClick={() => navigate(helpHref('home'))}>
           <BookOpenText className="size-5 text-primary" />
-          <span className="hidden sm:inline">Help</span>
+          <span className="hidden sm:inline">Documentation</span>
         </button>
         <label className="relative mx-auto w-full max-w-2xl">
           <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
           <Input
-            aria-label="Help 전체 검색"
+            aria-label="Documentation 전체 검색"
             type="search"
             placeholder="무엇을 하고 싶으신가요? 문서, 문법, 단위, Solver 검색"
             className="pl-9"
@@ -204,22 +199,18 @@ export function HelpWorkspace({
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
-        <Button aria-label="Help 닫기" size="sm" variant="ghost" onClick={onClose}>
-          <X className="size-4" />
-          <span className="hidden sm:inline">작업으로 돌아가기</span>
-        </Button>
       </header>
       <div className="relative flex min-h-0 flex-1">
         <aside
           className={`${menuOpen ? 'absolute inset-y-0 left-0 z-20 shadow-xl' : 'hidden'} w-64 shrink-0 overflow-auto border-r bg-background p-3 lg:static lg:block lg:shadow-none`}
         >
-          <nav aria-label="Help 탐색" className="space-y-4">
+          <nav aria-label="Documentation 탐색" className="space-y-4">
             <a
               href={helpHref('home')}
               aria-current={kind === 'home' ? 'page' : undefined}
               className="block rounded-md px-3 py-2 font-medium hover:bg-muted"
             >
-              Help 홈
+              Documentation 홈
             </a>
             {journeys.map((group) => (
               <details key={group.title} open={journey?.title === group.title}>
@@ -271,9 +262,13 @@ export function HelpWorkspace({
             </div>
           </nav>
         </aside>
-        <div ref={contentRef} className="min-w-0 flex-1 overflow-auto" aria-label="Help 본문">
+        <div ref={contentRef} className="min-w-0 flex-1 overflow-auto" aria-label="Documentation 본문">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3 text-xs text-muted-foreground">
-            <span>{kind === 'home' ? 'Help 홈' : `Help / ${journey?.title ? `${journey.title} / ` : ''}${title}`}</span>
+            <span>
+              {kind === 'home'
+                ? 'Documentation 홈'
+                : `Documentation / ${journey?.title ? `${journey.title} / ` : ''}${title}`}
+            </span>
             <CopyButton label="링크 복사" text={new URL(helpHref(kind, item, anchor), window.location.origin).href} />
           </div>
           {query.trim() ? (
@@ -469,7 +464,7 @@ export function HelpWorkspace({
                 <p className="my-3 text-muted-foreground">문서가 이동했거나 주소가 올바르지 않습니다.</p>
                 <Button onClick={() => navigate(helpHref('home'))}>
                   <ArrowLeft />
-                  Help 홈으로
+                  Documentation 홈으로
                 </Button>
               </div>
             )
