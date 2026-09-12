@@ -1,3 +1,5 @@
+import { assertBoxGridData, type BoxGridData } from '@/contracts/boxGrid'
+
 export const PREDICTION_PERSISTENT_ARRAY_LIMIT_BYTES = 192 * 1024 * 1024
 export const PREDICTION_WORKING_SET_LIMIT_BYTES = 256 * 1024 * 1024
 export const PREDICTION_NUMERIC_CELL_LIMIT = 10_000_000
@@ -39,6 +41,8 @@ export type PredictionTensorLayout = Readonly<{
   quantityKind?: string
   minimum?: number
   maximum?: number
+  boxGrid?: BoxGridData
+  frequencyOutput?: boolean
 }>
 
 export type PredictionTensorSample = Readonly<{
@@ -101,6 +105,7 @@ export type PredictionCohortOptions = Readonly<{
   fixedOutputLayouts?: readonly PredictionTensorLayout[]
   persistentArrayLimitBytes?: number
   workingSetLimitBytes?: number
+  nearestOnly?: boolean
 }>
 
 export type PredictionCohort = Readonly<{
@@ -142,6 +147,7 @@ export type PredictionKnnModel = Readonly<{
   measurementIds: Float64Array
   memory: PredictionMemoryEstimate
   cohort: PredictionCohortSummary
+  nearestOnly?: boolean
 }>
 
 export type PredictionNeighbor = Readonly<{
@@ -208,7 +214,7 @@ export function predictionTensorValueCount(layout: PredictionTensorLayout) {
   if (!Number.isSafeInteger(elementCount * componentCount)) {
     throw new PredictionModelError('invalid-data', 'Prediction tensor shape is too large.')
   }
-  return elementCount * componentCount
+  return elementCount * componentCount + (layout.frequencyOutput ? (layout.shape[4] ?? 0) : 0)
 }
 
 function validateLayout(layout: PredictionTensorLayout) {
@@ -216,6 +222,8 @@ function validateLayout(layout: PredictionTensorLayout) {
     throw new PredictionModelError('invalid-data', 'Prediction tensor key or dtype is invalid.')
   }
   predictionTensorValueCount(layout)
+  if (layout.boxGrid) assertBoxGridData(layout.boxGrid, layout.shape)
+  if (layout.frequencyOutput && layout.boxGrid?.frequencyKind !== 'modal') throw new PredictionModelError('invalid-data', 'Only modal Box Grids can infer frequency coordinates.')
   const tensorOrder = layout.tensorOrder ?? 0
   if (!Number.isSafeInteger(tensorOrder) || tensorOrder < 0 || tensorOrder > layout.shape.length) {
     throw new PredictionModelError('invalid-data', `Prediction tensor ${layout.key} has an invalid tensorOrder.`)
@@ -229,7 +237,7 @@ function validateLayout(layout: PredictionTensorLayout) {
   ) {
     throw new PredictionModelError('invalid-data', `Prediction tensor ${layout.key} has invalid bounds.`)
   }
-  const externalShape = layout.shape.slice(0, layout.shape.length - tensorOrder)
+  const externalShape = layout.boxGrid ? layout.shape : layout.shape.slice(0, layout.shape.length - tensorOrder)
   if (layout.axes !== undefined && layout.axes.length !== externalShape.length) {
     throw new PredictionModelError('invalid-data', `Prediction tensor ${layout.key} axes do not match its shape.`)
   }
@@ -371,7 +379,17 @@ function orderedSamples(
 }
 
 function predictionShapeSignature(layout: PredictionTensorLayout) {
-  return { key: layout.key, shape: [...layout.shape] }
+  const grid = layout.boxGrid
+  return {
+    key: layout.key,
+    shape: [...layout.shape],
+    ...(grid ? { boxGridContract: {
+      dtype: layout.dtype, quantityKind: layout.quantityKind, unit: layout.unit,
+      version: grid.version, sampling: grid.sampling, channels: grid.channels,
+      components: grid.components, channelUnits: grid.channelUnits, frequencyKind: grid.frequencyKind,
+      axes: layout.axes?.slice(3).map((axis, index) => ({ ...axis, ...(index === 1 && layout.frequencyOutput ? { ticks: undefined } : {}) })),
+    } } : {}),
+  }
 }
 
 type PendingDiagnostic = Omit<PredictionCohortDiagnosticGroup, 'direction' | 'measurementIds'> &
@@ -596,16 +614,18 @@ export function selectPredictionCohort(options: PredictionCohortOptions): Predic
         const samples = side === 'input' ? row.inputs : row.outputs
         const baselineSamples = side === 'input' ? baseline.inputs : baseline.outputs
         samples.forEach((sample, index) => {
-          if (JSON.stringify(sample.layout.shape) === JSON.stringify(baselineSamples[index].layout.shape)) return
+            const expectedLayout = baselineSamples[index].layout
+            if (JSON.stringify(predictionShapeSignature(sample.layout)) === JSON.stringify(predictionShapeSignature(expectedLayout))) return
+            const shapeMatches = JSON.stringify(sample.layout.shape) === JSON.stringify(expectedLayout.shape)
           pendingDiagnostics.push({
             disposition: 'excluded',
             reason: 'layout-mismatch',
             side,
             blockKey: sample.layout.key,
-            fieldPath: 'shape',
+              fieldPath: shapeMatches ? 'boxGridContract' : 'shape',
             baselineMeasurementId: baseline.measurementId,
-            expected: JSON.stringify(baselineSamples[index].layout.shape),
-            actual: JSON.stringify(sample.layout.shape),
+              expected: JSON.stringify(shapeMatches ? predictionShapeSignature(expectedLayout) : expectedLayout.shape),
+              actual: JSON.stringify(shapeMatches ? predictionShapeSignature(sample.layout) : sample.layout.shape),
             measurementId: row.measurementId,
           })
         })
@@ -884,6 +904,7 @@ export function buildPredictionKnnModel(options: PredictionCohortOptions): Predi
   return Object.freeze({
     direction: options.direction,
     fingerprint: options.fingerprint,
+    nearestOnly: options.nearestOnly,
     k,
     weighting: options.weighting ?? 'distance',
     inputScaling,
@@ -1043,7 +1064,7 @@ export function predictWithKnn(
     throw new PredictionModelError('invalid-data', 'Prediction distance overflowed for every cohort row.')
   }
   const zeroDistance = indices.filter((index) => distanceNorms[index] === 0)
-  const neighbors = zeroDistance.length > 0 ? zeroDistance : indices.slice(0, model.k)
+  const neighbors = model.nearestOnly ? indices.slice(0, 1) : zeroDistance.length > 0 ? zeroDistance : indices.slice(0, model.k)
   const ratios = new Float64Array(neighbors.length)
   if (zeroDistance.length > 0 || model.weighting === 'uniform') ratios.fill(1)
   else {

@@ -28,7 +28,7 @@ export function buildExperimentRecordCatalogItems(
   const dependencies = dependencyNames === null ? null : new Set(dependencyNames)
   const summariesByPath = new Map(summaries.map((summary) => [summary.path, summary]))
   return Object.freeze(
-    records.map((record) => {
+    records.filter((record) => record.data_schema?.boxGrid !== undefined).map((record) => {
       const summary = summariesByPath.get(record.name) ?? null
       return Object.freeze({
         record,

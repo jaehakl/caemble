@@ -68,7 +68,6 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     matrices = stiffness, mass, damping, prepared
     motion = None
     coupling_residual, converged = 0.0, True
-    history_complete = True
     patch = StatePatch()
     if analysis == "transient":
         time_rule = next(item for item in invocation.config["initializations"] if item["methodId"] == "fea.time")
@@ -93,7 +92,6 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             if solution.time >= settings["duration"] - clock_tolerance(settings):
                 raise ValueError("structural task has already reached its configured duration")
             solution, motion, coupling_residual, converged = advance_window(invocation, model, solution, settings, matrices)
-        history_complete = converged and solution.time >= settings["duration"] - clock_tolerance(settings)
         if "structural_mechanics" not in invocation.state:
             patch = patch.put(("structural_mechanics",), {})
         patch = patch.put(("structural_mechanics", invocation.task_name), encode_state(model, solution))
@@ -118,7 +116,8 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         append_history(model, solution)
     if invocation.progress is not None:
         await invocation.progress({"stage": "structural-response", "completed": 1, "total": 1})
-    return SolverResult(state_patch=patch, artifacts=build_outputs(invocation.config, invocation.descriptor, model, solution, motion, history_complete=history_complete), observations={"time": float(solution.time), "iterations": int(solution.iterations), "relativeResidual": float(solution.residual), "couplingResidual": float(coupling_residual), "couplingConverged": bool(converged), "strainEnergy": float(solution.strain_energy), "kineticEnergy": float(solution.kinetic_energy)})
+    artifacts, exports, visuals = build_outputs(invocation.config, invocation.descriptor, model, solution, motion)
+    return SolverResult(state_patch=patch, artifacts=artifacts, exports=exports, visualizations=visuals, observations={"time": float(solution.time), "iterations": int(solution.iterations), "relativeResidual": float(solution.residual), "couplingResidual": float(coupling_residual), "couplingConverged": bool(converged), "strainEnergy": float(solution.strain_energy), "kineticEnergy": float(solution.kinetic_energy)})
 
 
 implementation = SolverImplementation(abi_version=3, run=run)

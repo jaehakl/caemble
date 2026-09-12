@@ -136,8 +136,9 @@ function predictionResult(direction: 'forward' | 'inverse', value: number) {
   }
 }
 
-function TestWorkspace() {
+function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEvaluation?: boolean }) {
   const [candidate, setCandidate] = useState({ x: 1 })
+  const [evaluatedCandidate, setEvaluatedCandidate] = useState({ x: 1 })
   const [command, setCommand] = useState<PredictionWorkspaceCommand | null>(null)
   const onChromeStateChange = useCallback(() => undefined, [])
   const workbench = {
@@ -149,9 +150,9 @@ function TestWorkspace() {
       draftTaskNames: [],
       materialSnapshot: {},
       revision: 1,
-      status: 'Ready',
+      status: deferCandidateEvaluation && candidate.x !== evaluatedCandidate.x ? 'Evaluating' : 'Ready',
       successfulRevision: 1,
-      variables: candidate,
+      variables: deferCandidateEvaluation ? evaluatedCandidate : candidate,
       varsSchema: { x: { min: 0, max: 10, shape: [] } },
     },
     experimentId: 10,
@@ -174,6 +175,11 @@ function TestWorkspace() {
 
   return (
     <>
+      {deferCandidateEvaluation ? (
+        <button type="button" onClick={() => setEvaluatedCandidate(candidate)}>
+          Finish Candidate Evaluation
+        </button>
+      ) : null}
       <button type="button" onClick={() => setCommand({ id: Date.now(), type: 'validate' })}>
         Validate
       </button>
@@ -199,12 +205,12 @@ function TestWorkspace() {
   )
 }
 
-function renderWorkspace() {
+function renderWorkspace(deferCandidateEvaluation = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: PropsWithChildren) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
-  return render(<TestWorkspace />, { wrapper })
+  return render(<TestWorkspace deferCandidateEvaluation={deferCandidateEvaluation} />, { wrapper })
 }
 
 beforeEach(() => {
@@ -375,6 +381,21 @@ describe('Prediction Save & Run snapshot display', () => {
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18'))
     expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted-status', 'ready')
     expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '19')
+  })
+
+  it('waits for the inverse candidate Geometry before restoring its Forward tensors', async () => {
+    mocks.forwardOutputs
+      .mockResolvedValueOnce(predictionResult('forward', 10))
+      .mockResolvedValue(predictionResult('forward', 19))
+    mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+    renderWorkspace(true)
+    await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+    await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledOnce())
+    expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Candidate Evaluation' }))
+    await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '19'))
+    expect(mocks.forwardOutputs).toHaveBeenLastCalledWith({ x: 3 }, expect.any(Number))
   })
 
   it('clears the snapshot when an automatic reload finds a changed Calculation contract', async () => {

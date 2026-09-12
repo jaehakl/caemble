@@ -18,6 +18,7 @@ from db import (
 from models import CalculationBase, CalculationListRequest, CalculationOutputLayout, UserData
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
+from service.box_grid import validate_box_grid_schema
 
 
 CALCULATION_CRUD_SPEC = CrudSpec(
@@ -172,6 +173,11 @@ async def upsert_calculations(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"ExperimentRecord does not belong to the Calculation Experiment: {invalid}",
             )
+        for record_id in item.experiment_record_ids:
+            try:
+                validate_box_grid_schema(records_by_id[record_id].data_schema)
+            except ValueError as error:
+                raise HTTPException(422, f"Calculation inputs must be Box Grid Outputs: {record_id}. {error}") from error
         measurement = await db.get(Measurement, item.preflight_measurement_id)
         if (
             measurement is None

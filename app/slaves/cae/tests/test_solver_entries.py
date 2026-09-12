@@ -14,6 +14,8 @@ from app.kernel.api import InputArtifact, SolverInvocation, SolverResult
 from app.kernel.execution import SpawnSolverExecutor
 from app.kernel.resources import StateStore
 from tests.solver_fixtures import CubeGeometry
+from app.kernel.catalog import SolverCatalog
+from tests.test_box_grid_outputs import grid
 
 _DC_ENTRY = "app.solvers.dc_current_density.entry"
 _HEAT_ENTRY = "app.solvers.steady_state_heat.entry"
@@ -44,7 +46,7 @@ async def test_solver_entries_run_only_in_spawn_children() -> None:
 
     assert isinstance(ray, SolverResult)
     assert not ray.state_patch.is_empty
-    assert isinstance(ray.artifacts["paths"], BundleValue)
+    assert isinstance(ray.visualizations["paths"], BundleValue)
     assert ray.observations["recordedPaths"] == 0
 
     for module_name in (_DC_ENTRY, _HEAT_ENTRY, _RAY_ENTRY):
@@ -99,7 +101,7 @@ def _dc_invocation() -> SolverInvocation:
             "outputs": [
                 {
                     "methodId": "dc.total-current",
-                    "key": "totalCurrent",
+                    "key": "totalCurrent", "boxGrid": grid(shape=(1,1,1), origin=(-.5,-.5,-.5)).geometry,
                     "parameters": {"crossSectionPosition": {"value": 0.5}},
                 }
             ],
@@ -109,7 +111,7 @@ def _dc_invocation() -> SolverInvocation:
         world=_world(),
         geometry=CubeGeometry(),
         progress=None,
-        descriptor={"referenceLengthUnit": "m", "methods": {"outputs": []}},
+        descriptor=SolverCatalog.discover().descriptor("dc-current-density", "2.0.0"),
     )
 
 
@@ -169,7 +171,7 @@ def _heat_invocation() -> SolverInvocation:
                 },
             ],
             "outputs": [
-                {"methodId": "heat.maximum-temperature", "key": "maximumTemperature"}
+                {"methodId": "heat.maximum-temperature", "key": "maximumTemperature", "boxGrid": grid(shape=(1,1,1), origin=(-.5,-.5,-.5)).geometry}
             ],
         },
         state={},
@@ -177,7 +179,7 @@ def _heat_invocation() -> SolverInvocation:
         world=_world(),
         geometry=CubeGeometry(),
         progress=None,
-        descriptor={"referenceLengthUnit": "m", "methods": {"outputs": []}},
+        descriptor=SolverCatalog.discover().descriptor("steady-state-heat", "2.0.0"),
     )
 
 
@@ -198,14 +200,14 @@ def _ray_invocation() -> SolverInvocation:
                 }
             ],
             "boundaryConditions": [],
-            "outputs": [{"methodId": "ray.paths", "key": "paths", "parameters": {}}],
+            "outputs": [],
         },
         state={},
         inputs={},
         world=_world(),
         geometry=CubeGeometry(),
         progress=None,
-        descriptor={"referenceLengthUnit": "m"},
+        descriptor=SolverCatalog.discover().descriptor("ray-tracing", "2.0.0"),
     )
 
 

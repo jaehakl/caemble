@@ -10,7 +10,7 @@ from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ResourceStore
 from app.solvers.structural_mechanics.analysis import initial_solution
 from tests.structural_fixture import build_model
-from app.solvers.structural_mechanics.outputs import build_outputs
+from app.solvers.structural_mechanics.outputs import _physical_domain
 
 
 def mesh_invocation():
@@ -46,11 +46,11 @@ def mesh_invocation():
 def test_named_sets_survive_field_resource_roundtrip_with_original_ids_and_cad_provenance():
     invocation = mesh_invocation()
     model = build_model(invocation)
-    field = build_outputs(invocation.config, solver_catalog.descriptor("structural-mechanics", "4.0.0"), model, initial_solution(model))["displacement"]
+    domain, _ = _physical_domain(model)
     resources = ResourceStore()
     try:
-        restored = resources.resolve(resources.ingest(field))
-        metadata = restored.domain.metadata
+        restored = resources.resolve(resources.ingest(domain))
+        metadata = restored.metadata
         np.testing.assert_array_equal(metadata["nodeIds"], [11, 22, 33, 44, 55, 66, 77, 88])
         node = metadata["nodeSets"]["selected"]
         quad = metadata["faceSets"]["selected"]

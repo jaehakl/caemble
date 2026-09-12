@@ -22,6 +22,7 @@ import type {
 import { flattenVarsTensor, varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import type { Tensor, Vars } from '@/lib/cad/model/types'
 import type { VarsSchemaEntry } from '@/lib/cad/model/vars'
+import { assertBoxGridData, type BoxGridData } from '@/contracts/boxGrid'
 import {
   predictionNumericDtypes,
   predictionTensorValueCount,
@@ -136,6 +137,10 @@ export function predictionVarsSamples(vars: Readonly<Vars>, schema: VarsSchema):
 
 function recordedLayout(rule: RecordedDataRule, tensor: RecordedDataTensor): PredictionTensorLayout {
   const result = rule.result
+  assertBoxGridData(tensor.boxGrid, tensor.shape)
+  if (!result.boxGrid) throw new Error(`${rule.label} is not a Box Grid Output.`)
+  if (result.dtype !== 'float32' && result.dtype !== 'float64')
+    throw new Error(`${rule.label} Box Grid Output must use float32 or float64.`)
   const tensorOrder = (result as typeof result & Readonly<{ tensorOrder?: number }>).tensorOrder ?? 0
   const schemaAxes = result.axes ?? []
   const storedAxes = tensor.axes ?? []
@@ -162,9 +167,29 @@ function recordedLayout(rule: RecordedDataRule, tensor: RecordedDataTensor): Pre
       }),
     ),
     tensorOrder,
+    boxGrid: tensor.boxGrid,
+    ...(tensor.boxGrid.frequencyKind === 'modal' ? { frequencyOutput: true } : {}),
     ...('unit' in result && result.unit ? { unit: result.unit } : {}),
     ...('quantityKind' in result && result.quantityKind ? { quantityKind: result.quantityKind } : {}),
   })
+}
+
+function boxGridPredictionValues(accessor: DataTensorAccessor, layout: PredictionTensorLayout) {
+  const values = Array.from(predictionRecordedValues(accessor, layout.dtype, layout.key))
+  const grid = layout.boxGrid!
+  if (grid.channels.length === 2) {
+    const components = grid.components.length
+    for (let offset = 0; offset < values.length; offset += components * 2) {
+      for (let component = 0; component < components; component++) {
+        const amplitude = values[offset + component]
+        const phase = values[offset + components + component]
+        values[offset + component] = amplitude * Math.cos(phase)
+        values[offset + components + component] = amplitude * Math.sin(phase)
+      }
+    }
+  }
+  if (layout.frequencyOutput) values.push(...(layout.axes?.[4].ticks ?? []).map(Number))
+  return Object.freeze(values)
 }
 
 export function predictionRecordedSamples(
@@ -179,7 +204,7 @@ export function predictionRecordedSamples(
     const accessor = createDataTensorAccessor(rule.result, tensor, rule.label)
     return Object.freeze({
       layout,
-      values: predictionRecordedValues(accessor, rule.result.dtype, rule.label),
+      values: boxGridPredictionValues(accessor, layout),
     })
   })
   return Object.freeze({ rules: snapshot.rules, samples: Object.freeze(samples) })
@@ -194,7 +219,7 @@ export function predictionRecordedRowSample(row: RecordedDataRecord): Prediction
   const accessor = createDataTensorAccessor(rule.result, tensor, rule.label)
   return Object.freeze({
     layout,
-    values: predictionRecordedValues(accessor, rule.result.dtype, rule.label),
+    values: boxGridPredictionValues(accessor, layout),
   })
 }
 
@@ -216,6 +241,7 @@ export function predictedRecordedData(
   samples: readonly PredictionTensorSample[],
   rules: readonly RecordedDataRule[],
   onOrdinalAxisFallback?: (warning: Readonly<{ axisIndex: number; blockKey: string; length: number }>) => void,
+  candidateBoxGrids?: Readonly<Record<string, BoxGridData>>,
 ): RecordedData {
   const ruleMap = new Map(rules.map((rule) => [rule.label, rule]))
   const sampleMap = new Map(samples.map((sample) => [sample.layout.key, sample]))
@@ -239,20 +265,59 @@ export function predictedRecordedData(
           throw new Error(`${rule.label} RecordedData Prediction 값이 shape와 맞지 않습니다.`)
         }
         const integerRange = calculationIntegerRanges[rule.result.dtype]
-        const normalizedValues = sample.values.map((member) =>
+        const tensorSize = sample.layout.shape.reduce((size, length) => size * length, 1)
+        const predictedValues = sample.values.slice(0, tensorSize)
+        const boxGrid = candidateBoxGrids?.[rule.label] ?? sample.layout.boxGrid
+        assertBoxGridData(boxGrid, sample.layout.shape)
+        if (boxGrid.channels.length === 2) {
+          const components = boxGrid.components.length
+          for (let offset = 0; offset < predictedValues.length; offset += components * 2) {
+            for (let component = 0; component < components; component++) {
+              const re = predictedValues[offset + component]
+              const im = predictedValues[offset + components + component]
+              predictedValues[offset + component] = Math.hypot(re, im)
+              const phase = re === 0 && im === 0 ? 0 : Math.atan2(im, re)
+              predictedValues[offset + components + component] = phase >= Math.PI ? -Math.PI : phase
+            }
+          }
+        }
+        const normalizedValues = predictedValues.map((member) =>
           integerRange
             ? Math.min(integerRange[1], Math.max(integerRange[0], Math.round(member)))
             : rule.result.dtype === 'float32'
               ? Math.fround(member)
               : member,
         )
+        if (boxGrid.channels.length === 2) {
+          const components = boxGrid.components.length
+          // The nearest float32 to pi lies outside the canonical phase interval.
+          const phaseLimit = Math.fround(Math.PI - 2 ** -22)
+          for (let offset = 0; offset < normalizedValues.length; offset += components * 2) {
+            for (let component = 0; component < components; component++) {
+              const phaseIndex = offset + components + component
+              if (normalizedValues[offset + component] === 0) normalizedValues[phaseIndex] = 0
+              else if (rule.result.dtype === 'float32')
+                normalizedValues[phaseIndex] = Math.max(-phaseLimit, Math.min(phaseLimit, normalizedValues[phaseIndex]))
+            }
+          }
+        }
         const value =
           dtype === 'complex64'
             ? complexTensorFromComponents(normalizedValues, sample.layout.shape, rule.label)
             : varsTensorFromFlat(normalizedValues, sample.layout.shape)
-        const tensorOrder = (rule.result as typeof rule.result & Readonly<{ tensorOrder?: number }>).tensorOrder ?? 0
-        const externalShape = sample.layout.shape.slice(0, sample.layout.shape.length - tensorOrder)
+        const externalShape = sample.layout.shape
         const axes = (rule.result.axes ?? []).map((axis, index) => {
+          if (index < 3) {
+            const length = boxGrid.gridShape[index]
+            const extent = boxGrid.size[index]
+            return Object.freeze({
+              ticks: Object.freeze(Array.from({ length }, (_, cell) => ((cell + 0.5) * extent) / length)),
+              bounds: Object.freeze([0, extent]) as readonly [number, number],
+            })
+          }
+          if (index === 4 && sample.layout.frequencyOutput) {
+            return Object.freeze({ ticks: Object.freeze(sample.values.slice(tensorSize)) })
+          }
           const storedTicks = sample.layout.axes?.[index]?.ticks
           let ticks = storedTicks?.length === externalShape[index] ? storedTicks : axis.ticks
           if (ticks?.length !== externalShape[index]) {
@@ -261,7 +326,7 @@ export function predictedRecordedData(
           }
           return Object.freeze({ ticks: Object.freeze([...ticks]) })
         })
-        return [rule.label, createDataTensor(rule.result, { value, ...(axes?.length ? { axes } : {}) })]
+        return [rule.label, createDataTensor(rule.result, { value, boxGrid, ...(axes?.length ? { axes } : {}) })]
       }),
     ),
   ) as RecordedData

@@ -188,6 +188,8 @@ async def run_worker_connection(websocket: WebSocket, job_id: str) -> None:
                         await job_event(db, job, "job.progress", {"progress": progress})
                 elif kind == "job.record":
                     await handler.stage_record(db, job, packet, attachments)
+                elif kind == "job.visualization" and hasattr(handler, "stage_visualization"):
+                    await handler.stage_visualization(db, job, packet, attachments)
                 elif kind.startswith("job.storage.") and hasattr(handler, "storage_packet"):
                     if attachments:
                         raise ValueError("Storage requests must not carry binary bodies.")
@@ -206,8 +208,8 @@ async def run_worker_connection(websocket: WebSocket, job_id: str) -> None:
                     raise ValueError(f"Unknown worker message: {kind}")
                 await db.commit()
                 complete = kind in {"job.failed", "job.cancelled"}
-            if kind == "job.record":
-                await send({"type": "job.record.ack", "sequence": packet["sequence"]})
+            if kind in {"job.record", "job.visualization"}:
+                await send({"type": f"{kind}.ack", "sequence": packet["sequence"]})
             elif kind.startswith("job.storage."):
                 await send(storage_reply)
             elif kind == "job.complete":

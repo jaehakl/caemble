@@ -38,6 +38,7 @@ class RecordPacket:
     byte_length: int
     ack: asyncio.Future[None]
     resource_hold: RecordResourceHold | None = None
+    kind: str = "record"
 
     def release_resources(self) -> None:
         self.attachments.clear()

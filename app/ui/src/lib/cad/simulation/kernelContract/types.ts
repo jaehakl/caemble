@@ -1,6 +1,7 @@
 import type { CadScene } from '../../evaluation/types'
 import type { ExperimentParameter, ExperimentTarget } from '../../model/descriptor'
 import type { KernelArtifactDataSpec, KernelArtifactType } from '@/contracts/solver'
+import type { BoxGridGeometry } from '@/contracts/boxGrid'
 
 export type {
   KernelArtifactDataSpec,
@@ -25,9 +26,11 @@ export type KernelMethodCall = Readonly<{
   parameters: Readonly<Record<string, ExperimentParameter>>
 }>
 
-export type KernelOutputRequest = KernelMethodCall &
+export type KernelOutputRequest = Omit<KernelMethodCall, 'parameters'> &
   Readonly<{
     key: string
+    boxGrid?: BoxGridGeometry
+    parameters: Readonly<Record<string, ExperimentParameter | readonly [number, number, number]>>
   }>
 
 export type KernelTaskConfig = Readonly<{
@@ -35,6 +38,7 @@ export type KernelTaskConfig = Readonly<{
   initializations: readonly KernelMethodCall[]
   boundaryConditions: readonly KernelMethodCall[]
   outputs: readonly KernelOutputRequest[]
+  exports?: readonly KernelOutputRequest[]
 }>
 
 export type KernelWorld = Readonly<{

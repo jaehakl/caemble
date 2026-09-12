@@ -22,9 +22,9 @@ Source policy 오류가 발생하면 Editor가 문제가 된 코드를 밑줄로
 {{calculation.source}}
 ```
 
-Experiment를 저장하면 컴파일된 RecordedData 선언이 dotted path별 **ExperimentRecord** 계약으로 함께 저장됩니다. QuantityKind, tensorOrder, dtype과 data schema는 Measurement마다 복제되지 않고 이 계약에서 제공되며, Measurement의 RecordedData는 ExperimentRecord ID와 실제 tensor 값만 저장합니다. Measurement 조회와 Viewer에서는 join된 metadata를 기존과 같은 형태로 표시합니다.
+Experiment를 저장하면 컴파일된 Box Grid RecordedData 선언이 이름별 **ExperimentRecord** 계약으로 함께 저장됩니다. QuantityKind, tensorOrder, dtype, 7차원 data schema와 정적 `boxGrid` profile은 이 계약에서 제공됩니다. Measurement의 RecordedData는 ExperimentRecord ID, 실제 tensor 값과 실행 당시 Box geometry를 저장합니다. 자동 mesh·ray 시각화와 native coupling export는 ExperimentRecord나 Calculation dependency가 아닙니다.
 
-Calculation 입력은 ExperimentRecord의 dotted path를 key로 쓰는 읽기 전용 map입니다. `record.signal`, `record['group.signal']`, 정적 object destructuring과 추적 가능한 `const` alias만 dependency로 허용합니다. `record[key]`, `Object.keys/values/entries(record)`, spread, Record 전체 전달·반환, 재할당과 존재하지 않는 key는 정확한 source 위치가 있는 저장 오류입니다. 각 leaf에는 `dtype`, component 차원까지 포함한 전체 `shape`, row-major flat `data`, 외부 `axes`, `quantityKind`, `tensorOrder`, 값 `unit`이 있습니다.
+Calculation 입력은 ExperimentRecord 이름을 key로 쓰는 읽기 전용 map입니다. `record.signal`, `record['group.signal']`, 정적 object destructuring과 추적 가능한 `const` alias만 dependency로 허용합니다. `record[key]`, `Object.keys/values/entries(record)`, spread, Record 전체 전달·반환, 재할당과 존재하지 않는 key는 정확한 source 위치가 있는 저장 오류입니다. 각 leaf에는 float32/float64 `dtype`, 정확히 7차원인 `shape`, row-major flat `data`, `[x, y, z, time, frequency, amplitudePhase, component]` 전체 `axes`, `boxGrid`, `quantityKind`, `tensorOrder`, 값 `unit`이 있습니다. Component는 마지막 축에 포함되며 별도 차원을 덧붙이지 않습니다. 복소수는 진폭·위상 두 채널로 읽고 위상 단위는 rad입니다.
 Calculation에 전달되는 axis는 실제 shape와 정확히 맞지만 ticks는 숫자 또는 문자열일 수 있습니다. 기본 템플릿은 원본 axis를 그대로 반환하므로 문자열 ticks는 Output 계약 오류가 됩니다. 필요한 경우 ticks를 숫자로 변환하거나 Output에서 `axes`를 생략해 ordinal axis를 사용하세요.
 
 ### Tensor 연산

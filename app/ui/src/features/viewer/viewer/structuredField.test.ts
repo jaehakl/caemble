@@ -8,7 +8,7 @@ import {
   releaseDataTensorAttachments,
 } from '@/lib/cad/model/dataTensor'
 import type { DataSchema } from '@/lib/cad/model/descriptor'
-import { executeCalculation } from '@/lib/calculation/execute'
+import { assertCalculationInput } from '@/lib/calculation/validation'
 import { fieldRange, fieldScalar, fieldSlice, structuredField } from './structuredField'
 
 const schema: DataSchema = {
@@ -46,28 +46,11 @@ describe('complex field records', () => {
     expect(() => createDataTensor(vector, { value: [2] })).toThrow(/re, im/)
   })
 
-  it('passes Math.js Complex to Calculation and requires an explicit real output projection', () => {
-    const input = {
-      field: { dtype: 'complex64' as const, shape: [], data: { re: 3, im: 4 }, axes: [], tensorOrder: 0 },
-    }
-    const result = executeCalculation(
-      {
-        sourceHash: 'fixture',
-        code: `module.exports.default = (record) => { if (!record.field.data.isComplex) throw Error('Not Complex'); return { dtype: 'float64', data: require('mathjs').abs(record.field.data) } }`,
-      },
-      input,
-      () => {},
-    )
-    expect(result.data).toBe(5)
+  it('keeps visualization-only complex records out of Calculation', () => {
     expect(() =>
-      executeCalculation(
-        {
-          sourceHash: 'fixture',
-          code: `module.exports.default = (record) => ({ dtype: 'float64', data: record.field.data })`,
-        },
-        input,
-        () => {},
-      ),
+      assertCalculationInput({
+        field: { dtype: 'complex64', shape: [], data: { re: 3, im: 4 }, axes: [], tensorOrder: 0 },
+      }),
     ).toThrow()
   })
 

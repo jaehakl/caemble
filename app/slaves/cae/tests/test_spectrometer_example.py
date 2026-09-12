@@ -53,7 +53,9 @@ async def test_catalog_spectrometer_separates_three_lines_and_converges(tmp_path
                              geometry=None, progress=None, descriptor=detached(spec.descriptor)),
         )
         assert result.state_patch.operations[0].path == ('rayPaths',)
-        bundle = result.artifacts['rayPaths'].members
+        assert set(result.visualizations) == {'paths'}
+        assert set(result.artifacts) == {'fluenceRate', 'radiantFluxDensity'}
+        bundle = result.visualizations['paths'].members
         vertices = bundle['vertices']['value']
         offsets = bundle['pathOffsets']['value']
         events = bundle['segmentEvent']['value']
@@ -80,10 +82,16 @@ async def test_catalog_spectrometer_separates_three_lines_and_converges(tmp_path
         assert np.all(np.diff(centers) > 0.004)
         assert all(intervals[i][1] < intervals[i+1][0] for i in range(2))
         centers_by_resolution.append(centers)
-        power = result.artifacts['detectorPower']['value']
-        efficiency = result.artifacts['detectorEfficiency']['value']
+        for name, artifact in result.artifacts.items():
+            values = artifact['value']
+            assert values.ndim == 7
+            assert values.shape[:3] == (24, 24, 16)
+            assert values.shape[3:6] == (1, 3, 1)
+            assert values.shape[6] == (1 if name == 'fluenceRate' else 3)
+            assert np.all(np.isfinite(values)) and np.max(np.abs(values)) > 0
+            assert artifact['boxGrid']['gridShape'] == [24, 24, 16]
+        power = result.observations['detectedPower']
         assert 1.7 < power < 2.1
-        assert efficiency == pytest.approx(power / 3)
         powers.append(power)
     np.testing.assert_allclose(centers_by_resolution[0], centers_by_resolution[1], atol=0.0001, rtol=0)
     assert powers[0] == pytest.approx(powers[1], rel=1e-3)

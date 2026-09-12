@@ -1,4 +1,6 @@
 from __future__ import annotations
+from tests.test_box_grid_outputs import grid, data
+from app.methods.fields.box_grid import RectilinearSampler
 
 import math
 from dataclasses import replace
@@ -344,12 +346,9 @@ def test_source_timing_rejects_carrier_and_bandwidth_above_nyquist() -> None:
 
 
 def test_spectral_detector_returns_requested_frequency_raw_dft_real_and_imaginary() -> None:
-    region = DetectorRegion(
-        np.asarray([0]),
-        np.asarray([0]),
-        np.asarray([0]),
-        (np.asarray([0.0]), np.asarray([0.0]), np.asarray([0.0])),
-    )
+    probe = grid(shape=(1, 1, 1), origin=(-.5, -.5, -.5))
+    sampler = RectilinearSampler.prepare((np.array([0.]),) * 3, probe.points(), ((-.5,.5),)*3)
+    region = DetectorRegion(sampler, probe, data(components=("x","y","z"), polar=True))
     frequencies = requested_frequencies([0.25], dt=1.0)
     detector = SpectralDetector(
         "spectrum",
@@ -366,19 +365,17 @@ def test_spectral_detector_returns_requested_frequency_raw_dft_real_and_imaginar
         detector.capture(float(time), values)
 
     artifact = detector.artifact()
-    real = artifact.values.real
-    imaginary = artifact.values.imag
-    np.testing.assert_allclose(real[0, 0, 0, 0], [0.5, 0.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(imaginary[0, 0, 0, 0], [-1.0, 0.0, 0.0], atol=1e-6)
+    complex_values = artifact["value"][...,0,:] * np.exp(1j * artifact["value"][...,1,:])
+    real = complex_values.real
+    imaginary = complex_values.imag
+    np.testing.assert_allclose(real[0, 0, 0, 0, 0], [0.5, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(imaginary[0, 0, 0, 0, 0], [-1.0, 0.0, 0.0], atol=1e-6)
 
 
 def test_time_detector_keeps_stride_samples_and_off_stride_final_sample() -> None:
-    region = DetectorRegion(
-        np.asarray([0]),
-        np.asarray([0]),
-        np.asarray([0]),
-        (np.asarray([0.0]), np.asarray([0.0]), np.asarray([0.0])),
-    )
+    probe = grid(shape=(1, 1, 1), origin=(-.5, -.5, -.5))
+    sampler = RectilinearSampler.prepare((np.array([0.]),) * 3, probe.points(), ((-.5,.5),)*3)
+    region = DetectorRegion(sampler, probe, data(components=("x","y","z"), polar=False))
     detector = TimeDetector("history", "fdtd/time-field", "magnetic", region, 2)
     for step in range(4):
         detector.capture(
@@ -389,8 +386,8 @@ def test_time_detector_keeps_stride_samples_and_off_stride_final_sample() -> Non
         )
 
     member = detector.artifact()
-    np.testing.assert_allclose(member.metadata["sampleAxes"][0]["ticks"], [0.0, 0.2, 0.3])
-    np.testing.assert_allclose(member.values[:, 0, 0, 0, 0], [0.0, 2.0, 3.0])
+    np.testing.assert_allclose(member["axes"][3]["ticks"], [0.0, 0.2, 0.3])
+    np.testing.assert_allclose(member["value"][0, 0, 0, :, 0, 0, 0], [0.0, 2.0, 3.0])
 
 
 def test_electric_and_magnetic_fields_are_interpolated_to_cell_centers() -> None:

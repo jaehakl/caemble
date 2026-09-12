@@ -186,6 +186,8 @@ async def run_local(
         "jobId": f"local-{uuid.uuid4()}",
         "records": [],
         "recordSequences": [],
+        "visualizations": [],
+        "visualizationSequences": [],
         "recordedBytes": 0,
         "trace": [],
     }
@@ -218,8 +220,10 @@ async def run_local(
             if isinstance(packet, RecordPacket):
                 run.pending = packet
                 attachments = []
+                directory = "visualizations" if packet.kind == "visualization" else "records"
+                (output / directory).mkdir(exist_ok=True)
                 for index, attachment in enumerate(packet.attachments):
-                    relative_path = f"records/{packet.sequence:04d}-{index:04d}.bin"
+                    relative_path = f"{directory}/{packet.sequence:04d}-{index:04d}.bin"
                     (output / relative_path).write_bytes(attachment.data)
                     attachments.append({
                         "id": attachment.id,
@@ -227,6 +231,14 @@ async def run_local(
                         "mimeType": attachment.mimeType,
                         "byteLength": len(attachment.data),
                     })
+                if packet.kind == "visualization":
+                    visual = {"sequence": packet.sequence, "task": packet.name,
+                              "path": f"visualizations/{packet.sequence:04d}.json", "attachments": attachments}
+                    write_json(output / visual["path"], {**visual, "visualizations": packet.value})
+                    manifest["visualizations"] = [item for item in manifest["visualizations"] if item["task"] != packet.name] + [visual]
+                    write_json(manifest_path, manifest)
+                    run.acknowledge(packet.sequence)
+                    continue
                 record = {
                     "sequence": packet.sequence,
                     "name": packet.name,
@@ -261,6 +273,7 @@ async def run_local(
         if run is not None:
             await run.close()
             manifest["recordSequences"] = run.completed_sequences
+            manifest["visualizationSequences"] = run.visualization_sequences
             manifest["recordedBytes"] = run.recorded_bytes
             manifest["trace"] = run.trace
         manifest["durationMs"] = round((time.perf_counter() - started) * 1000)

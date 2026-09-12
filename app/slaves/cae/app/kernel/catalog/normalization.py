@@ -17,7 +17,7 @@ def normalize_task_config(
     methods = descriptor.get("methods", {})
     normalized: dict[str, Any] = {"parameters": parameters}
     outputs: dict[str, Any] = {}
-    for category in ("initializations", "boundaryConditions", "outputs"):
+    for category in ("initializations", "boundaryConditions", "outputs", "exports"):
         declared = {method["methodId"]: method for method in methods.get(category, [])}
         calls = []
         for call in config.get(category, []):
@@ -31,12 +31,18 @@ def normalize_task_config(
                     for name, value in call.get("parameters", {}).items()
                 },
             }
-            if category == "outputs":
+            if category in ("outputs", "exports"):
                 key = call["key"]
+                if key in outputs:
+                    raise ValueError(f"Output and export keys must be unique: {key!r}")
                 normalized_call["key"] = key
+                if category == "outputs":
+                    normalized_call["boxGrid"] = dict(call["boxGrid"])
                 outputs[key] = {
                     "artifactType": method.get("artifactType"),
                     "data": method.get("data"),
+                    "category": category,
+                    **({"boxGrid": normalized_call["boxGrid"]} if category == "outputs" else {}),
                 }
             calls.append(normalized_call)
         normalized[category] = calls

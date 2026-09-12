@@ -1,12 +1,12 @@
 # Catalog 기반 RecordedData와 Viewer
 
-Experiment의 `recordedData`는 `결과이름: { task, output }`으로 선언합니다. `task`는 Task 파일의 이름이고 `output`은 해당 Task가 요청한 output의 `key`입니다. 결과 이름은 자유롭게 정합니다. 수동 dtype/group schema와 예약 결과 이름은 지원하지 않습니다.
+Experiment의 `recordedData`는 `결과이름: { task, output }`으로 선언합니다. `task`는 Task 파일의 이름이고 `output`은 해당 Task가 요청한 Box Grid output의 `key`입니다. 각 output은 Experiment 또는 해당 Task의 Box 하나를 target으로 지정하고 `gridShape`를 필수로 받습니다. 결과 이름은 자유롭게 정하며 수동 dtype/group schema는 지원하지 않습니다.
 
-공통 빌드는 Catalog output의 데이터 구조와 semantic visualization 계약을 해석하고, Task·output·Solver 버전·Catalog revision·확장된 tensor schema를 결과 계약에 고정합니다. 같은 Experiment에서 여러 Solver의 결과를 함께 선언할 수 있습니다. 실행 순서와 데이터 전달은 `simulate.py`의 `sim.run`, `sim.record`, `sim.release`가 소유합니다. `sim.record(name, artifact)`에는 선언한 Task/output에서 생성된 live artifact를 전달해야 합니다. 모양이 같은 다른 출력, 임의 값, 해제된 artifact는 거부됩니다.
+공통 빌드는 Catalog output의 7차원 tensor schema와 표시 계약을 해석하고, Task·output·Solver 버전·Catalog revision을 결과 계약에 고정합니다. 같은 Experiment에서 여러 Solver의 결과를 함께 선언할 수 있습니다. 실행 순서와 데이터 전달은 `simulate.py`의 `sim.run`, `sim.record`, `sim.release`가 소유합니다. `sim.record(name, artifact)`에는 선언한 Task/output에서 생성된 live Box Grid artifact를 전달해야 합니다. Solver 사이에 전달할 native field/domain은 Task의 `config.exports`로 요청하며 기록할 수 없습니다.
 
-Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고정된 결과 계약이 함께 제공됩니다. 저장 결과를 열 때 최신 Catalog나 편집 중인 소스로 재해석하지 않습니다. Measurement가 있는 Experiment의 계약은 변경할 수 없습니다. 새 계약이 없는 과거 데이터는 보존하지만 새 Viewer에서 미지원 상태로 표시하며 이름이나 축을 이용해 복원하지 않습니다.
+Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고정된 결과 계약이 함께 제공됩니다. 저장 결과를 열 때 최신 Catalog나 편집 중인 소스로 재해석하지 않습니다. Measurement가 있는 Experiment의 source와 계약은 변경할 수 없으므로 새 버전을 만드세요. 표준 전환 시 과거 결과·결과 계약·Calculation preflight는 초기화되며 source, Measurement vars와 material snapshot은 보존됩니다. 과거 결과를 새 축으로 자동 변환하지 않습니다.
 
-Viewer의 공통 결과 선택 영역에서 Geometry와 모든 논리적 결과를 선택합니다. renderer는 결과 이름이 아닌 저장된 semantic kind로 결정합니다.
+메쉬·ray path는 Solver가 자동으로 제공하는 별도 시각화 데이터입니다. outputs나 `recordedData`에 선언하지 않으며 Calculation·Analysis·Prediction 입력에 포함하지 않습니다. 반복 실행에서는 Task마다 마지막 성공 invocation의 전체 시각화 snapshot을 저장하고, 시간 이력은 그 snapshot 안에 유지합니다. Viewer의 결과 선택 영역에서 Geometry, Box Grid와 자동 시각화를 선택합니다. renderer는 결과 이름이 아닌 저장된 semantic kind로 결정합니다.
 
 - `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 변형 배율을, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
 - `polyline`: 계약에 연결된 정점과 offset으로 경로를 구성합니다. 여러 결과를 독립적으로 선택할 수 있습니다.
@@ -16,9 +16,9 @@ Viewer의 공통 결과 선택 영역에서 Geometry와 모든 논리적 결과�
 
 초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변형 배율이 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.
 
-데이터 전송은 기존 tensor dtype·shape·axes 및 inline/attachment 형식을 사용합니다. 확장된 dotted tensor leaf와 ExperimentRecord ID는 Calculation에서 그대로 참조합니다. 논리적 결과의 계약 metadata는 tensor leaf가 아니며 CalculationData 후처리는 유지됩니다.
+Box Grid 데이터는 float32 또는 float64이며 축 순서는 항상 `[x, y, z, time, frequency, amplitudePhase, component]`입니다. 사용하지 않는 축도 길이 1로 보존합니다. 실수는 `value` 채널 하나, 복소수는 `amplitude`, `phase` 두 채널로 저장하며 위상 단위는 rad입니다. 각 RecordedData의 ExperimentRecord ID는 Calculation dependency로 사용합니다. 자동 시각화는 별도 `/measurement/{id}/visualizations` 조회와 CLI export에 포함됩니다.
 
-[Structural Optical Results 공식 예제](/?help=examples&item=caemble:experiment/caemble/verified/structural-optical-results@2.0.0)는 한 Experiment에서 displacement·stress-field·reaction과 서로 다른 이름의 ray 결과 두 개를 기록합니다.
+[Catalog 공식 예제](/?help=examples)에서 현재 Box Grid outputs와 자동 mesh·ray 시각화의 실행 소스를 확인하세요.
 
 ## 변형 형상과 시간 이력
 
@@ -30,8 +30,7 @@ tet4 displacement 결과는 변형 표시와 자동 확대가 기본입니다. �
 
 stress 결과는 같은 Task와 domain, 절점 ID, 연결성, 좌표계가 확인된 정적 displacement를
 선택해 변형 형상 위에 표시합니다. 후보가 하나면 자동 연결하며, 일부 영역 mesh나
-서로 다른 domain은 배열 크기가 같아도 연결하지 않습니다. 과거 기록에 절점 ID가
-없으면 해당 결과 자체의 변형은 볼 수 있지만 다른 stress 결과와 연결하지 않습니다.
+서로 다른 domain은 배열 크기가 같아도 연결하지 않습니다.
 
 시간 이력은 mesh와 모든 절점의 변위가 함께 기록된 결과에서 재생합니다. 일반 표면
 평균 history나 최종 displacement만으로 전체 구조 애니메이션을 복원하지 않습니다.
@@ -42,30 +41,31 @@ stress 결과는 같은 Task와 domain, 절점 ID, 연결성, 좌표계가 확�
 응력으로 표시하지 않습니다.
 
 직접 확인하려면 Catalog의 **structural-analysis-modes** 예제를 새로 빌드·실행한 뒤
-`transientAnimation` 결과를 선택합니다. 예제의 Task output과 `simulate.py`에는
-전체 절점 이력을 기록하는 선언이 포함되어 있습니다. 초기 자동 확대, 실제 크기 1×,
+transient Task의 자동 displacement history 시각화를 선택합니다. 전체 절점 이력은
+별도 output이나 `sim.record` 선언 없이 포함됩니다. 초기 자동 확대, 실제 크기 1×,
 원형 윤곽 비교, 시간 슬라이더와 재생을 차례로 확인하세요. 재생 중 카메라를 이동해도
 자동으로 맞춤이 반복되지 않아야 하고, Measurement를 바꾸면 재생과 선택이 초기화되어야
-합니다. `transientMesh`는 마지막 상태, `transient`는 기존 표면 history를 비교하는 데
-사용합니다. 상세한 output 문법은 현재 Catalog 계약과 이 예제 소스를 기준으로 확인하세요.
+합니다. 마지막 상태와 전체 시간 이력은 각 자동 시각화에서 확인합니다.
+상세한 output 문법은 현재 Catalog 계약과 이 예제 소스를 기준으로 확인하세요.
 
 ## 복소수 장과 3D 단면
 
-Spectral field는 `[frequency, z, y, x, component]` complex64 tensor 하나입니다.
-시간 기록은 `[time, z, y, x, component]` float32 tensor입니다. 주파수 입력은
+Spectral field와 시간 기록 모두 `[x, y, z, time, frequency, amplitudePhase, component]`
+순서의 실수 tensor입니다. 주파수 입력은
 명시적인 `frequencies` tensor이며 입력 순서가 그대로 기록됩니다. 서로 다른
 검출기와 전기장·자기장은 독립 결과로 유지됩니다. 정확한 authoring 문법은
 현재 Catalog의 FDTD output 계약과 공식 예제에서 확인합니다.
 
-complex64 원소는 실수부와 허수부를 모두 보존합니다. inline JSON은 `{ re, im }`,
-binary는 little-endian float32 `[re, im]` 교차 저장으로 원소당 8바이트입니다.
-복소수 표현은 shape에 축을 추가하지 않습니다. 저장·attachment·CLI export는
-같은 형식을 사용하며 과거 real/imag bundle은 자동 병합하지 않습니다.
+실수 장은 `amplitudePhase` 축의 `value` 하나를 사용합니다. 복소수 장은 이 축에
+진폭과 위상을 저장하며 `boxGrid.channels`는 `['amplitude', 'phase']`입니다.
+진폭은 장의 물리 단위, 위상은 rad이며 진폭이 0인 표본의 저장 위상도 0입니다.
+저장·attachment·CLI export는 같은 7차원 형식을 사용합니다.
 
 공간 의미가 기록된 structured-field는 Geometry와 같은 3D 장면의 XY·YZ·XZ
-단면으로 표시합니다. 좌표와 검출 영역은 기록할 때 transform이 적용된 Experiment
-좌표이며 실제 표본 간격을 사용합니다. 공간 계약이나 source/Vars가 호환되지 않으면
-Geometry Overlay를 표시하지 않습니다. 과거 bundle은 구성 데이터 상세 보기를 유지합니다.
+단면으로 표시합니다. x·y·z ticks는 Box의 local 좌표이며 각 셀 중심에서 표본을
+구합니다. 저장된 `boxGrid`의 origin과 rotation으로 world 좌표에 배치하므로 회전된
+Box도 표시할 수 있습니다. 공간 계약이나 source/Vars가 호환되지 않으면 Geometry
+Overlay를 표시하지 않습니다. 해석 영역 밖 표본은 0입니다.
 
 기본 표시는 전체 장 크기 `sqrt(Σ|component|²)`이며 광강도가 아닙니다.
 Ex·Ey·Ez 또는 Hx·Hy·Hz를 선택하면 개별 성분을 볼 수 있습니다. 복소수 성분은
@@ -84,12 +84,12 @@ Ex·Ey·Ez 또는 Hx·Hy·Hz를 선택하면 개별 성분을 볼 수 있습니�
 1000 nm·1500 nm, Ex·Ey·Ez와 전체 크기, 진폭·위상을 전환하세요. 기존 X 편광과
 무관하게 모든 전기장 성분이 보존됩니다. Geometry 위 검출 평면 위치, 단면 투명도,
 색상 범위 고정, 카메라 유지와 Measurement 전환 시 선택 초기화를 확인합니다.
-과거 저장 결과에는 새 주파수·성분 계약을 소급 적용하지 않습니다.
+과거 저장 결과를 새 주파수·성분 계약으로 변환하지 않습니다.
 
 ### 주파수 성분 진동
 
-complex64 spectral 결과의 3D 단면에서 `표시 모드 → 진동`을 선택하면 저장된
-복소수 성분을 `re × cos(φ) − im × sin(φ)`로 표시합니다. 기존 DFT 계수의 크기를
+polar spectral 결과의 3D 단면에서 `표시 모드 → 진동`을 선택하면 저장된
+진폭과 위상을 `amplitude × cos(phase + φ)`로 표시합니다. DFT 계수의 크기를
 그대로 사용하며 원래 광대역 펄스의 시간 이력을 복원하는 기능은 아닙니다.
 전체 크기에서 전환하면 Ex 또는 Hx가 선택됩니다. 진동 모드에서는 개별 성분만
 선택하며 범례는 해당 성분의 물리 단위로 표시됩니다.

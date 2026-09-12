@@ -7,12 +7,14 @@ from models import (
     GetListRequestBase,
     MeasurementCreateRequest,
     MeasurementRecordedDataResponse,
+    MeasurementVisualizationsResponse,
     UserData,
 )
 from service.measurement_service import (
     create_measurement as create_measurement_entity,
     delete_measurements as delete_measurement_rows,
     get_recorded_data,
+    get_visualizations,
     list_measurements as list_measurement_rows,
 )
 from user_auth.routes import get_db
@@ -71,6 +73,18 @@ async def get_measurement_recorded_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
+
+
+@router.get("/{measurement_id}/visualizations", response_model=MeasurementVisualizationsResponse)
+async def get_measurement_visualizations(
+    measurement_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: UserData | None = Depends(require_roles(["*"])),
+):
+    try:
+        return await get_visualizations(db, measurement_id, user=user)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 
 
 @router.delete("/", status_code=200)

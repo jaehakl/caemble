@@ -3,13 +3,15 @@ import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
+import { visualizationData } from '@/features/viewer/viewer/visualizationData'
 import { parseResultPolylines } from '@/features/viewer/viewer/resultPolylines'
 import { ResultTensorView } from '@/features/viewer/viewer/ResultTensorView'
 import { experimentTaskName, type ExperimentSourceDocument } from '@/lib/cad/source'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
 import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
+import { isDataTensor } from '@/lib/cad/model/dataTensor'
 import { parseRecordedMeshFields } from '@/features/viewer/viewer/meshFields'
 import { MeshFieldResult } from '@/features/viewer/viewer/MeshFieldResult'
 
@@ -21,15 +23,16 @@ export function WorkbenchViewer({
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
   onToggleViewerExpanded,
-  resultContracts,
-  resultErrors = {},
+  resultContracts: outputContracts,
+  resultErrors: outputErrors = {},
+  visualizations = {},
   resultSourceHash,
   resultVarsHash,
   selectionQuery,
   selectionSourceStatus,
   viewerExpanded,
-  recordedData,
-  recordedRules = [],
+  recordedData: outputData,
+  recordedRules: outputRules = [],
   loading = false,
   downloadProgress,
   autoSelectResult = false,
@@ -43,6 +46,7 @@ export function WorkbenchViewer({
   onToggleViewerExpanded: () => void
   resultErrors?: Readonly<Record<string, string>>
   resultContracts?: RecordedResultContracts | null
+  visualizations?: MeasurementVisualizations
   resultSourceHash?: string | null
   resultVarsHash?: string | null
   selectionQuery: CadViewerSelectionQuery | null
@@ -54,6 +58,30 @@ export function WorkbenchViewer({
   downloadProgress?: Readonly<{ completed: number; total: number }> | null
   autoSelectResult?: boolean
 }) {
+  const visual = useMemo(() => visualizationData(visualizations), [visualizations])
+  const resultContracts = useMemo(
+    () =>
+      outputContracts || Object.keys(visual.contracts).length ? { ...outputContracts, ...visual.contracts } : null,
+    [outputContracts, visual],
+  )
+  const recordedRules = useMemo(() => [...outputRules, ...visual.rules], [outputRules, visual])
+  const recordedData = useMemo(
+    () => (outputData || Object.keys(visual.data).length ? { ...outputData, ...visual.data } : undefined),
+    [outputData, visual],
+  )
+  const resultErrors = useMemo(() => ({ ...outputErrors, ...visual.errors }), [outputErrors, visual])
+  const resultProvenance = useMemo(
+    () => ({
+      ...Object.fromEntries(
+        Object.entries(outputData ?? {}).map(([name, tensor]) => [
+          name,
+          isDataTensor(tensor) ? tensor.provenance : undefined,
+        ]),
+      ),
+      ...visual.provenance,
+    }),
+    [outputData, visual],
+  )
   const mesh = useMemo(
     () => parseRecordedMeshFields(recordedRules, recordedData, resultContracts ?? {}),
     [recordedRules, recordedData, resultContracts],
@@ -100,27 +128,51 @@ export function WorkbenchViewer({
       if (result.visualization.kind === 'polyline') return polylines.bundles.some((bundle) => bundle.id === name)
       return Object.keys(recordedData).some((path) => path === name || path.startsWith(`${name}.`))
     })
-    const spatial = candidates.filter(([, result]) =>
-      frameMatches && result.visualization.coordinateSpace === 'experiment' &&
-      (result.visualization.kind === 'mesh-field' || result.visualization.kind === 'polyline' ||
-        (result.visualization.kind === 'structured-field' && result.visualization.grid)),
+    const spatial = candidates.filter(
+      ([, result]) =>
+        frameMatches &&
+        result.visualization.coordinateSpace === 'experiment' &&
+        (result.visualization.kind === 'mesh-field' ||
+          result.visualization.kind === 'polyline' ||
+          result.visualization.kind === 'box-grid' ||
+          (result.visualization.kind === 'structured-field' && result.visualization.grid)),
     )
-    setSelectedView((spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ?? '')
+    setSelectedView(
+      (spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ??
+        '',
+    )
     selectionMade.current = candidates.length > 0
   }, [autoSelectResult, recordedData, resultContracts, resultErrors, mesh, polylines, frameMatches])
   const canOverlayGeometry =
     frameMatches && (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
   const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
-  const gridAxis = selectedContract?.visualization.grid?.xyzAxes[0]
+  const gridAxis =
+    selectedContract?.visualization.kind === 'box-grid' ? 0 : selectedContract?.visualization.grid?.xyzAxes[0]
   const gridUnit =
     gridAxis === undefined
       ? undefined
       : recordedRules.find((rule) => rule.label === selectedView)?.result.axes?.[gridAxis]?.unit
   const displayUnit = sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? gridUnit ?? 'm'
+  function sameResultInvocation(name: string) {
+    if (!selectedView || selectedView === name) return true
+    const selected = resultProvenance[selectedView]
+    const other = resultProvenance[name]
+    return Boolean(
+      selected &&
+      other &&
+      selected.task === other.task &&
+      selected.solver.name === other.solver.name &&
+      selected.solver.version === other.solver.version &&
+      selected.stateRevision === other.stateRevision &&
+      selected.invocation === other.invocation &&
+      selected.catalogRevision === other.catalogRevision,
+    )
+  }
   const selectedLines = polylines.bundles.filter(
     (bundle) =>
       bundle.id === selectedView ||
       (overlay.includes(bundle.id) &&
+        sameResultInvocation(bundle.id) &&
         frameMatches &&
         resultContracts?.[bundle.id].visualization.coordinateSpace === 'experiment' &&
         (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')),
@@ -164,13 +216,18 @@ export function WorkbenchViewer({
         <select
           aria-label="Viewer 결과 선택"
           value={selectedView}
-          onChange={(event) => { selectionMade.current = true; setSelectedView(event.target.value) }}
+          onChange={(event) => {
+            selectionMade.current = true
+            setSelectedView(event.target.value)
+          }}
         >
           <option value="">Geometry</option>
           {selectedView && !selectedContract ? <option value={selectedView}>{selectedView} · 결과 없음</option> : null}
-          {Object.entries(resultContracts ?? {}).map(([name, result]) => (
+          {Object.keys(resultContracts ?? {}).map((name) => (
             <option key={name} value={name}>
-              {name} · {result.visualization.kind}
+              {name.startsWith('@visualizations.')
+                ? `${name.slice('@visualizations.'.length)} · 시각화`
+                : `${name} · Output`}
             </option>
           ))}
         </select>
@@ -178,6 +235,7 @@ export function WorkbenchViewer({
           .filter(([, result]) => result.visualization.kind === 'polyline')
           .map(([name, result]) => {
             const compatible =
+              sameResultInvocation(name) &&
               polylines.bundles.some((bundle) => bundle.id === name) &&
               frameMatches &&
               result.visualization.coordinateSpace === 'experiment' &&
@@ -196,16 +254,24 @@ export function WorkbenchViewer({
                     setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
                   }
                 />{' '}
-                {name}{overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
+                {name}
+                {overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
               </label>
             )
           })}
-        {overlay.filter((name) => !resultContracts?.[name]).map((name) => (
-          <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
-            <input type="checkbox" checked aria-label={`${name} Overlay`} onChange={() => setOverlay(overlay.filter((item) => item !== name))} />
-            {name} · 결과 없음
-          </label>
-        ))}
+        {overlay
+          .filter((name) => !resultContracts?.[name])
+          .map((name) => (
+            <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
+              <input
+                type="checkbox"
+                checked
+                aria-label={`${name} Overlay`}
+                onChange={() => setOverlay(overlay.filter((item) => item !== name))}
+              />
+              {name} · 결과 없음
+            </label>
+          ))}
         {loading ? (
           <span role="status">
             저장 결과 불러오는 중{downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
@@ -222,7 +288,9 @@ export function WorkbenchViewer({
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto">
         {selectedView && !selectedContract ? (
-          <p role="alert" className="p-3 text-red-700">{selectedView}: 새 실행에 선택한 결과가 없습니다.</p>
+          <p role="alert" className="p-3 text-red-700">
+            {selectedView}: 새 실행에 선택한 결과가 없습니다.
+          </p>
         ) : resultErrors[selectedView] ? (
           <p role="alert" className="p-3 text-red-700">
             {selectedView}: {resultErrors[selectedView]}
@@ -235,7 +303,8 @@ export function WorkbenchViewer({
             displayUnit={displayUnit}
             renderViewer={(data, view) => renderScene(data, view.deformationScale)}
           />
-        ) : selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid ? (
+        ) : selectedContract?.visualization.kind === 'box-grid' ||
+          (selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid) ? (
           <StructuredFieldResult
             key={selectedView}
             name={selectedView}

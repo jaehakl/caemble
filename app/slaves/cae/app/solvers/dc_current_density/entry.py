@@ -18,13 +18,14 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         int(scalar_parameter(invocation.config["parameters"]["maxIterations"])),
         invocation.progress,
     )
-    return SolverResult(
-        artifacts=await build_dc_outputs(
+    artifacts, exports = await build_dc_outputs(
             invocation.config,
             invocation.descriptor,
             result,
             invocation.progress,
-        ),
+        )
+    return SolverResult(
+        artifacts=artifacts, exports=exports,
         observations={
             "iterations": result.iterations,
             "relativeResidual": result.relative_residual,

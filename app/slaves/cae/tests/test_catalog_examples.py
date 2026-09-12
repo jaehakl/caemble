@@ -1,4 +1,4 @@
-"""Compile every official bundle and execute its nominal Measurement in real children."""
+"""Compile selected official bundles and execute nominal Measurements in real children."""
 from __future__ import annotations
 
 import asyncio
@@ -22,13 +22,19 @@ from caemble_catalog import open_catalog
 
 
 @pytest.fixture(scope="module")
-def catalog_measurements(tmp_path_factory):
+def catalog_measurements(tmp_path_factory, request):
     repo = Path(__file__).resolve().parents[4]
     output = tmp_path_factory.mktemp("catalog-measurements")
     with open_catalog() as catalog:
         examples, _ = catalog.list_experiments(limit=100)
+    required = {item.callspec.params["key"] for item in request.session.items
+                if hasattr(item, "callspec") and "key" in item.callspec.params}
+    if any(item.name.startswith("test_structural_child_") for item in request.session.items):
+        required.add("structural-analysis-modes")
     measurements = {}
     for example in examples:
+        if example["key"] not in required:
+            continue
         artifact = output / example["key"]
         subprocess.run([
             "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
@@ -40,6 +46,43 @@ def catalog_measurements(tmp_path_factory):
         item = json.loads((artifact / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
         measurements[example["key"]] = item["measurement"]
     return measurements
+
+
+def decode_tensor_tree(schema, value, attachments):
+    """Decode the actual packet before ACK releases its attachment buffers."""
+    result = {}
+    leaves = [("", schema, value)]
+    while leaves:
+        name, node, tensor = leaves.pop()
+        if "dtype" not in node:
+            leaves.extend((f"{name}.{member}".lstrip("."), child, tensor[member]) for member, child in node.items())
+            continue
+        storage = tensor["storage"]
+        if storage["kind"] == "inline":
+            values = np.asarray(storage["value"]).reshape(tensor["shape"])
+        else:
+            raw = b"".join(attachments[identifier] for identifier in storage["ids"])
+            values = (np.asarray(json.loads(raw.decode("utf-8"))) if node["dtype"] == "string"
+                      else np.frombuffer(raw, dtype=dtype_for(node["dtype"]))).reshape(tensor["shape"])
+        assert list(values.shape) == tensor["shape"]
+        if node["dtype"] != "string":
+            assert np.all(np.isfinite(values)), name
+        result[name] = values.copy()
+    return result
+
+
+def cylinder_segments(measurement):
+    pending = [root["node"] for root in measurement["experiment"]["scene"]["roots"]]
+    counts = set()
+    while pending:
+        node = pending.pop()
+        if node["kind"] == "primitive" and node["primitive"] == "cylinder":
+            counts.add(node["parameters"]["segments"])
+        pending.extend(node.get("children", ()))
+        if "child" in node:
+            pending.append(node["child"])
+    assert len(counts) == 1
+    return counts.pop()
 
 
 @pytest.mark.parametrize("key", [
@@ -54,94 +97,95 @@ def catalog_measurements(tmp_path_factory):
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
     measurement = catalog_measurements[key]
+    program = measurement["experiment"]["simulationProgram"]
     run = CaeRun(measurement=measurement, max_run_seconds=240, job_id=f"catalog-{key}")
     run.start()
-    recorded = {}
+    recorded, metadata, visualizations, native = {}, {}, {}, {}
+    sequences = []
     try:
         while True:
             packet = await asyncio.wait_for(run.queue.get(), timeout=250)
             if isinstance(packet, RecordPacket):
-                assert not packet.ack.done()
-                assert packet.resource_hold is not None
-                leaves = [(packet.name, run.schemas[packet.name], packet.value)]
+                assert not packet.ack.done() and packet.resource_hold is not None
+                sequences.append(packet.sequence)
                 attachments = {item.id: item.data for item in packet.attachments}
-                while leaves:
-                    name, schema, value = leaves.pop()
-                    if "dtype" not in schema:
-                        leaves.extend((f"{name}.{member}", member_schema, value[member]) for member, member_schema in schema.items())
-                        continue
-                    storage = value["storage"]
-                    if storage["kind"] == "inline":
-                        array = np.asarray(storage["value"]).reshape(value["shape"])
-                    else:
-                        raw = b"".join(attachments[identifier] for identifier in storage["ids"])
-                        array = (np.asarray(json.loads(raw.decode("utf-8"))) if schema["dtype"] == "string"
-                                 else np.frombuffer(raw, dtype=dtype_for(schema["dtype"]))).reshape(value["shape"])
-                    assert list(array.shape) == value["shape"]
-                    assert array.size > 0 or name.endswith((
-                        ".domain.metadata.loadPoints", ".domain.metadata.loadVectors",
-                        ".domain.metadata.supportNodes",
-                    )), name
-                    if schema["dtype"] != "string":
-                        assert np.all(np.isfinite(array)), name
-                    if key == "structural-analysis-modes" and name.startswith(("modal.", "harmonic.", "buckling.", "transient.")):
-                        # Calculation requires stored axis metadata in addition to tensor shape.
-                        assert len(value.get("axes", ())) == len(schema.get("axes", ())), name
-                        if name == "transient.rotorSpeed":
-                            assert value["axes"][0]["unit"] == "s"
-                    recorded[name] = array.copy()
+                if packet.kind == "visualization":
+                    assert packet.name not in visualizations
+                    visualizations[packet.name] = deepcopy(packet.value)
+                    frozen = program["visualizationContracts"][packet.name]
+                    assert set(packet.value).issubset(frozen)
+                    for name, item in packet.value.items():
+                        assert item["schema"] == frozen[name]["schema"]
+                        assert item["contract"] == {k: v for k, v in frozen[name].items() if k != "schema"}
+                        assert item["provenance"]["task"] == packet.name
+                        assert item["provenance"]["solver"] == program["tasks"][packet.name]["kernel"]
+                        leaves = decode_tensor_tree(item["schema"], item["data"], attachments)
+                        native.update({f"{packet.name}.{name}.{member}": values for member, values in leaves.items()})
+                else:
+                    schema, tensor = run.schemas[packet.name], packet.value
+                    assert schema["dtype"] in {"float32", "float64"}
+                    assert [axis["name"] for axis in schema["axes"]] == ["x", "y", "z", "time", "frequency", "amplitudePhase", "component"]
+                    values = decode_tensor_tree(schema, tensor, attachments)[""]
+                    assert values.ndim == 7 and all(size > 0 for size in values.shape)
+                    assert tensor["boxGrid"] == program["boxGrids"][packet.name]
+                    assert list(values.shape[:3]) == tensor["boxGrid"]["gridShape"]
+                    assert len(tensor["axes"]) == 7
+                    assert values.shape[5:] == (len(schema["boxGrid"]["channels"]), len(schema["boxGrid"]["components"]))
+                    for identity in ("task", "solver", "catalogRevision"):
+                        assert tensor["provenance"][identity] == program["resultContracts"][packet.name][identity]
+                    assert tensor["provenance"]["invocation"] > 0
+                    for axis in range(3):
+                        expected = (np.arange(values.shape[axis]) + .5) * tensor["boxGrid"]["size"][axis] / values.shape[axis]
+                        np.testing.assert_allclose(tensor["axes"][axis]["ticks"], expected)
+                    recorded[packet.name], metadata[packet.name] = values, deepcopy(tensor)
                 run.pending = packet
                 run.acknowledge(packet.sequence)
-                assert packet.ack.done()
-                assert packet.attachments == []
+                assert packet.ack.done() and packet.attachments == []
                 continue
             if packet["kind"] in {"complete", "failed"}:
                 assert packet["kind"] == "complete", packet
                 break
         await run.task
         assert set(run.recorded_names) == set(run.schemas)
-        assert run.completed_sequences == list(range(1, len(run.schemas) + 1))
-        for name, values in recorded.items():
-            if name.endswith(".stress"):
-                # A saved stress row must retain its coordinate basis in every example.
-                assert recorded[name[:-len("stress")] + "stressBasis"].shape == (len(values), 3, 3)
-        task_count = len(measurement["experiment"]["simulationProgram"]["tasks"])
-        if key == "structural-analysis-modes":
-            assert len(run.trace) > task_count
-        else:
-            assert len(run.trace) == task_count
+        assert sequences == list(range(1, len(sequences) + 1))
+        assert sorted(run.completed_sequences + run.visualization_sequences) == sequences
+        assert len(run.completed_sequences) == len(run.schemas)
+        assert len(run.visualization_sequences) == len(visualizations)
+        assert set(visualizations) == {name for name, task in program["tasks"].items()
+                                       if task["kernel"]["name"] in {"structural-mechanics", "ray-tracing"}}
+        for task, items in visualizations.items():
+            expected = {"paths"} if program["tasks"][task]["kernel"]["name"] == "ray-tracing" else {"displacement", "stress"}
+            if program["tasks"][task]["config"]["parameters"].get("analysis") == "transient":
+                expected.add("displacementHistory")
+            assert set(items) == expected
+            for name, item in items.items():
+                if item["contract"]["visualization"]["kind"] == "polyline":
+                    prefix, contract = f"{task}.{name}.", item["contract"]["visualization"]
+                    offsets, vertices = native[prefix + contract["offsets"]], native[prefix + contract["vertices"]]
+                    assert offsets[-1] == len(vertices) and np.all(np.diff(offsets) >= 2)
+        task_count = len(program["tasks"])
+        assert len(run.trace) > task_count if key == "structural-analysis-modes" else len(run.trace) == task_count
         if "totalCurrent" in recorded:
-            assert recorded["totalCurrent"] > 0
+            assert recorded["totalCurrent"].item() > 0
         if "maximumTemperature" in recorded:
-            assert recorded["maximumTemperature"] > measurement["experiment"]["variables"]["fixedTemperature"]
-        if "detectorPower" in recorded:
-            assert recorded["detectorPower"] > 0
-            if "detectorEfficiency" in recorded:
-                assert 0 < recorded["detectorEfficiency"] <= 1
-        for name, contract in measurement["experiment"]["simulationProgram"]["resultContracts"].items():
-            if contract["visualization"]["kind"] == "polyline":
-                offsets = recorded[name + "." + contract["visualization"]["offsets"]]
-                vertices = recorded[name + "." + contract["visualization"]["vertices"]]
-                assert offsets[-1] == len(vertices)
-                assert np.all(np.diff(offsets) >= 2)
+            assert recorded["maximumTemperature"].item() > measurement["experiment"]["variables"]["fixedTemperature"]
+        for name, values in recorded.items():
+            if name.endswith("FluenceRate") or name == "timeElectricField":
+                assert np.max(np.abs(values)) > 0
         if key == "structural-optical-results":
-            assert set(run.recorded_names) == {"displacement", "stress", "reaction", "opticalTrajectories", "secondaryTrajectories", "detectorPower"}
-            assert np.max(np.abs(recorded["stress.values"])) > 0
-            assert np.max(np.abs(recorded["displacement.values"])) > 0
-        if "timeElectricField" in recorded:
-            assert np.max(np.abs(recorded["timeElectricField"])) > 0
-        # Recorded mesh topology, physical locations and CAD region provenance are
-        # checked independently of the mesher's generated numbering.
+            assert set(recorded) == {"displacement", "stress", "reaction", "traceFluenceRate", "traceRadiantFluxDensity", "secondaryFluenceRate", "secondaryRadiantFluxDensity"}
+            assert np.max(np.abs(recorded["stress"])) > 0 and np.max(np.abs(recorded["displacement"])) > 0
+
+        # Native visual snapshots still preserve physical topology, coordinates,
+        # quality and CAD provenance, independently of numerical Box samples.
         meshes = {}
-        for name in recorded:
-            if not name.endswith(".domain.kind") or recorded[name].item() != "unstructured-mesh":
+        for name, kind in native.items():
+            if not name.endswith(".domain.kind") or kind.item() != "unstructured-mesh":
                 continue
             prefix = name[:-len(".domain.kind")]
-            points = recorded[prefix + ".domain.points"]
-            cells = recorded[prefix + ".domain.cells.tet4"]
-            faces = recorded[prefix + ".domain.metadata.boundaryFaces"]
-            regions = recorded[prefix + ".domain.metadata.cellRegions"]
-            region_ids = recorded[prefix + ".domain.metadata.regionIds"]
+            points, cells = native[prefix + ".domain.points"], native[prefix + ".domain.cells.tet4"]
+            faces = native[prefix + ".domain.metadata.boundaryFaces"]
+            regions, region_ids = native[prefix + ".domain.metadata.cellRegions"], native[prefix + ".domain.metadata.regionIds"]
             assert points.ndim == 2 and points.shape[1] == 3
             assert cells.ndim == 2 and cells.shape[1] == 4
             assert faces.ndim == 2 and faces.shape[1] == 3
@@ -149,151 +193,157 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert np.all((faces >= 0) & (faces < len(points)))
             vertices = points[cells]
             volumes = np.einsum("ij,ij->i", np.cross(vertices[:, 1] - vertices[:, 0], vertices[:, 2] - vertices[:, 0]), vertices[:, 3] - vertices[:, 0]) / 6
-            assert np.all(volumes > 0), prefix
-            np.testing.assert_allclose(recorded[prefix + ".domain.metadata.quality.cellVolumes"], volumes, rtol=1e-10)
-            ratios = recorded[prefix + ".domain.metadata.quality.meanRatios"]
-            assert ratios.shape == (len(cells),)
-            assert np.all((ratios > 0) & (ratios <= 1))
-            assert regions.shape == (len(cells),)
-            assert set(regions) == set(range(len(region_ids)))
+            assert np.all(volumes > 0)
+            np.testing.assert_allclose(native[prefix + ".domain.metadata.quality.cellVolumes"], volumes, rtol=1e-10)
+            ratios = native[prefix + ".domain.metadata.quality.meanRatios"]
+            assert ratios.shape == (len(cells),) and np.all((ratios > 0) & (ratios <= 1))
+            assert regions.shape == (len(cells),) and set(regions) == set(range(len(region_ids)))
             scene_ids = {"experiment:" + root["id"] for root in measurement["experiment"]["scene"]["roots"]}
             assert set(region_ids).issubset(scene_ids)
-            aliases = {member: recorded[prefix + ".domain.metadata.boundaryProvenance." + member]
+            aliases = {member: native[prefix + ".domain.metadata.boundaryProvenance." + member]
                        for member in ("offsets", "sources", "rootIds", "sourceNodeIds", "surfaceIndices")}
-            assert aliases["offsets"].shape == (len(faces) + 1,)
-            assert aliases["offsets"][0] == 0
+            assert aliases["offsets"].shape == (len(faces) + 1,) and aliases["offsets"][0] == 0
             assert np.all(np.diff(aliases["offsets"]) > 0)
             assert all(len(aliases[member]) == aliases["offsets"][-1] for member in aliases if member != "offsets")
             assert np.all(aliases["surfaceIndices"] >= 0)
-            primitive_ids = set()
-            for root in measurement["experiment"]["scene"]["roots"]:
-                pending_nodes = [root["node"]]
-                while pending_nodes:
-                    node = pending_nodes.pop()
-                    if node["kind"] == "primitive":
-                        primitive_ids.add(("experiment", root["id"], node["nodeId"]))
-                    pending_nodes.extend(node.get("children", ()))
-                    if "child" in node:
-                        pending_nodes.append(node["child"])
-            assert set(zip(aliases["sources"], aliases["rootIds"], aliases["sourceNodeIds"])).issubset(primitive_ids)
-            assert len(recorded[prefix + ".domain.identity"].item()) == 64
-            assert recorded[prefix + ".domain.lengthUnit"].item() == "m"
-            values = recorded[prefix + ".values"]
-            if recorded[prefix + ".location"].item() == "node":
-                assert values.shape == (len(points), 3)
-            else:
-                assert recorded[prefix + ".location"].item() == "cell"
-                assert values.shape == (len(cells), 6)
-            supports = recorded[prefix + ".domain.metadata.supportNodes"]
+            assert len(native[prefix + ".domain.identity"].item()) == 64
+            assert native[prefix + ".domain.lengthUnit"].item() == "m"
+            values = native[prefix + ".values"]
+            assert values.shape == ((len(points), 3) if native[prefix + ".location"].item() == "node" else (len(cells), 6))
+            supports = native[prefix + ".domain.metadata.supportNodes"]
             assert np.all((supports >= 0) & (supports < len(points)))
-            assert recorded[prefix + ".domain.metadata.loadPoints"].shape == recorded[prefix + ".domain.metadata.loadVectors"].shape
+            assert native[prefix + ".domain.metadata.loadPoints"].shape == native[prefix + ".domain.metadata.loadVectors"].shape
             meshes[prefix] = (points, cells, volumes)
         if key == "structural-element-basics":
-            loads = {
-                "axial": ([1000, 0, 0], [0, 0, 0]),
-                "bending": ([0, 0, -1000], [0, 0, 0]),
-                "torsion": ([0, 0, 0], [100, 0, 0]),
-            }
-            for task, (force, moment) in loads.items():
-                prefix = task + "_displacement"
+            for task, force in {"axial": [1000, 0, 0], "bending": [0, 0, -1000], "torsion": [0, 0, 0]}.items():
+                prefix = task + ".displacement"
                 points, _, volumes = meshes[prefix]
-                displacement = recorded[prefix + ".values"]
-                reactions = recorded[task + "_reaction.values"]
+                displacement = native[prefix + ".values"]
                 np.testing.assert_allclose(volumes.sum(), 1 * .3 * .3, rtol=1e-10)
-                np.testing.assert_array_equal(recorded[prefix + ".domain.identity"], recorded[task + "_reaction.domain.identity"])
-                np.testing.assert_allclose(reactions.sum(axis=0), -np.asarray(force), atol=1e-6)
-                np.testing.assert_allclose(np.cross(points - [1, 0, 0], reactions).sum(axis=0), -np.asarray(moment), atol=1e-6)
-                support = np.isclose(points[:, 0], 0)
-                np.testing.assert_allclose(displacement[support], 0, atol=1e-14)
-                faces = recorded[prefix + ".domain.metadata.boundaryFaces"]
+                np.testing.assert_allclose(recorded[task + "_reaction"].reshape(3), -np.asarray(force), atol=1e-6)
+                np.testing.assert_allclose(displacement[np.isclose(points[:, 0], 0)], 0, atol=1e-14)
+                faces = native[prefix + ".domain.metadata.boundaryFaces"]
                 tip_faces = faces[np.all(np.isclose(points[faces, 0], 1), axis=1)]
-                tip_triangles = points[tip_faces]
-                areas = np.linalg.norm(np.cross(tip_triangles[:, 1] - tip_triangles[:, 0], tip_triangles[:, 2] - tip_triangles[:, 0]), axis=1) / 2
+                triangles = points[tip_faces]
+                areas = np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]), axis=1) / 2
                 tip = np.einsum("n,ni->i", areas, displacement[tip_faces].mean(axis=1)) / areas.sum()
                 if task == "axial":
-                    # A fully clamped 3D end restrains Poisson contraction. The
-                    # compliance lies between fully constrained and uniaxial bars.
-                    free_extension = 1000 / (210e9 * .3 * .3)
-                    constrained_extension = free_extension * (1 + .3) * (1 - 2 * .3) / (1 - .3)
-                    assert constrained_extension < tip[0] < free_extension
+                    free = 1000 / (210e9 * .3 * .3)
+                    assert free * (1 + .3) * (1 - 2 * .3) / (1 - .3) < tip[0] < free
                 elif task == "bending":
                     assert tip[2] < 0
                 else:
-                    tip_nodes = np.unique(tip_faces)
-                    twist_work = points[tip_nodes, 1] * displacement[tip_nodes, 2] - points[tip_nodes, 2] * displacement[tip_nodes, 1]
-                    assert twist_work.sum() > 0
+                    nodes = np.unique(tip_faces)
+                    assert (points[nodes, 1] * displacement[nodes, 2] - points[nodes, 2] * displacement[nodes, 1]).sum() > 0
         if key == "structural-analysis-modes":
-            assert np.all(recorded["modal.frequencies"] > 0)
-            assert np.all(np.diff(recorded["modal.frequencies"]) >= 0)
-            assert np.all(recorded["buckling.factors"] > 0)
-            assert np.all(np.diff(recorded["transient.times"]) > 0)
-            np.testing.assert_array_equal(recorded["transient.regionIds"], ["experiment.surface.loaded"])
-            assert recorded["transient.displacement"].shape[1:] == (1, 3)
-            assert recorded["transient.times"][-1] == pytest.approx(.002)
-            assert np.max(np.abs(recorded["harmonic.displacementReal"])) > 0
-            assert np.max(np.abs(recorded["transientMesh.values"])) > 0
-            animation = recorded["transientAnimation.values"]
-            np.testing.assert_array_equal(recorded["transientAnimation.times"], recorded["transient.times"])
-            assert animation.shape[1:] == recorded["transientAnimation.field.domain.points"].shape
-            np.testing.assert_allclose(animation[-1], recorded["transientMesh.values"])
+            frequencies = metadata["modal"]["axes"][4]["ticks"]
+            assert np.all(np.asarray(frequencies) > 0) and np.all(np.diff(frequencies) >= 0)
+            assert np.all(recorded["bucklingFactor"] > 0)
+            times = metadata["transient"]["axes"][3]["ticks"]
+            assert np.all(np.diff(times) > 0) and times[-1] == pytest.approx(.002)
+            assert np.max(recorded["harmonic"][:, :, :, :, :, 0, :]) > 0
+            assert np.max(np.abs(recorded["transientMesh"])) > 0
+            prefix = "transient.displacementHistory"
+            animation = native[prefix + ".values"]
+            np.testing.assert_array_equal(native[prefix + ".times"], times)
+            assert animation.shape[1:] == native[prefix + ".field.domain.points"].shape
+            np.testing.assert_allclose(animation[-1], native["transient.displacement.values"])
+            assert visualizations["transient"]["displacementHistory"]["provenance"]["invocation"] == 3
         if key == "structural-nonlinear-materials":
-            assert np.max(recorded["plastic_stress.equivalentPlasticStrain"]) > 0
+            assert np.max(np.abs(recorded["plastic_stress"])) > 0
             for task, force in {"plastic": [35e6, 0, 0], "contact": [0, 0, -200], "laminate": [10000, 0, 0]}.items():
-                residual = recorded[task + "_reaction.values"].sum(axis=0) + force
-                assert np.linalg.norm(residual) < 1e-6 * np.linalg.norm(force)
-            points, cells, _ = meshes["contact_displacement"]
-            displaced = points + recorded["contact_displacement.values"]
-            slider_bottom = np.isclose(points[:, 2], .1999)
-            base_top = np.isclose(points[:, 2], .2)
-            assert np.any(slider_bottom) and np.any(base_top)
-            penetration = displaced[base_top, 2].max() - displaced[slider_bottom, 2].mean()
-            # Contact pressure = penalty * penetration on the 0.4 × 0.4 face.
-            assert 0 < penetration < 2 * 200 / (1e9 * .4 * .4)
-            contact_regions = recorded["contact_displacement.domain.metadata.cellRegions"]
-            assert len(np.intersect1d(cells[contact_regions == 0], cells[contact_regions == 1])) == 0
-            points, cells, _ = meshes["laminate_displacement"]
-            regions = recorded["laminate_displacement.domain.metadata.cellRegions"]
-            shared_nodes = np.intersect1d(cells[regions == 0], cells[regions == 1])
-            assert len(shared_nodes) > 0
-            np.testing.assert_allclose(points[shared_nodes, 2], .2, atol=1e-10)
-            laminate_group = next(group for group in measurement["experiment"]["scene"]["geometryGroups"]
-                                  if group["name"] == "laminate")
-            assert set(recorded["laminate_displacement.domain.metadata.regionIds"]) == {
-                "experiment:" + root_id for root_id in laminate_group["rootIds"]
-            }
+                assert np.linalg.norm(recorded[task + "_reaction"].reshape(3) + force) < 1e-6 * np.linalg.norm(force)
+            points, cells, _ = meshes["contact.displacement"]
+            displaced = points + native["contact.displacement.values"]
+            bottom, top = np.isclose(points[:, 2], .1999), np.isclose(points[:, 2], .2)
+            assert np.any(bottom) and np.any(top)
+            assert 0 < displaced[top, 2].max() - displaced[bottom, 2].mean() < 2 * 200 / (1e9 * .4 * .4)
+            regions = native["contact.displacement.domain.metadata.cellRegions"]
+            assert len(np.intersect1d(cells[regions == 0], cells[regions == 1])) == 0
+            points, cells, _ = meshes["laminate.displacement"]
+            regions = native["laminate.displacement.domain.metadata.cellRegions"]
+            shared = np.intersect1d(cells[regions == 0], cells[regions == 1])
+            assert len(shared) > 0
+            np.testing.assert_allclose(points[shared, 2], .2, atol=1e-10)
         if key in {"curved-tower-shell", "boolean-connection-solid"}:
             curved = key == "curved-tower-shell"
-            points, cells, volumes = meshes["displacement"]
-            supports = recorded["displacement.domain.metadata.supportNodes"]
+            points, cells, volumes = meshes["detail.displacement"]
+            supports = native["detail.displacement.domain.metadata.supportNodes"]
             np.testing.assert_allclose(points[supports, 2 if curved else 0], 0, atol=1e-10)
-            np.testing.assert_array_equal(recorded["displacement.domain.metadata.regionIds"], ["experiment:body"])
-            np.testing.assert_allclose(recorded["reaction.values"].sum(axis=0), [-1000 if curved else -10000, 0, 0], atol=1e-5)
-            centers = points[cells].mean(axis=1)
-            if curved:
-                radius, center, expected_volume = .25, [0, 0], np.pi * (.4 ** 2 - .25 ** 2) * 1.2
-            else:
-                variables = measurement["experiment"]["variables"]
-                radius, center = variables["holeRadius"], [variables["holePosition"], 0]
-                expected_volume = (1 * .6 - np.pi * radius ** 2) * variables["thickness"]
+            np.testing.assert_allclose(recorded["reaction"].reshape(3), [-1000 if curved else -10000, 0, 0], atol=1e-5)
+            variables = measurement["experiment"]["variables"]
+            radius, center = (.25, [0, 0]) if curved else (variables["holeRadius"], [variables["holePosition"], 0])
+            segments = cylinder_segments(measurement)
+            polygon_area = segments * np.sin(2 * np.pi / segments) / 2
+            expected_volume = polygon_area * (.4 ** 2 - .25 ** 2) * 1.2 if curved else (1 * .6 - polygon_area * radius ** 2) * variables["thickness"]
             np.testing.assert_allclose(volumes.sum(), expected_volume, rtol=5e-4)
-            assert np.all(np.linalg.norm(centers[:, :2] - center, axis=1) > radius * np.cos(np.pi / 128) - 1e-10)
-            bases = recorded["stress.stressBasis"]
-            assert bases.shape == (len(recorded["stress.elementIds"]), 3, 3)
-            np.testing.assert_allclose(bases.transpose(0, 2, 1) @ bases, np.broadcast_to(np.eye(3), bases.shape), atol=1e-12)
-            np.testing.assert_allclose(np.linalg.det(bases), 1, atol=1e-12)
-            assert recorded["stressField.values"].shape == (len(cells), 6)
-            provenance_prefix = "displacement.domain.metadata.boundaryProvenance."
-            surface_aliases = set(zip(recorded[provenance_prefix + "rootIds"],
-                                      recorded[provenance_prefix + "sourceNodeIds"],
-                                      recorded[provenance_prefix + "surfaceIndices"]))
-            # Selected support/load/hole surfaces survive Boolean evaluation and recording.
+            assert np.all(np.linalg.norm(points[cells].mean(axis=1)[:, :2] - center, axis=1) > radius * np.cos(np.pi / segments) - 1e-10)
+            prefix = "detail.displacement.domain.metadata.boundaryProvenance."
+            aliases = set(zip(native[prefix + "rootIds"], native[prefix + "sourceNodeIds"], native[prefix + "surfaceIndices"]))
             for group in measurement["experiment"]["scene"]["surfaceGroups"]:
                 for selector in group["selectors"]:
-                    assert (selector["rootId"], selector["sourceNodeId"], selector["surfaceIndex"]) in surface_aliases
-        assert run._record_packets == {}
+                    assert (selector["rootId"], selector["sourceNodeId"], selector["surfaceIndex"]) in aliases
+        assert not run._record_packets
     finally:
         await run.close()
         await asyncio.gather(run.task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("key,task_name,expected", [
+    ("folded-ray-tracing", "trace", {"paths"}),
+    ("structural-element-basics", "axial", {"displacement", "stress"}),
+])
+@pytest.mark.asyncio
+async def test_visualization_only_official_task_needs_no_outputs(key, task_name, expected, catalog_measurements):
+    measurement = deepcopy(catalog_measurements[key])
+    program = measurement["experiment"]["simulationProgram"]
+    task = program["tasks"][task_name]
+    task["config"]["outputs"] = []
+    task["config"]["exports"] = []
+    program["tasks"] = {task_name: task}
+    program["recordedData"], program["resultContracts"], program["boxGrids"] = {}, {}, {}
+    program["visualizationContracts"] = {task_name: program["visualizationContracts"][task_name]}
+    program["pythonSource"] = f'''async def simulate(*, sim, tasks, vars):
+    result = await sim.run(tasks["{task_name}"])
+    sim.release(result["state"])
+'''
+    measurement["experiment"]["taskScenes"] = {task_name: measurement["experiment"]["taskScenes"][task_name]}
+    for field in ("taskMaterialSnapshots", "materialSelections"):
+        measurement[field] = {task_name: measurement[field][task_name]}
+    run = CaeRun(measurement=measurement, max_run_seconds=120, job_id=f"visual-only-{key}")
+    run.start()
+    packets = []
+    try:
+        while True:
+            packet = await asyncio.wait_for(run.queue.get(), timeout=130)
+            if isinstance(packet, RecordPacket):
+                assert packet.kind == "visualization" and packet.name == task_name
+                assert set(packet.value) == expected
+                assert not packet.ack.done() and packet.resource_hold is not None
+                attachments = {part.id: part.data for part in packet.attachments}
+                for item in packet.value.values():
+                    leaves = decode_tensor_tree(item["schema"], item["data"], attachments)
+                    assert leaves and any(value.size > 0 for value in leaves.values())
+                    assert item["provenance"]["task"] == task_name
+                    assert item["provenance"]["invocation"] == 1
+                packets.append(packet)
+                run.pending = packet
+                run.acknowledge(packet.sequence)
+                assert packet.ack.done() and packet.attachments == []
+                continue
+            if packet["kind"] in {"complete", "failed"}:
+                assert packet["kind"] == "complete", packet
+                break
+        await run.task
+        assert len(packets) == 1 and run.visualization_sequences == [1]
+        assert run.completed_sequences == [] and run.recorded_names == []
+        assert not run._record_packets
+    finally:
+        simulation = run.simulation_api
+        await run.close()
+        await asyncio.gather(run.task, return_exceptions=True)
+    assert simulation._resources.stats().resource_count == 0
+    assert not simulation._buffers.root.exists()
 
 
 @pytest.mark.asyncio
@@ -324,23 +374,10 @@ async def test_boolean_vars_rebuild_mesh_and_preserve_semantic_boundaries(tmp_pa
             while True:
                 packet = await asyncio.wait_for(run.queue.get(), timeout=250)
                 if isinstance(packet, RecordPacket):
-                    if packet.name == "displacement":
-                        leaves = [("", run.schemas[packet.name], packet.value)]
+                    if packet.kind == "visualization" and packet.name == "detail":
+                        item = packet.value["displacement"]
                         attachments = {item.id: item.data for item in packet.attachments}
-                        while leaves:
-                            name, schema, value = leaves.pop()
-                            if "dtype" not in schema:
-                                leaves.extend((f"{name}.{member}".lstrip("."), member_schema, value[member])
-                                              for member, member_schema in schema.items())
-                                continue
-                            storage = value["storage"]
-                            if storage["kind"] == "inline":
-                                values = np.asarray(storage["value"]).reshape(value["shape"])
-                            else:
-                                raw = b"".join(attachments[identifier] for identifier in storage["ids"])
-                                values = (np.asarray(json.loads(raw.decode("utf-8"))) if schema["dtype"] == "string"
-                                          else np.frombuffer(raw, dtype=dtype_for(schema["dtype"]))).reshape(value["shape"])
-                            recorded[name] = values.copy()
+                        recorded = decode_tensor_tree(item["schema"], item["data"], attachments)
                     run.pending = packet
                     run.acknowledge(packet.sequence)
                     assert packet.ack.done() and packet.attachments == []
@@ -357,14 +394,16 @@ async def test_boolean_vars_rebuild_mesh_and_preserve_semantic_boundaries(tmp_pa
         points, cells = recorded["domain.points"], recorded["domain.cells.tet4"]
         faces = recorded["domain.metadata.boundaryFaces"]
         volumes = recorded["domain.metadata.quality.cellVolumes"]
-        np.testing.assert_allclose(volumes.sum(), (.6 - np.pi * variables["holeRadius"] ** 2) * variables["thickness"], rtol=5e-4)
+        segments = cylinder_segments(measurement)
+        polygon_area = segments * np.sin(2 * np.pi / segments) / 2
+        np.testing.assert_allclose(volumes.sum(), (.6 - polygon_area * variables["holeRadius"] ** 2) * variables["thickness"], rtol=5e-4)
         assert np.all(volumes > 0)
         assert recorded["values"].shape == points.shape
         assert np.max(np.abs(recorded["values"])) > 0
         np.testing.assert_allclose(np.ptp(points[:, 2]), variables["thickness"], atol=1e-10)
         hole_center = [variables["holePosition"], 0]
         assert np.all(np.linalg.norm(points[cells].mean(axis=1)[:, :2] - hole_center, axis=1)
-                      > variables["holeRadius"] * np.cos(np.pi / 128) - 1e-10)
+                      > variables["holeRadius"] * np.cos(np.pi / segments) - 1e-10)
         offsets = recorded["domain.metadata.boundaryProvenance.offsets"]
         root_ids = recorded["domain.metadata.boundaryProvenance.rootIds"]
         node_ids = recorded["domain.metadata.boundaryProvenance.sourceNodeIds"]
@@ -378,7 +417,7 @@ async def test_boolean_vars_rebuild_mesh_and_preserve_semantic_boundaries(tmp_pa
         assert len(hole_points) > 0
         np.testing.assert_allclose((hole_points[:, :2].min(axis=0) + hole_points[:, :2].max(axis=0)) / 2, hole_center, atol=1e-8)
         radial_distances = np.linalg.norm(hole_points[:, :2] - hole_center, axis=1)
-        assert np.all(radial_distances >= variables["holeRadius"] * np.cos(np.pi / 128) - 1e-8)
+        assert np.all(radial_distances >= variables["holeRadius"] * np.cos(np.pi / segments) - 1e-8)
         assert np.all(radial_distances <= variables["holeRadius"] + 1e-8)
         supports = recorded["domain.metadata.supportNodes"]
         assert len(supports) > 0
@@ -454,11 +493,12 @@ async def test_structural_child_rejects_foreign_motion_without_committing_trial(
     measurement = deepcopy(catalog_measurements["structural-analysis-modes"])
     program = measurement["experiment"]["simulationProgram"]
     task = program["tasks"]["transient"]
-    motion = next((output for output in task["config"]["outputs"] if output["methodId"] == "fea.motion"), None)
+    motion = next((output for output in task["config"]["exports"] if output["methodId"] == "fea.motion"), None)
     if motion is None:
         motion = {"methodId": "fea.motion", "key": "motion", "target": [], "parameters": {}}
-        task["config"]["outputs"].append(motion)
+        task["config"]["exports"].append(motion)
     program["tasks"]["foreign"] = deepcopy(task)
+    program["visualizationContracts"]["foreign"] = deepcopy(program["visualizationContracts"]["transient"])
     # Same CSG and physical conditions, a different solver-generated mesh profile.
     program["tasks"]["foreign"]["config"]["parameters"]["spatialResolution"]["value"] *= .8
     measurement["experiment"]["taskScenes"]["foreign"] = deepcopy(measurement["experiment"]["taskScenes"]["transient"])

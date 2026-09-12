@@ -71,23 +71,29 @@ after a catalog deployment.
 ## Resource and recording boundaries
 
 Solver values use `FieldValue` with a self-contained domain; only the resident
-resource graph uses `ResourceRef`. Domain fields use `FieldValue`; compound
-outputs and retained ray paths use `BundleValue`. ABI 1, ABI 2 and legacy resource
-mappings are not supported.
+resource graph uses `ResourceRef`. Native coupling values are requested through
+`config.exports`. Numerical Outputs are real, rank-seven Box Grid tensors.
+Mesh and retained ray paths belong to automatic `SolverResult.visualizations`,
+whose frozen contracts can project compound values such as `BundleValue`.
+ABI 1, ABI 2 and legacy resource mappings are not supported.
 State lineage survives explicit root release, while live state, artifacts,
 invocations, and ACK packets independently retain the resources they need.
 `sim.release(state, keep=next_state)` preserves an unchanged revision;
 `keep=(next_state, checkpoint)` also preserves a checkpoint. Empty revision 0 is
 never released, and an active invocation's base state cannot be released.
 
-Recording projects artifacts onto the declared RecordedData schema before
-tensor encoding. Existing tensor schemas keep their wire format. An explicit
-group can additionally preserve domain coordinates, connectivity, identity and
-field metadata using the projection names in the Solver development guide.
-Workbench Help documents authoring syntax and examples.
+Recording validates the declared Box Grid schema before tensor encoding. Axes
+are always x, y, z, time, frequency, amplitudePhase, component; complex values
+use amplitude and phase channels in a float32 or float64 tensor. Each value
+preserves its Box geometry beside the static profile. Automatic visualizations
+preserve native domain coordinates, connectivity, identity and field metadata
+in a separate collection. Only the latest successful invocation snapshot per
+Task is published; accepted time history remains inside that snapshot.
 
-Each record retains its resources until the server confirms durable staging.
-Completion is sent only after every record ACK and after invocation children,
+Each numerical or visualization packet retains its resources until the server
+confirms durable staging. The two packet kinds share one sequence counter and
+have separate ACKs and terminal sequence lists. Completion is sent only after
+every record and visualization ACK and after invocation children,
 deferred process cleanup, and run resources have closed. The launcher releases
 its job slot after the server completion ACK and the worker's `job.cleaned` message.
 Cancellation and connection loss also await cleanup. Interrupted computations fail;

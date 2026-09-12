@@ -42,7 +42,7 @@ const integerRanges: Readonly<Record<string, readonly [number, number]>> = Objec
   uint64: [0, Number.MAX_SAFE_INTEGER],
 })
 const recordedDataNamePattern = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/u
-const methodCategories = ['initializations', 'boundaryConditions', 'outputs'] as const
+const methodCategories = ['initializations', 'boundaryConditions', 'outputs', 'exports'] as const
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return (
@@ -321,7 +321,10 @@ function validateParameters(
   }
   Object.entries(values).forEach(([name, value]) => {
     const spec = specs[name]
-    if (spec) validateValue(value, spec.data, `${path}.${name}`, catalog, issues)
+    if (name === 'gridShape' && spec && Array.isArray(value)) {
+      if (value.length !== 3 || value.some((length) => !Number.isSafeInteger(length) || length < 1))
+        addIssue(issues, `${path}.${name}`, 'requires three positive integers.')
+    } else if (spec) validateValue(value, spec.data, `${path}.${name}`, catalog, issues)
   })
 }
 
@@ -362,12 +365,13 @@ function validateCalls(
       return
     }
     const allowed =
-      category === 'outputs' ? ['key', 'methodId', 'target', 'parameters'] : ['methodId', 'target', 'parameters']
+      category === 'outputs' ? ['key', 'methodId', 'target', 'parameters', 'boxGrid'] :
+      category === 'exports' ? ['key', 'methodId', 'target', 'parameters'] : ['methodId', 'target', 'parameters']
     Reflect.ownKeys(call).forEach((key) => {
       if (typeof key !== 'string' || !allowed.includes(key))
         addIssue(issues, `${callPath}.${String(key)}`, 'is not allowed.')
     })
-    if (category === 'outputs') {
+    if (category === 'outputs' || category === 'exports') {
       if (typeof call.key !== 'string' || !call.key.trim()) {
         addIssue(issues, `${callPath}.key`, 'must be a non-empty string.')
       } else if (outputKeys.has(call.key)) {
@@ -421,12 +425,18 @@ function validateCalls(
     let resolvedCount = 0
     call.target.forEach((target, targetIndex) => {
       const targetPath = `${callPath}.target[${targetIndex}]`
-      const prefix = `${method.target.source}.${method.target.kind}.`
+      const source = method.target.source === 'either' && typeof target === 'string'
+        ? target.split('.')[0] : method.target.source
+      const prefix = `${source}.${method.target.kind}.`
       if (typeof target !== 'string' || !target.startsWith(prefix) || !target.slice(prefix.length)) {
         addIssue(issues, targetPath, `must match ${prefix}<group>.`)
         return
       }
-      const scene = scenes[method.target.source]
+      if (source !== 'experiment' && source !== 'task') {
+        addIssue(issues, targetPath, 'must select Experiment or Task geometry.')
+        return
+      }
+      const scene = scenes[source]
       const group = targetGroup(scene, method.target.kind, target.slice(prefix.length))
       if (!group) {
         addIssue(issues, targetPath, 'references a group that is not declared in its scene.')
@@ -513,7 +523,7 @@ function validateRecordedSchema(
     })
     return
   }
-  const allowed = new Set(['dtype', 'tensorOrder', 'axes', 'unit', 'quantityKind', 'basis'])
+  const allowed = new Set(['dtype', 'tensorOrder', 'axes', 'unit', 'quantityKind', 'basis', 'boxGrid'])
   Reflect.ownKeys(node).forEach((key) => {
     if (typeof key !== 'string' || !allowed.has(key))
       addIssue(issues, `${path}.${String(key)}`, 'is not a RecordedData descriptor field.')
@@ -647,7 +657,7 @@ export function assertExperimentAuthoringSemantics(
     validateParameters(config.parameters, solver.descriptor.parameters, `${path}.parameters`, catalog, issues)
     const scenes = Object.freeze({ experiment: evaluated.scene, task: scene })
     methodCategories.forEach((category) => {
-      validateCalls(solver.descriptor, category, config[category], scenes, `${path}.${category}`, catalog, issues)
+      validateCalls(solver.descriptor, category, config[category] ?? (category === 'exports' ? [] : undefined), scenes, `${path}.${category}`, catalog, issues)
     })
     if (Array.isArray(config.outputs) && config.outputs.length < (solver.descriptor.minimumOutputs ?? 0)) {
       addIssue(

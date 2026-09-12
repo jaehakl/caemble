@@ -280,6 +280,16 @@ class Measurement(TimestampMixin, Base):
     )
 
 
+class MeasurementVisualization(TimestampMixin, Base):
+    __tablename__ = "measurement_visualizations"
+
+    measurement_id: Mapped[int] = mapped_column(
+        ForeignKey("measurements.id", ondelete="CASCADE"), primary_key=True,
+    )
+    task: Mapped[str] = mapped_column(Text, primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
 class RecordedData(TimestampMixin, Base):
     __tablename__ = "recorded_data"
     __table_args__ = (

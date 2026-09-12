@@ -2,41 +2,36 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from itertools import product
 from typing import Any
 
 import numpy as np
 import torch
 
-from app.kernel.api import FieldValue, StructuredGridValue, SolverInvocation
-from app.kernel.api.world import task_scene
-from .setup import (
-    PreparedDomain,
-    _target_part,
-    _positive_int,
-    axis_aligned_box_bounds,
-    detector_indices,
-)
+from app.kernel.api import SolverInvocation
+from app.methods.fields.box_grid import BoxGrid, RectilinearSampler, pack_box_grid
+from .setup import PreparedDomain, _positive_int
 
 
 @dataclass(frozen=True, slots=True)
 class DetectorRegion:
-    z: np.ndarray[Any, np.dtype[np.int64]]
-    y: np.ndarray[Any, np.dtype[np.int64]]
-    x: np.ndarray[Any, np.dtype[np.int64]]
-    ticks: tuple[np.ndarray[Any, np.dtype[np.float64]], ...]
-    bounds: tuple[tuple[float, float], ...] | None = None
-
-    def __post_init__(self) -> None:
-        if self.z.size == 0 or self.y.size == 0 or self.x.size == 0:
-            raise ValueError("detector geometry must select at least one cell on every axis")
+    sampler: RectilinearSampler
+    grid: BoxGrid
+    data: dict[str, Any]
 
     def sample(self, values: torch.Tensor) -> torch.Tensor:
-        z = torch.as_tensor(self.z, dtype=torch.long, device=values.device)
-        y = torch.as_tensor(self.y, dtype=torch.long, device=values.device)
-        x = torch.as_tensor(self.x, dtype=torch.long, device=values.device)
-        return values[:, z[:, None, None], y[None, :, None], x[None, None, :]].permute(
-            1, 2, 3, 0
-        )
+        sampler = self.sampler
+        result = torch.zeros((len(sampler.valid), values.shape[0]), dtype=values.dtype, device=values.device)
+        for corner in product((0, 1), repeat=3):
+            indices = tuple(torch.as_tensor(sampler.indices[axis][side], device=values.device)
+                            for axis, side in enumerate(corner))
+            weight = np.ones(len(sampler.valid))
+            for axis, side in enumerate(corner):
+                weight *= sampler.weights[axis] if side else 1 - sampler.weights[axis]
+            result += values[(slice(None), *indices)].T * torch.as_tensor(weight[:, None], dtype=values.dtype, device=values.device)
+        result[torch.as_tensor(~sampler.valid, device=values.device)] = 0
+        return result.reshape((*sampler.shape, values.shape[0]))
+
 
 
 @dataclass(slots=True)
@@ -63,12 +58,10 @@ class TimeDetector:
         )
         self.times.append(time)
 
-    def artifact(self) -> FieldValue:
+    def artifact(self) -> dict[str, Any]:
         values = np.stack(self.samples).astype(np.float32, copy=False)
-        return _field_member(
-            values, np.asarray(self.times, dtype=np.float64), self.region.ticks,
-            self.field_kind, "time", "s", self.region.bounds,
-        )
+        return pack_box_grid(self.region.grid, self.region.data, np.moveaxis(values, 0, 3), times=self.times)
+
 
 
 @dataclass(slots=True)
@@ -91,9 +84,7 @@ class SpectralDetector:
             raise ValueError("spectral frequencies must be finite and non-negative")
         shape = (
             self.frequencies.size,
-            self.region.z.size,
-            self.region.y.size,
-            self.region.x.size,
+            *self.region.grid.shape,
             3,
         )
         self.accumulator = torch.zeros(shape, dtype=torch.complex64, device=self.device)
@@ -112,14 +103,12 @@ class SpectralDetector:
         self.accumulator.add_(phase.reshape((-1, 1, 1, 1, 1)) * sampled.unsqueeze(0))
         self.sample_count += 1
 
-    def artifact(self) -> FieldValue:
+    def artifact(self) -> dict[str, Any]:
         if self.sample_count == 0:
             raise ValueError("spectral detector received no samples")
         values = (self.accumulator / self.sample_count).detach().cpu().numpy()
-        return _field_member(
-            values, self.frequencies, self.region.ticks,
-            self.field_kind, "frequency", "Hz", self.region.bounds,
-        )
+        return pack_box_grid(self.region.grid, self.region.data, np.moveaxis(values, 0, 3), frequencies=self.frequencies)
+
 
 
 def requested_frequencies(values: Any, dt: float) -> np.ndarray:
@@ -134,60 +123,6 @@ def requested_frequencies(values: Any, dt: float) -> np.ndarray:
         raise ValueError(f"frequencies exceed the {nyquist:g} Hz Nyquist limit")
     return frequencies
 
-
-def _field_member(
-    values: np.ndarray[Any, np.dtype[np.float32] | np.dtype[np.complex64]],
-    first_ticks: np.ndarray[Any, np.dtype[np.float64]],
-    spatial_ticks: tuple[np.ndarray[Any, np.dtype[np.float64]], ...],
-    field_kind: str,
-    first_axis: str,
-    first_unit: str,
-    bounds: tuple[tuple[float, float], ...] | None = None,
-) -> FieldValue:
-    quantity_kind = (
-        "electromagnetism.ElectricFieldStrength"
-        if field_kind == "electric"
-        else "electromagnetism.MagneticFieldStrength"
-    )
-    unit = "V.m-1" if field_kind == "electric" else "A.m-1"
-    return FieldValue(
-        domain=StructuredGridValue(
-            shape=tuple(len(axis) for axis in spatial_ticks),
-            axes=spatial_ticks,
-            unit="m",
-            metadata={"bounds": bounds} if bounds is not None else {},
-        ),
-        location="cell",
-        quantity_kind=quantity_kind,
-        unit=unit,
-        values=values,
-        basis=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-        components=tuple(("E" if field_kind == "electric" else "H") + axis for axis in "xyz"),
-        metadata={"sampleAxes": [{"name": first_axis, "unit": first_unit, "ticks": first_ticks}]},
-    )
-
-
-
-__all__ = [
-    "DetectorRegion",
-    "SpectralDetector",
-    "TimeDetector",
-    "requested_frequencies",
-]
-
-
-_OUTPUT_TYPES = {
-    "fdtd.time-electric-field": ("caemble.fdtd/time-electric-field@2", "electric"),
-    "fdtd.time-magnetic-field": ("caemble.fdtd/time-magnetic-field@2", "magnetic"),
-    "fdtd.spectral-electric-field": (
-        "caemble.fdtd/spectral-electric-field@2",
-        "electric",
-    ),
-    "fdtd.spectral-magnetic-field": (
-        "caemble.fdtd/spectral-magnetic-field@2",
-        "magnetic",
-    ),
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,75 +140,23 @@ async def prepare_detectors(
     invocation: SolverInvocation,
     prepared: PreparedDomain,
 ) -> list[OutputPlan]:
-    scene = task_scene(invocation.world)
     plans: list[OutputPlan] = []
-    for index, rule in enumerate(invocation.config["outputs"]):
+    definitions = {item["methodId"]: item for item in invocation.descriptor["methods"]["outputs"]}
+    domain_ticks = prepared.domain.cell_ticks
+    for rule in invocation.config["outputs"]:
         method = rule["methodId"]
-        if method not in _OUTPUT_TYPES:
-            continue
-        part = _target_part(scene, rule, f"detector {index}")
-        bounds = await axis_aligned_box_bounds(
-            invocation, scene, part, f"detector {index}"
-        )
+        definition = definitions[method]
+        grid = BoxGrid(rule["boxGrid"])
+        points = grid.points("m")[..., ::-1]
+        sampler = RectilinearSampler.prepare(tuple(reversed(domain_ticks)), points,
+                                             tuple(reversed(prepared.domain.core_bounds)))
+        region = DetectorRegion(sampler, grid, definition["data"])
+        field_kind = "electric" if "electric" in method else "magnetic"
         parameters = rule["parameters"]
-        strides = tuple(
-            _positive_int(parameters[name], name)
-            for name in ("strideX", "strideY", "strideZ")
-        )
-        x, y, z = detector_indices(
-            bounds,
-            prepared.domain.core_bounds,
-            prepared.domain.cell_ticks,
-            strides,
-            f"detector {index}",
-            nearest_core_cell=True,
-        )
-        domain_ticks = prepared.domain.cell_ticks
-        recorded_bounds = list(bounds)
-        tolerance = max(max(hi - lo for lo, hi in prepared.domain.core_bounds) * 1e-10, 1e-12)
-        for axis, indices in enumerate((x, y, z)):
-            tick = domain_ticks[axis][int(indices[0])]
-            if indices.size == 1 and (tick < bounds[axis][0] - tolerance or tick > bounds[axis][1] + tolerance):
-                edges = prepared.domain.boundary_ticks[axis]
-                cell = int(indices[0])
-                recorded_bounds[axis] = (edges[cell], edges[cell + 1])
-        region = DetectorRegion(
-            z,
-            y,
-            x,
-            (
-                np.asarray(domain_ticks[2], dtype=np.float64)[z],
-                np.asarray(domain_ticks[1], dtype=np.float64)[y],
-                np.asarray(domain_ticks[0], dtype=np.float64)[x],
-            ),
-            tuple(recorded_bounds[axis] for axis in (2, 1, 0)),
-        )
-        artifact_type, field_kind = _OUTPUT_TYPES[method]
         if method.startswith("fdtd.time-"):
-            plans.append(
-                OutputPlan(
-                    method,
-                    rule["key"],
-                    artifact_type,
-                    field_kind,
-                    region,
-                    time_stride=_positive_int(parameters["timeStride"], "timeStride"),
-                )
-            )
+            plans.append(OutputPlan(method, rule["key"], definition["artifactType"], field_kind, region,
+                                    time_stride=_positive_int(parameters["timeStride"], "timeStride")))
         else:
-            plans.append(
-                OutputPlan(
-                    method,
-                    rule["key"],
-                    artifact_type,
-                    field_kind,
-                    region,
-                    frequencies=requested_frequencies(
-                        parameters["frequencies"]["value"],
-                        prepared.dt,
-                    ),
-                )
-            )
+            plans.append(OutputPlan(method, rule["key"], definition["artifactType"], field_kind, region,
+                                    frequencies=requested_frequencies(parameters["frequencies"]["value"], prepared.dt)))
     return plans
-
-

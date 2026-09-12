@@ -68,7 +68,10 @@ export function summarizeCalculationRecordedData(
         if (!Number.isSafeInteger(tensorOrder) || tensorOrder < 0 || tensorOrder > shape.length) {
           throw new Error(`tensorOrder ${String(tensorOrder)}가 전체 shape와 맞지 않습니다.`)
         }
-        actualAxisLengths = Object.freeze(shape.slice(0, shape.length - tensorOrder))
+        if (!rule.result.boxGrid || !value.boxGrid || shape.length !== 7) {
+          throw new Error('Calculation은 7축 Box Grid Outputs만 입력으로 받을 수 있습니다.')
+        }
+        actualAxisLengths = shape
         return {
           actualAxisLengths,
           axes,

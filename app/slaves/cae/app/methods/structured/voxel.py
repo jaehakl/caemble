@@ -71,6 +71,7 @@ async def build_voxel_domain(
         v_spacing,
         occupancy,
         occupied,
+        origin,
     )
 
 
@@ -172,4 +173,3 @@ def voxel_index(i: int, j: int, k: int, shape: tuple[int, int, int]) -> int:
 
 def round_like_javascript(value: float) -> int:
     return math.floor(value + 0.5)
-

@@ -1,10 +1,10 @@
 # Develop and validate a Calculation
 
-1. Resolve the target before writing code. Read the ExperimentRecord catalog, Calculation source/base hash if editing, the selected recorded Measurement and the records actually available for it. Names are dotted leaf paths; a record schema does not establish that its data exists in every Measurement.
+1. Resolve the target before writing code. Read the ExperimentRecord catalog, Calculation source/base hash if editing, the selected recorded Measurement and the Outputs actually available for it. Calculation accepts only real seven-dimensional Box Grid Outputs. Meshes, ray paths, visualization members and native coupling exports cannot be dependencies. A record schema does not establish that its data exists in every Measurement.
 2. Read calculation.contract and calculation.declarations. The language is JavaScript with optional JSDoc, exactly one synchronous default-exported function declaration and one identifier parameter. Use only named imports from the shipped Math.js manifest. Do not write TypeScript annotations, an arrow default export, an async function, dynamic imports or general Node/browser code. Some Math.js declaration signatures intentionally use any; runtime shape and numerical behavior still require execution.
 3. Declare dependencies in the source. Read record.signal or record['group.signal']; use fixed object destructuring or traceable const aliases. Do not enumerate or spread the whole input, pass it to a helper, or choose a record name dynamically. Dynamic numeric indexes inside a leaf array are a different operation; runtime requires non-negative safe integers. Dependency analysis must use the actual available ExperimentRecord names.
-4. Export a complete input snapshot for reproducibility. Preserve dtype, shape, flat/scalar data, complete axes/ticks, tensorOrder, quantityKind and unit as applicable. Keep Experiment/Measurement/RecordedData IDs, source hash, Catalog revision and content hashes in a separate provenance envelope. A sample or truncated preview is not an executable complete snapshot. An already-normalized snapshot can execute offline without a Catalog adapter; its resolved tensorOrder must not be guessed from shape.
-5. Start from a validated complete example. The synthetic examples here each provide full calculation.js, input and expected output. Replace their fixed 'signal' dependency with an actual name and choose numerical assumptions explicitly. A string/bool input may require a meaningful conversion or rejection; silently coercing every dataset can hide invalid science.
+4. Export a complete input snapshot for reproducibility. Preserve float32/float64 dtype, the complete seven-axis shape and row-major flat data, axes/ticks, quantityKind, units and boxGrid profile plus actual candidate geometry. The seventh axis already contains all components; do not append tensorOrder dimensions. Keep Experiment/Measurement/RecordedData IDs, source hash, Catalog revision and content hashes in a separate provenance envelope. A sample or truncated preview is not an executable complete snapshot. An already-normalized snapshot can execute offline without a Catalog adapter.
+5. Start from a validated complete example. The synthetic examples here each provide full calculation.js, Box Grid input and expected output. Replace their fixed 'signal' dependency with an actual name and choose numerical assumptions explicitly. Inspect sampling, components and channelUnits before reducing axes; phase and amplitude do not have the same unit.
 6. Run all layers. Source policy and dependency analysis catch different errors. Type-check against the exact shipped declarations. Execute the common compiled runtime in the CLI's disposable child with bounded time and logs. Check dtype, finite output, inferred rank/shape, numeric axes and units, and assert expected numerical values for at least one relevant fixture. Re-run with the actual server input snapshot before persistence.
 7. Inspect the result. Scalar output has no axes; rank one renders a line; rank two renders a heatmap. Verify orientation, ordering and dimensions using the normalized output, then inspect its PNG. Output must be finite real rank 0/1/2 data; ragged arrays, complex final values and an explicit shape field are rejected. Input rank can be higher and needs deliberate reduction.
 8. Save the right contract. A source-changing save requires successful preflight with the selected server data. Preserve the source hash, exact dependency list and dtype/shape/axes layout from that run. Offline synthetic success is test evidence, not permission to invent a server preflight. For a base-source conflict, fetch and reconcile the current record or save the intended new Calculation. Persist results only for the corresponding Calculation source and Measurement.
@@ -38,7 +38,7 @@ node $caembleCli png calculation .work/local-calculation.json --out .work/local-
 node $caembleCli data export --result .work/local-results/1 --out .work/result-export
 ```
 
-The local data export directory contains the Record values, binary attachments and exact built input with its source bundle and hashes. It remains readable after moving the complete directory: use --result with that directory for inspect, slice, Calculation or PNG. Export does not rebuild or run a Solver.
+The local data export directory contains the Box Grid Record values, automatic visualizations, binary attachments and exact built input with its source bundle and hashes. Calculation reads only the numerical Records. The complete directory remains readable after moving it: use --result with that directory for inspect, slice, Calculation or PNG. Export does not rebuild or run a Solver.
 
 For a server Measurement, select IDs from experiment list and completed batch/Measurement metadata; do not substitute arbitrary IDs. Configure the API .env and run doctor --api. When editing an existing Calculation, first calculation pull <id> --out <empty-directory> and retain its revision in caemble.json.
 
@@ -57,11 +57,14 @@ push is a server write and performs a fresh preflight using the required server 
 
 ## Complex RecordedData
 
-`complex64` input elements are Math.js Complex values inside the Calculation.
-An offline JSON snapshot retains each element as `{ re, im }`; execution restores
-Math.js Complex without changing the logical shape. Import `re`, `im`, `abs` or
-`arg` from `mathjs` to produce a finite real chart/table output explicitly.
-`Number(complex)` is not a real-part conversion. A zero-amplitude phase is undefined.
-For spectral fields select the requested sample using recorded frequency-axis ticks,
-not a wavelength embedded in the result name. The current Gold FCC Catalog example
-includes two Fresnel Calculations using this selection on the same three records.
+Complex physical quantities are stored as real amplitude/phase channels on axis 5,
+with channelUnits describing the quantity unit and radians respectively. The axes
+are x, y, z, time, frequency, amplitudePhase, component; do not squeeze singleton
+axes or expect `{ re, im }` values. Reconstruct Cartesian values when needed with
+`re = amplitude * cos(phase)` and `im = amplitude * sin(phase)`. A zero amplitude
+has stored phase zero and carries no directional phase information. For spectral
+fields select samples using frequency-axis ticks, not a wavelength in a result name.
+Forward Prediction predicts each complete Box Grid before running Calculations;
+different candidate Boxes correspond at normalized local positions, and the current
+candidate's actual Box geometry is restored in the predicted input. Mesh and ray
+visualizations never enter training or Calculation inputs.

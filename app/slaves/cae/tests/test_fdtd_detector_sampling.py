@@ -10,36 +10,29 @@ from app.solvers.fdtd.setup import detector_indices
 
 @pytest.mark.parametrize("scale", [1., 1e-6])
 @pytest.mark.asyncio
-async def test_nearest_detector_records_selected_cell_coordinates_and_boundaries(monkeypatch, scale):
-    bounds = tuple((lo * scale, hi * scale) for lo, hi in ((0, 4), (0, 4), (1.9, 2.1)))
+async def test_box_without_cell_centers_interpolates_requested_coordinates(scale):
+    import torch
+    from tests.test_box_grid_outputs import data, grid
     core = ((0., 4 * scale),) * 3
-    ticks = (tuple(value * scale for value in (-1, 1, 3, 5)),) * 3
-    edges = (tuple(value * scale for value in (-2, 0, 2, 4, 6)),) * 3
-    domain = SimpleNamespace(core_bounds=core, cell_ticks=ticks, boundary_ticks=edges)
-    invocation = SimpleNamespace(world={}, config={"outputs": [{
-        "methodId": "fdtd.time-electric-field", "key": "field", "parameters": {
-            "strideX": 2, "strideY": 1, "strideZ": 3, "timeStride": 1,
-        },
+    ticks = (np.array([-1., 1., 3., 5.]) * scale,) * 3
+    domain = SimpleNamespace(core_bounds=core, cell_ticks=ticks)
+    probe = grid(shape=(2, 2, 1), origin=(0, 0, 1.9 * scale), size=(4 * scale, 4 * scale, .2 * scale))
+    profile = data(("x", "y", "z"))
+    profile["dtype"] = "float32"
+    definition = {"methodId": "fdtd.time-electric-field", "artifactType": "test-field", "data": profile}
+    invocation = SimpleNamespace(descriptor={"methods": {"outputs": [definition]}}, config={"outputs": [{
+        "methodId": definition["methodId"], "key": "field", "parameters": {"timeStride": 1}, "boxGrid": probe.geometry,
     }]})
-    monkeypatch.setattr("app.solvers.fdtd.detectors.task_scene", lambda _: {})
-    monkeypatch.setattr("app.solvers.fdtd.detectors._target_part", lambda *args: {})
-    monkeypatch.setattr("app.solvers.fdtd.detectors.axis_aligned_box_bounds", AsyncMock(return_value=bounds))
     plan, = await prepare_detectors(invocation, SimpleNamespace(domain=domain))
-    # Z is halfway between core centers: select the lower coordinate, index 1.
-    assert plan.region.z.tolist() == [1]
-    assert plan.region.x.tolist() == [1]  # Existing stride stays in effect.
-    assert plan.region.y.tolist() == [1, 2]
-    assert plan.region.bounds == ((0., 2 * scale), bounds[1], bounds[0])
+    z, y, x = np.meshgrid(*ticks, indexing="ij")
+    vector = np.stack((x, y, z)) / scale
     detector = TimeDetector(plan.key, plan.artifact_type, plan.field_kind, plan.region, 1)
-    detector.times = [0.]
-    detector.samples = [np.zeros((1, 2, 1, 3), dtype=np.float32)]
+    detector.capture(0, 0., torch.from_numpy(vector.astype(np.float32)), final=True)
     field = detector.artifact()
-    assert field.domain.shape == (1, 2, 1)
-    assert field.values.shape == (1, 1, 2, 1, 3)
-    assert field.domain.axes[0].tolist() == [scale]
-    assert field.domain.metadata["bounds"] == plan.region.bounds
-    assert field.metadata["sampleAxes"][0]["ticks"].tolist() == [0.]
-
+    assert field["value"].shape == (2, 2, 1, 1, 1, 1, 3)
+    np.testing.assert_allclose(field["value"][..., 0, 0, 0, :], probe.points() / scale, rtol=1e-6)
+    assert field["axes"][2]["ticks"].tolist() == pytest.approx([.1 * scale])
+    assert field["boxGrid"]["origin"] == list(probe.geometry["origin"])
 
 
 def test_nearest_selection_excludes_pml_and_rejects_detectors_outside_core():

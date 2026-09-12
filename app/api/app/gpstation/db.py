@@ -257,6 +257,19 @@ class JobEvent(Base):
     )
 
 
+class JobVisualization(Base):
+    __tablename__ = "job_visualizations"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt_count", "task", name="uq_job_visualizations_task"),
+    )
+
+    job_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
 class JobRecord(Base):
     __tablename__ = "job_records"
     __table_args__ = (

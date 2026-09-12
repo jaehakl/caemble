@@ -51,6 +51,7 @@ class CaeRun:
         self.task: asyncio.Task[None] | None = None
         self.sequence = 0
         self.completed_sequences: list[int] = []
+        self.visualization_sequences: list[int] = []
         self.recorded_names: list[str] = []
         self._recorded_name_set: set[str] = set()
         self.recorded_bytes = 0
@@ -125,6 +126,30 @@ class CaeRun:
             return
         await self._emit_latest_progress()
 
+    async def visualization(self, task: str, values: Any, *, resource_hold: RecordResourceHold) -> None:
+        try:
+            await self._flush_progress()
+            sequence = self.sequence + 1
+            encoded, attachments, byte_length = {}, [], 0
+            for name, entry in values.items():
+                data, parts, size = encode_recorded_data(name, entry["schema"], entry["data"], sequence)
+                encoded[name] = {**entry, "data": data}
+                attachments.extend(parts)
+                byte_length += size
+            self.sequence = sequence
+            ack = asyncio.get_running_loop().create_future()
+            packet = RecordPacket(sequence, task, encoded, attachments, byte_length, ack,
+                                  resource_hold=resource_hold, kind="visualization")
+            resource_hold.hand_off()
+            self._record_packets[sequence] = packet
+            await self.queue.put(packet)
+            await asyncio.shield(ack)
+            self.visualization_sequences.append(sequence)
+        except BaseException:
+            if not resource_hold.handed_off:
+                resource_hold.release()
+            raise
+
     async def _emit_deferred_progress(self, delay: float) -> None:
         try:
             await asyncio.sleep(max(0, delay))
@@ -180,6 +205,7 @@ class CaeRun:
             )
             final_state_revision = sim.state_revision(final_state)
             await self._status("finalizing")
+            await sim._flush_visualizations()
             duration_ms = int((time.perf_counter() - started) * 1000)
             logger.info(
                 "CAE run completed run_id=%s tasks=%s records=%s bytes=%s final_state_revision=%s duration_ms=%s",
@@ -195,6 +221,7 @@ class CaeRun:
                     "kind": "complete",
                     "sequence": self.sequence + 1,
                     "recordSequences": list(self.completed_sequences),
+                    "visualizationSequences": list(self.visualization_sequences),
                 }
             )
         except asyncio.CancelledError:

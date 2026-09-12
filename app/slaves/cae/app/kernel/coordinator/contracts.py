@@ -57,6 +57,34 @@ def validate_artifact_payload(
     else:
         raw = value
 
+    if "boxGrid" in contract:
+        profile = contract["boxGrid"]
+        if not isinstance(value, Mapping) or not isinstance(value.get("boxGrid"), Mapping):
+            raise ValueError(f"{path} must carry its Box Grid geometry")
+        grid = value["boxGrid"]
+        if any(not np.array_equal(grid.get(key), expected) for key, expected in profile.items()):
+            raise ValueError(f"{path}.boxGrid differs from its output profile")
+        shape = tuple(grid["gridShape"])
+        array = np.asarray(raw)
+        if (array.ndim != 7 or any(size < 1 for size in array.shape) or array.shape[:3] != shape
+                or array.shape[-2:] != (len(profile["channels"]), len(profile["components"]))):
+            raise ValueError(f"{path} must have x/y/z/time/frequency/amplitudePhase/component dimensions")
+        if profile["sampling"] == "aggregate" and shape != (1, 1, 1):
+            raise ValueError(f"{path} aggregate outputs require gridShape [1, 1, 1]")
+        axes = value.get("axes")
+        if not isinstance(axes, (list, tuple)) or len(axes) != 7:
+            raise ValueError(f"{path} requires all seven coordinate axes")
+        for axis, size in zip(axes, array.shape, strict=True):
+            if len(axis.get("ticks", ())) != size:
+                raise ValueError(f"{path} coordinate length differs from its tensor shape")
+        if np.iscomplexobj(array) or not np.all(np.isfinite(array)):
+            raise ValueError(f"{path} requires finite real channel values")
+        if tuple(profile["channels"]) == ("amplitude", "phase"):
+            amplitude, phase = array[..., 0, :], array[..., 1, :].astype(np.float64)
+            if (np.any(amplitude < 0) or np.any(phase < -np.pi) or np.any(phase >= np.pi)
+                    or np.any(phase[amplitude == 0] != 0)):
+                raise ValueError(f"{path} requires nonnegative amplitude and phase in [-pi, pi), zero when amplitude is zero")
+
     dtype = contract.get("dtype")
     if not isinstance(dtype, str) or not dtype:
         raise ValueError(f"{path} has no dtype contract")

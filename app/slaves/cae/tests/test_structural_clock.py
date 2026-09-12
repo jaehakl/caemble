@@ -1,6 +1,7 @@
 """장시간 덧셈 오차가 마지막 이력이나 출력 격자를 잃게 해서는 안 된다."""
 
 from dataclasses import replace
+from tests.test_box_grid_outputs import grid
 
 import numpy as np
 import pytest
@@ -38,9 +39,10 @@ def clock_invocation(duration, time, dt=.005, window=.05):
             {"methodId": "fea.time", "parameters": settings},
         ],
         "boundaryConditions": [],
-        "outputs": [{"methodId": "fea.history", "key": "history", "target": ["experiment.surface.clock"], "parameters": {"scope": "final"}}, {"methodId": "fea.motion", "key": "motion", "parameters": {}}],
+        "outputs": [{"methodId": "fea.pitch-history", "key": "history", "boxGrid": grid(shape=(1,1,1), origin=(-.5,-.5,-.5)).geometry, "parameters": {"scope": "cumulative"}}],
+        "exports": [{"methodId": "fea.motion", "key": "motion", "parameters": {}}],
     }
-    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "4.0.0"), task_name="structure")
+    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "5.0.0"), task_name="structure")
     model = build_model(invocation)
     model.boundary_regions["experiment.surface.clock"] = {
         "faces": np.empty((0, 3), dtype=int), "nodes": np.array([0]),
@@ -70,8 +72,8 @@ async def test_final_history_is_nonempty_and_no_tiny_next_window_is_predicted(du
     actual_time = result.observations["time"]
     assert abs(actual_time - duration) <= clock_tolerance(settings)
     # 결과에 계산된 실제 시각을 보존한다. 단지 종료 여부만 올바르게 판정한다.
-    np.testing.assert_array_equal(result.artifacts["motion"].members["times"], [actual_time])
-    history_times = result.artifacts["history"].members["times"]["value"]
+    np.testing.assert_array_equal(result.exports["motion"].members["times"], [actual_time])
+    history_times = result.artifacts["history"]["axes"][3]["ticks"]
     assert len(history_times) >= 2 and history_times[-1] == actual_time
     saved = result.state_patch.operations[-1].value
     assert saved["time"] == actual_time
@@ -88,7 +90,7 @@ async def test_refined_dt_after_long_negative_tail_keeps_the_original_output_gri
         return model
     monkeypatch.setattr("app.solvers.structural_mechanics.entry.build_geometry_model", prepared_model)
     result = await run(invocation)
-    times = result.artifacts["history"].members["times"]["value"][2:]
+    times = np.asarray(result.artifacts["history"]["axes"][3]["ticks"])[2:]
     # dt=.0025 표본 중 outputInterval=.005에 해당하는 표본만 골라야 한다.
     # 음의 시각 꼬리를 floor가 이전 출력 칸으로 분류하면 .0025 위상으로 밀린다.
     expected = 240. + np.arange(1, 11) * .005

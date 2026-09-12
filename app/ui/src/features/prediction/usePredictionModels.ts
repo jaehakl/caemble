@@ -8,6 +8,11 @@ import {
 } from '@/api'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { runCalculation } from '@/lib/calculation'
+import { browserClient } from '@/api/http'
+import { resolveObjects } from '@/api/objectStorage'
+import { isDataTensor } from '@/lib/cad/model/dataTensor'
+import type { BoxGridData } from '@/contracts/boxGrid'
+import type { RecordedResultContracts } from '@/contracts/results'
 import type { Vars, VarsSchemaEntry } from '@/lib/cad/model'
 import type { RecordedDataSchemaTree } from '@/lib/cad/simulation'
 import { buildCalculationRecordedData } from '../calculation/calculationRecordedData'
@@ -76,6 +81,22 @@ function assertTrainingCellLimit(rows: readonly PredictionTrainingRow[]) {
   }
 }
 
+/** Inspect tensor metadata before object downloads or expansion into JS number arrays. */
+export function assertPredictionRecordedMemory(rows: readonly RecordedDataRecord[], inputSize: number) {
+  let cells = 0
+  for (const row of rows) {
+    if (!isDataTensor(row.data)) continue
+    const shape = row.data.shape
+    const values = shape.reduce((size, length) => size * length, 1)
+    cells += values + inputSize + (row.data.boxGrid?.frequencyKind === 'modal' ? (shape[4] ?? 0) : 0)
+    if (!Number.isSafeInteger(cells) || cells > PREDICTION_NUMERIC_CELL_LIMIT) {
+      throw new Error(
+        `Box Grid Prediction 학습 데이터가 ${PREDICTION_NUMERIC_CELL_LIMIT.toLocaleString()}개 수치 값 제한을 초과합니다. Grid 또는 학습 Measurement 수를 줄이세요.`,
+      )
+    }
+  }
+}
+
 function aggregateForwardProfiles(models: readonly PredictionForwardModelEntry[]): PredictionWorkerModelProfile {
   const profiles = models.map((model) => model.profile)
   const excluded = {
@@ -131,6 +152,9 @@ export function usePredictionModels({
   onForwardRecordProfilesChange,
   onProfile,
   recordedData,
+  candidateBoxGrids,
+  candidateReady = true,
+  resultContracts = {},
   runtime,
   selectedCalculations,
   setup,
@@ -143,6 +167,9 @@ export function usePredictionModels({
   onForwardRecordProfilesChange: (profiles: readonly PredictionForwardRecordProfile[]) => void
   onProfile: (profile: PredictionWorkerModelProfile, fingerprint: string) => void
   recordedData: RecordedDataSchemaTree
+  candidateBoxGrids?: Readonly<Record<string, BoxGridData>>
+  candidateReady?: boolean
+  resultContracts?: RecordedResultContracts
   runtime: PredictionRuntimeController
   selectedCalculations: readonly SavedPredictionCalculation[]
   setup: PredictionSetup
@@ -192,13 +219,21 @@ export function usePredictionModels({
           limit: null,
           sort: ['measurement_id', 'asc'],
         },
-        { signal },
+        { signal, resolveObjects: false },
       )
+      assertPredictionRecordedMemory(
+        recordedResponse.items,
+        predictionVarsLayouts(varsSchema).reduce(
+          (size, layout) => size + layout.shape.reduce((count, length) => count * length, 1),
+          0,
+        ),
+      )
+      const hydratedRows = await resolveObjects(browserClient, recordedResponse.items, signal)
       if (!runtime.transactionIsCurrent(transaction))
         throw new DOMException('Stale Prediction transaction', 'AbortError')
       const measurementIds = new Set(context.measurements.map((measurement) => measurement.id))
       const rowsByRecord = new Map<number, Map<number, RecordedDataRecord>>()
-      recordedResponse.items.forEach((row) => {
+      hydratedRows.forEach((row) => {
         if (!measurementIds.has(row.measurement_id) || !requiredRecordIds.includes(row.experiment_record_id)) return
         const byMeasurement = rowsByRecord.get(row.experiment_record_id) ?? new Map<number, RecordedDataRecord>()
         byMeasurement.set(row.measurement_id, row)
@@ -207,28 +242,48 @@ export function usePredictionModels({
 
       const models: PredictionForwardModelEntry[] = []
       const errors: Record<number, string> = {}
+      const groups = new Map<string, typeof records>()
       for (const record of records) {
         const rule = rulesByName.get(record.name)
-        if (!rule) {
-          errors[record.id] = `현재 Experiment source에서 ${record.name} Record를 찾을 수 없습니다.`
+        const contract = Object.entries(resultContracts).find(
+          ([name]) => record.name === name || record.name.startsWith(`${name}.`),
+        )?.[1]
+        const key =
+          rule?.result.boxGrid?.frequencyKind === 'modal' && contract ? `modal:${contract.task}` : `record:${record.id}`
+        const group = groups.get(key) ?? []
+        group.push(record)
+        groups.set(key, group)
+      }
+      for (const group of groups.values()) {
+        const record = group[0]
+        const rule = rulesByName.get(record.name)
+        const groupRules = group.flatMap((member) => {
+          const current = rulesByName.get(member.name)
+          return current ? [current] : []
+        })
+        if (!rule || groupRules.length !== group.length || groupRules.some((member) => !member.result.boxGrid)) {
+          group.forEach((member) => {
+            errors[member.id] = `현재 Experiment source에서 ${member.name} Box Grid Output을 찾을 수 없습니다.`
+          })
           continue
         }
         if (rule.result.dtype === 'bool' || rule.result.dtype === 'string') {
           errors[record.id] = `${record.name}의 dtype ${rule.result.dtype}은 numeric Prediction을 지원하지 않습니다.`
           continue
         }
-        const byMeasurement = rowsByRecord.get(record.id) ?? new Map<number, RecordedDataRecord>()
+        const modal = rule.result.boxGrid?.frequencyKind === 'modal'
         const rows = Object.freeze(
           context.measurements.map((measurement): PredictionTrainingRow => {
             try {
               const inputs = predictionVarsSamples(measurement.vars as Readonly<Vars>, varsSchema)
-              const stored = byMeasurement.get(measurement.id)
-              if (!stored) return Object.freeze({ measurementId: measurement.id, inputs, outputs: Object.freeze([]) })
+              const stored = group.map((member) => rowsByRecord.get(member.id)?.get(measurement.id))
+              if (stored.some((member) => !member))
+                return Object.freeze({ measurementId: measurement.id, inputs, outputs: Object.freeze([]) })
               try {
                 return Object.freeze({
                   measurementId: measurement.id,
                   inputs,
-                  outputs: Object.freeze([predictionRecordedRowSample(stored)]),
+                  outputs: Object.freeze(stored.map((member) => predictionRecordedRowSample(member!))),
                 })
               } catch {
                 return Object.freeze({
@@ -253,20 +308,27 @@ export function usePredictionModels({
         )
         try {
           assertTrainingCellLimit(rows)
-          const modelFingerprint = predictionFingerprint([fingerprint, record.id, record.contract_hash])
+          const modelFingerprint = predictionFingerprint([
+            fingerprint,
+            group.map((member) => [member.id, member.contract_hash]),
+          ])
           const generation = runtime.nextGeneration()
           const profile = await runtime.buildModel(`forward:${record.id}`, generation, modelFingerprint, {
             direction: 'forward',
             fingerprint: modelFingerprint,
             inputKeys: predictionVarsLayouts(varsSchema).map((layout) => layout.key),
-            outputKeys: [record.name],
-            outputDtypes: Object.freeze({ [record.name]: rule.result.dtype as PredictionNumericDtype }),
+            outputKeys: group.map((member) => member.name),
+            outputDtypes: Object.freeze(
+              Object.fromEntries(
+                groupRules.map((member) => [member.label, member.result.dtype as PredictionNumericDtype]),
+              ),
+            ),
             rows,
             diagnoseMetadata: false,
             fixedInputLayouts: predictionVarsLayouts(varsSchema),
             inputScaling: 'range',
             weighting: setup.weighting,
-            ...(setup.kMode === 'manual' ? { k: setup.manualK } : {}),
+            ...(modal ? { k: 1, nearestOnly: true } : setup.kMode === 'manual' ? { k: setup.manualK } : {}),
           })
           if (!runtime.transactionIsCurrent(transaction))
             throw new DOMException('Stale Prediction transaction', 'AbortError')
@@ -278,19 +340,23 @@ export function usePredictionModels({
               profile,
               record,
               rule,
+              records: group,
+              rules: groupRules,
               workerEpoch: runtime.workerEpoch,
             }),
           )
         } catch (cause: unknown) {
           if ((cause as { name?: string })?.name === 'AbortError' || cause instanceof PredictionWorkerRestartError)
             throw cause
-          errors[record.id] = cause instanceof Error ? cause.message : String(cause)
+          group.forEach((member) => {
+            errors[member.id] = cause instanceof Error ? cause.message : String(cause)
+          })
         }
       }
       onForwardRecordProfilesChange(
         Object.freeze(
           records.map((record) => {
-            const model = models.find((candidate) => candidate.record.id === record.id)
+            const model = models.find((candidate) => candidate.records?.some((member) => member.id === record.id))
             return Object.freeze({
               error: errors[record.id] ?? null,
               name: record.name,
@@ -307,7 +373,7 @@ export function usePredictionModels({
         fingerprint,
         models: Object.freeze(models),
         profile,
-        rules: Object.freeze(models.map((model) => model.rule)),
+        rules: Object.freeze(models.flatMap((model) => model.rules ?? [model.rule])),
       })
       runtime.cacheForwardModel(next)
       onProfile(profile, fingerprint)
@@ -320,6 +386,7 @@ export function usePredictionModels({
       onForwardRecordProfilesChange,
       onProfile,
       recordedData,
+      resultContracts,
       runtime,
       selectedCalculations,
       setup.kMode,
@@ -518,6 +585,8 @@ export function usePredictionModels({
       runtime.runWithWorkerRestartRetry(
         transaction,
         async () => {
+          if (!candidateReady || !candidateBoxGrids)
+            throw new Error('현재 Candidate의 Box Grid 평가가 완료되지 않았습니다.')
           const model = await ensureForwardModel(transaction)
           if (!runtime.transactionIsCurrent(transaction))
             throw new DOMException('Stale Prediction transaction', 'AbortError')
@@ -571,23 +640,31 @@ export function usePredictionModels({
             ),
             queryDiagnostics: Object.freeze(results.flatMap((entry) => entry.queryDiagnostics)),
           })
-          const recorded = predictedRecordedData(result.output, model.rules, (warning) => {
-            const key = `axis-fallback:${model.fingerprint}:${warning.blockKey}:${warning.axisIndex}`
-            if (runtime.emittedDiagnosticFingerprints.has(key)) return
-            runtime.emittedDiagnosticFingerprints.add(key)
-            onActivity?.({
-              source: 'prediction',
-              level: 'warning',
-              phase: 'cohort.forward',
-              message: `[Forward output] ${warning.blockKey} axis ${warning.axisIndex}의 ticks를 사용할 수 없어 ${warning.length.toLocaleString()}개 ordinal ticks로 대체했습니다.`,
-              details: {
-                block: warning.blockKey,
-                axisIndex: warning.axisIndex,
-                length: warning.length,
-                modelFingerprint: model.fingerprint,
-              },
-            })
+          model.rules.forEach((rule) => {
+            if (!candidateBoxGrids[rule.label]) throw new Error(`${rule.label} Candidate Box Grid가 없습니다.`)
           })
+          const recorded = predictedRecordedData(
+            result.output,
+            model.rules,
+            (warning) => {
+              const key = `axis-fallback:${model.fingerprint}:${warning.blockKey}:${warning.axisIndex}`
+              if (runtime.emittedDiagnosticFingerprints.has(key)) return
+              runtime.emittedDiagnosticFingerprints.add(key)
+              onActivity?.({
+                source: 'prediction',
+                level: 'warning',
+                phase: 'cohort.forward',
+                message: `[Forward output] ${warning.blockKey} axis ${warning.axisIndex}의 ticks를 사용할 수 없어 ${warning.length.toLocaleString()}개 ordinal ticks로 대체했습니다.`,
+                details: {
+                  block: warning.blockKey,
+                  axisIndex: warning.axisIndex,
+                  length: warning.length,
+                  modelFingerprint: model.fingerprint,
+                },
+              })
+            },
+            candidateBoxGrids,
+          )
           const input = buildCalculationRecordedData(model.rules, recorded)
           if (!input.input)
             throw new Error(input.error ?? '예측 RecordedData를 Calculation input으로 만들 수 없습니다.')
@@ -595,7 +672,16 @@ export function usePredictionModels({
         },
         clearModelCaches,
       ),
-    [clearModelCaches, ensureForwardModel, executeCalculations, onActivity, runtime, varsSchema],
+    [
+      candidateBoxGrids,
+      candidateReady,
+      clearModelCaches,
+      ensureForwardModel,
+      executeCalculations,
+      onActivity,
+      runtime,
+      varsSchema,
+    ],
   )
 
   const predictInverse = useCallback(

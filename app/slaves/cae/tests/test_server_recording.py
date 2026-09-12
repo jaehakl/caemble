@@ -68,7 +68,7 @@ async def test_record_ack_wait_starts_after_upload(monkeypatch, acknowledged) ->
         {"measurement": measurement}, [], SimpleNamespace(job_id="slow-upload", send=send, receive=receive),
     )
     if acknowledged:
-        assert await result == {"recordSequences": [1]}
+        assert await result == {"recordSequences": [1], "visualizationSequences": []}
     else:
         with pytest.raises(TimeoutError):
             await result

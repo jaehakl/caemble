@@ -25,6 +25,7 @@ from models import (
 )
 from user_auth.db import User
 from service.experiment_access import require_experiment_read
+from service.box_grid import validate_box_grid_schema
 from cae.batches import require_no_active_batches
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user, normalize_int_ids
@@ -125,6 +126,10 @@ async def _sync_experiment_records(
 ) -> bool:
     requested: dict[str, dict[str, Any]] = {}
     for record in records:
+        try:
+            validate_box_grid_schema(record.data_schema)
+        except ValueError as error:
+            raise _bad(str(error)) from error
         payload = _record_payload(record)
         name = record.name.strip()
         if not _RECORD_NAME.fullmatch(name):
@@ -472,22 +477,14 @@ async def _save_experiment(
             if not isinstance(result, dict) or not {"task", "output", "solver", "artifactType", "catalogRevision", "visualization", "schema"} <= result.keys():
                 raise _bad("Invalid semantic result contract.")
         expected_leaves = {}
-        pending = [(name, result["schema"]) for name, result in request.result_contracts.items()]
         for name, result in request.result_contracts.items():
-            visual = result.get("visualization")
-            if not isinstance(visual, dict) or visual.get("kind") not in {"tensor", "bundle", "mesh-field", "structured-field", "polyline"}:
-                raise _bad(f"Result {name} has no supported semantic visualization contract.")
-            if visual["kind"] == "polyline" and not all(isinstance(visual.get(key), str) for key in ("vertices", "offsets")):
-                raise _bad(f"Result {name} requires polyline member bindings.")
-        while pending:
-            path, schema = pending.pop()
-            if not isinstance(schema, dict):
-                raise _bad(f"Invalid result schema at {path}.")
-            if "dtype" not in schema:
-                pending.extend((f"{path}.{member}", child) for member, child in schema.items())
-            else:
-                expected_leaves[path] = {"name": path, "dtype": schema["dtype"], "tensor_order": schema.get("tensorOrder", 0),
-                    "quantity_kind": schema.get("quantityKind"), "data_schema": {key: value for key, value in schema.items() if key != "tensorOrder"}}
+            schema = result["schema"]
+            try:
+                validate_box_grid_schema(schema)
+            except ValueError as error:
+                raise _bad(f"Result {name}: {error}") from error
+            expected_leaves[name] = {"name": name, "dtype": schema["dtype"], "tensor_order": schema.get("tensorOrder", 0),
+                "quantity_kind": schema.get("quantityKind"), "data_schema": {key: value for key, value in schema.items() if key != "tensorOrder"}}
         if expected_leaves != {record.name: _record_payload(record) for record in request.records}:
             raise _bad("Recorded tensor schemas differ from the frozen result contracts.")
         experiment.result_contracts = request.result_contracts

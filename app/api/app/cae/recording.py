@@ -8,9 +8,11 @@ import struct
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import ExperimentRecord, Measurement, RecordedData
-from gpstation.db import Job, JobRecord
+from cae.db import CaeBatch
+from db import ExperimentRecord, Measurement, MeasurementVisualization, RecordedData
+from gpstation.db import Job, JobRecord, JobVisualization
 from gpstation.service.state import utcnow
+from service.box_grid import validate_box_grid_tensor, validate_result_provenance
 
 INLINE_BYTES = 64 * 1024
 NUMERIC_FORMATS = {
@@ -36,7 +38,7 @@ def persist_record(schema: dict, value: dict, attachments: dict[str, bytes]) -> 
             name: persist_record(member, value[name], attachments)
             for name, member in schema.items()
         }
-    tensor = {"shape": value["shape"], **({"axes": value["axes"]} if "axes" in value else {})}
+    tensor = {"shape": value["shape"], **{key: value[key] for key in ("axes", "boxGrid", "provenance") if key in value}}
     storage = value["storage"]
     if storage["kind"] == "base64":
         from storage.contracts import ObjectReference
@@ -107,6 +109,10 @@ async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: l
         or sequence <= 0
     ):
         raise ValueError("Invalid record identity.")
+    validate_box_grid_tensor(schemas[name], payload["value"])
+    contract = job.input["measurement"]["experiment"]["simulationProgram"]["resultContracts"][name]
+    if any(payload["value"]["provenance"][key] != contract[key] for key in ("task", "solver", "catalogRevision")):
+        raise ValueError("Recorded provenance differs from its frozen output contract.")
     data = persist_record(
         schemas[name], payload["value"], {item.id: item.data for item in attachments}
     )
@@ -122,7 +128,10 @@ async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: l
             .order_by(JobRecord.sequence)
         )
     ).all()
-    if sequence != len(rows) + 1 or any(row.name == name for row in rows):
+    visual_sequences = (await db.scalars(select(JobVisualization.sequence).where(
+        JobVisualization.job_id == job.id, JobVisualization.attempt_count == job.attempt_count,
+    ))).all()
+    if sequence != len(rows) + len(visual_sequences) + 1 or any(row.name == name for row in rows):
         raise ValueError("Record sequence is out of order or the name was already recorded.")
     db.add(
         JobRecord(
@@ -135,7 +144,64 @@ async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: l
     )
 
 
+async def stage_visualization(db: AsyncSession, job: Job, payload: dict, attachments: list) -> None:
+    sequence, task, entries = payload.get("sequence"), payload.get("task"), payload.get("visualizations")
+    program = job.input["measurement"]["experiment"]["simulationProgram"]
+    tasks = program["tasks"]
+    if type(sequence) is not int or sequence < 1 or not isinstance(task, str) or task not in tasks or not isinstance(entries, dict):
+        raise ValueError("Invalid visualization identity.")
+    persisted = {}
+    frozen = program["visualizationContracts"].get(task, {})
+    if not set(entries).issubset(frozen):
+        raise ValueError("Visualization entries differ from the frozen Task contracts.")
+    batch = await db.get(CaeBatch, job.batch_id)
+    catalog_revision = batch.spec.get("catalog_revision") if batch is not None else None
+    if not isinstance(catalog_revision, str) or not catalog_revision.strip():
+        raise ValueError("Visualization requires its frozen Batch Catalog revision.")
+    for key, item in entries.items():
+        if not isinstance(key, str) or not key or not isinstance(item, dict) or set(item) != {"contract", "schema", "data", "provenance"}:
+            raise ValueError("Invalid visualization entry.")
+        contract, provenance = item["contract"], item["provenance"]
+        validate_result_provenance(provenance)
+        if provenance["catalogRevision"] != catalog_revision:
+            raise ValueError("Visualization provenance differs from its frozen Catalog revision.")
+        if not isinstance(contract, dict) or contract != {name: value for name, value in frozen[key].items() if name != "schema"} or item["schema"] != frozen[key]["schema"]:
+            raise ValueError("Visualization requires its frozen contract and tensor schema.")
+        if not isinstance(provenance, dict) or provenance.get("task") != task or provenance.get("solver") != tasks[task]["kernel"] or type(provenance.get("invocation")) is not int or provenance["invocation"] < 1:
+            raise ValueError("Visualization provenance differs from its Task.")
+        persisted[key] = {**item, "data": persist_record(item["schema"], item["data"], {part.id: part.data for part in attachments})}
+    if job.input.get("storage_version") == 1:
+        from storage.service import bind_objects
+        measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
+        if measurement is None and not job.input.get("preflight"):
+            raise ValueError("Assigned Measurement is missing.")
+        await bind_objects(db, persisted, user_id=job.user_id, experiment_id=measurement.experiment_id if measurement else None,
+                           job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id if measurement else None, bind=False)
+    previous = await db.get(JobVisualization, (job.id, job.attempt_count, sequence))
+    if previous is not None:
+        if previous.task != task or previous.payload != persisted:
+            raise ValueError("A repeated visualization has different contents.")
+        return
+    rows = (await db.scalars(select(JobVisualization).where(
+        JobVisualization.job_id == job.id, JobVisualization.attempt_count == job.attempt_count,
+    ))).all()
+    records = (await db.scalars(select(JobRecord.sequence).where(
+        JobRecord.job_id == job.id, JobRecord.attempt_count == job.attempt_count,
+    ))).all()
+    if sequence != len(rows) + len(records) + 1 or any(row.task == task for row in rows):
+        raise ValueError("Visualization sequence is out of order or the Task was already finalized.")
+    db.add(JobVisualization(job_id=job.id, attempt_count=job.attempt_count, sequence=sequence, task=task, payload=persisted))
+
+
 async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
+    visual_rows = (await db.scalars(select(JobVisualization).where(
+        JobVisualization.job_id == job.id, JobVisualization.attempt_count == job.attempt_count,
+    ).order_by(JobVisualization.sequence))).all()
+    if [row.sequence for row in visual_rows] != packet["visualizationSequences"]:
+        raise ValueError("Terminal visualizations differ from the staged payloads.")
+    all_sequences = sorted([*packet["recordSequences"], *packet["visualizationSequences"]])
+    if all_sequences != list(range(1, len(all_sequences) + 1)):
+        raise ValueError("Terminal payload sequences must be complete and unique.")
     if job.input.get("preflight"):
         from storage.service import bind_objects
         if job.input.get("execution_mode") == "brief":
@@ -149,11 +215,15 @@ async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
         for row in staged:
             await bind_objects(db, row.payload, user_id=job.user_id, experiment_id=None,
                                job_id=job.id, attempt=job.attempt_count)
+        for row in visual_rows:
+            await bind_objects(db, row.payload, user_id=job.user_id, experiment_id=None,
+                               job_id=job.id, attempt=job.attempt_count)
         # finish_job deletes staging records in this same transaction. Keep the
         # completed tensors (including object references) on their owning job.
         job.artifact_metadata = {
             **(job.artifact_metadata or {}),
             "recorded_data": {row.name: row.payload for row in staged},
+            "visualizations": {row.task: row.payload for row in visual_rows},
             "execution_trace": packet.get("executionTrace", []),
         }
         await db.flush()
@@ -184,6 +254,8 @@ async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
         ).all()
     }
     schemas = job.input["measurement"]["experiment"]["simulationProgram"]["recordedData"]
+    if {record.name for record in staged} != set(schemas):
+        raise ValueError("Terminal records differ from the declared Outputs.")
 
     def add_leaves(name: str, schema: dict, value: dict) -> None:
         if "dtype" in schema:
@@ -205,11 +277,18 @@ async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
                 add_leaves(f"{name}.{member_name}", member_schema, value[member_name])
 
     for record in staged:
+        validate_box_grid_tensor(schemas[record.name], record.payload)
         if job.input.get("storage_version") == 1:
             from storage.service import bind_objects
             await bind_objects(db, record.payload, user_id=job.user_id, experiment_id=measurement.experiment_id,
                                job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id)
         add_leaves(record.name, schemas[record.name], record.payload)
+    for row in visual_rows:
+        if job.input.get("storage_version") == 1:
+            from storage.service import bind_objects
+            await bind_objects(db, row.payload, user_id=job.user_id, experiment_id=measurement.experiment_id,
+                               job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id)
+        db.add(MeasurementVisualization(measurement_id=measurement.id, task=row.task, data=row.payload))
     measurement.recorded_at = utcnow()
     await db.flush()
     return {"measurement_id": measurement.id}

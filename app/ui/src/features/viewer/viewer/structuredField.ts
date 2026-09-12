@@ -2,6 +2,7 @@ import type { ResultVisualization } from '@/contracts/solver'
 import { convertUcumValue, type DataSchema, type RecordedDataTensor, type UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor } from '@/lib/cad/model/dataTensor'
 import type { MeshRenderGeometry } from './meshFields'
+import { assertBoxGridData } from '@/contracts/boxGrid'
 
 export type HeatmapRenderData = Readonly<{
   identity: string
@@ -15,21 +16,30 @@ export function structuredField(
   semantic: ResultVisualization,
   unit: UcumUnit,
 ) {
-  const grid = semantic.grid
-  if (!grid || !semantic.components) throw new Error('기록된 공간·성분 계약이 없습니다.')
+  const boxGrid = tensor.boxGrid
+  if (boxGrid) assertBoxGridData(boxGrid, tensor.shape)
+  const grid = boxGrid
+    ? {
+        xyzAxes: [0, 1, 2] as const,
+        sampleAxis: boxGrid.frequencyKind || tensor.shape[4] > 1 ? 4 : 3,
+        sampleKind: boxGrid.frequencyKind || tensor.shape[4] > 1 ? ('frequency' as const) : ('time' as const),
+        componentAxis: 6,
+      }
+    : semantic.grid
+  const components = boxGrid?.components ?? semantic.components
+  if (!grid || !components) throw new Error('기록된 공간·성분 계약이 없습니다.')
   const accessor = createDataTensorAccessor(schema, tensor)
   const axes = [...grid.xyzAxes, grid.sampleAxis, grid.componentAxis]
   if (
-    accessor.shape.length !== 5 ||
+    accessor.shape.length !== (boxGrid ? 7 : 5) ||
     new Set(axes).size !== 5 ||
-    axes.some((axis) => axis < 0 || axis >= 5) ||
+    axes.some((axis) => axis < 0 || axis >= accessor.shape.length) ||
     accessor.shape.some((size) => size < 1)
   )
     throw new Error('공간 tensor의 축 계약이 일치하지 않습니다.')
-  if (accessor.shape[grid.componentAxis] !== semantic.components.length)
-    throw new Error('기록 성분이 계약과 일치하지 않습니다.')
+  if (accessor.shape[grid.componentAxis] !== components.length) throw new Error('기록 성분이 계약과 일치하지 않습니다.')
   const spatial = grid.xyzAxes.map((axis) => {
-    const sourceUnit = schema.axes?.[axis]?.unit
+    const sourceUnit = boxGrid?.lengthUnit ?? schema.axes?.[axis]?.unit
     const recorded = tensor.axes?.[axis]
     if (!sourceUnit || !recorded?.ticks || recorded.ticks.length !== accessor.shape[axis])
       throw new Error('기록된 공간 좌표가 없습니다.')
@@ -39,8 +49,9 @@ export function structuredField(
     })
     if (ticks.some((tick, index) => index > 0 && tick <= ticks[index - 1]))
       throw new Error('공간 좌표는 오름차순이어야 합니다.')
-    if (!recorded.bounds) throw new Error('기록된 검출 영역이 없습니다.')
-    const bounds = recorded.bounds.map((value) => convertUcumValue(value, sourceUnit, unit))
+    const recordedBounds = boxGrid ? [0, boxGrid.size[axis]] : recorded.bounds
+    if (!recordedBounds) throw new Error('기록된 검출 영역이 없습니다.')
+    const bounds = recordedBounds.map((value) => convertUcumValue(value, sourceUnit, unit))
     if (
       !bounds.every(Number.isFinite) ||
       bounds[0] > ticks[0] ||
@@ -59,11 +70,51 @@ export function structuredField(
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('시간·주파수 좌표가 유효하지 않습니다.')
     return convertUcumValue(value, sampleUnit, grid.sampleKind === 'frequency' ? 'Hz' : 's')
   })
-  const bounds = {
+  let bounds = {
     min: spatial.map((axis) => axis.edges[0]),
     max: spatial.map((axis) => axis.edges[axis.edges.length - 1]),
   }
-  return { accessor, grid, spatial, sampleTicks, bounds, components: semantic.components }
+  const origin = boxGrid?.origin.map((value) => convertUcumValue(value, boxGrid.lengthUnit, unit)) ?? [0, 0, 0]
+  const rotation = boxGrid?.rotation ?? [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ]
+  if (boxGrid) {
+    const corners = Array.from({ length: 8 }, (_, corner) =>
+      rotation.map(
+        (row, axis) =>
+          origin[axis] +
+          row.reduce(
+            (sum, value, coordinate) =>
+              sum +
+              value *
+                (corner & (1 << coordinate) ? spatial[coordinate].edges[spatial[coordinate].edges.length - 1] : 0),
+            0,
+          ),
+      ),
+    )
+    bounds = {
+      min: [0, 1, 2].map((axis) => Math.min(...corners.map((point) => point[axis]))),
+      max: [0, 1, 2].map((axis) => Math.max(...corners.map((point) => point[axis]))),
+    }
+  }
+  const secondaryAxis = boxGrid ? (grid.sampleAxis === 4 ? 3 : 4) : null
+  const secondaryTicks = secondaryAxis === null ? [] : (tensor.axes?.[secondaryAxis]?.ticks ?? []).map(Number)
+  return {
+    accessor,
+    grid,
+    spatial,
+    sampleTicks,
+    bounds,
+    components,
+    boxGrid,
+    origin,
+    rotation,
+    secondaryAxis,
+    secondaryTicks,
+    secondaryIndex: 0,
+  }
 }
 
 export function fieldScalar(
@@ -73,24 +124,36 @@ export function fieldScalar(
   component: number,
   representation: string,
 ): number {
-  const indices = Array(5).fill(0)
+  const indices = Array(field.accessor.shape.length).fill(0)
   field.grid.xyzAxes.forEach((axis, index) => {
     indices[axis] = xyz[index]
   })
   indices[field.grid.sampleAxis] = sample
-  let squared = 0, realSquared = 0, imaginarySquared = 0, dot = 0
+  if (field.secondaryAxis !== null) indices[field.secondaryAxis] = field.secondaryIndex
+  let squared = 0,
+    realSquared = 0,
+    imaginarySquared = 0,
+    dot = 0
   for (let c = component < 0 ? 0 : component; c < (component < 0 ? field.components.length : component + 1); c++) {
     indices[field.grid.componentAxis] = c
     const value = field.accessor.get(indices)
     if (typeof value !== 'number' && typeof value !== 'object') throw new Error('장 데이터는 수치 tensor여야 합니다.')
-    const re = typeof value === 'number' ? value : value.re
-    const im = typeof value === 'number' ? 0 : value.im
+    let re = typeof value === 'number' ? value : value.re
+    let im = typeof value === 'number' ? 0 : value.im
+    if (field.boxGrid?.channels.length === 2) {
+      indices[5] = 1
+      const phase = field.accessor.get(indices)
+      indices[5] = 0
+      if (typeof phase !== 'number') throw new Error('위상 채널은 수치 데이터여야 합니다.')
+      im = re * Math.sin(phase)
+      re *= Math.cos(phase)
+    }
     if (!Number.isFinite(re) || !Number.isFinite(im)) throw new Error('장 데이터에 유효하지 않은 값이 있습니다.')
     if (component >= 0) {
       if (representation === 'peak' && field.sampleTicks[sample] === 0) return Math.abs(re)
       if (representation === 're') return re
       if (representation === 'im') return im
-      if (representation === 'arg') return re === 0 && im === 0 ? NaN : Math.atan2(im, re)
+      if (representation === 'arg') return re === 0 && im === 0 ? (field.boxGrid ? 0 : NaN) : Math.atan2(im, re)
       return Math.hypot(re, im)
     }
     squared += re * re + im * im
@@ -175,7 +238,12 @@ export function fieldSlice(
         point[normal] = field.spatial[normal].ticks[index]
         point[u] = field.spatial[u].edges[i + du]
         point[v] = field.spatial[v].edges[j + dv]
-        positions.push(...point)
+        positions.push(
+          ...field.rotation.map(
+            (row, axis) =>
+              field.origin[axis] + row.reduce((sum, value, coordinate) => sum + value * point[coordinate], 0),
+          ),
+        )
         colors.push(t, 1 - Math.abs(2 * t - 1), 1 - t, opacity)
       }
       indices.push(start, start + 1, start + 2, start, start + 2, start + 3)

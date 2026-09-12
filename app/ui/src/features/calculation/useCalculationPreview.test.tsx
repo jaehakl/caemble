@@ -4,6 +4,7 @@ import type { NormalizedCalculationOutput } from '@/lib/calculation'
 import { runCalculation } from '@/lib/calculation'
 import type { CalculationDraft } from './calculationEditingState'
 import { useCalculationPreview } from './useCalculationPreview'
+import { calculationExampleInput } from '@/authoring/examples'
 
 vi.mock('@/lib/calculation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/calculation')>()
@@ -28,15 +29,7 @@ const baseDraft: CalculationDraft = {
 const recordedSnapshot = {
   error: null,
   errorCode: null,
-  input: {
-    input: {
-      axes: [],
-      data: 1,
-      dtype: 'float64' as const,
-      shape: [],
-      tensorOrder: 0,
-    },
-  },
+  input: calculationExampleInput,
   summaries: [],
 }
 

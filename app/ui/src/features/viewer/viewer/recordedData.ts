@@ -71,6 +71,7 @@ export function normalizeCadViewerRecordedTensor(
   value: unknown,
   quantityKinds: RecordedQuantityKinds = new Map(),
 ): ResolvedRecordedTensor {
+  if (rule.result.boxGrid) return normalizeRecordedDataTensor(rule, value)
   const definition = quantityKindDefinition(rule, quantityKinds)
   if (!definition) return normalizeRecordedDataTensor(rule, value)
   const tensorOrder = definition.tensorOrder

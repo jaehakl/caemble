@@ -1,128 +1,60 @@
-from __future__ import annotations
-
-import hashlib
-import json
-from typing import Any, Awaitable, Callable
+"""Electrical native coupling fields and passive Box Grid observations."""
 
 import numpy as np
 
-from app.methods.structured import (
-    axis_ticks,
-    dense_voxel_field,
-)
-from app.kernel.api import FieldValue, StructuredGridValue
+from app.kernel.api import FieldValue
+from app.methods.fields.box_grid import BoxGrid, clip_box_polygon, pack_box_grid, sample_voxel_field, voxel_frame
+from app.methods.structured import dense_voxel_field, axis_ticks, round_like_javascript
 from app.kernel.api.world import scalar_parameter
 
-from .formulation import DcSolution, _cross_section, _gradient
+from .formulation import _gradient, _cross_section
 
 
-async def build_dc_outputs(
-    config: dict[str, Any],
-    descriptor: dict[str, Any],
-    result: DcSolution,
-    progress: Callable[[Any], Awaitable[None]],
-) -> dict[str, Any]:
-    setup = result.setup
-    domain = setup.grid
-    ticks = axis_ticks(domain)
-    outputs = config["outputs"]
-    artifacts: dict[str, Any] = {}
-    cross_sections: dict[float, tuple[np.ndarray[Any, Any], float]] = {}
-    density_positions = {
-        scalar_parameter(output["parameters"]["crossSectionPosition"])
-        for output in outputs
-        if output["methodId"] == "dc.current-density"
+async def build_dc_outputs(config, descriptor, result, progress):
+    domain = result.setup.grid
+    current = np.zeros((domain.occupancy.size, 3), dtype=np.float64)
+    joule = np.zeros(domain.occupancy.size, dtype=np.float64)
+    frame = voxel_frame(domain)
+    for index in np.flatnonzero(domain.occupancy):
+        gradient = _gradient(domain, result.potential, int(index), result.setup.source_voltage,
+                             result.setup.reference_voltage, result.setup.surface_terminals)
+        current[index] = -result.setup.conductivity * (frame @ gradient)
+        joule[index] = result.setup.conductivity * np.dot(gradient, gradient)
+    values = {
+        "dc.current-density": np.stack([dense_voxel_field(domain, current[:, axis]) for axis in range(3)], axis=-1),
+        "dc.joule-heating": dense_voxel_field(domain, joule),
     }
-    joule: FieldValue | None = None
-    for index, output in enumerate(outputs):
-        method = output["methodId"]
-        key = output["key"]
-        if method == "dc.joule-heating":
-            if joule is None:
-                voxel_values = np.zeros(domain.occupancy.size, dtype=np.float64)
-                for global_index in np.flatnonzero(domain.occupancy):
-                    gradient = _gradient(
-                        domain,
-                        result.potential,
-                        int(global_index),
-                        setup.source_voltage,
-                        setup.reference_voltage,
-                        setup.surface_terminals,
-                    )
-                    voxel_values[global_index] = setup.conductivity * float(np.dot(gradient, gradient))
-                data = next(
-                    item.get("data", {})
-                    for item in descriptor["methods"]["outputs"]
-                    if item["methodId"] == method
-                )
-                joule = FieldValue(
-                    domain=setup.field_domain,
-                    location="cell",
-                    values=dense_voxel_field(domain, voxel_values),
-                    quantity_kind=data["quantityKind"],
-                    unit=data["unit"],
-                )
-            artifacts[key] = joule
-        elif method in {"dc.current-density", "dc.total-current"}:
+    definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
+    artifacts, exports = {}, {}
+    for index, output in enumerate(config["outputs"]):
+        data = definitions[output["methodId"]]["data"]
+        grid = BoxGrid(output["boxGrid"])
+        if output["methodId"] == "dc.total-current":
             position = scalar_parameter(output["parameters"]["crossSectionPosition"])
-            if position not in cross_sections:
-                cross_sections[position] = _cross_section(
-                    result.potential,
-                    domain,
-                    position,
-                    setup.conductivity,
-                    setup.source_voltage,
-                    setup.reference_voltage,
-                    position in density_positions,
-                    setup.surface_terminals,
-                )
-            values, total = cross_sections[position]
-            if method == "dc.total-current":
-                artifacts[key] = {"value": total}
-            else:
-                data = next(
-                    item.get("data", {})
-                    for item in descriptor["methods"]["outputs"]
-                    if item["methodId"] == method
-                )
-                axes = [
-                    {"ticks": ticks[1], "spacing": domain.v_spacing},
-                    {"ticks": ticks[2], "spacing": domain.u_spacing},
-                ]
-                field = FieldValue(
-                    domain=_cross_section_field_domain(setup.field_domain, axes, values.shape, position),
-                    location="cell",
-                    values=values[..., None] * domain.axis,
-                    quantity_kind=data["quantityKind"],
-                    unit=data["unit"],
-                    basis=data.get("basis"),
-                    components=("x", "y", "z"),
-                )
-                artifacts[key] = field
-        await progress({"stage": "output", "completed": index + 1, "total": len(outputs)})
-    return artifacts
-
-
-def _cross_section_field_domain(
-    parent: StructuredGridValue,
-    axes: list[dict[str, Any]],
-    shape: tuple[int, ...],
-    position: float,
-) -> StructuredGridValue:
-    signature = {
-        "parentDomainId": parent.identity,
-        "position": position,
-        "referenceLengthUnit": parent.unit,
-        "shape": list(shape),
-        "axes": axes,
-    }
-    identity = hashlib.sha256(
-        json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return StructuredGridValue(
-        shape=shape,
-        axes=tuple(np.asarray(axis["ticks"], dtype=np.float64) for axis in axes),
-        unit=parent.unit,
-        identity=identity,
-        metadata={**signature, "spacings": [axis["spacing"] for axis in axes]},
-    )
+            densities, _ = _cross_section(result.potential, domain, position, result.setup.conductivity,
+                                         result.setup.source_voltage, result.setup.reference_voltage, True,
+                                         result.setup.surface_terminals)
+            axial = -domain.length / 2 + min(domain.shape[0], max(0, round_like_javascript(position * domain.shape[0]))) * domain.axial_spacing
+            _, v_ticks, u_ticks = axis_ticks(domain)
+            total = 0.0
+            for row, v in enumerate(v_ticks):
+                for column, u in enumerate(u_ticks):
+                    center = domain.origin + frame @ [axial, u, v]
+                    corners = np.asarray([center + frame @ [0, du * domain.u_spacing / 2, dv * domain.v_spacing / 2]
+                                          for du, dv in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+                    polygon = clip_box_polygon(corners, grid, descriptor["referenceLengthUnit"])
+                    area = sum(np.linalg.norm(np.cross(polygon[i] - polygon[0], polygon[i + 1] - polygon[0])) / 2
+                               for i in range(1, len(polygon) - 1))
+                    total += densities[row, column] * area
+            sampled = abs(total)
+        else:
+            sampled = sample_voxel_field(domain, values[output["methodId"]], grid, descriptor["referenceLengthUnit"])
+        artifacts[output["key"]] = pack_box_grid(grid, data, sampled)
+        if progress is not None:
+            await progress({"stage": "output", "completed": index + 1, "total": len(config["outputs"])})
+    definitions = {item["methodId"]: item for item in descriptor["methods"].get("exports", ())}
+    for output in config.get("exports", ()):
+        data = definitions[output["methodId"]]["data"]
+        exports[output["key"]] = FieldValue(result.setup.field_domain, "cell", data["quantityKind"],
+                                           data["unit"], values[output["methodId"]])
+    return artifacts, exports

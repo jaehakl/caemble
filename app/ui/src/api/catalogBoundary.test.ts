@@ -20,7 +20,7 @@ const descriptor = {
   materials: [],
   inputPorts: {},
   observations: {},
-  methods: { initializations: [], boundaryConditions: [], outputs: [] },
+  methods: { initializations: [], boundaryConditions: [], outputs: [], exports: [] },
 }
 
 function jsonResponse(body: unknown) {

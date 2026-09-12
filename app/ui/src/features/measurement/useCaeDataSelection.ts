@@ -1,4 +1,4 @@
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient, type QueryKey } from '@tanstack/react-query'
 import type { MeasurementRecordedData } from '@/api'
@@ -14,6 +14,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   const [measurement, setMeasurement] = useState<SavedMeasurement | null>(null)
   const [recordedDataTree, setRecordedDataTree] = useState<MeasurementRecordedData>({})
   const [resultContracts, setResultContracts] = useState<RecordedResultContracts | null>(null)
+  const [visualizations, setVisualizations] = useState<MeasurementVisualizations>({})
   const [resultErrors, setResultErrors] = useState<Readonly<Record<string, string>>>({})
   const [loading, setLoading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<Readonly<{ completed: number; total: number }> | null>(null)
@@ -36,6 +37,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     setMeasurement(null)
     setRecordedDataTree({})
     setResultContracts(null)
+    setVisualizations({})
     setResultErrors({})
   }, [cancelActiveQueries])
 
@@ -85,6 +87,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
         setMeasurement(row)
         setRecordedDataTree(recorded.recorded_data)
         setResultContracts(recorded.result_contracts)
+        setVisualizations(recorded.visualizations ?? {})
         setResultErrors(recorded.result_errors ?? {})
         return row
       } catch (error: unknown) {
@@ -108,6 +111,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   return useMemo(
     () => ({
       resultContracts,
+      visualizations,
       resultErrors,
       measurement,
       recordedRows: snapshot.rows,
@@ -131,6 +135,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       measurement,
       snapshot,
       resultContracts,
+      visualizations,
       resultErrors,
     ],
   )

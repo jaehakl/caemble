@@ -5,7 +5,7 @@ from app.kernel.api.world import experiment_scene, geometry_parts, scalar_parame
 
 from .domain import THIN_LAYER_LIMIT, build_collision_scene
 from .formulation import launch_sources, trace_rays
-from .outputs import build_detectors, build_ray_outputs
+from .outputs import build_detectors, build_volume_tallies
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
@@ -18,16 +18,15 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     seed = int(scalar_parameter(config["parameters"]["seed"]))
 
     detectors = build_detectors(config, scene, meshes)
-    launched, source_power = await launch_sources(invocation, config, scene, meshes, seed, epsilon)
-    paths = await trace_rays(invocation, scene, collision_scene, meshes, launched, detectors, seed, epsilon)
+    launched, _ = await launch_sources(invocation, config, scene, meshes, seed, epsilon)
+    tallies = build_volume_tallies(config, invocation.descriptor, [ray.wavelength for ray in launched])
+    paths = await trace_rays(invocation, scene, collision_scene, meshes, launched, detectors, seed, epsilon, tallies)
 
     path_bundle = paths.bundle()
-    artifacts = await build_ray_outputs(
-        config, detectors, source_power, path_bundle, invocation.progress, invocation.descriptor,
-    )
     return SolverResult(
         state_patch=StatePatch().put("rayPaths", path_bundle),
-        artifacts=artifacts,
+        artifacts={tally.key: tally.artifact() for tally in tallies},
+        visualizations={"paths": path_bundle},
         observations={
             "launchedRays": len(launched),
             "recordedPaths": len(paths.paths),

@@ -105,6 +105,7 @@ async def trace_rays(
     detectors: list[Detector],
     seed: int,
     epsilon: float,
+    tallies: list[Any] | None = None,
 ) -> PathCollector:
     """Trace queued rays and their physical branches in deterministic order."""
     config = context.config
@@ -124,7 +125,7 @@ async def trace_rays(
             detector_by_triangle.setdefault(triangle_key, []).append(detector)
 
     await context.progress({"stage": "trace", "completed": 0, "total": len(launched)})
-    collector = PathCollector(maximum_paths)
+    collector = PathCollector(maximum_paths, tallies=[] if tallies is None else tallies)
     queue = deque(launched)
     processed = 0
     scheduled = len(launched)
@@ -175,6 +176,13 @@ def _trace_one(
     hit = scene.intersect(ray.origin, ray.direction, epsilon)
     escape_distance = max(scene.diagonal, epsilon * 100)
     if hit is None:
+        medium = optical_material(world, ray.medium_name, ray.wavelength)
+        score_distance = escape_distance
+        for tally in collector.tallies:
+            interval = tally.interval(ray.origin, ray.direction)
+            if interval is not None:
+                score_distance = max(score_distance, interval[1])
+        collector.score(ray.origin, ray.direction, score_distance, float(ray.stokes[0]), medium.absorption_coefficient, ray.wavelength)
         _segment(ray, ray.origin + ray.direction * escape_distance, EVENT_ESCAPE)
         collector.finish(ray)
         return []
@@ -185,6 +193,7 @@ def _trace_one(
         random_value = max(1e-15, counter_random(seed, ray.path_key, ray.interactions, 20))
         scatter_distance = -math.log(random_value) / medium.scattering_coefficient
         if scatter_distance < travel:
+            collector.score(ray.origin, ray.direction, scatter_distance, float(ray.stokes[0]), medium.absorption_coefficient, ray.wavelength)
             ray.stokes *= math.exp(-medium.absorption_coefficient * scatter_distance)
             position = ray.origin + ray.direction * scatter_distance
             if ray.stokes[0] <= threshold:
@@ -207,6 +216,7 @@ def _trace_one(
                 collector.finish(ray)
                 return []
             return [ray]
+    collector.score(ray.origin, ray.direction, travel, float(ray.stokes[0]), medium.absorption_coefficient, ray.wavelength)
     ray.stokes *= math.exp(-medium.absorption_coefficient * travel)
     if ray.stokes[0] <= threshold:
         _segment(ray, hit.position, EVENT_POWER_CUTOFF)
@@ -216,8 +226,6 @@ def _trace_one(
     if detector_hits:
         _segment(ray, hit.position, EVENT_DETECTOR)
         collector.detected_power += float(ray.stokes[0])
-        for detector in detector_hits:
-            detector.deposit(hit.position, float(ray.stokes[0]))
         collector.finish(ray)
         return []
     if ray.interactions >= maximum_interactions:

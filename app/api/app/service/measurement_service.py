@@ -5,12 +5,13 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import CalculationData, Experiment, ExperimentRecord, Measurement, RecordedData
+from db import CalculationData, Experiment, ExperimentRecord, Measurement, MeasurementVisualization, RecordedData
 from models import (
     GetListRequestBase,
     MeasurementBase,
     MeasurementCreateRequest,
     MeasurementRecordedDataResponse,
+    MeasurementVisualizationsResponse,
     UserData,
 )
 from service.experiment_access import require_experiment_read
@@ -104,6 +105,25 @@ async def get_recorded_data(
     return MeasurementRecordedDataResponse.model_validate({
         "recorded_data": tree, "result_contracts": experiment.result_contracts,
     })
+
+
+async def get_visualizations(
+    db: AsyncSession,
+    measurement_id: int,
+    *,
+    user: UserData | None,
+) -> MeasurementVisualizationsResponse:
+    measurement = await db.get(Measurement, measurement_id)
+    if measurement is None:
+        raise LookupError("Measurement not found.")
+    try:
+        await require_experiment_read(db, measurement.experiment_id, user)
+    except HTTPException as error:
+        raise LookupError("Measurement not found.") from error
+    rows = (await db.scalars(select(MeasurementVisualization).where(
+        MeasurementVisualization.measurement_id == measurement_id,
+    ).order_by(MeasurementVisualization.task))).all()
+    return MeasurementVisualizationsResponse(visualizations={row.task: row.data for row in rows})
 
 
 async def create_measurement(

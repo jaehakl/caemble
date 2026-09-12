@@ -3,6 +3,8 @@ from __future__ import annotations
 import numbers
 from collections.abc import Mapping
 
+import numpy as np
+
 from app.kernel.api.errors import CaeError
 from app.kernel.api import SolverResult, StateDelete, StatePatch, StatePut
 from app.kernel.coordinator.contracts import validate_artifact_payload
@@ -19,6 +21,9 @@ def commit_result(
     resources: ResourceStore,
     states: StateStore,
     artifacts: ArtifactStore,
+    visualization_handles: dict[str, ArtifactHandle] | None = None,
+    invocation: int = 1,
+    catalog_revision: str | None = None,
 ) -> tuple[StateHandle, dict[str, ArtifactHandle]]:
     """Validate and publish one child result, or undo every provisional owner."""
     result = transaction.value
@@ -27,9 +32,10 @@ def commit_result(
     roots = ()
     handles: dict[str, ArtifactHandle] = {}
     output_state = base_state
+    visual_handles = {} if visualization_handles is None else visualization_handles
     try:
         if not isinstance(result, SolverResult):
-            raise TypeError("solver result does not implement ABI-v2 SolverResult")
+            raise TypeError("solver result does not implement ABI-3 SolverResult")
         if not isinstance(result.state_patch, StatePatch):
             raise TypeError("solver state_patch must be a StatePatch")
         if not isinstance(result.artifacts, Mapping) or not isinstance(result.observations, Mapping):
@@ -53,9 +59,14 @@ def commit_result(
                     "invalid_solver_result",
                     f"task {task_name} observation {name!r} must be {expected}",
                 )
+        if not isinstance(result.exports, Mapping) or not isinstance(result.visualizations, Mapping):
+            raise TypeError("solver exports and visualizations must be mappings")
+        if set(result.artifacts) & set(result.exports):
+            raise ValueError("Output and native export keys must not collide")
         output_specs = task_spec.output_specs
-        missing = sorted(set(output_specs) - set(result.artifacts))
-        unknown = sorted(set(result.artifacts) - set(output_specs))
+        returned = {**result.artifacts, **result.exports}
+        missing = sorted(set(output_specs) - set(returned))
+        unknown = sorted(set(returned) - set(output_specs))
         if missing or unknown:
             details = []
             if missing:
@@ -67,6 +78,9 @@ def commit_result(
                 f"task {task_name} returned incorrect artifacts: {', '.join(details)}",
             )
         for output_name, spec in output_specs.items():
+            expected_exports = spec.get("category") == "exports"
+            if expected_exports != (output_name in result.exports):
+                raise ValueError(f"{output_name!r} was returned in the wrong output/export channel")
             if not isinstance(spec.get("artifactType"), str) or not spec["artifactType"]:
                 raise CaeError(
                     "invalid_solver_result",
@@ -81,22 +95,34 @@ def commit_result(
             try:
                 payload_kind = spec.get("payloadKind") or task_spec.artifact_payload_kinds.get(spec["artifactType"])
                 validate_artifact_payload(
-                    result.artifacts[output_name],
+                    returned[output_name],
                     data,
                     f"task {task_name} output {output_name!r}",
-                    require_spatial_field=payload_kind == "field",
+                    require_spatial_field=payload_kind == "field" and "boxGrid" not in data,
                 )
+                if "boxGrid" in spec:
+                    actual = returned[output_name]["boxGrid"]
+                    if any(not np.array_equal(actual.get(key), value) for key, value in spec["boxGrid"].items()):
+                        raise ValueError(f"task {task_name} output {output_name!r} changed its requested Box")
             except (TypeError, ValueError) as exc:
                 raise CaeError("invalid_solver_result", str(exc)) from exc
+
+        visual_specs = task_spec.descriptor.get("visualizations", {})
+        if set(result.visualizations) - set(visual_specs):
+            raise ValueError("Solver returned an undeclared visualization")
+        for name, value in result.visualizations.items():
+            validate_artifact_payload(value, visual_specs[name]["data"], f"visualization {name}")
 
         patch_values = [
             operation.value
             for operation in result.state_patch.operations
             if isinstance(operation, StatePut)
         ]
-        artifact_names = list(result.artifacts)
+        artifact_names = list(returned)
+        visual_names = list(result.visualizations)
         roots = resources.ingest_many(
-            (*patch_values, *(result.artifacts[name] for name in artifact_names)),
+            (*patch_values, *(returned[name] for name in artifact_names),
+             *(result.visualizations[name] for name in visual_names)),
             copy_arrays=False,
         )
         patch_refs = iter(roots[: len(patch_values)])
@@ -107,7 +133,7 @@ def commit_result(
             for operation in result.state_patch.operations
         )
         output_state = states.commit(base_state, StatePatch(operations), copy_arrays=False, producer_task=task_name)
-        artifact_refs = roots[len(patch_values) :]
+        artifact_refs = roots[len(patch_values) :len(patch_values) + len(artifact_names)]
         for output_name, ref in zip(artifact_names, artifact_refs, strict=True):
             spec = output_specs[output_name]
             handles[output_name] = artifacts.publish(
@@ -120,13 +146,23 @@ def commit_result(
                 state_revision=output_state.revision,
                 data=detached(spec.get("data")),
                 copy_arrays=False,
+                invocation=invocation, catalog_revision=catalog_revision,
+            )
+        for name, ref in zip(visual_names, roots[len(patch_values) + len(artifact_names):], strict=True):
+            spec = visual_specs[name]
+            visual_handles[name] = artifacts.publish(
+                ref, producer_task=task_name, solver_name=str(kernel["name"]),
+                solver_version=str(kernel["version"]), output_name=name,
+                artifact_type=spec["artifactType"], state_revision=output_state.revision,
+                data=detached(spec["data"]), copy_arrays=False,
+                invocation=invocation, catalog_revision=catalog_revision,
             )
         if not transaction.commit():
             raise RuntimeError("solver execution transaction was already finalized")
         return output_state, handles
     except BaseException as error:
         # Continue recovery even if one cleanup operation itself fails.
-        for handle in reversed(tuple(handles.values())):
+        for handle in reversed((*handles.values(), *visual_handles.values())):
             try:
                 if artifacts.is_live(handle):
                     artifacts.release(handle)

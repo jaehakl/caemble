@@ -12,6 +12,7 @@ from app.kernel.coordinator.invocation import execute_solver
 from app.kernel.coordinator.commit import commit_result
 from app.kernel.coordinator.plan import RunPlan, TaskSpec, detached
 from app.kernel.api import InputArtifact, SolverResourceServices
+from app.kernel.catalog import solver_catalog
 from app.kernel.execution import MmapPayloadCodec, SpawnSolverExecutor
 from app.kernel.resources import (
     ArtifactHandle,
@@ -39,6 +40,8 @@ class SimulationHost(Protocol):
         self, name: str, value: Any, *, resource_hold: RecordResourceHold | None = None
     ) -> None: ...
 
+    async def visualization(self, task: str, values: Any, *, resource_hold: RecordResourceHold) -> None: ...
+
 
 class SimulationApi:
     """Resident, run-scoped coordinator exposed to trusted ``simulate.py``."""
@@ -57,6 +60,8 @@ class SimulationApi:
             prefix="caemble-cae-geometry-cache-"
         )
         self._closed = False
+        self._invocations: dict[str, int] = {}
+        self._visualizations: dict[str, dict[str, ArtifactHandle]] = {}
 
     async def run(
         self,
@@ -117,10 +122,20 @@ class SimulationApi:
                 ),
             )
             result = transaction.value
+            visual_handles: dict[str, ArtifactHandle] = {}
+            invocation = self._invocations.get(task_name, 0) + 1
             output_state, artifacts = commit_result(
                 transaction, task_spec, base_state,
                 resources=self._resources, states=self._states, artifacts=self._artifacts,
+                visualization_handles=visual_handles,
+                invocation=invocation, catalog_revision=solver_catalog.catalog_revision,
             )
+            self._invocations[task_name] = invocation
+            if task_spec.descriptor.get("visualizations"):
+                previous = self._visualizations.get(task_name, {})
+                self._visualizations[task_name] = visual_handles
+                for handle in previous.values():
+                    self._artifacts.release(handle)
         except asyncio.CancelledError:
             raise
         except CaeError:
@@ -187,6 +202,9 @@ class SimulationApi:
             if not isinstance(value, ArtifactHandle) or not self._artifacts.is_live(value):
                 raise CaeError("invalid_record", "sim.record requires a live output artifact")
             provenance = value.provenance
+            task_spec = self._run.plan.task_specs.get(provenance.producer_task)
+            if task_spec is not None and task_spec.output_specs.get(provenance.output_name, {}).get("category") == "exports":
+                raise CaeError("invalid_record", "Native exports are not numerical RecordedData")
             if (provenance.producer_task != contract["task"] or provenance.output_name != contract["output"]
                     or provenance.solver_name != contract["solver"]["name"]
                     or provenance.solver_version != contract["solver"]["version"]
@@ -196,7 +214,57 @@ class SimulationApi:
                 value, self._run.plan.schemas[name], resources=self._resources,
                 artifacts=self._artifacts, owner=f"record:{name}", leases=leases,
             )
+            if isinstance(materialized, dict) and "boxGrid" in materialized:
+                materialized["provenance"] = {
+                    "task": provenance.producer_task,
+                    "solver": {"name": provenance.solver_name, "version": provenance.solver_version},
+                    "stateRevision": provenance.state_revision,
+                    "invocation": provenance.invocation,
+                    "catalogRevision": provenance.catalog_revision,
+                }
             await self._run.record(name, materialized, resource_hold=hold)
+        except BaseException:
+            if not hold.handed_off:
+                hold.release()
+            raise
+
+    async def _flush_visualizations(self) -> None:
+        """Publish only the latest successful invocation of each Task after simulate finishes."""
+        for task_name, handles in tuple(self._visualizations.items()):
+            await self._record_visualizations(self._run.plan.task_specs[task_name], handles)
+            del self._visualizations[task_name]
+
+    async def _record_visualizations(self, task_spec, handles) -> None:
+        leases: list[ResourceLease] = []
+
+        def release_visuals():
+            for lease in reversed(leases):
+                self._resources.release(lease)
+            leases.clear()
+            for handle in handles.values():
+                if self._artifacts.is_live(handle):
+                    self._artifacts.release(handle)
+
+        hold = RecordResourceHold(release_visuals)
+        try:
+            entries = {}
+            for name, handle in handles.items():
+                contract = detached(self._run.plan.visualization_contracts[task_spec.name][name])
+                schema = contract.pop("schema")
+                entries[name] = {
+                    "contract": contract, "schema": schema,
+                    "data": materialize_record_value(
+                        handle, schema, resources=self._resources, artifacts=self._artifacts,
+                        owner=f"visualization:{task_spec.name}:{name}", leases=leases,
+                    ),
+                    "provenance": {
+                        "task": task_spec.name, "solver": detached(task_spec.task["kernel"]),
+                        "stateRevision": handle.provenance.state_revision,
+                        "invocation": handle.provenance.invocation,
+                        "catalogRevision": handle.provenance.catalog_revision,
+                    },
+                }
+            await self._run.visualization(task_spec.name, entries, resource_hold=hold)
         except BaseException:
             if not hold.handed_off:
                 hold.release()

@@ -4,6 +4,8 @@ import type {
   RecordedDataAxis as RecordedDataAxisContract,
 } from '@/contracts/cad-persistence'
 import type { UcumUnit } from './units'
+import type { BoxGridData, BoxGridProfile } from '@/contracts/boxGrid'
+import type { ResultProvenance } from '@/contracts/results'
 
 export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
 export type Complex64Value = Readonly<{ re: number; im: number }>
@@ -44,7 +46,7 @@ type DataTypeMetadata = Readonly<
       basis?: never
     }
 >
-export type DataSchema = Readonly<{ axes?: readonly DataSchemaAxis[] }> & DataTypeMetadata
+export type DataSchema = Readonly<{ axes?: readonly DataSchemaAxis[]; boxGrid?: BoxGridProfile }> & DataTypeMetadata
 export type DataValueDescriptor = Readonly<{
   axes?: readonly DataAxis[]
   value: boolean | string | number | Complex64Value | readonly unknown[]
@@ -68,6 +70,8 @@ export type RecordedDataRule<TParameters extends ExperimentParameters = Experime
 export type RecordedDataAxis = RecordedDataAxisContract
 export type DataTensor = Readonly<{
   shape: readonly number[]
+  boxGrid?: BoxGridData
+  provenance?: ResultProvenance
   axes?: readonly RecordedDataAxis[]
   storage:
     | Readonly<{ kind: 'inline'; value: unknown }>
@@ -76,6 +80,8 @@ export type DataTensor = Readonly<{
 }>
 export type PersistedDataTensor = PersistedDataTensorContract
 export type DataTensorInput = Readonly<{
+  boxGrid?: BoxGridData
+  provenance?: ResultProvenance
   value: boolean | string | number | Complex64Value | readonly unknown[]
   axes?: readonly RecordedDataAxis[]
 }>

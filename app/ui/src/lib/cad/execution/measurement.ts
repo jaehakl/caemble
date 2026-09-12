@@ -3,7 +3,7 @@ import type { CatalogMaterialModel } from '@/contracts/catalog'
 import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
 import { materialVarsHash, type MaterialResolution } from '../../material/resolution'
 import type { CadScene } from '../evaluation/types'
-import type { EvaluatedExperimentSnapshot, MeasurementExperimentSnapshot } from './snapshotTypes'
+import type { MeasurementExperimentSnapshot } from './snapshotTypes'
 
 export type TaskMaterialResolution = Readonly<{
   taskMaterialSnapshots: Readonly<Record<string, MaterialSnapshot>>
@@ -26,19 +26,6 @@ export type BuiltMeasurement = Readonly<{
   modelDefinitions: readonly CatalogMaterialModel[]
   materialSelections: Readonly<Record<string, TaskMaterialSelections>>
 }>
-
-export function unresolvedMeasurementMaterialRoles(snapshot: EvaluatedExperimentSnapshot) {
-  const unresolved = new Set<string>()
-  snapshot.scene.roots.forEach((root) => {
-    if (!root.material) unresolved.add(`Experiment: ${root.materialRole}`)
-  })
-  Object.entries(snapshot.taskScenes).forEach(([taskName, scene]) => {
-    scene.roots.forEach((root) => {
-      if (!root.material) unresolved.add(`Task ${taskName}: ${root.materialRole}`)
-    })
-  })
-  return Object.freeze([...unresolved])
-}
 
 export function buildMeasurement(
   snapshot: MeasurementExperimentSnapshot,

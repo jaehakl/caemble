@@ -28,23 +28,35 @@ it.each(['create', 'overwrite', 'new_version'] as const)(
     try {
       const sourceBundle = {
         files: {
-          'experiment.tsx': `import { experiment } from '@caemble/core'
+          'experiment.tsx': `import { Box, experiment } from '@caemble/core'
 export default experiment({
-  varsSchema: {}, lengthUnit: 'mm', geometry: () => [],
+  varsSchema: {}, lengthUnit: 'mm', geometry: () => <Box id="probe" size={[2, 3, 4]} />,
+  geometryGroup: { probe: ['probe'] },
   recordedData: {
     samples: { task: 'fixture', output: 'samples' },
-    group: { task: 'fixture', output: 'group' },
+    secondary: { task: 'fixture', output: 'secondary' },
   },
 })`,
           'tasks/fixture.tsx': `import { defineTask } from '@caemble/core'
-export default defineTask({ kernel: { name: 'fixture', version: '1.0.0' }, config: () => ({ parameters: {}, initializations: [], boundaryConditions: [], outputs: [
-{ key: 'samples', methodId: 'samples', target: [], parameters: {} }, { key: 'group', methodId: 'group', target: [], parameters: {} }
+export default defineTask({ kernel: { name: 'fixture', version: '1.0.0' }, config: () => ({ parameters: {}, initializations: [], boundaryConditions: [], exports: [], outputs: [
+{ key: 'samples', methodId: 'samples', target: ['experiment.geometry.probe'], parameters: { gridShape: [2, 1, 1] } },
+{ key: 'secondary', methodId: 'samples', target: ['experiment.geometry.probe'], parameters: { gridShape: [1, 1, 1] } }
 ] }) })`,
           'geometry.tsx': 'export {}',
           'material.tsx': 'export {}',
           'simulate.py': 'def simulate(context):\n    return {}\n',
         },
       }
+      const dataSchema = {
+        dtype: 'float64',
+        quantityKind: 'Dimensionless',
+        unit: '1',
+        axes: ['x', 'y', 'z', 'time', 'frequency', 'amplitudePhase', 'component'].map((name, index) => ({
+          name,
+          ...(index < 3 ? {} : { length: 1 }),
+        })),
+        boxGrid: { version: 1, sampling: 'point', components: ['scalar'], channels: ['value'], channelUnits: ['1'] },
+      } as const
       const catalog: CatalogRuntimeSlice = {
         catalogRevision: 'contract-fixture',
         solvers: [
@@ -63,51 +75,35 @@ export default defineTask({ kernel: { name: 'fixture', version: '1.0.0' }, confi
               methods: {
                 initializations: [],
                 boundaryConditions: [],
+                exports: [],
                 outputs: [
                   {
                     methodId: 'samples',
                     description: '',
                     minimumOccurrences: 0,
-                    maximumOccurrences: 1,
+                    maximumOccurrences: 2,
                     target: {
                       source: 'experiment',
                       kind: 'geometry',
-                      minimumTargets: 0,
-                      maximumTargets: 0,
-                      minimumResolved: 0,
-                      maximumResolved: 0,
+                      minimumTargets: 1,
+                      maximumTargets: 1,
+                      minimumResolved: 1,
+                      maximumResolved: 1,
                     },
-                    parameters: {},
+                    parameters: {
+                      gridShape: { description: '', required: true, data: { dtype: 'int32', axes: [{ length: 3 }] } },
+                    },
                     artifactType: 'fixture/samples@1',
-                    data: { dtype: 'int32', axes: [{ name: 'samples' }], visualization: { kind: 'tensor' } },
-                  },
-                  {
-                    methodId: 'group',
-                    description: '',
-                    minimumOccurrences: 0,
-                    maximumOccurrences: 1,
-                    target: {
-                      source: 'experiment',
-                      kind: 'geometry',
-                      minimumTargets: 0,
-                      maximumTargets: 0,
-                      minimumResolved: 0,
-                      maximumResolved: 0,
-                    },
-                    parameters: {},
-                    artifactType: 'fixture/group@1',
-                    data: {
-                      resourceKind: 'structuredBundle',
-                      members: { label: { dtype: 'string' } },
-                      visualization: { kind: 'bundle' },
-                    },
+                    data: { ...dataSchema, visualization: { kind: 'tensor' } },
                   },
                 ],
               },
             },
           },
         ],
-        quantityKinds: [],
+        quantityKinds: [
+          { name: 'Dimensionless', domain: 'general', tensorOrder: 0, opaque: false, applicableUnits: ['1'] },
+        ],
 
         materialModels: [],
 
@@ -129,17 +125,17 @@ export default defineTask({ kernel: { name: 'fixture', version: '1.0.0' }, confi
       expect(webRecords).toEqual([
         {
           name: 'samples',
-          quantity_kind: null,
+          quantity_kind: 'Dimensionless',
           tensor_order: 0,
-          dtype: 'int32',
-          data_schema: { dtype: 'int32', axes: [{ name: 'samples' }] },
+          dtype: 'float64',
+          data_schema: dataSchema,
         },
         {
-          name: 'group.label',
-          quantity_kind: null,
+          name: 'secondary',
+          quantity_kind: 'Dimensionless',
           tensor_order: 0,
-          dtype: 'string',
-          data_schema: { dtype: 'string' },
+          dtype: 'float64',
+          data_schema: dataSchema,
         },
       ])
       const source = path.join(root, 'source')

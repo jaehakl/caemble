@@ -209,6 +209,7 @@ export function useCaeWorkbenchState(
   const selection = useMemo(
     () => ({
       resultContracts: baseSelection.resultContracts,
+      visualizations: baseSelection.visualizations,
       resultErrors: baseSelection.resultErrors,
       measurement,
       recordedRows,
@@ -226,6 +227,7 @@ export function useCaeWorkbenchState(
     }),
     [
       baseSelection.resultContracts,
+      baseSelection.visualizations,
       baseSelection.resultErrors,
       clearMeasurement,
       flatRecordedData,

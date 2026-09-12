@@ -16,4 +16,4 @@ sim.release(state, keep=result["state"])
 state = result["state"]
 ```
 
-[Electro-Thermal Notched Bar의 canonical simulate.py 열기](/?help=examples&item=caemble:experiment/caemble/verified/electro-thermal-notched-bar@4.0.0)
+[Electro-Thermal Notched Bar의 canonical simulate.py 열기](/?help=examples&item=caemble:experiment/caemble/verified/electro-thermal-notched-bar@5.0.0)

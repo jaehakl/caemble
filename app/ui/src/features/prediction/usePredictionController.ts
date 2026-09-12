@@ -23,6 +23,8 @@ export type PredictionForwardModelEntry = PredictionModelCache &
   Readonly<{
     record: ExperimentRecordedDataRecord
     rule: ReturnType<typeof recordedDataRules>[number]
+    records?: readonly ExperimentRecordedDataRecord[]
+    rules?: ReturnType<typeof recordedDataRules>
   }>
 
 export type PredictionForwardModelBundle = Readonly<{

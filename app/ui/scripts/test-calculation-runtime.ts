@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { calculationExampleInput } from '../src/authoring/examples'
+import { createDataTensor } from '../src/lib/cad/model/dataTensor'
+import { varsTensorFromFlat } from '../src/lib/cad/model/tensor'
 import { CALCULATION_SOURCE_SKELETON } from '../src/lib/calculation/declarations'
 import {
   analyzeCalculationDependencies,
@@ -32,7 +35,7 @@ import {
   normalizeCalculationOutput,
   normalizeCalculationRunnerOutput,
 } from '../src/lib/calculation/validation'
-import type { RecordedData, RecordedDataRule } from '../src/lib/cad/model/descriptor'
+import type { RecordedDataRule } from '../src/lib/cad/model/descriptor'
 
 assert.deepEqual(Object.keys(CALCULATION_MATHJS_RUNTIME).sort(), [...CALCULATION_MATHJS_NAMES].sort())
 assert.equal((CALCULATION_MATHJS_RUNTIME.add as (left: number, right: number) => number)(2, 3), 5)
@@ -42,22 +45,7 @@ assert.deepEqual(Object.keys(CALCULATION_MATHJS_RUNTIME.mean as object), [])
 assert.equal('signatures' in (CALCULATION_MATHJS_RUNTIME.mean as object), false)
 assert.equal('_typedFunctionData' in (CALCULATION_MATHJS_RUNTIME.mean as object), false)
 assert.equal('fromJSON' in (CALCULATION_MATHJS_RUNTIME.number as object), false)
-assert.deepEqual(calculationInputDtypes, [
-  'bool',
-  'string',
-  'int8',
-  'int16',
-  'int32',
-  'int64',
-  'uint8',
-  'uint16',
-  'uint32',
-  'uint64',
-  'float16',
-  'float32',
-  'float64',
-  'complex64',
-])
+assert.deepEqual(calculationInputDtypes, ['float32', 'float64'])
 for (const name of [
   'Atomics',
   'Blob',
@@ -168,7 +156,7 @@ const catalogRecords = [
     quantity_kind: null,
     tensor_order: 0,
     dtype: 'float64',
-    data_schema: { dtype: 'float64', axes: [{ name: 'sample' }] },
+    data_schema: { boxGrid: calculationExampleInput.signal.boxGrid, dtype: 'float64', axes: [{ name: 'sample' }] },
     contract_hash: 'group-hash',
   },
   {
@@ -178,7 +166,7 @@ const catalogRecords = [
     quantity_kind: null,
     tensor_order: 0,
     dtype: 'float64',
-    data_schema: { dtype: 'float64' },
+    data_schema: { boxGrid: calculationExampleInput.signal.boxGrid, dtype: 'float64' },
     contract_hash: 'signal-hash',
   },
   {
@@ -188,7 +176,7 @@ const catalogRecords = [
     quantity_kind: 'Temperature',
     tensor_order: 0,
     dtype: 'float64',
-    data_schema: { dtype: 'float64', unit: 'K' },
+    data_schema: { boxGrid: calculationExampleInput.signal.boxGrid, dtype: 'float64', unit: 'K' },
     contract_hash: 'temperature-hash',
   },
 ] as const
@@ -557,111 +545,42 @@ assert.throws(() =>
   }),
 )
 
-const input = {
-  signal: {
-    dtype: 'float64',
-    shape: [2],
-    data: [1, 2],
-    axes: [{ name: 'time', ticks: ['start', 'end'] }],
-    quantityKind: 'Time',
-    tensorOrder: 0,
-    unit: 'm',
-  },
-}
+const input = { signal: {
+  ...calculationExampleInput.signal,
+  shape: [1, 1, 1, 2, 1, 1, 1], data: [1, 2],
+  axes: calculationExampleInput.signal.axes.map((axis, index) => index === 3 ? { ...axis, ticks: [0, 1] } : axis),
+} }
 assert.doesNotThrow(() => assertCalculationInput(input))
-const rule = {
-  target: [],
-  label: 'signal',
-  methodId: 'test',
-  parameters: {},
-  result: { dtype: 'float64', tensorOrder: 0, axes: [{ name: 'sample', ticks: ['a', 'b'] }] },
-} as unknown as RecordedDataRule
-const recorded = {
-  signal: {
-    shape: [2],
-    axes: [{ ticks: ['a', 'b'] }],
-    storage: { kind: 'inline', value: [10, 20] },
-  },
-} as RecordedData
+const rule: RecordedDataRule = {
+  target: [], label: 'signal', methodId: 'test', parameters: {},
+  result: { dtype: 'float64', axes: input.signal.axes, boxGrid: input.signal.boxGrid },
+}
+const recorded = { signal: createDataTensor(rule.result, {
+  value: varsTensorFromFlat([10, 20], input.signal.shape), boxGrid: input.signal.boxGrid,
+  axes: input.signal.axes.map((axis) => ({ ticks: axis.ticks })),
+}) }
 assert.deepEqual(createCalculationInput([rule], recorded).signal.data, [10, 20])
-const secondRule = { ...rule, label: 'signal2' } as RecordedDataRule
+const secondRule = { ...rule, label: 'signal2' }
 assert.deepEqual(requiredCalculationRecordedDataRules([rule, secondRule], ['signal']), [rule])
-assert.throws(
-  () =>
-    createCalculationInput([rule, secondRule], {
-      signal: {
-        shape: [2],
-        axes: [{ ticks: ['a', 'b'] }],
-        storage: { kind: 'base64', data: '%', byteLength: CALCULATION_INPUT_MAX_BYTES / 2 },
-      },
-      signal2: {
-        shape: [2],
-        axes: [{ ticks: ['a', 'b'] }],
-        storage: { kind: 'base64', data: '%', byteLength: CALCULATION_INPUT_MAX_BYTES / 2 },
-      },
-    } as RecordedData),
-  (error: unknown) =>
-    error instanceof Error && !(error instanceof CalculationExecutionError && error.code === 'input-too-large'),
-)
-assert.throws(
-  () =>
-    createCalculationInput([rule, secondRule], {
-      signal: {
-        shape: [2],
-        axes: [{ ticks: ['a', 'b'] }],
-        storage: { kind: 'base64', data: '%', byteLength: CALCULATION_INPUT_MAX_BYTES / 2 + 1 },
-      },
-      signal2: {
-        shape: [2],
-        axes: [{ ticks: ['a', 'b'] }],
-        storage: { kind: 'base64', data: '%', byteLength: CALCULATION_INPUT_MAX_BYTES / 2 + 1 },
-      },
-    } as RecordedData),
-  (error: unknown) => error instanceof CalculationExecutionError && error.code === 'input-too-large',
-)
-assert.throws(() =>
-  createCalculationInput([rule], { signal: { ...recorded.signal, axes: [{ ticks: ['a', 'c'] }] } } as RecordedData),
-)
-assert.throws(() =>
-  createCalculationInput(
-    [{ ...rule, result: { ...rule.result, axes: [{ name: 'sample', ticks: [10, 20] }] } } as RecordedDataRule],
-    { signal: { ...recorded.signal, axes: [{ implicitOrdinal: true }] } } as RecordedData,
-  ),
-)
-assert.throws(
-  () =>
-    createCalculationInput([rule], {
-      signal: {
-        shape: [2],
-        axes: [{ ticks: ['a', 'b'] }],
-        storage: { kind: 'base64', data: 'invalid base64', byteLength: CALCULATION_INPUT_MAX_BYTES + 1 },
-      },
-    } as RecordedData),
-  (error: unknown) => error instanceof CalculationExecutionError && error.code === 'input-too-large',
-)
-assert.throws(() =>
-  createCalculationInput(
-    [
-      {
-        ...rule,
-        result: { dtype: 'float64', tensorOrder: 1, axes: [{ name: 'sample', ticks: [0, 1] }] },
-      } as RecordedDataRule,
-    ],
-    {
-      signal: {
-        shape: [2, 2],
-        axes: [{ ticks: [0, 1] }],
-        storage: {
-          kind: 'inline',
-          value: [
-            [1, 2],
-            [3, 4],
-          ],
-        },
-      },
-    } as RecordedData,
-  ),
-)
+const oversizedTensor = (byteLength: number) => ({
+  ...recorded.signal,
+  storage: { kind: 'base64' as const, data: '%', byteLength },
+})
+assert.throws(() => createCalculationInput([rule, secondRule], {
+  signal: oversizedTensor(CALCULATION_INPUT_MAX_BYTES / 2),
+  signal2: oversizedTensor(CALCULATION_INPUT_MAX_BYTES / 2),
+}), (error: unknown) => error instanceof Error && !(error instanceof CalculationExecutionError && error.code === 'input-too-large'))
+assert.throws(() => createCalculationInput([rule, secondRule], {
+  signal: oversizedTensor(CALCULATION_INPUT_MAX_BYTES / 2 + 1),
+  signal2: oversizedTensor(CALCULATION_INPUT_MAX_BYTES / 2 + 1),
+}), (error: unknown) => error instanceof CalculationExecutionError && error.code === 'input-too-large')
+assert.throws(() => createCalculationInput([rule], { signal: oversizedTensor(CALCULATION_INPUT_MAX_BYTES + 1) }),
+  (error: unknown) => error instanceof CalculationExecutionError && error.code === 'input-too-large')
+assert.throws(() => createCalculationInput([rule], { signal: { ...recorded.signal,
+  axes: recorded.signal.axes!.map((axis, index) => index === 3 ? { ticks: [0, 2] } : axis),
+} }))
+assert.throws(() => createCalculationInput([rule], { signal: { ...recorded.signal, boxGrid: undefined } }))
+assert.throws(() => createCalculationInput([rule], { signal: { ...recorded.signal, shape: [2] } }))
 
 assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', data: 2 }), {
   dtype: 'float64',

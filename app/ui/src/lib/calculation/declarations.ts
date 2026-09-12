@@ -60,11 +60,26 @@ interface CalculationInputAxis {
 interface CalculationInputLeaf {
   readonly dtype: ${calculationInputDtypes.map((dtype) => `'${dtype}'`).join(' | ')}
   readonly shape: readonly number[]
-  readonly data: boolean | string | number | MathJsComplex | readonly (boolean | string | number | MathJsComplex)[]
+  readonly data: readonly number[]
   readonly axes: readonly CalculationInputAxis[]
   readonly quantityKind?: string
   readonly tensorOrder: number
   readonly unit?: string
+  readonly boxGrid: {
+    readonly version: 1
+    readonly sampling: 'point' | 'cell-average' | 'aggregate'
+    readonly components: readonly string[]
+    readonly channels: readonly ['value'] | readonly ['amplitude', 'phase']
+    readonly channelUnits: readonly string[]
+    readonly frequencyKind?: 'modal' | 'sampled'
+    readonly origin: readonly [number, number, number]
+    readonly size: readonly [number, number, number]
+    readonly rotation: readonly [readonly [number, number, number], readonly [number, number, number], readonly [number, number, number]]
+    readonly lengthUnit: string
+    readonly gridShape: readonly [number, number, number]
+    readonly source: 'experiment' | 'task'
+    readonly rootId: string
+  }
 }
 
 type CalculationInput = Readonly<Record<string, CalculationInputLeaf>>
@@ -82,37 +97,22 @@ declare module 'mathjs' {
 
 export const CALCULATION_MATHJS_DECLARATION = CALCULATION_MONACO_DECLARATION
 
-export const CALCULATION_SOURCE_SKELETON = `import { mean, range, reshape, zeros } from 'mathjs'
+export const CALCULATION_SOURCE_SKELETON = `import { range } from 'mathjs'
 
 export default function calculate(record) {
   const source = record['signal']
 
-  // 1. Decide which two dimensions to display.
-  const shape = source?.shape ?? []
-  const tensorOrder = source?.tensorOrder ?? 0
-  const spatialShape = shape.slice(0, shape.length - tensorOrder)
-  const rows = spatialShape.length >= 2 ? (spatialShape[0] ?? 0) : 1
-  const columns = spatialShape.length >= 2 ? (spatialShape[1] ?? 0) : (spatialShape[0] ?? 1)
-
-  // 2. Restore the tensor and average every dimension after rows and columns.
-  const rawData = source ? (Array.isArray(source.data) ? source.data : [source.data]) : [0]
-  const numericData = rawData.map(Number).map((value) => (Number.isFinite(value) ? value : 0))
-  let data = zeros(rows, columns)
-  if (!shape.includes(0)) {
-    let tensor = reshape(numericData, shape.length > 0 ? shape : [1])
-    for (let axis = shape.length - 1; axis >= Math.min(spatialShape.length, 2); axis -= 1) {
-      tensor = mean(tensor, axis)
-    }
-    data = reshape(Array.isArray(tensor) ? tensor : [tensor], [rows, columns])
-  }
-
-  // 3. Keep source axes and add ordinal axes only for new dimensions.
-  const rowAxis = spatialShape.length >= 2 ? source?.axes[0] : undefined
-  const columnAxis = spatialShape.length === 1
-    ? source?.axes[0]
-    : spatialShape.length >= 2
-      ? source?.axes[1]
-      : undefined
+  // Axes: x, y, z, time, frequency, amplitudePhase, component.
+  // Display the XY plane at the first z/time/frequency/channel/component.
+  const shape = source?.shape ?? [1, 1, 1, 1, 1, 1, 1]
+  const rows = shape[0]
+  const columns = shape[1]
+  const stride = shape.slice(2).reduce((size, length) => size * length, 1)
+  const rawData = source && Array.isArray(source.data) ? source.data : [0]
+  const data = Array.from({ length: rows }, (_, x) =>
+    Array.from({ length: columns }, (_, y) => Number(rawData[(x * columns + y) * stride] ?? 0)))
+  const rowAxis = source?.axes[0]
+  const columnAxis = source?.axes[1]
   const axes = [
     rowAxis ?? { name: 'row', ticks: range(0, rows).toArray() },
     columnAxis ?? { name: 'column', ticks: range(0, columns).toArray() },

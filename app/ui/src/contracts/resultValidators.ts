@@ -1,9 +1,9 @@
 import { z } from 'zod'
-import type { RecordedResultContracts } from './results'
+import type { MeasurementVisualization, RecordedResultContracts, ResultProvenance } from './results'
 
 export const resultVisualizationSchema = z
   .object({
-    kind: z.enum(['tensor', 'bundle', 'mesh-field', 'structured-field', 'polyline']),
+    kind: z.enum(['tensor', 'bundle', 'mesh-field', 'structured-field', 'polyline', 'box-grid']),
     coordinateSpace: z.literal('experiment').optional(),
     valuePath: z.string().optional(),
     fieldPath: z.string().optional(),
@@ -55,3 +55,22 @@ export const recordedResultContractsSchema: z.ZodType<RecordedResultContracts> =
     })
     .strict(),
 )
+
+export const resultProvenanceSchema: z.ZodType<ResultProvenance> = z
+  .object({
+    task: z.string().min(1),
+    solver: z.object({ name: z.string().min(1), version: z.string().min(1) }).strict(),
+    stateRevision: z.number().int().nonnegative(),
+    invocation: z.number().int().positive(),
+    catalogRevision: z.string().min(1),
+  })
+  .strict()
+
+export const measurementVisualizationSchema: z.ZodType<MeasurementVisualization> = z
+  .object({
+    contract: z.object({ artifactType: z.string().min(1), visualization: resultVisualizationSchema }).strict(),
+    schema: z.record(z.string(), z.unknown()),
+    data: z.unknown(),
+    provenance: resultProvenanceSchema,
+  })
+  .strict()

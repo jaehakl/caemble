@@ -24,6 +24,8 @@ class ArtifactProvenance:
     artifact_type: str
     state_revision: int
     data: Mapping[str, Any] | None = None
+    invocation: int = 1
+    catalog_revision: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +77,8 @@ class ArtifactStore:
         state_revision: int,
         data: Mapping[str, Any] | None = None,
         copy_arrays: bool = True,
+        invocation: int = 1,
+        catalog_revision: str | None = None,
     ) -> ArtifactHandle:
         self._ensure_open()
         owns_ref = not isinstance(value, ResourceRef)
@@ -89,6 +93,8 @@ class ArtifactStore:
                 artifact_type=artifact_type,
                 state_revision=state_revision,
                 data=copy.deepcopy(data),
+                invocation=invocation,
+                catalog_revision=catalog_revision,
             )
             handle = ArtifactHandle(self.artifact_store_id, artifact_id, ref, provenance)
             lease = self.resources.acquire(

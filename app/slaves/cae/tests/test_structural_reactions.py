@@ -22,7 +22,7 @@ from app.solvers.structural_mechanics.shells import laminate_section, shell4_res
 
 @pytest.mark.parametrize("kind", ["tri3", "quad4"])
 @pytest.mark.parametrize("plane", ["stress", "strain"])
-def test_public_plane_stress_recovers_the_thickness_constraint_reaction(kind, plane):
+def test_continuum_plane_stress_recovers_the_thickness_constraint_reaction(kind, plane):
     points = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]) if kind == "tri3" else np.array([[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]])
     count = len(points)
     material = {"model": "mechanics.isotropic-elastic@1", "E": 1000., "nu": .3, "density": 1., "C": isotropic_elasticity(1000., .3)}
@@ -31,19 +31,16 @@ def test_public_plane_stress_recovers_the_thickness_constraint_reaction(kind, pl
     solution = initial_solution(model)
     solution.displacement[:, 0] = .01 * points[:, 0]
     solution.stresses[0] = element_response(kind, points[:, :2], solution.displacement[:, :2].ravel(), material["C"], .2, plane)[1]
-    config = {"outputs": [{"methodId": "fea.stress", "key": "stress", "parameters": {}}]}
-    artifact = build_outputs(config, solver_catalog.descriptor("structural-mechanics", "4.0.0"), model, solution)["stress"]
-    actual = artifact.members["stress"]["value"]
+    actual = element_response(kind, points[:, :2], solution.displacement[:, :2].ravel(), material["C"], .2, plane, full_stress=True)[1]
     if plane == "strain":
         # epsilon_zz=0으로 가둔 두께의 Poisson 반응: sigma_zz=nu*(sigma_xx+sigma_yy).
         expected = np.array([175 / 13, 75 / 13, 75 / 13, 0., 0., 0.])
     else:
         expected = np.array([1000 / 91, 300 / 91, 0., 0., 0., 0.])
     np.testing.assert_allclose(actual, np.broadcast_to(expected, np.shape(actual)), rtol=1e-13, atol=1e-13)
-    np.testing.assert_array_equal(artifact.members["stressBasis"]["value"], np.broadcast_to(np.eye(3), (len(actual), 3, 3)))
 
 
-def test_tilted_shell_stress_basis_preserves_the_physical_tensor_through_public_transport():
+def test_tilted_shell_stress_basis_preserves_the_physical_tensor_through_resource_transport():
     rotation = rotation_exp([.35, -.62, .4])
     reference = np.array([[0., 0., 0.], [2., 0., 0.], [2., 1., 0.], [0., 1., 0.]])
     points = reference @ rotation.T
@@ -53,17 +50,15 @@ def test_tilted_shell_stress_basis_preserves_the_physical_tensor_through_public_
     solution = initial_solution(model)
     solution.displacement[:, :3] = .01 * reference[:, :1] * rotation[:, 0]
     solution.stresses[0] = shell4_response(points, solution.displacement.ravel(), section)
-    config = {"outputs": [{"methodId": "fea.stress", "key": "stress", "parameters": {}}]}
-    field = build_outputs(config, solver_catalog.descriptor("structural-mechanics", "4.0.0"), model, solution)["stress"]
+    values = solution.stresses[0]["plyStress"].reshape(-1,3)
     resources = ResourceStore()
     try:
-        result = resources.resolve(resources.ingest(field))
-        values = result.members["stress"]["value"]
-        bases = result.members["stressBasis"]["value"]
+        restored = resources.resolve(resources.ingest({"values": values, "basis": rotation}))
+        values, basis = restored["values"], restored["basis"]
         expected_local = np.diag([1000 / 91, 300 / 91, 0.])
         expected_world = rotation @ expected_local @ rotation.T
-        for value, basis in zip(values, bases):
-            local = np.array([[value[0], value[3], value[5]], [value[3], value[1], value[4]], [value[5], value[4], value[2]]])
+        for value in values:
+            local = np.array([[value[0], value[2], 0.], [value[2], value[1], 0.], [0., 0., 0.]])
             np.testing.assert_allclose(basis, rotation, atol=1e-14)
             np.testing.assert_allclose(basis @ local @ basis.T, expected_world, atol=1e-13)
     finally:

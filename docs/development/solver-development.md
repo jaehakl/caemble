@@ -31,8 +31,11 @@ await sim.record("temperature", thermal["artifacts"]["temperature"])
 sim.release(electric["artifacts"]["jouleHeating"])
 ```
 
-`state`는 계산 계보를 잇고, 실제 Solver 간 물리량 전달은 Catalog에 선언한
-output과 typed input port로 표현합니다. 현재 Experiment bundle은 `sim.run`/`sim.record`/`sim.release`를 사용합니다.
+`state`는 계산 계보를 잇고, 실제 Solver 간 물리량 전달은 Catalog의 `exports`와
+typed input port로 표현합니다. Task의 `config.exports`로 요청한 native artifact는
+`sim.run()`의 `artifacts`에서 받아 연결하며 `sim.record()`에는 전달하지 않습니다.
+`outputs`는 Calculation에 사용할 Box Grid 데이터이고, `visualizations`는 자동
+포함되는 표시 자료입니다. Experiment bundle은 `sim.run`/`sim.record`/`sim.release`를 사용합니다.
 Catalog는 Solver별 현재 버전과 새 예제만 제공합니다. 제거된 Solver 버전을
 참조하는 Experiment는 오류로 종료하며 자동 변환하거나 다른 버전으로 재지정하지 않습니다.
 
@@ -247,18 +250,20 @@ implementation = SolverImplementation(abi_version=3, run=run)
 - Solver descriptor
 - run-scoped geometry cache 경로와 child-local workspace 같은 resource service
 
-`SolverResult`에는 세 범주만 반환합니다.
+`SolverResult`는 수치 기록, 연성 값과 자동 표시 자료를 구분해 반환합니다.
 
 ```python
 return SolverResult(
     state_patch=patch,
     artifacts={"outputName": output_value},
+    visualizations={"visualizationName": visualization_value},
     observations={"iterationCount": iteration_count},
 )
 ```
 
 - `state_patch`: 이후 계산이 이어받을 재현 가능한 상태 변경
-- `artifacts`: 요청된 output method와 정확히 일치하는 큰 결과
+- `artifacts`: 요청된 `outputs`와 `exports` method에 정확히 일치하는 결과
+- `visualizations`: Catalog에 선언된 native mesh/ray 표시 자료. Output 요청 없이 자동 포함
 - `observations`: Catalog에 선언된 작은 scalar/string/boolean 값
 
 Solver는 파일 시스템, 네트워크, 프로세스 전역 mutable state나 이전 child의
@@ -278,10 +283,14 @@ Solver 설정 변환 hook은 제공하지 않습니다. 설정 탐색이나 자�
 
 API는 `/cae/preflights`로 한 후보를 등록하고 기존 batch upload/commit/status/cancel
 경로를 공유합니다. `/cae/preflights/{id}/result`는 고정된 결과 계약과 임시
-RecordedData를 반환합니다. Experiment/Measurement 행을 만들지 않으며 완료 후
+Box Grid RecordedData와 별도 visualizations를 반환합니다. Experiment/Measurement 행을 만들지 않으며 완료 후
 24시간에 조회가 만료됩니다. 기존 60초 정리 작업이 임시 DB payload와 Bucket
-객체를 정리합니다. API migration `000000000011` 적용과 새 CAE worker 재시작이
-필요합니다. 기존 저장 데이터는 변환하거나 삭제하지 않습니다.
+객체를 정리합니다. Outputs 전환에는 API migration `000000000012`와 같은 Catalog를
+사용하는 API/UI/CAE 갱신이 필요합니다. 이 migration은 기존 RecordedData,
+CalculationData, 임시 실행 결과와 파생 Record 계약을 초기화합니다. Source와
+Measurement vars/material_snapshot은 보존하며 Calculation은 다시 preflight해야
+합니다. 제거한 결과의 Bucket object에는 삭제 tombstone을 남깁니다. 실행 중인
+CAE job을 먼저 종료해야 하며, 기존 Measurement가 있는 Source 잠금은 유지합니다.
 
 ## Material Model 입력
 
@@ -359,8 +368,9 @@ Solver 경계에서는 `StructuredGridValue`, `UnstructuredMeshValue`,
 `FieldValue.domain`은 실제 domain 값이고, 좌표·connectivity·위치·QuantityKind·
 unit·basis/components·values를 다른 child가 Store 조회 없이 해석할 수 있습니다.
 부모는 이를 내부 domain/field node와 `ResourceRef`로 변환합니다.
-Solver의 domain field는 `FieldValue`, ray path와 복합 결과는 `BundleValue`로
-전달합니다. 내부 ResourceRef를 Solver 입출력이나 method API에 노출하지 않습니다.
+Solver의 내부·연성 domain field는 `FieldValue`, ray path와 복합 표시 자료는
+`BundleValue`로 전달합니다. 수치 Output은 Box Grid Tensor로 변환합니다.
+내부 ResourceRef를 Solver 입출력이나 method API에 노출하지 않습니다.
 
 StatePatch와 여러 Artifact를 한 번에 ingest할 때 동일한 domain과 array의
 공유 관계를 보존합니다. mmap으로 전달된 배열은 backing buffer를 재사용하며,
@@ -395,25 +405,62 @@ Measurement run의 state는 거부됩니다.
 `transport/recording.py`는 live artifact를 선언된 기록 schema의 값 트리로
 변환하고, `transport/tensor.py`는 inline tensor 또는 binary attachment를 만듭니다.
 Experiment는 `{ task, output }` 참조만 선언합니다. 공통 빌드가 Catalog output의
-데이터 구조, `visualization`, 선택적인 `recording` projection을 해석해 고정된
-결과 계약과 tensor schema를 만듭니다. 수동 dtype/group schema는 거부됩니다.
+Box Grid profile과 일곱 축을 고정된 결과 계약과 tensor schema로 만듭니다.
+수동 dtype/group schema, native export와 visualization 기록은 거부됩니다.
 `sim.record`는 live artifact의 Task·output·Solver 버전·artifactType 출처가
 고정된 계약과 일치하는지 검사합니다.
 
-Catalog output은 mesh-field, polyline, structured-field, tensor, bundle의
-시각화 의미와 필요한 멤버 연결·공간 축·component 의미를 명시합니다.
-축 이름이나 Solver 이름으로 renderer를 추론하지 않습니다. 수치 artifact의
-입출력 호환성 비교에서는 표시용 visualization/recording metadata를 제외합니다.
+수치 schema의 `boxGrid`는 version, sampling, components, channels, channelUnits,
+선택적인 frequencyKind를 갖습니다. dtype은 float32 또는 float64이고 축 순서는
+`[x, y, z, time, frequency, amplitudePhase, component]`입니다. 필요 없는 축도 길이
+1로 남깁니다. 물리 Tensor 성분은 마지막 축에 평탄화하므로 tensorOrder에 따른
+추가 축을 붙이지 않습니다. 실수는 value 한 채널, 복소수는 amplitude/phase 두
+채널을 사용하며 위상의 단위는 rad입니다. 진폭 0의 저장 위상은 0입니다.
+History output의 `scope: 'final'`은 현재 성공한 호출까지 수락된 마지막 표본 하나를
+뜻하며 continuation 중에도 길이 1인 time 축을 반환합니다. 자동 history 시각화는
+누적 이력을 유지합니다.
+
+Target은 Experiment 또는 Task의 Box 하나로 resolve되어야 하고 gridShape는
+필수입니다. 공간 좌표는 Box local `[0, size]` 안의 cell center이며 길이 1 축은
+중심입니다. 회전·instance를 합성한 직교 Box transform을 보존하고 world bounding
+box로 대체하지 않습니다. 해석 영역 안에서는 interpolation으로 구하며 Box 내부에
+절점이나 요소가 없어도 유효합니다. 해석 영역 밖의 표본은 모든 채널을 0으로
+기록합니다. aggregate method는 gridShape `[1, 1, 1]`을 사용하며 Box 전체에 걸친
+물리량의 집계 의미를 method가 정의합니다. Heat의 maximum-temperature는 회전된
+target Box와 전체 cell 체적이 교차하는 유한체적 cell의 최댓값이며, 교차 cell이
+없으면 0입니다. DC의 total-current는 target Box로 잘린 native 단면 face를
+적분합니다. 두 방식 모두 Box 내부에 cell 중심이 없어도 계산하며 전체 영역 또는
+전체 단면을 포함할 때 원래 해석의 최댓값 또는 총전류를 보존합니다.
+
+각 실제 tensor의 `boxGrid`에는 profile과 함께 origin, size, rotation, lengthUnit,
+gridShape, source, rootId를 평탄하게 보존합니다. origin은 world 좌표의 local
+최소 모서리이며 `world = origin + rotation * local`입니다. Candidate마다 달라지는
+이 Geometry metadata를 Experiment의 정적 schema나 contract hash에 넣지 않습니다.
+실제 tensor의 `provenance`에는 task, solver, stateRevision, invocation,
+catalogRevision을 보존합니다. invocation은 값을 만든 호출의 순번이며 나중에
+이전 artifact를 기록해도 최신 호출의 순번으로 바꾸지 않습니다. 서버는 frozen
+Task·Solver·Catalog 계약과 출처가 일치하는지 확인합니다.
+Forward는 Box Grid 전체를 추론한 뒤 Calculation을 실행하며, Candidate 간 대응은
+정규화한 Box local 좌표를 사용합니다.
+
+Catalog의 `visualizations`는 mesh-field, polyline 등의 표시 계약과 recording
+projection을 별도로 선언합니다. 빌드는 Task별 `visualizationContracts`에
+artifactType, schema, visualization을 고정합니다. 축 이름이나 Solver 이름으로
+renderer를 추론하지 않습니다. 수치 artifact의 입출력 호환성 비교에서는 표시용
+visualization/recording metadata를 제외합니다.
 Catalog 데이터 변경은 Draft SQLite와 catalogctl로 수행하며 계약의 breaking
 변경은 Solver major 버전과 공식 예제를 함께 전환합니다.
 
-mesh-field recording projection은 메쉬·연결·Field와 provenance를 기존 tensor
-leaf로 보존합니다. structured-field는 기록된 실제 공간 좌표 축을 사용합니다.
-실수 및 complex64 leaf에는 QuantityKind·unit·필요한 basis를 고정합니다.
-complex64는 원소당 8바이트의 little-endian float32 re/im 교차 저장이며 inline은
-원소별 `{ re, im }`입니다. 복소수 표현은 논리 shape의 추가 축이 아닙니다.
-고정된 결과 계약은 Experiment 저장 및 조회와 로컬 export에 함께 포함됩니다.
-이는 checkpoint 복원 기능을 추가하지 않습니다.
+자동 표시 자료는 Task별 마지막 성공 invocation의 snapshot을 유지합니다. 새
+invocation의 commit에 성공한 뒤 이전 표시 resource를 해제하며 마지막 snapshot을
+finalizing에서 전송합니다. 물리적 시간 이력은 snapshot 안에 보존하고 연성 trial마다
+별도 결과를 쌓지 않습니다. mesh-field projection의 연결·Field·provenance leaf는
+visualization collection에만 저장하며 ExperimentRecord를 만들지 않습니다.
+`job.visualization`은 numerical Record와 하나의 전송 sequence를 공유하고 별도
+ACK를 받습니다. 완료에는 recordSequences와 visualizationSequences가 각각
+포함됩니다. 취소·실패 시 두 collection의 임시 결과와 resource를 함께 정리합니다.
+Measurement 조회 `/measurement/{id}/visualizations`, preflight와 local export는
+이 collection을 보존하지만 Calculation·analysis·prediction 입력에서는 제외합니다.
 
 ## 호출별 process transaction
 
@@ -456,6 +503,10 @@ canonical Geometry scene입니다. 공통 장면은 `experiment`, task별 장면
 `task` scope로 전달됩니다. Solver는 child에 주입된 Geometry service에
 root의 triangular mesh를 요청합니다.
 
+두 scene은 별도로 평가·빌드·렌더링됩니다. 서로 겹친다는 이유로 CSG나 mesh를
+변경하지 않습니다. Task의 source/domain/PML 같은 물리적 역할과 Experiment
+재료 형상과의 상호작용은 해당 Solver가 명시적으로 정의합니다.
+
 Surface group selector의 `rootId`, `sourceNodeId`, 숫자 `surfaceIndex`는
 canonical provenance입니다. `surfaceIndex`는 primitive가 정한 숫자
 slot입니다. Triangle 순서로 표면을 재식별하거나 Solver별 triangulation
@@ -495,8 +546,9 @@ domain에서는 dtype을 바꾸거나 배열을 복사하지 않고 값을 공�
 
 `ray-tracing` Solver는 미리 정한 surface sequence 대신 다음 실제 충돌을
 따릅니다. Source는 point, area, directional, Lambertian 형태로 구성할 수
-있고, detector surface는 irradiance, detected radiant flux, source
-efficiency 같은 일반 RecordedData를 만듭니다.
+있습니다. 수치 Output은 ray power의 체적 경로 적분으로 구한 Box Grid
+fluence rate와 방향별 radiant flux density입니다. 검출기 표면의 흡수·종료는
+명시적인 경계조건이며 Output 요청 여부와 무관합니다.
 
 박막 처리는 실제 shell 두께에 적응합니다.
 
@@ -507,12 +559,12 @@ efficiency 같은 일반 RecordedData를 만듭니다.
 - Reflection, transmission, scattering, absorption, detector hit, branching
   상태는 이 선택과 함께 물리적으로 이어져야 합니다.
 
-Ray는 path bundle을 `BundleValue`로 state에 보관하고, 요청한 `ray.paths`
-output의 typed artifact로 내보냅니다. 예제에서는 이 artifact를 직접 기록합니다. Path bundle의
+Ray는 path bundle을 `BundleValue`로 자동 visualization에 포함합니다. `ray.paths`
+Output이나 `recordedData` 선언은 필요하지 않습니다. Path bundle의
 `vertices`, `pathOffsets`, `segmentPower`, `pathWavelength`, `segmentEvent`는
 각각 vertex, variable-length path, segment와 path 축의 의미를 보존해야
-합니다. Viewer 기록은 bundle을 한 번에 `sim.record()`하여 offsets로 path를
-복원할 수 있게 합니다.
+합니다. Coordinator가 bundle을 한 번에 저장하며 Viewer는 offsets로 path를
+복원합니다. 경로 보존량은 Solver의 기존 maxPaths 설정을 따릅니다.
 
 ## 검증
 
@@ -572,7 +624,9 @@ Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
 - state/checkpoint 명시적 해제, busy-state 거부와 과거 handle 보관 시 buffer 수
 - Electro-Thermal typed artifact handoff 및 domain projection 보존량
 - 서로 다른 child 사이의 독립적인 mesh/field/particle/bundle 전달
-- domain 보존 기록 schema의 inline/attachment encode/decode 왕복
+- Box Grid 일곱 축·회전·단일 표본·해석 영역 밖 0 및 inline/attachment 왕복
+- native exports와 mesh/ray visualizations의 Calculation/recording 입력 거부
+- Task별 최신 visualization 교체·별도 저장과 global sequence/ACK 검증
 - foreign/released handle과 artifact type mismatch 거부
 - child crash, timeout, cancellation, 결과 검증 실패 시 commit/파일 잔존 없음
 - 여러 artifact의 동일 Resource 공유와 독립 provenance/release

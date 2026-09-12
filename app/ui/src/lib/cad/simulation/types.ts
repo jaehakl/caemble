@@ -1,5 +1,7 @@
 import type { DataTensor as CadDataTensor, RecordedDataResult } from '../model/descriptor'
 import type { RecordedResultContracts } from '@/contracts/results'
+import type { BoxGridData } from '@/contracts/boxGrid'
+import type { ResultVisualization } from '@/contracts/solver'
 
 export type RecordedDataSpec = RecordedDataResult
 export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: number }>
@@ -28,6 +30,22 @@ export type SimulationProgramTaskManifest = Readonly<{
 }>
 
 export type SimulationProgramManifest = Readonly<{
+  boxGrids?: Readonly<Record<string, BoxGridData>>
+  visualizationContracts?: Readonly<
+    Record<
+      string,
+      Readonly<
+        Record<
+          string,
+          Readonly<{
+            artifactType: string
+            schema: RecordedDataSpecNode
+            visualization: ResultVisualization
+          }>
+        >
+      >
+    >
+  >
   pythonSource: string
   tasks: Readonly<Record<string, SimulationProgramTaskManifest>>
   recordedData: RecordedDataSchemaTree

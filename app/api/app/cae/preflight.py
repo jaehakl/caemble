@@ -6,7 +6,7 @@ from sqlalchemy import delete, select, update
 
 from cae.batches import require_batch
 from cae.db import CaeBatch
-from gpstation.db import Job, JobRecord
+from gpstation.db import Job, JobRecord, JobVisualization
 from gpstation.service.state import utcnow
 from storage.db import StorageObject
 
@@ -40,6 +40,7 @@ async def preflight_result(db, batch_id, user_id):
         "vars_hash": job.input["measurement"]["varsHash"],
         "result_contracts": program["resultContracts"], "schemas": program["recordedData"],
         "recorded_data": recorded,
+        "visualizations": (job.artifact_metadata or {}).get("visualizations", {}),
         "execution_trace": (job.artifact_metadata or {}).get("execution_trace", []),
     }
 
@@ -54,6 +55,7 @@ async def expire_preflights(db):
         await db.execute(update(StorageObject).where(StorageObject.job_id == job.id).values(
             deleting=True, bound=False, updated_at=utcnow() - timedelta(hours=25)))
         await db.execute(delete(JobRecord).where(JobRecord.job_id == job.id))
+        await db.execute(delete(JobVisualization).where(JobVisualization.job_id == job.id))
         job.input = None
         job.artifact_metadata = None
         job.progress = []

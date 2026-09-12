@@ -1,4 +1,5 @@
 import { convertUcumValue } from '@/lib/cad/model/units'
+import { assertBoxGridData, BOX_GRID_AXES } from '@/contracts/boxGrid'
 import {
   CALCULATION_INPUT_MAX_BYTES,
   CALCULATION_OUTPUT_MAX_ELEMENTS,
@@ -96,7 +97,7 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
     if (!pathPattern.test(path)) throw new Error(`Calculation input path is invalid: ${path}`)
     const leaf = secureRecord(rawLeaf, `Calculation input ${path}`)
     const unexpected = Object.keys(leaf).filter(
-      (key) => !['dtype', 'shape', 'data', 'axes', 'quantityKind', 'tensorOrder', 'unit'].includes(key),
+      (key) => !['dtype', 'shape', 'data', 'axes', 'quantityKind', 'tensorOrder', 'unit', 'boxGrid'].includes(key),
     )
     if (unexpected.length > 0)
       throw new Error(`Calculation input ${path} contains unsupported fields: ${unexpected.join(', ')}.`)
@@ -104,6 +105,10 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
       throw new Error(`Calculation input ${path}.dtype is invalid.`)
     }
     const shape = secureShape(leaf.shape, `Calculation input ${path}.shape`)
+    if (shape.length !== 7 || shape.some((length) => length < 1) || !leaf.boxGrid) {
+      throw new Error(`Calculation input ${path} must be a nonempty seven-axis Box Grid Output.`)
+    }
+    assertBoxGridData(leaf.boxGrid, shape)
     if (
       !Number.isInteger(leaf.tensorOrder) ||
       (leaf.tensorOrder as number) < 0 ||
@@ -111,22 +116,30 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
     ) {
       throw new Error(`Calculation input ${path}.tensorOrder is invalid.`)
     }
-    const externalShape = shape.slice(0, shape.length - (leaf.tensorOrder as number))
-    validateInputAxes(leaf.axes, externalShape, `Calculation input ${path}.axes`)
+    validateInputAxes(leaf.axes, shape, `Calculation input ${path}.axes`)
+    if ((leaf.axes as { name: string }[]).some((axis, index) => axis.name !== BOX_GRID_AXES[index])) {
+      throw new Error(`Calculation input ${path} must use the canonical Box Grid axis order.`)
+    }
     const size = shape.reduce((product, length) => product * length, 1)
-    const validScalar = (item: unknown) => leaf.dtype === 'complex64'
-      ? typeof item === 'object' && item !== null && 're' in item && 'im' in item && typeof item.re === 'number' && typeof item.im === 'number' && Number.isFinite(Math.fround(item.re)) && Number.isFinite(Math.fround(item.im))
-      : ['boolean', 'string', 'number'].includes(typeof item)
-    if (shape.length === 0) {
-      if (!validScalar(leaf.data)) {
-        throw new Error(`Calculation input ${path}.data must be scalar.`)
-      }
-    } else if (
+    const validScalar = (item: unknown) => typeof item === 'number' && Number.isFinite(item) && (leaf.dtype !== 'float32' || Number.isFinite(Math.fround(item)))
+    if (
       !Array.isArray(leaf.data) ||
       leaf.data.length !== size ||
       leaf.data.some((item) => !validScalar(item))
     ) {
       throw new Error(`Calculation input ${path}.data must contain ${size} row-major scalar values.`)
+    }
+    if (leaf.boxGrid.channels.length === 2) {
+      const components = leaf.boxGrid.components.length
+      for (let offset = 0; offset < leaf.data.length; offset += components * 2) {
+        for (let component = 0; component < components; component++) {
+          const amplitude = leaf.dtype === 'float32' ? Math.fround(leaf.data[offset + component]) : leaf.data[offset + component]
+          const phase = leaf.dtype === 'float32' ? Math.fround(leaf.data[offset + components + component]) : leaf.data[offset + components + component]
+          if (amplitude < 0 || phase < -Math.PI || phase >= Math.PI || amplitude === 0 && phase !== 0) {
+            throw new Error(`Calculation input ${path} polar channels require non-negative amplitude, phase in [-pi, pi), and zero phase at zero amplitude.`)
+          }
+        }
+      }
     }
     if (leaf.quantityKind !== undefined && typeof leaf.quantityKind !== 'string') {
       throw new Error(`Calculation input ${path}.quantityKind is invalid.`)

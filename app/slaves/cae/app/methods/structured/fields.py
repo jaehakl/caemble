@@ -26,6 +26,7 @@ def structured_grid_value(
         "referenceLengthUnit": reference_length_unit,
         "shape": [domain.shape[0], domain.shape[2], domain.shape[1]],
         "axis": np.asarray(domain.axis, dtype=np.float64).tolist(),
+        "origin": np.asarray(domain.origin, dtype=np.float64).tolist(),
         "length": domain.length,
         "minimumU": domain.minimum_u,
         "minimumV": domain.minimum_v,

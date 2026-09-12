@@ -1,4 +1,5 @@
 import { resultVisualizationSchema } from './resultValidators'
+import { BOX_GRID_AXES, assertBoxGridProfile } from './boxGrid'
 import { calculationDefinitionSchema } from './api/calculationValidators'
 import { z } from 'zod'
 import type {
@@ -204,7 +205,7 @@ const kernelParameterSchema = z
 
 const kernelTargetSchema = z
   .object({
-    source: z.enum(['experiment', 'task']),
+    source: z.enum(['experiment', 'task', 'either']),
     kind: z.enum(['geometry', 'surface']),
     minimumTargets: nonnegativeIntegerSchema,
     maximumTargets: nonnegativeIntegerSchema,
@@ -232,6 +233,35 @@ const kernelOutputMethodSchema = kernelMethodSchema.extend({
       recording: z.enum(['mesh-field', 'mesh-series', 'structured-field']).optional(),
     }),
   ),
+})
+
+const kernelBoxOutputMethodSchema = kernelOutputMethodSchema.superRefine((method, context) => {
+  try {
+    const parsed = kernelDataSpecSchema.safeParse(method.data)
+    if (!parsed.success || !['float32', 'float64'].includes(parsed.data.dtype))
+      throw new Error('Numerical Outputs require float32 or float64 Box Grid tensors.')
+    const data = parsed.data
+    assertBoxGridProfile(data.boxGrid)
+    if (JSON.stringify(data.axes?.map((axis) => axis.name)) !== JSON.stringify(BOX_GRID_AXES))
+      throw new Error('Numerical Outputs require the fixed seven Box Grid axes.')
+    if (
+      data.axes?.[5].length !== data.boxGrid.channels.length ||
+      data.axes?.[6].length !== data.boxGrid.components.length
+    )
+      throw new Error('Numerical Output channel and component dimensions must match their labels.')
+    if (
+      method.target.kind !== 'geometry' ||
+      method.target.minimumTargets !== 1 ||
+      method.target.maximumTargets !== 1 ||
+      method.target.minimumResolved !== 1 ||
+      method.target.maximumResolved !== 1
+    )
+      throw new Error('Numerical Outputs must target exactly one Box geometry.')
+    if (!method.parameters.gridShape || method.parameters.gridShape.required === false)
+      throw new Error('Numerical Outputs require the gridShape parameter.')
+  } catch (error) {
+    context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 const kernelMaterialSchema = z
@@ -278,11 +308,15 @@ const kernelDescriptorSchema = z
     materials: z.array(kernelMaterialSchema),
     inputPorts: z.record(z.string(), kernelInputPortSchema),
     observations: z.record(z.string(), kernelObservationSchema),
+    visualizations: z
+      .record(z.string(), z.object({ artifactType: z.string(), data: kernelArtifactDataSpecSchema }))
+      .optional(),
     methods: z
       .object({
         initializations: z.array(kernelMethodSchema),
         boundaryConditions: z.array(kernelMethodSchema),
-        outputs: z.array(kernelOutputMethodSchema),
+        outputs: z.array(kernelBoxOutputMethodSchema),
+        exports: z.array(kernelOutputMethodSchema),
       })
       .passthrough(),
   })

@@ -150,8 +150,14 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
+export function canonicalGeometrySceneDraft(scene: CadScene): CanonicalGeometrySceneDraftV1 {
+  const draft = drafts.get(scene)
+  if (!draft) throw new Error('Canonical Geometry scene is unavailable.')
+  return draft
+}
+
 export async function canonicalGeometryScene(scene: CadScene): Promise<CanonicalGeometrySceneV1> {
-  const draft = drafts.get(scene)!
+  const draft = canonicalGeometrySceneDraft(scene)
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(draft)))
   const geometryHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
   return Object.freeze({ ...draft, geometryHash })

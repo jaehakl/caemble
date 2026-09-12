@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { predictionNumericDtypes, predictionTensorValueCount } from './knn'
 import type { PredictionWorkerRequest, PredictionWorkerResponse } from './protocol'
+import { assertBoxGridData, type BoxGridData } from '@/contracts/boxGrid'
 
 const nonnegativeIntegerSchema = z.number().int().nonnegative()
 const positiveIntegerSchema = z.number().int().positive()
@@ -46,6 +47,17 @@ const predictionTensorLayoutSchema = z
     quantityKind: nonBlankStringSchema.optional(),
     minimum: z.number().optional(),
     maximum: z.number().optional(),
+    boxGrid: z
+      .custom<BoxGridData>((value) => {
+        try {
+          assertBoxGridData(value)
+          return true
+        } catch {
+          return false
+        }
+      })
+      .optional(),
+    frequencyOutput: z.boolean().optional(),
   })
   .passthrough()
   .superRefine((layout, context) => {
@@ -66,7 +78,7 @@ const predictionTensorLayoutSchema = z
         message: 'Tensor minimum must not exceed its maximum.',
       })
     }
-    const externalRank = Math.max(0, layout.shape.length - tensorOrder)
+    const externalRank = layout.boxGrid ? layout.shape.length : Math.max(0, layout.shape.length - tensorOrder)
     if (layout.axes !== undefined && layout.axes.length !== externalRank) {
       context.addIssue({ code: 'custom', path: ['axes'], message: 'Tensor axes must match the external shape rank.' })
       return
@@ -183,6 +195,7 @@ const cohortOptionsSchema = z
     fixedOutputLayouts: z.array(predictionTensorLayoutSchema).optional(),
     persistentArrayLimitBytes: positiveIntegerSchema.optional(),
     workingSetLimitBytes: positiveIntegerSchema.optional(),
+    nearestOnly: z.boolean().optional(),
   })
   .passthrough()
 

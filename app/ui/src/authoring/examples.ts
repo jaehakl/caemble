@@ -4,10 +4,34 @@ import type { CalculationInput, NormalizedCalculationOutput } from '../lib/calcu
 export const calculationExampleInput: CalculationInput = {
   signal: {
     dtype: 'float64',
-    shape: [4],
+    shape: [1, 1, 1, 4, 1, 1, 1],
     data: [2, 4, 6, 8],
-    axes: [{ name: 'time', ticks: [0, 1, 2, 3], unit: 's' }],
+    axes: [
+      ...['x', 'y', 'z'].map((name) => ({ name, ticks: [0.5], unit: 'm' })),
+      { name: 'time', ticks: [0, 1, 2, 3], unit: 's' },
+      { name: 'frequency', ticks: [0], unit: 'Hz' },
+      { name: 'amplitudePhase', ticks: ['value'] },
+      { name: 'component', ticks: ['scalar'] },
+    ],
     tensorOrder: 0,
+    boxGrid: {
+      version: 1,
+      sampling: 'point',
+      components: ['scalar'],
+      channels: ['value'],
+      channelUnits: ['1'],
+      origin: [0, 0, 0],
+      size: [1, 1, 1],
+      rotation: [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+      lengthUnit: 'm',
+      gridShape: [1, 1, 1],
+      source: 'task',
+      rootId: 'sample',
+    },
   },
 }
 

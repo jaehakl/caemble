@@ -1,6 +1,7 @@
 """선택 절점 이력의 좌표, 불변 checkpoint, 출력 범위를 검증합니다."""
 
 from types import SimpleNamespace
+from tests.test_box_grid_outputs import grid
 
 import numpy as np
 import pytest
@@ -32,22 +33,22 @@ def history_case():
     return model, solution, settings, invocation
 
 
-def test_selected_node_order_and_multiple_output_union():
+def test_automatic_history_contains_all_nodes_and_requested_internal_order():
     model, solution, _, _ = history_case()
     configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [90, 20]}}, {"methodId": "fea.history", "parameters": {"nodeIds": [20, 10]}}])
     solution.history = {}
     solution.displacement[:, 0] = model.node_ids
     append_history(model, solution)
-    assert model.history_nodes.tolist() == [2, 1, 0]
+    assert model.history_nodes.tolist() == [0, 1, 2]
     first = history_members(model, solution, [90, 20])
     second = history_members(model, solution, [20, 10])
     np.testing.assert_array_equal(first["nodeIds"], [90, 20])
     np.testing.assert_array_equal(first["displacement"][0, :, 0], [90, 20])
     np.testing.assert_array_equal(second["displacement"][0, :, 0], [20, 10])
     with pytest.raises(ValueError, match="absent"):
-        configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [999]}}])
+        history_members(model, solution, [999])
     with pytest.raises(ValueError, match="unique"):
-        configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [90, 90]}}])
+        history_members(model, solution, [90, 90])
 
 
 def test_window_chunks_restart_replay_and_initial_sample_are_preserved():
@@ -56,7 +57,7 @@ def test_window_chunks_restart_replay_and_initial_sample_are_preserved():
     checkpoint = encode_state(model, initial)
     first = advance_window(invocation, model, read_state(model, checkpoint), settings, matrices)[0]
     replay = advance_window(invocation, model, read_state(model, checkpoint), settings, matrices)[0]
-    assert [chunk.shape for chunk in first.history["displacement"]] == [(1, 2, 3), (2, 2, 3)]
+    assert [chunk.shape for chunk in first.history["displacement"]] == [(1, 3, 3), (2, 3, 3)]
     assert first.history["displacement"][0] is checkpoint["history"]["displacement"][0]
     assert not first.history["displacement"][-1].flags.writeable
     np.testing.assert_array_equal(history_members(model, first)["displacement"], history_members(model, replay)["displacement"])
@@ -64,7 +65,7 @@ def test_window_chunks_restart_replay_and_initial_sample_are_preserved():
     second = advance_window(invocation, model, read_state(model, encode_state(model, first)), settings, matrices)[0]
     complete = history_members(model, second, scope="final", complete=True)
     np.testing.assert_allclose(complete["times"], [0., .01, .02, .03, .04])
-    np.testing.assert_allclose(complete["displacement"][:, :, 0], complete["times"][:, None] * [.3, .1])
+    np.testing.assert_allclose(complete["displacement"][:, :, 0], complete["times"][:, None] * [.1, .2, .3])
     np.testing.assert_allclose(history_members(model, second, scope="latest-window")["times"], [.03, .04])
     np.testing.assert_allclose(complete["pitch"], .2)
 
@@ -94,16 +95,14 @@ def test_scalar_mechanical_history_survives_without_requested_node_output():
     configure_history(model, [])
     solution.history = {}
     append_history(model, solution, pitch=.3)
-    assert solution.history["displacement"][0].shape == (1, 0, 3)
+    assert solution.history["displacement"][0].shape == (1, 3, 3)
     np.testing.assert_allclose(predict_motion(model, solution, settings).members["pitch"], .3)
     saved = encode_state(model, solution)
     configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [90]}}])
-    with pytest.raises(ValueError, match="selection differs"):
-        read_state(model, saved)
+    np.testing.assert_array_equal(read_state(model, saved).history["displacement"][0], solution.history["displacement"][0])
 
 
-@pytest.mark.parametrize("complete", [False, True])
-def test_recorded_history_retains_physical_time_and_semantic_region_axes(complete):
+def test_recorded_scalar_history_retains_physical_time_on_box_axes():
     """실제 ABI/기록 경계를 통과해도 시간/표면 영역 좌표가 남아야 합니다."""
     model, solution, _, _ = history_case()
     target = "experiment.surface.measurement"
@@ -113,28 +112,43 @@ def test_recorded_history_retains_physical_time_and_semantic_region_axes(complet
         "referencePoint": np.zeros(3),
     }
     model.result_requests["history"] = {"regions": [target]}
-    descriptor = solver_catalog.descriptor("structural-mechanics", "4.0.0")
-    config = {"outputs": [{"methodId": "fea.history", "key": "history", "target": [target], "parameters": {"scope": "final"}}]}
-    definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.history")
-    value = build_outputs(config, descriptor, model, solution, history_complete=complete)["history"]
+    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    config = {"parameters": {"analysis": "static"}, "outputs": [{"methodId": "fea.pitch-history", "key": "history", "boxGrid": grid(shape=(1,1,1)).geometry, "parameters": {"scope": "final"}}]}
+    definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.pitch-history")
+    value = build_outputs(config, descriptor, model, solution)[0]["history"]
     validate_artifact_payload(value, definition["data"], "history")
     resources = ResourceStore()
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="4.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
-        schema = definition["data"]["members"]
+        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="5.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
+        schema = definition["data"]
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("history", schema, recorded, 1)
         assert not attachments
-        expected_times = [0.] if complete else []
-        assert encoded["rotorSpeed"]["axes"] == [{"ticks": expected_times, "unit": "s"}]
-        assert encoded["displacement"]["axes"] == [{"ticks": expected_times, "unit": "s"}, {"ticks": [target]}, {"implicitOrdinal": True}]
-        assert encoded["regionIds"]["axes"] == [{"ticks": [target]}]
-        assert encoded["displacement"]["shape"] == [int(complete), 1, 3]
+        expected_times = [0.]
+        assert encoded["axes"][3] == {"ticks": expected_times, "unit": "s"}
+        assert encoded["shape"] == [1,1,1,1,1,1,1]
+        assert encoded["boxGrid"]["sampling"] == "aggregate"
     finally:
         for lease in reversed(leases):
             resources.release(lease)
         artifacts.close()
         assert resources.stats().resource_count == 0
         resources.close()
+
+
+@pytest.mark.parametrize("time", [0., .02, .04])
+def test_final_box_history_is_last_accepted_sample_of_each_call(time):
+    model, solution, _, _ = history_case()
+    if time:
+        solution.time = time
+        append_history(model, solution, pitch=.7)
+    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    config = {"parameters": {"analysis": "static"}, "outputs": [{
+        "methodId": "fea.pitch-history", "key": "pitch", "boxGrid": grid(shape=(1,1,1)).geometry,
+        "parameters": {"scope": "final"}}]}
+    value = build_outputs(config, descriptor, model, solution)[0]["pitch"]
+    assert value["value"].shape == (1,1,1,1,1,1,1)
+    np.testing.assert_array_equal(value["axes"][3]["ticks"], [time])
+    assert value["value"].item() == pytest.approx(.7 if time else .2)

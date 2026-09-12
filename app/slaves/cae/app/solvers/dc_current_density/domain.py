@@ -206,6 +206,7 @@ async def build_electrode_voxel_domain(
         (maximum_v - minimum_v) / shape[2],
         np.zeros(math.prod(shape), dtype=np.uint8),
         0,
+        origin,
     )
     frame = (origin, axis, u_axis, v_axis)
     conductor = await _voxelize_meshes(conductor_meshes, domain, frame, progress, "conductor")
@@ -223,6 +224,7 @@ async def build_electrode_voxel_domain(
         domain.v_spacing,
         occupancy,
         int(np.count_nonzero(occupancy)),
+        origin,
     )
     return ElectrodeVoxelDomain(combined, conductor, source, reference)
 

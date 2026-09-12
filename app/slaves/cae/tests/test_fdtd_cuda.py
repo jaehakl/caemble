@@ -39,3 +39,30 @@ def test_cuda_fdtd_with_cpml_matches_cpu(model: int) -> None:
         # propagation, where a pointwise relative error is not informative.
         relative_error = torch.linalg.vector_norm(cuda - cpu) / torch.linalg.vector_norm(cpu)
         assert relative_error.item() < 1e-5
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device is unavailable")
+def test_cuda_rotated_box_interpolation_and_polar_output_match_cpu():
+    from tests.test_box_grid_outputs import grid, data
+    from app.methods.fields.box_grid import RectilinearSampler
+    from app.solvers.fdtd.detectors import DetectorRegion, SpectralDetector
+    from app.kernel.coordinator.contracts import validate_artifact_payload
+    probe = grid(origin=(1.4,0,0), rotation=[[0,-1,0],[1,0,0],[0,0,1]])
+    profile = {**data(("x","y","z"), polar=True), "dtype": "float32"}
+    axes = (np.array([.25,.75]),)*3
+    sampler = RectilinearSampler.prepare(axes, probe.points()[...,::-1], ((0,1),)*3)
+    z,y,x = np.meshgrid(*axes, indexing="ij")
+    native = np.stack((x+2*y+3*z, -x, z)).astype(np.float32)
+    results = []
+    for device_name in ("cpu", "cuda"):
+        device = torch.device(device_name)
+        detector = SpectralDetector("field", "test/spectrum", "electric", DetectorRegion(sampler,probe,profile), np.array([.25]), device)
+        field = torch.as_tensor(native, device=device)
+        for step in range(4):
+            detector.capture(step, field * np.cos(step*np.pi/2))
+        value = detector.artifact()
+        validate_artifact_payload(value, profile, "field")
+        assert not value["value"][probe.points()[...,0] > 1].any()
+        results.append(value["value"])
+    np.testing.assert_allclose(results[0], results[1], rtol=2e-6, atol=2e-6)

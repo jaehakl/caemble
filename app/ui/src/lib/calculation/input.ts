@@ -16,6 +16,9 @@ export function createCalculationInput(
     if (tensor === undefined) throw new Error(`RecordedData ${rule.label} is missing.`)
     if (!isDataTensor(tensor)) throw new Error(`RecordedData ${rule.label} is not a tensor leaf.`)
     const result = rule.result as ResolvedRuleResult
+    if (!result.boxGrid || !tensor.boxGrid || tensor.shape.length !== 7) {
+      throw new Error(`RecordedData ${rule.label} must be a seven-axis Box Grid Output.`)
+    }
     const tensorOrder =
       result.tensorOrder ?? (result.quantityKind === undefined ? 0 : getQuantityKindTensorOrder(result.quantityKind))
     if (!Number.isInteger(tensorOrder) || tensorOrder < 0) {
@@ -57,11 +60,7 @@ export function createCalculationInput(
   const input = Object.freeze(
     Object.fromEntries(
       prepared.map(({ accessor, result, rule, tensorOrder }) => {
-        const externalRank = accessor.shape.length - tensorOrder
-        if (externalRank < 0) throw new Error(`RecordedData ${rule.label} tensorOrder exceeds its rank.`)
-        if (accessor.shape.slice(externalRank).some((length) => length !== 3)) {
-          throw new Error(`RecordedData ${rule.label} tensor component dimensions must all have length 3.`)
-        }
+        const externalRank = 7
         const schemaAxes = result.axes ?? []
         if (schemaAxes.length !== externalRank) {
           throw new Error(
@@ -131,6 +130,7 @@ export function createCalculationInput(
             axes,
             ...(result.quantityKind === undefined ? {} : { quantityKind: result.quantityKind }),
             tensorOrder,
+            boxGrid: accessor.tensor.boxGrid!,
             ...(result.unit === undefined ? {} : { unit: result.unit }),
           }),
         ] as const

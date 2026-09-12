@@ -8,8 +8,8 @@ import { assertExperimentAuthoringSemantics } from './authoringSemantics'
 import type { RecordedDataSpecNode } from './types'
 import { resolveRecordedOutputReferences, resolveRecordedResult } from './outputRecording'
 
-describe('domain preserving RecordedData', () => {
-  it('accepts the worker mesh field declaration with the real Catalog', () => {
+describe('Box Grid RecordedData', () => {
+  it('keeps numerical tensor schemas separate from generic mesh visualization schemas', () => {
     const fixture = JSON.parse(
       execFileSync(
         'python',
@@ -23,7 +23,7 @@ sys.path.insert(0,sys.argv[1])
 from caemble_catalog import open_catalog
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
-    data=catalog.runtime_slice(solvers=[('structural-mechanics','4.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
+    data=catalog.runtime_slice(solvers=[('structural-mechanics','5.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),
@@ -35,30 +35,31 @@ with open_catalog() as catalog:
     const tasks = {
       solid: {
         kind: 'caemble-kernel-task' as const,
-        kernel: { name: 'structural-mechanics', version: '4.0.0' },
+        kernel: { name: 'structural-mechanics', version: '5.0.0' },
         config: {
           outputs: [
             { key: 'motion', methodId: 'fea.displacement' },
             { key: 'animation', methodId: 'fea.displacement-history' },
-            { key: 'modes', methodId: 'fea.modes' },
+            { key: 'modes', methodId: 'fea.modal-displacement' },
           ],
         },
       },
     }
     expect(() => resolveRecordedResult({ dtype: 'int32' }, tasks, 'manual')).toThrow('manual recording schemas')
     const frozen = resolveRecordedResult({ task: 'solid', output: 'motion' }, tasks, 'anything')
-    expect(frozen.visualization.kind).toBe('mesh-field')
+    expect(frozen.visualization.kind).toBe('box-grid')
     expect(frozen.task).toBe('solid')
     expect(frozen.catalogRevision).toBe(fixture.catalog.catalogRevision)
     const reference = resolveRecordedOutputReferences({ task: 'solid', output: 'motion' }, tasks, 'recordedData.motion')
-    expect(reference).toHaveProperty('domain.cells.tet4')
-    expect(reference).toHaveProperty('domain.metadata.nodeIds')
+    expect(reference).toHaveProperty('boxGrid.components', ['x', 'y', 'z'])
+    expect(reference).not.toHaveProperty('domain')
     const animation = resolveRecordedResult({ task: 'solid', output: 'animation' }, tasks, 'animation')
-    expect(animation.schema).toHaveProperty('field.domain.metadata.nodeIds')
-    expect(animation.visualization.time).toEqual({ path: 'times', axis: 0, nodeAxis: 1, componentAxis: 2 })
-    expect(canonicalRecordedDataTree({ motion: reference })).toHaveProperty('motion.values.tensorOrder', 1)
+    expect(animation.schema).toHaveProperty('axes.3.name', 'time')
+    expect(animation.visualization.kind).toBe('box-grid')
+    expect(canonicalRecordedDataTree({ motion: reference })).toHaveProperty('motion.tensorOrder', 1)
     expect(resolveRecordedOutputReferences({ task: 'solid', output: 'modes' }, tasks, 'modes')).toHaveProperty(
-      'frequencies',
+      'boxGrid.frequencyKind',
+      'modal',
     )
     expect(() => resolveRecordedOutputReferences({ task: 'absent', output: 'motion' }, tasks, 'record')).toThrow(
       'unknown Task',
@@ -68,7 +69,7 @@ with open_catalog() as catalog:
     )
     installCatalogRuntimeSlice({ ...fixture.catalog, catalogRevision: 'changed-after-build', solvers: [] })
     expect(frozen.catalogRevision).toBe(fixture.catalog.catalogRevision)
-    expect(frozen.visualization.kind).toBe('mesh-field')
+    expect(frozen.visualization.kind).toBe('box-grid')
     const recordedData = canonicalRecordedDataTree({ mesh: fixture.schema })
     const evaluated = {
       scene: { parts: [] },

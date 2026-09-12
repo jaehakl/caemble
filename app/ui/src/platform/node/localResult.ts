@@ -1,4 +1,4 @@
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
 import { constants } from 'node:fs'
 import { copyFile, mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -31,6 +31,12 @@ export type LocalResultManifest = Readonly<{
   records: readonly LocalRecord[]
   recordSequences: readonly number[]
   recordedBytes: number
+  visualizations?: readonly Readonly<{
+    sequence: number
+    task: string
+    path: string
+    attachments: readonly LocalAttachment[]
+  }>[]
   trace: readonly unknown[]
   durationMs?: number
   error?: Readonly<{ code: string; message: string }>
@@ -44,6 +50,7 @@ async function loadLocalResult(location: string): Promise<{
   rules: readonly RecordedDataRule[]
   flat: RecordedData
   attachments: Map<string, LocalAttachment>
+  visualizations: MeasurementVisualizations
 }> {
   const directory = path.resolve(location.endsWith('.json') ? path.dirname(location) : location)
   const rawManifest = JSON.parse(await readFile(await containedPath(directory, 'manifest.json'), 'utf8'))
@@ -90,6 +97,37 @@ async function loadLocalResult(location: string): Promise<{
       attachments.set(attachment.id, attachment)
     }
   }
+  const visualizations: Record<string, MeasurementVisualizations[string]> = {}
+  for (const entry of manifest.visualizations ?? []) {
+    const stored = JSON.parse(await readFile(await containedPath(directory, entry.path), 'utf8'))
+    if (
+      stored.sequence !== entry.sequence ||
+      stored.task !== entry.task ||
+      JSON.stringify(stored.attachments) !== JSON.stringify(entry.attachments)
+    ) {
+      throw new CliError(`Visualization ${entry.task} metadata differs from its result manifest.`, 4)
+    }
+    const frozen = input.measurement.experiment.simulationProgram.visualizationContracts?.[entry.task]
+    if (!frozen || !stored.visualizations || Object.keys(stored.visualizations).some((key) => !frozen[key])) {
+      throw new CliError(`Visualization ${entry.task} is not declared in the frozen build input.`, 4)
+    }
+    for (const [key, raw] of Object.entries(stored.visualizations)) {
+      const visual = raw as MeasurementVisualizations[string][string]
+      if (
+        JSON.stringify(visual.contract) !==
+          JSON.stringify({ artifactType: frozen[key].artifactType, visualization: frozen[key].visualization }) ||
+        JSON.stringify(visual.schema) !== JSON.stringify(frozen[key].schema) ||
+        visual.provenance.task !== entry.task
+      ) {
+        throw new CliError(`Visualization ${entry.task}.${key} differs from its frozen build contract.`, 4)
+      }
+    }
+    visualizations[entry.task] = stored.visualizations
+    for (const attachment of entry.attachments) {
+      if (attachments.has(attachment.id)) throw new CliError(`Duplicate local attachment: ${attachment.id}`, 4)
+      attachments.set(attachment.id, attachment)
+    }
+  }
   return {
     directory,
     manifest,
@@ -98,6 +136,7 @@ async function loadLocalResult(location: string): Promise<{
     rules: recordedDataRules(schemas, 'local.recorded-data'),
     flat: flattenRecordedData(schemas, records)!,
     attachments,
+    visualizations,
   }
 }
 
@@ -185,6 +224,17 @@ export async function inspectLocalResult(location: string) {
   return {
     manifest: result.manifest,
     resultContracts: result.resultContracts,
+    visualizations: Object.fromEntries(
+      Object.entries(result.visualizations).map(([task, entries]) => [
+        task,
+        Object.fromEntries(
+          Object.entries(entries).map(([key, entry]) => [
+            key,
+            { contract: entry.contract, schema: entry.schema, provenance: entry.provenance },
+          ]),
+        ),
+      ]),
+    ),
     records: result.rules.map((rule) => {
       const tensor = result.flat[rule.label]
       return {
@@ -193,6 +243,7 @@ export async function inspectLocalResult(location: string) {
         present: isDataTensor(tensor),
         shape: isDataTensor(tensor) ? tensor.shape : null,
         axes: isDataTensor(tensor) ? (tensor.axes ?? []) : [],
+        boxGrid: isDataTensor(tensor) ? tensor.boxGrid : undefined,
         storage: isDataTensor(tensor) ? tensor.storage.kind : null,
         byteLength: isDataTensor(tensor) && tensor.storage.kind !== 'inline' ? tensor.storage.byteLength : null,
       }
@@ -233,6 +284,7 @@ export async function exportLocalResult(location: string, output: string, signal
   }
   const files = [
     ...result.manifest.records.map((record) => ({ path: record.path, byteLength: undefined })),
+    ...(result.manifest.visualizations ?? []).map((entry) => ({ path: entry.path, byteLength: undefined })),
     ...result.attachments.values(),
   ]
   for (const file of files) {
@@ -292,17 +344,22 @@ export async function sliceLocalResult(
       : await readTensorBytes(result, tensor)
     selected = {
       ...tensor,
-      ...(numeric ? { shape: [count], axes: [] } : {}),
+      ...(numeric ? { shape: [count], axes: [], boxGrid: undefined } : {}),
       storage: { kind: 'base64', data: raw.toString('base64'), byteLength: raw.byteLength },
     }
     if (numeric) firstIndex = 0
   }
-  const accessor = createDataTensorAccessor(rule.result, selected, name)
+  const slicedSchema =
+    firstIndex === 0 && tensor.storage.kind === 'attachments' && rule.result.dtype !== 'string'
+      ? { ...rule.result, axes: [{ name: 'value', length: count }], boxGrid: undefined }
+      : rule.result
+  const accessor = createDataTensorAccessor(slicedSchema, selected, name)
   return {
     name,
     schema: rule.result,
     shape: tensor.shape,
     axes: tensor.axes ?? [],
+    boxGrid: tensor.boxGrid,
     offset,
     total,
     values: Array.from({ length: count }, (_, index) => accessor.at(firstIndex + index)),

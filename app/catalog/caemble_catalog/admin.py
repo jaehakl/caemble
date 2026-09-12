@@ -120,8 +120,15 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
             "INSERT INTO solver_observations VALUES (?, ?, ?, ?, ?, ?)",
             (*solver, ordinal, name, observation["description"], observation["type"]),
         )
-    for category in ("initializations", "boundaryConditions", "outputs"):
-        for ordinal, method in enumerate(descriptor.get("methods", {}).get(category, [])):
+    methods = {**descriptor.get("methods", {}), "visualizations": [
+        {"methodId": key, "description": key, "minimumOccurrences": 0, "maximumOccurrences": 1,
+         "target": {"source": "task", "kind": "geometry", "minimumTargets": 0,
+                    "maximumTargets": 0, "minimumResolved": 0, "maximumResolved": 0},
+         "parameters": {}, **value}
+        for key, value in descriptor.get("visualizations", {}).items()
+    ]}
+    for category in ("initializations", "boundaryConditions", "outputs", "exports", "visualizations"):
+        for ordinal, method in enumerate(methods.get(category, [])):
             target = method["target"]
             data = method.get("data")
             connection.execute(
@@ -405,6 +412,38 @@ def rebase_database(path: Path) -> None:
     refresh_derived_data(source_path)
 
 
+def validate_output_contracts(catalog: Catalog, descriptor: dict[str, Any]) -> None:
+    for method in descriptor["methods"]["outputs"]:
+        label = f"Solver {descriptor['name']} Output {method['methodId']}"
+        data, target = method["data"], method["target"]
+        profile, axes = data.get("boxGrid"), data.get("axes", [])
+        if data.get("dtype") not in {"float32", "float64"} or not isinstance(profile, dict) or profile.get("version") != 1:
+            raise CatalogError(f"{label} requires a real-valued Box Grid Tensor contract")
+        if [axis.get("name") for axis in axes] != ["x", "y", "z", "time", "frequency", "amplitudePhase", "component"]:
+            raise CatalogError(f"{label} requires the fixed seven Box Grid axes")
+        if profile.get("sampling") not in {"point", "cell-average", "aggregate"} or profile.get("frequencyKind") not in {None, "sampled", "modal"}:
+            raise CatalogError(f"{label} has an unsupported sampling convention")
+        channels, components = profile.get("channels"), profile.get("components")
+        if channels not in (["value"], ["amplitude", "phase"]):
+            raise CatalogError(f"{label} requires value or amplitude/phase channels")
+        if not isinstance(components, list) or not components or any(not isinstance(item, str) or not item for item in components) or len(set(components)) != len(components):
+            raise CatalogError(f"{label} requires distinct component labels")
+        expected_units = [data.get("unit"), "rad"] if len(channels) == 2 else [data.get("unit")]
+        if profile.get("channelUnits") != expected_units or not data.get("unit"):
+            raise CatalogError(f"{label} channel units must match the quantity and phase radians")
+        order = catalog.quantity_kind(data["quantityKind"])["tensorOrder"]
+        if (order == 0 and len(components) != 1) or (order == 1 and components != ["x", "y", "z"]) or (order == 2 and components != ["xx", "yy", "zz", "xy", "yz", "xz"]):
+            raise CatalogError(f"{label} must use scalar, world XYZ, or symmetric tensor component order")
+        for index, labels in [(5, channels), (6, components)]:
+            if axes[index].get("length") != len(labels) or axes[index].get("ticks") != labels:
+                raise CatalogError(f"{label} channel/component axes must match the profile")
+        if target["source"] not in {"experiment", "task", "either"} or target["kind"] != "geometry" or any(target[key] != 1 for key in ("minimumTargets", "maximumTargets", "minimumResolved", "maximumResolved")):
+            raise CatalogError(f"{label} must target exactly one Box geometry")
+        grid = method["parameters"].get("gridShape", {}).get("data", {})
+        if grid.get("dtype") != "int32" or grid.get("axes") != [{"length": 3}] or grid.get("minimum") != 1:
+            raise CatalogError(f"{label} requires positive integer gridShape [nx, ny, nz]")
+
+
 def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
     source = source.resolve()
     destination_path = destination.resolve()
@@ -416,6 +455,7 @@ def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
         for model in catalog.material_models():
             validate_parameter_schema(model["parameterSchema"])
         for manifest in catalog.solver_manifests():
+            validate_output_contracts(catalog, manifest["descriptor"])
             for role in manifest["descriptor"]["materials"]:
                 if not role["modelGroups"] or any(not group["oneOf"] for group in role["modelGroups"]):
                     raise CatalogError(f"Solver {manifest['descriptor']['name']} role {role['role']} requires nonempty model groups")
@@ -505,7 +545,7 @@ def _rebuild_artifact_types(connection: sqlite3.Connection) -> None:
     contracts: dict[str, str] = {}
     rows = connection.execute(
         """SELECT artifact_type, data_json FROM solver_methods
-           WHERE category = 'outputs' AND artifact_type IS NOT NULL AND data_json IS NOT NULL
+           WHERE category IN ('outputs', 'exports') AND artifact_type IS NOT NULL AND data_json IS NOT NULL
            UNION ALL
            SELECT a.artifact_type, p.data_json
            FROM solver_input_artifact_types AS a
@@ -530,7 +570,9 @@ def _rebuild_artifact_types(connection: sqlite3.Connection) -> None:
         [
             (
                 name,
-                "structured-bundle"
+                "tensor"
+                if json.loads(data_json).get("boxGrid")
+                else "structured-bundle"
                 if json.loads(data_json).get("resourceKind") == "structuredBundle"
                 else "field"
                 if json.loads(data_json).get("axes")

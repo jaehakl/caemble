@@ -42,18 +42,26 @@ export function StructuredFieldResult(props: {
 }
 
 function FieldControls({
-  field,
+  field: sourceField,
   rule,
   ...props
 }: Parameters<typeof StructuredFieldResult>[0] & {
   field: ReturnType<typeof structuredField>
   rule: RecordedDataRule
 }) {
+  const [secondaryIndex, setSecondaryIndex] = useState(0)
+  const field = useMemo(
+    () => ({
+      ...sourceField,
+      secondaryIndex: Math.min(secondaryIndex, Math.max(0, sourceField.secondaryTicks.length - 1)),
+    }),
+    [sourceField, secondaryIndex],
+  )
   const singleton = field.spatial.findIndex((axis) => axis.ticks.length === 1)
   const [normal, setNormal] = useState(singleton < 0 ? 2 : singleton)
   const [sliceIndex, setIndex] = useState(Math.floor(field.spatial[singleton < 0 ? 2 : singleton].ticks.length / 2))
   const [sampleIndex, setSample] = useState(0)
-  const [componentIndex, setComponent] = useState(-1)
+  const [componentIndex, setComponent] = useState(field.components.length === 1 ? 0 : -1)
   const [representation, setRepresentation] = useState('abs')
   const [opacity, setOpacity] = useState(0.8)
   const [staticFixed, setStaticFixed] = useState<readonly [number, number] | null>(null)
@@ -68,13 +76,24 @@ function FieldControls({
     setIndex(index)
     setSample(sample)
     setComponent(component)
-    if (field.grid.sampleKind !== 'frequency' || rule.result.dtype !== 'complex64') setOscillating(false)
+    if (
+      field.grid.sampleKind !== 'frequency' ||
+      !(
+        rule.result.dtype === 'complex64' ||
+        field.boxGrid?.channels.length === 2 ||
+        field.boxGrid?.frequencyKind === 'modal'
+      )
+    )
+      setOscillating(false)
   }, [field, rule, index, sample, component])
   const [magnitudeFixed, setMagnitudeFixed] = useState<readonly [number, number] | null>(null)
-  const fixed = oscillating ? component < 0 ? magnitudeFixed : oscillationFixed : staticFixed
-  const setFixed = oscillating ? component < 0 ? setMagnitudeFixed : setOscillationFixed : setStaticFixed
+  const fixed = oscillating ? (component < 0 ? magnitudeFixed : oscillationFixed) : staticFixed
+  const setFixed = oscillating ? (component < 0 ? setMagnitudeFixed : setOscillationFixed) : setStaticFixed
   const spectral = field.grid.sampleKind === 'frequency'
-  const complex = rule.result.dtype === 'complex64'
+  const complex =
+    rule.result.dtype === 'complex64' ||
+    field.boxGrid?.channels.length === 2 ||
+    field.boxGrid?.frequencyKind === 'modal'
   const projection = oscillating ? 're' : component < 0 ? 'abs' : complex ? representation : 're'
   const rendered = useMemo(() => {
     try {
@@ -86,7 +105,7 @@ function FieldControls({
       return { error: error instanceof Error ? error.message : String(error) }
     }
   }, [field, sample, component, projection, oscillating])
-  const range = fixed ?? rendered.range ?? [0, 0]
+  const range = useMemo(() => fixed ?? rendered.range ?? ([0, 0] as const), [fixed, rendered.range])
   const cached = useMemo(() => {
     try {
       return oscillating ? { data: oscillationSlice(field, props.name, normal, index, sample, component) } : {}
@@ -106,7 +125,9 @@ function FieldControls({
   }, [field, props.name, normal, index, sample, component, projection, range, opacity, rendered.error, cached, phase])
   const label =
     component < 0
-      ? oscillating ? '전체 크기 · 순간값' : '전체 크기'
+      ? oscillating
+        ? '전체 크기 · 순간값'
+        : '전체 크기'
       : `${field.components[component]} · ${oscillating ? '진동값' : projection === 'abs' ? '진폭' : projection === 're' ? '실수부' : projection === 'im' ? '허수부' : '위상'}`
   const unit = projection === 'arg' ? 'rad' : rule.result.unit
   const current = field.sampleTicks[sample]
@@ -184,6 +205,22 @@ function FieldControls({
             ))}
           </select>
         </label>
+        {field.secondaryAxis !== null && field.secondaryTicks.length > 1 ? (
+          <label>
+            {field.secondaryAxis === 3 ? '시간' : '주파수'}{' '}
+            <select
+              aria-label={field.secondaryAxis === 3 ? '시간 선택' : '주파수 선택'}
+              value={field.secondaryIndex}
+              onChange={(event) => setSecondaryIndex(Number(event.target.value))}
+            >
+              {field.secondaryTicks.map((tick, index) => (
+                <option key={index} value={index}>
+                  {tick.toPrecision(6)} {field.secondaryAxis === 3 ? 's' : 'Hz'}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {spectral && complex ? <FieldFormulaTooltip label="성분 수식 도움말" unit={rule.result.unit} /> : null}
         {complex && component >= 0 && !oscillating ? (
           <label>
@@ -272,13 +309,14 @@ function FieldControls({
   )
 }
 
-
 function FieldFormulaTooltip({ label, unit }: { label: string; unit?: string }) {
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button type="button" aria-label={label} className="rounded border px-1 text-xs">수식 ⓘ</button>
+          <button type="button" aria-label={label} className="rounded border px-1 text-xs">
+            수식 ⓘ
+          </button>
         </TooltipTrigger>
         <TooltipContent className="max-w-sm space-y-1">
           <p>F는 전기장 E 또는 자기장 H이며, i는 X·Y·Z 성분입니다. 단위: {unit}.</p>
@@ -287,7 +325,9 @@ function FieldFormulaTooltip({ label, unit }: { label: string; unit?: string }) 
           <p>순간 전체 크기: √(Fₓ(φ)² + Fᵧ(φ)² + Fz(φ)²)</p>
           <p>φ = 2πft (라디안). 화면 위상은 도(°)로 표시합니다.</p>
           <p>순간 전체 크기는 음수가 없고 반 주기마다 반복됩니다. 광강도나 원래 펄스의 시간 이력이 아닙니다.</p>
-          <p>진동 전체 크기의 자동 범례는 공간 전체·한 주기의 최대 순간값으로 고정됩니다. 0 Hz는 실수부만 사용합니다.</p>
+          <p>
+            진동 전체 크기의 자동 범례는 공간 전체·한 주기의 최대 순간값으로 고정됩니다. 0 Hz는 실수부만 사용합니다.
+          </p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

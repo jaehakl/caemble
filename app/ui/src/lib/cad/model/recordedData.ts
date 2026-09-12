@@ -31,11 +31,11 @@ function resolveRecordedDataTensor(rule: RecordedDataRule, value: unknown): Reso
     const accessor = createDataTensorAccessor(rule.result, value as import('./core').RecordedDataTensor, path)
     const axisCount = rule.result.axes?.length ?? 0
     const componentShape =
-      rule.result.quantityKind === undefined
+      rule.result.boxGrid || rule.result.quantityKind === undefined
         ? (Object.freeze([]) as readonly 3[])
         : getQuantityKindComponentShape(rule.result.quantityKind)
     const tensorOrder =
-      rule.result.quantityKind === undefined ? 0 : getQuantityKindTensorOrder(rule.result.quantityKind)
+      rule.result.boxGrid || rule.result.quantityKind === undefined ? 0 : getQuantityKindTensorOrder(rule.result.quantityKind)
     const resolved = {
       axes: Object.freeze(
         Array.from({ length: axisCount }, (_, axisIndex) =>

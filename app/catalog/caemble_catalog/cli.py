@@ -282,7 +282,8 @@ def _run_solver(args: argparse.Namespace) -> None:
                 "materials": [],
                 "inputPorts": {},
                 "observations": {},
-                "methods": {"initializations": [], "boundaryConditions": [], "outputs": []},
+                "methods": {"initializations": [], "boundaryConditions": [], "outputs": [], "exports": []},
+                "visualizations": {},
             },
         }
         _replace_manifest(database, None, manifest)
@@ -323,6 +324,7 @@ def _run_solver(args: argparse.Namespace) -> None:
         "method-parameter": _edit_method_parameter,
         "input-port": _edit_input_port,
         "observation": _edit_observation,
+        "visualization": _edit_visualization,
     }[action]
     handler(args)
 
@@ -567,6 +569,16 @@ def _edit_observation(args: argparse.Namespace) -> None:
     _mutate(args.database, args.name, args.version, operation)
 
 
+def _edit_visualization(args: argparse.Namespace) -> None:
+    def operation(manifest: dict[str, Any]) -> None:
+        values = manifest["descriptor"].setdefault("visualizations", {})
+        if args.row_action == "remove":
+            _named_remove(values, args.key, "Solver visualization")
+        else:
+            _named_upsert(values, args.key, {"artifactType": args.artifact_type, "data": args.data_json})
+    _mutate(args.database, args.name, args.version, operation)
+
+
 def _identity(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("name")
     parser.add_argument("version")
@@ -684,7 +696,7 @@ def build_parser() -> argparse.ArgumentParser:
     upsert, remove = _row_actions(method)
     for item in (upsert, remove):
         _identity(item)
-        item.add_argument("category", choices=("initializations", "boundaryConditions", "outputs"))
+        item.add_argument("category", choices=("initializations", "boundaryConditions", "outputs", "exports"))
         item.add_argument("method_id")
     upsert.add_argument("--description", required=True)
     upsert.add_argument("--minimum-occurrences", type=int, required=True)
@@ -702,10 +714,18 @@ def build_parser() -> argparse.ArgumentParser:
     upsert, remove = _row_actions(method_parameter)
     for item in (upsert, remove):
         _identity(item)
-        item.add_argument("category", choices=("initializations", "boundaryConditions", "outputs"))
+        item.add_argument("category", choices=("initializations", "boundaryConditions", "outputs", "exports"))
         item.add_argument("method_id")
         item.add_argument("parameter")
     _descriptor(upsert)
+
+    visualization = solver_actions.add_parser("visualization")
+    upsert, remove = _row_actions(visualization)
+    for item in (upsert, remove):
+        _identity(item)
+        item.add_argument("key")
+    upsert.add_argument("--artifact-type", required=True)
+    upsert.add_argument("--data-json", type=_data, required=True)
 
     input_port = solver_actions.add_parser("input-port")
     upsert, remove = _row_actions(input_port)

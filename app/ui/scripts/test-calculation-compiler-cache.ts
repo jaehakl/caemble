@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { calculationExampleInput } from '../src/authoring/examples'
+import { BOX_GRID_AXES } from '../src/contracts/boxGrid'
 import { calculationMonacoStubState } from './calculation-monaco-stub'
 import { compileCalculationSource } from '../src/lib/calculation/compiler'
 import { CALCULATION_SOURCE_SKELETON } from '../src/lib/calculation/declarations'
@@ -8,8 +10,6 @@ import { CALCULATION_INDEX_GUARD_GLOBAL } from '../src/lib/calculation/runtimeGl
 import {
   CalculationExecutionError,
   type CalculationInput,
-  type CalculationInputAxis,
-  type CalculationInputLeaf,
   type CompiledCalculationSource,
 } from '../src/lib/calculation/types'
 import { assertCalculationInput, normalizeCalculationOutput } from '../src/lib/calculation/validation'
@@ -22,25 +22,30 @@ export default function calculate(input) {
 }`
 }
 
-function calculationInput(
-  shape: readonly number[],
-  data: CalculationInputLeaf['data'],
-  tensorOrder = 0,
-  axes?: readonly CalculationInputAxis[],
-): CalculationInput {
-  const externalShape = shape.slice(0, shape.length - tensorOrder)
+function calculationInput(shape: readonly number[], data: readonly number[]): CalculationInput {
+  const channels = shape[5] === 2 ? (['amplitude', 'phase'] as const) : (['value'] as const)
+  const gridShape = shape.slice(0, 3) as [number, number, number]
   return {
     signal: {
-      dtype: 'float64',
+      ...calculationExampleInput.signal,
       shape,
       data,
-      axes:
-        axes ??
-        externalShape.map((length, axis) => ({
-          name: `axis ${axis}`,
-          ticks: Array.from({ length }, (_item, tick) => tick),
-        })),
-      tensorOrder,
+      boxGrid: {
+        ...calculationExampleInput.signal.boxGrid,
+        gridShape,
+        size: gridShape,
+        channels,
+        channelUnits: channels.length === 2 ? ['1', 'rad'] : ['1'],
+      },
+      axes: BOX_GRID_AXES.map((name, axis) => ({
+        name,
+        ticks:
+          axis === 5
+            ? channels
+            : axis === 6
+              ? ['scalar']
+              : Array.from({ length: shape[axis] }, (_, index) => (axis < 3 ? index + 0.5 : index)),
+      })),
     },
   }
 }
@@ -117,7 +122,7 @@ async function main() {
 
   const compiledSkeleton = await compileCalculationSource(CALCULATION_SOURCE_SKELETON)
   const skeletonModule = { exports: {} as Record<string, unknown> }
-  new Function('module', 'exports', 'require', 'console', compiledSkeleton.code)(
+  new Function('module', 'exports', 'require', 'console', CALCULATION_INDEX_GUARD_GLOBAL, compiledSkeleton.code)(
     skeletonModule,
     skeletonModule.exports,
     (specifier: string) => {
@@ -125,6 +130,7 @@ async function main() {
       return CALCULATION_MATHJS_RUNTIME
     },
     { log() {} },
+    calculationIndex,
   )
   const calculate = skeletonModule.exports.default as (input: CalculationInput) => unknown
   const runSkeleton = (input: CalculationInput) => {
@@ -140,106 +146,35 @@ async function main() {
       { name: 'column', ticks: [0] },
     ],
   })
-  assert.deepEqual(runSkeleton(calculationInput([], 5)), {
-    dtype: 'float64',
-    shape: [1, 1],
-    data: [5],
-    axes: [
-      { name: 'row', ticks: [0] },
-      { name: 'column', ticks: [0] },
-    ],
-  })
-  assert.deepEqual(
-    runSkeleton(calculationInput([3], [1, 2, 3], 0, [{ name: 'time', ticks: [0.1, 0.2, 0.3], unit: 's' }])),
-    {
-      dtype: 'float64',
-      shape: [1, 3],
-      data: [1, 2, 3],
-      axes: [
-        { name: 'row', ticks: [0] },
-        { name: 'time', ticks: [0.1, 0.2, 0.3], unit: 's' },
-      ],
-    },
-  )
-  assert.deepEqual(runSkeleton(calculationInput([2, 2], [1, 2, 3, 4])), {
+  assert.deepEqual(runSkeleton(calculationInput([2, 2, 1, 1, 1, 1, 1], [1, 2, 3, 4])), {
     dtype: 'float64',
     shape: [2, 2],
     data: [1, 2, 3, 4],
     axes: [
-      { name: 'axis 0', ticks: [0, 1] },
-      { name: 'axis 1', ticks: [0, 1] },
+      { name: 'x', ticks: [0.5, 1.5] },
+      { name: 'y', ticks: [0.5, 1.5] },
     ],
   })
-  assert.deepEqual(runSkeleton(calculationInput([2, 2, 2], [1, 2, 3, 4, 5, 6, 7, 8])), {
-    dtype: 'float64',
-    shape: [2, 2],
-    data: [1.5, 3.5, 5.5, 7.5],
-    axes: [
-      { name: 'axis 0', ticks: [0, 1] },
-      { name: 'axis 1', ticks: [0, 1] },
-    ],
-  })
-  assert.deepEqual(runSkeleton(calculationInput([2, 2, 3], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 1)), {
-    dtype: 'float64',
-    shape: [2, 2],
-    data: [1, 4, 7, 10],
-    axes: [
-      { name: 'axis 0', ticks: [0, 1] },
-      { name: 'axis 1', ticks: [0, 1] },
-    ],
-  })
-  assert.deepEqual(runSkeleton(calculationInput([3], [1, 2, 3], 1)), {
-    dtype: 'float64',
-    shape: [1, 1],
-    data: [2],
-    axes: [
-      { name: 'row', ticks: [0] },
-      { name: 'column', ticks: [0] },
-    ],
-  })
-  assert.deepEqual(runSkeleton(calculationInput([0, 3], [])), {
-    dtype: 'float64',
-    shape: [0, 3],
-    data: [],
-    axes: [
-      { name: 'axis 0', ticks: [] },
-      { name: 'axis 1', ticks: [0, 1, 2] },
-    ],
-  })
-  assert.deepEqual(runSkeleton(calculationInput([2, 0], [])), {
-    dtype: 'float64',
-    shape: [2, 0],
-    data: [],
-    axes: [
-      { name: 'axis 0', ticks: [0, 1] },
-      { name: 'axis 1', ticks: [] },
-    ],
-  })
-  assert.deepEqual(runSkeleton(calculationInput([2, 3, 0], [])), {
-    dtype: 'float64',
-    shape: [2, 3],
-    data: [0, 0, 0, 0, 0, 0],
-    axes: [
-      { name: 'axis 0', ticks: [0, 1] },
-      { name: 'axis 1', ticks: [0, 1, 2] },
-    ],
-  })
+  // A/phase must never be averaged together by the default source.
   assert.deepEqual(
-    runSkeleton(calculationInput([2], ['invalid', Number.POSITIVE_INFINITY], 0, [{ name: 'sample', ticks: [0, 1] }])),
+    runSkeleton(
+      calculationInput(
+        [2, 2, 2, 1, 1, 2, 1],
+        Array.from({ length: 16 }, (_, index) => (index % 2 === 0 ? index : index === 1 ? 0 : 0.5)),
+      ),
+    ),
     {
       dtype: 'float64',
-      shape: [1, 2],
-      data: [0, 0],
+      shape: [2, 2],
+      data: [0, 4, 8, 12],
       axes: [
-        { name: 'row', ticks: [0] },
-        { name: 'sample', ticks: [0, 1] },
+        { name: 'x', ticks: [0.5, 1.5] },
+        { name: 'y', ticks: [0.5, 1.5] },
       ],
     },
   )
-  assert.throws(
-    () => runSkeleton(calculationInput([2], [1, 2], 0, [{ name: 'label', ticks: ['a', 'b'] }])),
-    /Calculation output axes\[1\]\.ticks must contain 2 finite numbers/u,
-  )
+  assert.throws(() => runSkeleton(calculationInput([0, 2, 1, 1, 1, 1, 1], [])))
+  assert.throws(() => runSkeleton(calculationInput([1, 1, 1, 1, 1, 1, 1], [Number.POSITIVE_INFINITY])))
 
   for (let value = 1; value <= 33; value += 1) await compileCalculationSource(sourceWithValue(value))
   const compileCountBeforeRetry = calculationMonacoStubState.compileCount

@@ -13,6 +13,7 @@ from cae.recording import complete_job, persist_record, stage_record, storage_pa
 from gpstation.service.state import utcnow
 from gpstation.service.batches import finish_job
 from storage.service import bind_objects
+from box_grid_fixtures import box_schema, box_tensor
 
 
 class PreflightTests(unittest.IsolatedAsyncioTestCase):
@@ -21,8 +22,8 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
             state="succeeded", attempt_count=1, finished_at=utcnow(), artifact_metadata={}, progress=[],
             input={"preflight": True, "storage_version": 1,
                 "measurement": {"varsHash": "vars", "experiment": {"simulationProgram": {
-                    "recordedData": {"field": {"dtype": "complex64"}},
-                    "resultContracts": {"field": {"visualization": {"kind": "structured-field"}}},
+                    "recordedData": {"field": box_schema()},
+                    "resultContracts": {"field": {**box_tensor()["provenance"], "visualization": {"kind": "structured-field"}}},
                 }}}})
 
     def test_request_rejects_saved_or_multi_candidate_preflight(self):
@@ -42,7 +43,7 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_record_commit_and_result_without_measurement(self):
         job = self.job()
-        value = {"shape": [2], "storage": {"kind": "inline", "value": [{"re": 1, "im": 2}, {"re": 3, "im": 4}]}}
+        value = box_tensor()
         db = SimpleNamespace(scalar=AsyncMock(return_value=None), get=AsyncMock(return_value=None),
             scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [])), add=Mock(), flush=AsyncMock())
         await stage_record(db, job, {"sequence": 1, "name": "field", "value": value}, [])
@@ -50,23 +51,23 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.payload, value)
         # Include an object-backed tensor and actual coordinates in the same
         # completion, without downloading any bucket bytes.
-        from gpstation.db import JobRecord
-        large = {"shape": [10000], "axes": [{"ticks": [0, 1], "bounds": [0, 2]}],
-            "storage": {"kind": "base64", "byteLength": 80000, "data": {
+        from gpstation.db import JobRecord, JobVisualization
+        large_shape = (10000, 1, 1, 1, 1, 1, 1)
+        large = {**box_tensor(large_shape), "storage": {"kind": "base64", "byteLength": 80000, "data": {
                 "kind": "caemble.object", "version": 1, "id": job.id,
                 "encoding": "base64", "sha256": "a" * 64, "byteLength": 80000}}}
         program = job.input["measurement"]["experiment"]["simulationProgram"]
-        program["recordedData"]["large"] = {"dtype": "complex64"}
+        program["recordedData"]["large"] = box_schema(large_shape)
         program["resultContracts"]["large"] = {"visualization": {"kind": "tensor"}}
         staged = [record, JobRecord(job_id=job.id, attempt_count=1, sequence=2, name="large", payload=large)]
-        db.scalars.return_value = SimpleNamespace(all=lambda: list(staged))
+        db.scalars.side_effect = lambda statement: SimpleNamespace(all=lambda: [] if statement.column_descriptions[0]["entity"] is JobVisualization else list(staged))
         with patch("storage.service.bind_objects", AsyncMock()):
-            result = await complete_job(db, job, {"recordSequences": [1, 2], "executionTrace": []})
+            result = await complete_job(db, job, {"recordSequences": [1, 2], "visualizationSequences": [], "executionTrace": []})
         self.assertEqual(result, {"preflight_id": "batch"})
         self.assertEqual(db.add.call_count, 1)  # Only JobRecord, never Measurement/RecordedData.
         expected = {"field": value, "large": large}
         async def delete_staging(statement):
-            self.assertEqual(statement.table.name, "job_records")
+            self.assertIn(statement.table.name, {"job_records", "job_visualizations"})
             self.assertEqual(job.artifact_metadata["recorded_data"], expected)
             staged.clear()
         db.execute = AsyncMock(side_effect=delete_staging)
@@ -144,5 +145,5 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(job.input)
         self.assertIsNone(job.artifact_metadata)
         self.assertNotIn("source_bundle", cae.spec)
-        self.assertEqual(db.execute.await_count, 2)  # Object tombstones plus temporary records.
+        self.assertEqual(db.execute.await_count, 3)  # Object tombstones plus both temporary result collections.
         db.commit.assert_awaited_once()

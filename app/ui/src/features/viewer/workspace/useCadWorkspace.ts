@@ -25,7 +25,6 @@ import {
   deserializeCadScene,
   evaluateDocument,
   inspectDocument,
-  unresolvedMeasurementMaterialRoles,
   type BuiltMeasurement,
   type EvaluatedExperimentSnapshot,
 } from '@/lib/cad/execution'
@@ -470,7 +469,6 @@ export function useCadWorkspace(
             items.map((item) => `${name}: ${item}`),
           ),
         ])
-        const unresolved = unresolvedMeasurementMaterialRoles(snapshot)
         const registeredCatalog = sourceCatalogRuntimeSlice(snapshot.sourceHash)
         const reportReady = (details: RuntimeActivityDetails) =>
           emitRuntimeActivity(onActivityRef.current, {
@@ -494,31 +492,6 @@ export function useCadWorkspace(
             outputKey,
             resetKey,
           })
-        }
-        if (unresolved.length > 0) {
-          const nextDraftTaskNames = catalogDraftTaskNames(registeredCatalog, snapshot.simulationProgram)
-          setEvaluatedSnapshot(snapshot)
-          setResultSessionKey(resetKey)
-          setDraftTaskNames(nextDraftTaskNames)
-          setVariables(snapshot.variables)
-          setVarsSchema(snapshot.varsSchema)
-          setScene(commonScene)
-          setTaskScenes(nextTaskScenes)
-          setSimulationProgram(nextDraftTaskNames.length > 0 ? null : snapshot.simulationProgram)
-          setMaterialWarnings(
-            Object.freeze([
-              ...resolutionWarnings,
-              `Measurement requires resolved Material roles: ${unresolved.join(', ')}.`,
-            ]),
-          )
-          rememberEditableMaterialOutput(materialsKey)
-          completeCandidateGeneration()
-          successfulRevisionRef.current = requestRevision
-          setSuccessfulRevision(requestRevision)
-          statusRef.current = 'Ready'
-          dispatchLifecycle({ type: 'evaluationSucceeded' })
-          reportReady({ revision: requestRevision, unresolvedMaterialRoles: unresolved.length })
-          return
         }
         const nextDraftTaskNames = catalogDraftTaskNames(registeredCatalog, snapshot.simulationProgram)
         if (nextDraftTaskNames.length > 0) {

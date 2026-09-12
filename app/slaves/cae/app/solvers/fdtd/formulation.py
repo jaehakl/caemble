@@ -26,9 +26,7 @@ def allocate_simulation(
     """Select the device and allocate the engine, sources, and detector buffers."""
     spectral_elements = sum(
         int(plan.frequencies.size)
-        * plan.region.z.size
-        * plan.region.y.size
-        * plan.region.x.size
+        * math.prod(plan.region.grid.shape)
         * 3
         for plan in output_plans
         if plan.frequencies is not None

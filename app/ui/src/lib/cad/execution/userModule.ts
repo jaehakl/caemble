@@ -1,5 +1,6 @@
 import type { CompiledCadDocument, CompiledCadSource } from '../compiler/types'
 import { evaluateCadScene } from '../evaluation/evaluator'
+import { resolveProgramBoxGrids } from '../simulation/boxGrid'
 import { Fragment, h } from '../evaluation/jsx'
 import type { CadScene } from '../evaluation/types'
 import { cadPrimitiveAuthoringBindings } from '../elements/generated'
@@ -308,7 +309,7 @@ export function evaluateDocumentEntry(
       varsSchema: entry.varsSchema,
       scene,
       taskScenes,
-      simulationProgram: runtime.manifest,
+      simulationProgram: resolveProgramBoxGrids(runtime.manifest, scene, taskScenes),
     })
   })
 }

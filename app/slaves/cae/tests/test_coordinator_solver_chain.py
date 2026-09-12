@@ -10,12 +10,12 @@ from app.kernel.coordinator import SimulationApi
 from app.kernel.api import FieldValue
 from app.kernel.coordinator.plan import RunPlan
 from app.kernel.resources import FileResourceCache
-from tests.test_actual_solver_chain import parameter, world
+from tests.test_actual_solver_chain import parameter, world, output_box
 
 
 @pytest.mark.asyncio
 async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
-    dc_version, heat_version = "1.0.0", "1.0.0"
+    dc_version, heat_version = "2.0.0", "2.0.0"
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
@@ -39,13 +39,13 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
                     "parameters": {"voltage": {**parameter(0.0), "unit": "V"}},
                 },
             ],
+            "exports": [{"methodId": "dc.joule-heating", "key": "jouleHeating", "target": [], "parameters": {}}],
             "outputs": [
-                {"methodId": "dc.joule-heating", "key": "jouleHeating", "target": [], "parameters": {}},
                 {
                     "methodId": "dc.total-current",
-                    "key": "totalCurrent",
+                    "key": "totalCurrent", "boxGrid": output_box(),
                     "target": [],
-                    "parameters": {"crossSectionPosition": {**parameter(0.5), "unit": "{fraction}"}},
+                    "parameters": {"gridShape": parameter([1, 1, 1]), "crossSectionPosition": {**parameter(0.5), "unit": "{fraction}"}},
                 },
             ],
         },
@@ -74,12 +74,12 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
                 },
             ],
             "outputs": [
-                {"methodId": "heat.temperature", "key": "temperature", "target": [], "parameters": {}},
+                {"methodId": "heat.temperature", "key": "temperature", "target": [], "boxGrid": output_box((6, 4, 4)), "parameters": {"gridShape": parameter([6, 4, 4])}},
                 {
                     "methodId": "heat.maximum-temperature",
-                    "key": "maximumTemperature",
+                    "key": "maximumTemperature", "boxGrid": output_box(),
                     "target": [],
-                    "parameters": {},
+                    "parameters": {"gridShape": parameter([1, 1, 1])},
                 },
             ],
         },
@@ -113,7 +113,7 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
             inputs={"heatSource": electric["artifacts"]["jouleHeating"]},
         )
         temperature = sim._artifacts.materialize(thermal["artifacts"]["temperature"])
-        assert np.asarray(temperature.values).shape == (6, 4, 4)
+        assert np.asarray(temperature["value"]).shape == (6, 4, 4, 1, 1, 1, 1)
         assert sim._artifacts.materialize(thermal["artifacts"]["maximumTemperature"])["value"] >= 300.0
         assert thermal["state"] is electric["state"]
         assert thermal["state"].revision == 0

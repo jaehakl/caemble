@@ -1,4 +1,4 @@
-import type { RecordedResultContracts } from '../results'
+import type { RecordedResultContracts, MeasurementVisualizations } from '../results'
 import type { MaterialSnapshot, TaskMaterialSelections } from '../material'
 import type { CatalogMaterialModel } from '../catalog'
 
@@ -75,6 +75,7 @@ export type PersistedRecordedDataRecord = RecordedDataReadFields & Readonly<{ id
 export type RecordedDataRecord = RecordedDataReadFields & Readonly<{ id?: number }>
 
 export type MeasurementResults = Readonly<{
+  visualizations?: MeasurementVisualizations
   recorded_data: MeasurementRecordedData
   result_contracts: RecordedResultContracts | null
   result_errors?: Readonly<Record<string, string>>

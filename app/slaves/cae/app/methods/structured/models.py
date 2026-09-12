@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -18,4 +18,4 @@ class VoxelDomain:
     v_spacing: float
     occupancy: np.ndarray[Any, Any]
     occupied_count: int
-
+    origin: np.ndarray[Any, Any] = field(default_factory=lambda: np.zeros(3))

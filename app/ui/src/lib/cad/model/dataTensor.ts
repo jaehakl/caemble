@@ -170,6 +170,8 @@ export function createDataTensor(schema: DataSchema, value: DataTensorInput, _pa
   const normalized = tensorInput(schema, value)
   return Object.freeze({
     shape: normalized.shape,
+    ...(value.boxGrid === undefined ? {} : { boxGrid: structuredClone(value.boxGrid) }),
+    ...(value.provenance === undefined ? {} : { provenance: structuredClone(value.provenance) }),
     ...(normalized.axes.length === 0 ? {} : { axes: normalized.axes }),
     storage: normalized.shape.length === 0 || normalized.rawBytes.byteLength <= DATA_TENSOR_INLINE_BYTES
       ? Object.freeze({ kind: 'inline' as const, value: normalized.value })
@@ -188,6 +190,8 @@ export function createAttachmentDataTensor(
     return Object.freeze({
       tensor: Object.freeze({
         shape: normalized.shape,
+        ...(value.boxGrid === undefined ? {} : { boxGrid: structuredClone(value.boxGrid) }),
+    ...(value.provenance === undefined ? {} : { provenance: structuredClone(value.provenance) }),
         ...(normalized.axes.length === 0 ? {} : { axes: normalized.axes }),
         storage: Object.freeze({ kind: 'inline' as const, value: normalized.value }),
       }),
@@ -198,6 +202,8 @@ export function createAttachmentDataTensor(
   return Object.freeze({
     tensor: Object.freeze({
       shape: normalized.shape,
+      ...(value.boxGrid === undefined ? {} : { boxGrid: structuredClone(value.boxGrid) }),
+    ...(value.provenance === undefined ? {} : { provenance: structuredClone(value.provenance) }),
       ...(normalized.axes.length === 0 ? {} : { axes: normalized.axes }),
       storage: Object.freeze({ kind: 'attachments' as const, ids: Object.freeze(attachments.map(({ id }) => id)), byteLength: normalized.rawBytes.byteLength }),
     }),
@@ -284,6 +290,8 @@ export function persistDataTensor(schema: DataSchema, value: RecordedDataTensor 
   const accessor = createDataTensorAccessor(schema, isDataTensor(value) ? value : createDataTensor(schema, value, path), path)
   return Object.freeze({
     shape: accessor.shape,
+    ...(accessor.tensor.boxGrid === undefined ? {} : { boxGrid: structuredClone(accessor.tensor.boxGrid) }),
+    ...(accessor.tensor.provenance === undefined ? {} : { provenance: structuredClone(accessor.tensor.provenance) }),
     ...(accessor.tensor.axes === undefined ? {} : { axes: accessor.tensor.axes }),
     storage: accessor.shape.length === 0 || accessor.byteLength <= DATA_TENSOR_INLINE_BYTES
       ? Object.freeze({ kind: 'inline' as const, value: accessor.materialize() })

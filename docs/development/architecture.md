@@ -146,8 +146,9 @@ previous identities, and publishes the completed file to the canonical Catalog.
 
 The ray-tracing Solver launches point, area, directional, or Lambertian sources
 and follows the next physical collision rather than a prescribed surface
-sequence. Detector surfaces produce ordinary outputs such as irradiance,
-detected radiant flux, and source efficiency.
+sequence. Numerical Outputs are Box Grid fluence rate and radiant flux density,
+computed from power-weighted volume track lengths. Absorbing detector surfaces
+are explicit boundary conditions independent of Output requests.
 
 Physical shell thickness controls multilayer treatment. Adjacent shell layers
 whose thickness is strictly less than `50 µm` form one coherent transfer-matrix
@@ -160,8 +161,10 @@ All RecordedData declarations are `{ task, output }` references. The build freez
 Catalog output data schemas and semantic visualization contracts alongside Task,
 output key, Solver version and Catalog revision. These contracts travel with the
 Experiment, Measurement result envelope and offline export. Reading historical
-results does not consult the current Catalog. Records without frozen contracts
-remain stored but are unsupported by the new Viewer.
+results does not consult the current Catalog. The Box Grid transition clears old
+derived results and their contracts; it does not convert legacy results. Native
+coupling artifacts use exports, while mesh/ray visualizations use a separate
+channel containing the last successful invocation of each Task.
 
 The Viewer selects renderers by semantic kind: mesh-field, polyline,
 structured-field, tensor or bundle. Paths have no reserved root or special result

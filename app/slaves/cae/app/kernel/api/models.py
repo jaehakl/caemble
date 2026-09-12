@@ -62,6 +62,8 @@ class SolverResult:
     state_patch: StatePatch = field(default_factory=StatePatch)
     artifacts: Mapping[str, Any] = field(default_factory=dict)
     observations: Mapping[str, Any] = field(default_factory=dict)
+    exports: Mapping[str, Any] = field(default_factory=dict)
+    visualizations: Mapping[str, Any] = field(default_factory=dict)
 
 
 SolverRunner: TypeAlias = Callable[[SolverInvocation], Awaitable[SolverResult]]

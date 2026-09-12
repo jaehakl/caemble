@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import type { MeasurementResults, MeasurementRecordedDataNode } from '@/contracts/api/measurement'
 import { measurementRecordedDataSchema } from '@/contracts/api/measurementValidators'
-import { recordedResultContractsSchema } from '@/contracts/resultValidators'
+import { measurementVisualizationSchema, recordedResultContractsSchema } from '@/contracts/resultValidators'
+import type { MeasurementVisualizations } from '@/contracts/results'
 import type { CaembleClient, RequestContext } from './http'
 import { resolveObjects } from './objectStorage'
 
@@ -37,5 +38,31 @@ export async function readMeasurementResults(
     }
     context?.onObjectProgress?.({ completed: ++completed, total: entries.length })
   }
-  return { recorded_data, result_contracts: envelope.result_contracts, result_errors }
+  const visualizations: Record<string, Record<string, MeasurementVisualizations[string][string]>> = {}
+  try {
+    const response = await client.request('get', `/measurement/${id}/visualizations`, undefined, {
+      signal: context?.signal,
+      validate: (value) =>
+        z.object({ visualizations: z.record(z.string(), z.record(z.string(), z.unknown())) }).parse(value),
+    })
+    for (const [task, values] of Object.entries(response.visualizations ?? {})) {
+      visualizations[task] = {}
+      for (const [key, value] of Object.entries(values)) {
+        try {
+          const entry = measurementVisualizationSchema.parse(value)
+          if (entry.provenance.task !== task) throw new Error('시각화 결과의 Task 출처가 일치하지 않습니다.')
+          const data =
+            context?.resolveObjects === false ? entry.data : await resolveObjects(client, entry.data, context?.signal)
+          visualizations[task][key] = { ...entry, data }
+        } catch (error) {
+          context?.signal?.throwIfAborted()
+          result_errors[`@visualizations.${task}.${key}`] = error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+  } catch (error) {
+    context?.signal?.throwIfAborted()
+    result_errors['@visualizations'] = error instanceof Error ? error.message : String(error)
+  }
+  return { recorded_data, result_contracts: envelope.result_contracts, result_errors, visualizations }
 }

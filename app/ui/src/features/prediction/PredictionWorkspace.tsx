@@ -680,11 +680,16 @@ export function PredictionWorkspace({
     onForwardRecordProfilesChange: setForwardRecordProfiles,
     onProfile: rememberProfile,
     recordedData: workbench.experimentDocument.simulationProgram?.recordedData ?? Object.freeze({}),
+    candidateBoxGrids: workbench.experimentDocument.simulationProgram?.boxGrids,
+    candidateReady: candidateEvaluationReady,
+    resultContracts: workbench.experimentDocument.simulationProgram?.resultContracts,
     runtime,
     selectedCalculations,
     setup,
     varsSchema,
   })
+  const forwardOutputsRef = useRef(forwardOutputs)
+  forwardOutputsRef.current = forwardOutputs
 
   const runForward = useCallback(
     async (vars: Readonly<Vars>) => {
@@ -826,7 +831,22 @@ export function PredictionWorkspace({
         rememberProfile(model.profile, model.fingerprint)
         setStatus('Inverse 완료 · Viewer를 갱신하고 surrogate를 계산하는 중…')
         try {
-          const surrogate = await forwardOutputs(nextVars, transaction)
+          const deadline = Date.now() + 30_000
+          while (true) {
+            if (!runtime.transactionIsCurrent(transaction)) return
+            const document = experimentDocumentRef.current
+            if (document.status === 'Error') throw new Error('Inverse Candidate의 Geometry 평가에 실패했습니다.')
+            if (
+              document.status === 'Ready' &&
+              document.successfulRevision === document.revision &&
+              candidateFingerprint(document.variables) === nextFingerprint
+            )
+              break
+            if (Date.now() >= deadline)
+              throw new Error('Inverse Candidate의 Geometry 평가를 기다리는 시간이 초과되었습니다.')
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+          const surrogate = await forwardOutputsRef.current(nextVars, transaction)
           if (!runtime.transactionIsCurrent(transaction)) return
           setSurrogateValues(surrogate.calculated.values)
           setSurrogateErrors(surrogate.calculated.errors)

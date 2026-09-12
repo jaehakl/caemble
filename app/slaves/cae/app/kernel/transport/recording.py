@@ -39,6 +39,8 @@ def materialize_record_value(
         leases.append(resources.acquire(value.resource_ref, owner=owner))
         value = artifacts.materialize(value, copy_arrays=False)
         if "dtype" in schema and isinstance(value, Mapping) and "value" in value:
+            if "boxGrid" in schema:
+                return {"value": value["value"], "axes": value["axes"], "boxGrid": value["boxGrid"]}
             axes = value.get("axes")
             return {"value": value["value"], "axes": axes} if axes is not None else value["value"]
 

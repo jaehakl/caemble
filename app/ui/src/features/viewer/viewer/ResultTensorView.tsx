@@ -66,11 +66,13 @@ export function ResultTensorView({
               }
             : rule.result),
           tensorOrder: 0,
+          boxGrid: undefined,
           axes: selected.map((axis) => rule.result.axes?.[axis] ?? { name: `component ${axis}` }),
         },
       }
       const tensor = {
         ...accessor.tensor,
+        boxGrid: undefined,
         shape,
         axes: tensorAxes,
         storage: {

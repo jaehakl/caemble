@@ -229,6 +229,10 @@ class MeasurementRecordedDataResponse(BaseModel):
     result_contracts: Optional[Dict[str, Any]] = None
 
 
+class MeasurementVisualizationsResponse(BaseModel):
+    visualizations: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+
 class RecordedDataBase(OwnedTimestampFields):
     user_id: str
     measurement_id: int

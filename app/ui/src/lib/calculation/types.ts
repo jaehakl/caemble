@@ -1,4 +1,4 @@
-import type { DataDType } from '@/lib/cad/model'
+import type { DataDType, RecordedDataTensor } from '@/lib/cad/model'
 
 export const CALCULATION_INPUT_MAX_BYTES = 64 * 1024 * 1024
 export const CALCULATION_OUTPUT_MAX_ELEMENTS = 5_000_000
@@ -7,22 +7,7 @@ export const CALCULATION_LOG_MAX_ENTRIES = 100
 export const CALCULATION_LOG_MAX_ENTRY_BYTES = 4 * 1024
 export const CALCULATION_LOG_MAX_BYTES = 64 * 1024
 
-export const calculationInputDtypes = [
-  'bool',
-  'string',
-  'int8',
-  'int16',
-  'int32',
-  'int64',
-  'uint8',
-  'uint16',
-  'uint32',
-  'uint64',
-  'float16',
-  'float32',
-  'float64',
-  'complex64',
-] as const satisfies readonly DataDType[]
+export const calculationInputDtypes = ['float32', 'float64'] as const satisfies readonly DataDType[]
 
 export const calculationDtypes = ['float32', 'float64', 'int8', 'int16', 'int32', 'uint8', 'uint16', 'uint32'] as const
 
@@ -44,16 +29,12 @@ export type CalculationInputAxis = Readonly<{
 export type CalculationInputLeaf = Readonly<{
   dtype: CalculationInputDtype
   shape: readonly number[]
-  data:
-    | boolean
-    | string
-    | number
-    | Readonly<{ re: number; im: number }>
-    | readonly (boolean | string | number | Readonly<{ re: number; im: number }>)[]
+  data: readonly number[]
   axes: readonly CalculationInputAxis[]
   quantityKind?: string
   tensorOrder: number
   unit?: string
+  boxGrid: NonNullable<RecordedDataTensor['boxGrid']>
 }>
 
 export type CalculationInput = Readonly<Record<string, CalculationInputLeaf>>

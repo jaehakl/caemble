@@ -65,10 +65,14 @@ def encode_tensor(
     sequence: int,
 ) -> tuple[dict[str, Any], list[Attachment], int]:
     axes = None
+    box_grid = None
+    provenance = None
     raw_value = value
     if isinstance(value, dict) and "value" in value:
         raw_value = value["value"]
         axes = _materialize_metadata(value.get("axes"))
+        box_grid = _materialize_metadata(value.get("boxGrid"))
+        provenance = _materialize_metadata(value.get("provenance"))
     dtype_name = schema["dtype"]
 
     if dtype_name == "string":
@@ -96,9 +100,19 @@ def encode_tensor(
             inline_value = np.array([{ "re": float(v.real), "im": float(v.imag) } for v in encoded.flat], dtype=object).reshape(encoded.shape).tolist()
         if dtype_name == "bool":
             inline_value = bool(inline_value) if encoded.ndim == 0 else encoded.astype(np.bool_).tolist()
-        return _inline_tensor(shape, axes, inline_value), [], len(raw)
+        tensor = _inline_tensor(shape, axes, inline_value)
+        if box_grid is not None:
+            tensor["boxGrid"] = box_grid
+        if provenance is not None:
+            tensor["provenance"] = provenance
+        return tensor, [], len(raw)
     attachments = _shard(name, sequence, raw, "application/octet-stream")
-    return _attachment_tensor(shape, axes, attachments, len(raw)), attachments, len(raw)
+    tensor = _attachment_tensor(shape, axes, attachments, len(raw))
+    if box_grid is not None:
+        tensor["boxGrid"] = box_grid
+    if provenance is not None:
+        tensor["provenance"] = provenance
+    return tensor, attachments, len(raw)
 
 
 def _materialize_metadata(value: Any) -> Any:

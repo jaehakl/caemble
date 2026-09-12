@@ -282,35 +282,35 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     predictionState,
     preflightControls: (
       <div className="flex items-center gap-2 px-2 text-xs">
-          <button
-            type="button"
-            className="rounded border px-3 py-1"
-            disabled={
-              preflight.busy || !workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy
-            }
-            onClick={() => {
-              if (!auth.isAuthenticated) page.setDialog('account')
-              else void preflight.run()
-            }}
-          >
-            실행
+        <button
+          type="button"
+          className="rounded border px-3 py-1"
+          disabled={
+            preflight.busy || !workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy
+          }
+          onClick={() => {
+            if (!auth.isAuthenticated) page.setDialog('account')
+            else void preflight.run()
+          }}
+        >
+          실행
+        </button>
+        <button
+          type="button"
+          className="rounded border px-3 py-1"
+          disabled={preflight.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy}
+          onClick={() => {
+            if (!auth.isAuthenticated) page.setDialog('account')
+            else void preflight.run(true)
+          }}
+        >
+          Candidate 재생성 + 실행
+        </button>
+        {preflight.busy ? (
+          <button type="button" onClick={() => void preflight.cancel()}>
+            취소
           </button>
-          <button
-            type="button"
-            className="rounded border px-3 py-1"
-            disabled={preflight.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy}
-            onClick={() => {
-              if (!auth.isAuthenticated) page.setDialog('account')
-              else void preflight.run(true)
-            }}
-          >
-            Candidate 재생성 + 실행
-          </button>
-          {preflight.busy ? (
-            <button type="button" onClick={() => void preflight.cancel()}>
-              취소
-            </button>
-          ) : null}
+        ) : null}
       </div>
     ),
   })
@@ -512,11 +512,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const preview = preflight.result
   const viewerPane = (
     <div className="flex h-full min-h-0 flex-col">
-      {preview ? (
-        <div className="border-b p-2 text-xs">
-          임시 결과 · 실행 당시 Geometry / Vars
-        </div>
-      ) : null}
+      {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
           activeExperimentTaskName={page.activeExperimentFile}
@@ -531,6 +527,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
           autoSelectResult={Boolean(preview || workbench.selection.measurement)}
           resultContracts={preview?.payload.result_contracts ?? workbench.selection.resultContracts}
+          visualizations={preview?.payload.visualizations ?? workbench.selection.visualizations}
           resultErrors={preview?.errors ?? workbench.selection.resultErrors}
           resultSourceHash={preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash}
           resultVarsHash={preview?.payload.vars_hash ?? workbench.selection.materialSnapshot?.varsHash}

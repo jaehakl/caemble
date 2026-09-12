@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { calculationExampleInput } from '../src/authoring/examples'
+import { createDataTensor } from '../src/lib/cad/model/dataTensor'
+import { varsTensorFromFlat } from '../src/lib/cad/model/tensor'
 import { Buffer } from 'node:buffer'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -41,9 +44,6 @@ import {
 } from '../src/features/prediction/data'
 import { compatibleVarsResetValues } from '../src/features/calculation/varsTensor'
 import { createCalculationInput } from '../src/lib/calculation/input'
-import { executeCalculation } from '../src/lib/calculation/execute'
-import { analyzeCalculationSource } from '../src/lib/calculation/sourcePolicy'
-import { transformCalculationSource } from '../src/lib/calculation/transform'
 import {
   acceptPredictionSamplingCenter,
   createPredictionSamplingSession,
@@ -998,180 +998,69 @@ assert.deepEqual(
 )
 assert.throws(() => predictionVarsSamples({ alpha: 3, beta: [1] }, varsSchema))
 
-const encodedBytes = Buffer.alloc(16)
-encodedBytes.writeDoubleLE(3.5, 0)
-encodedBytes.writeDoubleLE(-2.25, 8)
-const complexBytes = Buffer.alloc(32)
-;[
-  [1, -2],
-  [3, -4],
-  [5, -6],
-  [7, -8],
-].forEach(([re, im], index) => {
-  complexBytes.writeFloatLE(re, index * 8)
-  complexBytes.writeFloatLE(im, index * 8 + 4)
+const gridInput = calculationExampleInput.signal
+const gridSchema = { dtype: 'float64' as const, tensorOrder: 0, axes: gridInput.axes, boxGrid: gridInput.boxGrid }
+const gridTensor = createDataTensor(gridSchema, {
+  value: varsTensorFromFlat(gridInput.data, gridInput.shape),
+  boxGrid: gridInput.boxGrid,
+  axes: gridInput.axes.map((axis) => ({ ticks: axis.ticks })),
 })
+const gridBytes = Buffer.from(createDataTensorAccessor(gridSchema, gridTensor).rawBytes())
+const gridLeaf = {
+  experiment_record_id: 11,
+  quantity_kind: null,
+  tensor_order: 0,
+  dtype: 'float64',
+  data_schema: gridSchema,
+  data: gridTensor,
+}
 const recordedTree = {
   group: {
-    complexScalar: {
-      experiment_record_id: 13,
-      quantity_kind: 'Length',
-      tensor_order: 0,
-      dtype: 'complex64',
-      data_schema: { dtype: 'complex64', quantityKind: 'Length', unit: 'm' },
-      data: {
-        shape: [],
-        storage: { kind: 'inline', value: { re: 3, im: 4 } },
-      },
-    },
-    complexEncoded: {
-      experiment_record_id: 14,
-      quantity_kind: 'Length',
-      tensor_order: 0,
-      dtype: 'complex64',
-      data_schema: {
-        dtype: 'complex64',
-        quantityKind: 'Length',
-        unit: 'm',
-        axes: [
-          { name: 'row', ticks: [0, 1] },
-          { name: 'column', ticks: [10, 20] },
-        ],
-      },
-      data: {
-        shape: [2, 2],
-        axes: [{ ticks: [0, 1] }, { ticks: [10, 20] }],
-        storage: { kind: 'base64', data: complexBytes.toString('base64'), byteLength: complexBytes.byteLength },
-      },
-    },
-    inline: {
-      experiment_record_id: 11,
-      quantity_kind: null,
-      tensor_order: 0,
-      dtype: 'float64',
-      data_schema: { dtype: 'float64', axes: [{ name: 'sample', length: 2 }] },
-      data: {
-        shape: [2],
-        axes: [{ implicitOrdinal: true }],
-        storage: { kind: 'inline', value: [1.5, 2.5] },
-      },
-    },
+    inline: gridLeaf,
     encoded: {
+      ...gridLeaf,
       experiment_record_id: 12,
-      quantity_kind: null,
-      tensor_order: 0,
-      dtype: 'float64',
-      data_schema: { dtype: 'float64', axes: [{ name: 'frequency', ticks: [10, 20] }] },
       data: {
-        shape: [2],
-        axes: [{ ticks: [10, 20] }],
-        storage: { kind: 'base64', data: encodedBytes.toString('base64'), byteLength: encodedBytes.byteLength },
+        ...gridTensor,
+        storage: { kind: 'base64' as const, data: gridBytes.toString('base64'), byteLength: gridBytes.length },
       },
     },
   },
-} as const satisfies MeasurementRecordedData
+} satisfies MeasurementRecordedData
 const recordedSamples = predictionRecordedSamples(recordedTree, 41)
-const complexRecordedRowSample = predictionRecordedRowSample({
-  ...recordedTree.group.complexScalar,
-  measurement_id: 41,
-  name: 'group.complexScalar',
-})
-assert.deepEqual(complexRecordedRowSample.values, [3, 4])
 assert.equal(predictionRecordedSamplesMatchRules(recordedSamples.samples, recordedSamples.rules), true)
-const incompatibleRecordedRules = recordedSamples.rules.map((rule, index) =>
-  index === 0 ? { ...rule, result: { ...rule.result, unit: 'incompatible-unit' } } : rule,
+assert.equal(
+  predictionRecordedSamplesMatchRules(
+    recordedSamples.samples,
+    recordedSamples.rules.map((rule) => ({ ...rule, result: { ...rule.result, unit: 'm' } })),
+  ),
+  false,
 )
-assert.equal(predictionRecordedSamplesMatchRules(recordedSamples.samples, incompatibleRecordedRules), false)
-const recordedByKey = new Map(recordedSamples.samples.map((sample) => [sample.layout.key, sample]))
-assert.deepEqual(recordedByKey.get('group.inline')?.layout.axes?.[0].ticks, [0, 1])
-assert.deepEqual(recordedByKey.get('group.inline')?.values, [1.5, 2.5])
-assert.deepEqual(recordedByKey.get('group.encoded')?.values, [3.5, -2.25])
-assert.deepEqual(recordedByKey.get('group.complexScalar')?.values, [3, 4])
-assert.deepEqual(recordedByKey.get('group.complexEncoded')?.layout.shape, [2, 2])
-assert.deepEqual(recordedByKey.get('group.complexEncoded')?.values, [1, -2, 3, -4, 5, -6, 7, -8])
+assert.deepEqual(
+  recordedSamples.samples.map((sample) => sample.values),
+  [
+    [2, 4, 6, 8],
+    [2, 4, 6, 8],
+  ],
+)
 const reconstructedRecorded = predictedRecordedData(recordedSamples.samples, recordedSamples.rules)
-const reconstructedInline = reconstructedRecorded['group.inline']
-assert.ok(isDataTensor(reconstructedInline))
-const inlineRule = recordedSamples.rules.find((rule) => rule.label === 'group.inline')!
-assert.deepEqual(createDataTensorAccessor(inlineRule.result, reconstructedInline).materialize(), [1.5, 2.5])
-const complexEncodedRule = recordedSamples.rules.find((rule) => rule.label === 'group.complexEncoded')!
-const reconstructedComplexEncoded = reconstructedRecorded['group.complexEncoded']
-assert.ok(isDataTensor(reconstructedComplexEncoded))
-assert.deepEqual(createDataTensorAccessor(complexEncodedRule.result, reconstructedComplexEncoded).materialize(), [
-  [
-    { re: 1, im: -2 },
-    { re: 3, im: -4 },
-  ],
-  [
-    { re: 5, im: -6 },
-    { re: 7, im: -8 },
-  ],
-])
-
-const complexScalarRule = recordedSamples.rules.find((rule) => rule.label === 'group.complexScalar')!
-const complexScalarLayout = recordedByKey.get('group.complexScalar')!.layout
-const complexModel = buildPredictionKnnModel({
-  direction: 'forward',
-  fingerprint: 'complex-forward-v1',
-  k: 2,
-  weighting: 'uniform',
-  inputScaling: 'range',
-  inputKeys: ['x'],
-  outputKeys: ['group.complexScalar'],
-  outputDtypes: { 'group.complexScalar': 'complex64' },
-  rows: [
-    row(1, [scalar('x', 0, { minimum: 0, maximum: 10 })], [{ layout: complexScalarLayout, values: [2, 4] }]),
-    row(2, [scalar('x', 10, { minimum: 0, maximum: 10 })], [{ layout: complexScalarLayout, values: [6, 8] }]),
-  ],
-})
-assert.equal(complexModel.outputSize, 2)
-const complexCohortWithInvalidRow = selectPredictionCohort({
-  direction: 'forward',
-  fingerprint: 'complex-invalid-row',
-  inputKeys: ['x'],
-  outputKeys: ['group.complexScalar'],
-  rows: [
-    row(1, [scalar('x', 0)], [{ layout: complexScalarLayout, values: [2, 4] }]),
-    row(2, [scalar('x', 10)], [{ layout: complexScalarLayout, values: [Number.NaN, 8] }]),
-  ],
-})
-assert.equal(complexCohortWithInvalidRow.summary.includedRows, 1)
-assert.equal(complexCohortWithInvalidRow.summary.excluded['invalid-tensor'], 1)
-const complexPrediction = predictWithKnn(complexModel, [scalar('x', 5, { minimum: 0, maximum: 10 })])
-assert.deepEqual(complexPrediction.output[0].values, [4, 6])
-const predictedComplexRecorded = predictedRecordedData(complexPrediction.output, [complexScalarRule])
-const predictedComplexTensor = predictedComplexRecorded['group.complexScalar']
-assert.ok(isDataTensor(predictedComplexTensor))
-assert.deepEqual(createDataTensorAccessor(complexScalarRule.result, predictedComplexTensor).materialize(), {
-  re: 4,
-  im: 6,
-})
-const calculationInput = createCalculationInput([complexScalarRule], predictedComplexRecorded)
-const complexMagnitudeSource = `import { abs } from 'mathjs'
-export default function calculate(input) {
-  return { dtype: 'float64', data: abs(input['group.complexScalar'].data) }
-}`
-const complexMagnitude = executeCalculation(
-  transformCalculationSource(
-    complexMagnitudeSource,
-    'complex-forward-calculation',
-    analyzeCalculationSource(complexMagnitudeSource),
-  ),
-  calculationInput,
-  () => {},
-)
-assert.equal(complexMagnitude.dtype, 'float64')
-assert.ok(Math.abs((complexMagnitude.data as number) - Math.sqrt(52)) < 1e-12)
-const ordinalFallbacks: { axisIndex: number; blockKey: string; length: number }[] = []
-predictedRecordedData(
-  recordedSamples.samples.map((sample) =>
-    sample.layout.key === 'group.inline' ? { ...sample, layout: { ...sample.layout, axes: undefined } } : sample,
-  ),
-  recordedSamples.rules,
-  (warning) => ordinalFallbacks.push(warning),
-)
-assert.deepEqual(ordinalFallbacks, [{ axisIndex: 0, blockKey: 'group.inline', length: 2 }])
+assert.ok(isDataTensor(reconstructedRecorded['group.inline']))
+const calculationInput = createCalculationInput(recordedSamples.rules, reconstructedRecorded)
+assert.deepEqual(calculationInput['group.inline'].data, [2, 4, 6, 8])
+assert.deepEqual(calculationInput['group.encoded'].boxGrid, gridInput.boxGrid)
 assert.throws(() => predictedRecordedData(recordedSamples.samples.slice(1), recordedSamples.rules))
+assert.throws(() =>
+  predictionRecordedRowSample({
+    name: 'legacy',
+    measurement_id: 41,
+    experiment_record_id: 13,
+    quantity_kind: null,
+    tensor_order: 0,
+    dtype: 'complex64',
+    data_schema: { dtype: 'complex64' },
+    data: { shape: [], storage: { kind: 'inline', value: { re: 3, im: 4 } } },
+  }),
+)
 
 const calculationTensor = {
   dtype: 'float64',

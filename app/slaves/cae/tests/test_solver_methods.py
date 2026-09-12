@@ -16,7 +16,7 @@ from app.methods.structured import (
 from app.solvers.dc_current_density.domain import DcDomain
 from app.solvers.dc_current_density.formulation import DcSolution
 from app.solvers.dc_current_density.outputs import build_dc_outputs
-from app.solvers.ray_tracing.outputs import build_ray_outputs
+from app.solvers.ray_tracing.outputs import PathCollector
 from app.solvers.steady_state_heat.formulation import _volume_source
 
 
@@ -110,10 +110,10 @@ class SolverOutputTests(unittest.TestCase):
             0,
             0.0,
         )
-        config = {"outputs": [{"methodId": "dc.joule-heating", "key": "jouleHeating"}]}
+        config = {"outputs": [], "exports": [{"methodId": "dc.joule-heating", "key": "jouleHeating"}]}
         descriptor = {
             "methods": {
-                "outputs": [
+                "outputs": [], "exports": [
                     {
                         "methodId": "dc.joule-heating",
                         "data": {"quantityKind": "PowerDensity", "unit": "W.m-3"},
@@ -125,26 +125,19 @@ class SolverOutputTests(unittest.TestCase):
         async def progress(_event: object) -> None:
             return None
 
-        artifacts = asyncio.run(build_dc_outputs(config, descriptor, solution, progress))
-        field = artifacts["jouleHeating"]
+        artifacts, exports = asyncio.run(build_dc_outputs(config, descriptor, solution, progress))
+        field = exports["jouleHeating"]
+        self.assertEqual(artifacts, {})
         self.assertIsInstance(field, FieldValue)
         self.assertEqual(field.domain.identity, domain_ref.identity)
         self.assertIsInstance(field.values, np.ndarray)
         self.assertEqual(field.domain.shape, field.values.shape)
 
-    def test_ray_path_artifact_is_only_added_when_requested(self) -> None:
-        bundle = BundleValue("caemble.ray/paths@1", {"vertices": {"value": np.empty((0, 3), dtype=np.float32)}})
-        config = {"outputs": [{"methodId": "ray.paths", "key": "paths"}]}
-        progress_events: list[object] = []
-
-        async def progress(event: object) -> None:
-            progress_events.append(event)
-
-        artifacts = asyncio.run(build_ray_outputs(config, [], 0.0, bundle, progress, {}))
-
-        self.assertEqual(artifacts["paths"].bundle_type, "caemble.ray/paths@1")
-        self.assertIs(artifacts["paths"], bundle)
-        self.assertEqual(len(progress_events), 1)
+    def test_empty_ray_path_visualization_is_available_without_output_request(self) -> None:
+        bundle = PathCollector(0).bundle()
+        self.assertEqual(bundle.bundle_type, "caemble.ray/paths@1")
+        self.assertEqual(bundle.members["pathOffsets"]["value"].tolist(), [0])
+        self.assertEqual(bundle.members["vertices"]["value"].shape, (0, 3))
 
 
 if __name__ == "__main__":

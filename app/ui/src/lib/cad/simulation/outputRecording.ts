@@ -3,6 +3,8 @@ import { CadModelError } from '../model/errors'
 import type { DefinedKernelTask, RecordedDataSpecNode, RecordedDataSpec } from './types'
 import type { RecordedResultContract } from '@/contracts/results'
 import type { KernelTaskConfig } from './kernelContract'
+import type { KernelArtifactDataSpec } from '@/contracts/solver'
+import { assertBoxGridProfile } from '@/contracts/boxGrid'
 
 /** The common tet volume serialization, not a Solver-specific output declaration. */
 function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string, nodeIds = false): RecordedDataSpecNode {
@@ -57,6 +59,49 @@ function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string, nodeIds =
   } as RecordedDataSpecNode
 }
 
+export function projectArtifactRecordingSchema(
+  artifactData: KernelArtifactDataSpec,
+  referenceLengthUnit: string,
+): RecordedDataSpecNode {
+  const { visualization, recording, ...data } = artifactData
+  let schema: RecordedDataSpecNode = 'resourceKind' in data ? data.members : (data as RecordedDataSpec)
+  if (recording === 'mesh-field')
+    schema = meshFieldSchema(data as RecordedDataSpec, referenceLengthUnit, Boolean(visualization?.nodeIdsPath))
+  if (recording === 'mesh-series' && 'resourceKind' in data) {
+    schema = {
+      ...data.members,
+      field: meshFieldSchema(data.members.field as RecordedDataSpec, referenceLengthUnit, true),
+    } as RecordedDataSpecNode
+  }
+  if (recording === 'structured-field') {
+    const values = data as RecordedDataSpec
+    schema = {
+      values,
+      location: { dtype: 'string' },
+      quantity: { dtype: 'string' },
+      valueUnit: { dtype: 'string' },
+      domain: {
+        kind: { dtype: 'string' },
+        identity: { dtype: 'string' },
+        lengthUnit: { dtype: 'string' },
+        shape: { dtype: 'int64', axes: [{ name: 'dimension' }] },
+        coordinates: Object.fromEntries(
+          (values.axes ?? []).map((axis, index) => [
+            `axis${index}`,
+            {
+              dtype: 'float64',
+              quantityKind: 'Length',
+              unit: referenceLengthUnit,
+              axes: [{ name: axis.name }],
+            },
+          ]),
+        ),
+      },
+    } as RecordedDataSpecNode
+  }
+  return schema
+}
+
 export function resolveRecordedResult(
   node: RecordedDataSpecNode,
   tasks: Readonly<Record<string, DefinedKernelTask>>,
@@ -84,53 +129,17 @@ export function resolveRecordedResult(
   const method = descriptor?.methods.outputs.find((candidate) => candidate.methodId === output.methodId)
   if (!method || !descriptor || !method.data.visualization)
     throw new CadModelError(`${path} output has no semantic Catalog contract.`)
-  const { visualization, recording, ...data } = method.data
-  let schema: RecordedDataSpecNode = 'resourceKind' in data ? data.members : (data as RecordedDataSpec)
-  if (recording === 'mesh-field')
-    schema = meshFieldSchema(
-      data as RecordedDataSpec,
-      descriptor.referenceLengthUnit,
-      Boolean(visualization.nodeIdsPath),
-    )
-  if (recording === 'mesh-series' && 'resourceKind' in data) {
-    schema = {
-      ...data.members,
-      field: meshFieldSchema(data.members.field as RecordedDataSpec, descriptor.referenceLengthUnit, true),
-    } as RecordedDataSpecNode
-  }
-  if (recording === 'structured-field') {
-    const values = data as RecordedDataSpec
-    schema = {
-      values,
-      location: { dtype: 'string' },
-      quantity: { dtype: 'string' },
-      valueUnit: { dtype: 'string' },
-      domain: {
-        kind: { dtype: 'string' },
-        identity: { dtype: 'string' },
-        lengthUnit: { dtype: 'string' },
-        shape: { dtype: 'int64', axes: [{ name: 'dimension' }] },
-        coordinates: Object.fromEntries(
-          (values.axes ?? []).map((axis, index) => [
-            `axis${index}`,
-            {
-              dtype: 'float64',
-              quantityKind: 'Length',
-              unit: descriptor.referenceLengthUnit,
-              axes: [{ name: axis.name }],
-            },
-          ]),
-        ),
-      },
-    } as RecordedDataSpecNode
-  }
+  if (!('boxGrid' in method.data) || !method.data.boxGrid)
+    throw new CadModelError(`${path} must reference a Box Grid Output; exports and visualizations cannot be recorded.`)
+  assertBoxGridProfile(method.data.boxGrid)
+  const schema = projectArtifactRecordingSchema(method.data, descriptor.referenceLengthUnit)
   return Object.freeze({
     task: node.task,
     output: node.output,
     solver: { ...task.kernel },
     artifactType: method.artifactType,
     catalogRevision: catalog.catalogRevision,
-    visualization: structuredClone(visualization),
+    visualization: structuredClone(method.data.visualization),
     schema: structuredClone(schema),
   })
 }

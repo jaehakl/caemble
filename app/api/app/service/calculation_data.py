@@ -14,6 +14,7 @@ from db import (
     CalculationData,
     CalculationExperimentRecord,
     Experiment,
+    ExperimentRecord,
     Measurement,
     RecordedData,
 )
@@ -28,6 +29,7 @@ from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user
 from service.experiment_access import require_experiment_read, require_experiment_write
 from service.calculation import calculation_output_contract
+from service.box_grid import validate_box_grid_schema
 
 
 CALCULATION_DATA_CRUD_SPEC = CrudSpec(
@@ -370,6 +372,11 @@ async def save_calculation_data(
             )
         ).all()
     )
+    for record in (await db.scalars(select(ExperimentRecord).where(ExperimentRecord.id.in_(required_record_ids)))).all():
+        try:
+            validate_box_grid_schema(record.data_schema)
+        except ValueError as error:
+            raise HTTPException(422, f"Calculation inputs must be Box Grid Outputs: {record.id}. {error}") from error
     if available_record_ids != required_record_ids:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

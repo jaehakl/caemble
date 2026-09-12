@@ -1,3 +1,5 @@
+import type { BoxGridProfile } from './boxGrid'
+
 export type KernelArtifactType = `${string}@${number}`
 
 type KernelFloatDType = 'float16' | 'float32' | 'float64' | 'complex64'
@@ -13,7 +15,7 @@ export type KernelDataAxis = Readonly<{
 }> &
   Readonly<{ unit: string; quantityKind: string } | { unit?: never; quantityKind?: never }>
 
-export type KernelDataSpec = Readonly<{ axes?: readonly KernelDataAxis[] }> &
+export type KernelDataSpec = Readonly<{ axes?: readonly KernelDataAxis[]; boxGrid?: BoxGridProfile }> &
   Readonly<
     | {
         dtype: KernelFloatDType
@@ -34,7 +36,7 @@ export type KernelStructuredBundleSpec = Readonly<{
   members: Readonly<Record<string, KernelDataSpec>>
 }>
 export type ResultVisualization = Readonly<{
-  kind: 'tensor' | 'bundle' | 'mesh-field' | 'structured-field' | 'polyline'
+  kind: 'tensor' | 'bundle' | 'mesh-field' | 'structured-field' | 'polyline' | 'box-grid'
   coordinateSpace?: 'experiment'
   valuePath?: string
   fieldPath?: string
@@ -77,7 +79,7 @@ export type KernelParameterDescriptor = Readonly<{
 }>
 
 export type KernelTargetDescriptor = Readonly<{
-  source: 'experiment' | 'task'
+  source: 'experiment' | 'task' | 'either'
   kind: 'geometry' | 'surface'
   minimumTargets: number
   maximumTargets: number
@@ -132,6 +134,9 @@ export type KernelDescriptor = Readonly<{
   description: string
   referenceLengthUnit: string
   minimumOutputs?: number
+  visualizations?: Readonly<
+    Record<string, Readonly<{ artifactType: KernelArtifactType; data: KernelArtifactDataSpec }>>
+  >
   parameters: Readonly<Record<string, KernelParameterDescriptor>>
   materials: readonly KernelMaterialDescriptor[]
   inputPorts: Readonly<Record<string, KernelInputPortDescriptor>>
@@ -140,5 +145,6 @@ export type KernelDescriptor = Readonly<{
     initializations: readonly KernelMethodDescriptor[]
     boundaryConditions: readonly KernelMethodDescriptor[]
     outputs: readonly KernelOutputMethodDescriptor[]
+    exports: readonly KernelOutputMethodDescriptor[]
   }>
 }>

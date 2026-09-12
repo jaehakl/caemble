@@ -12,3 +12,20 @@ export type RecordedResultContract = Readonly<{
 }>
 
 export type RecordedResultContracts = Readonly<Record<string, RecordedResultContract>>
+
+export type ResultProvenance = Readonly<{
+  task: string
+  solver: Readonly<{ name: string; version: string }>
+  stateRevision: number
+  invocation: number
+  catalogRevision: string
+}>
+
+export type MeasurementVisualization = Readonly<{
+  contract: Readonly<{ artifactType: string; visualization: ResultVisualization }>
+  schema: Readonly<Record<string, unknown>>
+  data: unknown
+  provenance: ResultProvenance
+}>
+
+export type MeasurementVisualizations = Readonly<Record<string, Readonly<Record<string, MeasurementVisualization>>>>

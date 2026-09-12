@@ -16,7 +16,7 @@ function recordedDataLeaf(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Measurement recorded-data wire contract', () => {
-  it('reads explicitly stored mesh axes as Calculation inputs without changing the API response', () => {
+  it('keeps explicitly stored legacy mesh axes readable but rejects them as Calculation inputs', () => {
     const response = parseMeasurementRecordedDataResponse({
       result_contracts: null,
       recorded_data: {
@@ -45,7 +45,7 @@ describe('Measurement recorded-data wire contract', () => {
     })
     const before = JSON.stringify(response)
     const snapshot = recordedDataTreeSnapshot(response.recorded_data, 57)
-    expect(() => createCalculationInput(snapshot.rules, snapshot.flatData)).not.toThrow()
+    expect(() => createCalculationInput(snapshot.rules, snapshot.flatData)).toThrow(/Box Grid/)
     expect(JSON.stringify(response)).toBe(before)
     expect(snapshot.flatData['displacement.domain.cells.tet4']).toMatchObject({
       axes: [{ implicitOrdinal: true }, { implicitOrdinal: true }],

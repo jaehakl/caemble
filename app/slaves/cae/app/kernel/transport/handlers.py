@@ -47,21 +47,27 @@ async def run_measurement(
                 run.pending = item
                 stored = message.get("storage_version") == 1
                 value = await externalize_record(context, item.value, {part.id: part.data for part in item.attachments}) if stored else item.value
+                payload = ({"type": "job.visualization", "sequence": item.sequence,
+                            "task": item.name, "visualizations": value}
+                           if item.kind == "visualization" else
+                           {"type": "job.record", "sequence": item.sequence, "name": item.name, "value": value})
                 await context.send(
-                    {"type": "job.record", "sequence": item.sequence, "name": item.name, "value": value},
+                    payload,
                     () if stored else item.attachments,
                 )
                 acknowledgement, _ = await asyncio.wait_for(
                     context.receive(), timeout=RECORD_ACK_TIMEOUT_SECONDS,
                 )
-                if acknowledgement.get("type") != "job.record.ack":
-                    raise ProtocolError("Expected job.record.ack")
+                expected_ack = f"job.{item.kind}.ack"
+                if acknowledgement.get("type") != expected_ack:
+                    raise ProtocolError(f"Expected {expected_ack}")
                 run.acknowledge(acknowledgement.get("sequence"))
                 continue
             if item["kind"] == "failed":
                 raise CaeError(item["error"]["code"], item["error"]["message"])
             if item["kind"] == "complete":
                 return {"recordSequences": item["recordSequences"],
+                        "visualizationSequences": item.get("visualizationSequences", []),
                         **({"executionTrace": run.trace} if message.get("preflight") else {})}
     finally:
         await run.close()

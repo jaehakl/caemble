@@ -36,8 +36,7 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
     measurement = json.loads((build / manifest["items"][0]["file"]).read_text(encoding="utf-8"))["measurement"]
     experiment = measurement["experiment"]
     assert set(experiment["simulationProgram"]["recordedData"]) == {
-        f"{name}{wavelength}" for name in ("scattered", "referenceScattered", "incident")
-        for wavelength in (1000, 1500)
+        "scattered", "referenceScattered", "incident",
     }
     for layer, size in (("lower", 5), ("upper", 4)):
         np.testing.assert_array_equal(experiment["variables"][layer + "DiameterNm"], np.full((size, size), diameter_nm))
@@ -196,8 +195,8 @@ def test_catalog_fresnel_matches_complex_gaussian_and_vacuum(tmp_path, wavelengt
     source = tmp_path / "calculation.js"
     source.write_text(calculation["source_code"], encoding="utf-8")
     ticks = np.linspace(-2e-6, 2e-6, 81)
-    xs = ticks if scenario != "quadrature" else (np.linspace(-1, 1, 47)**3 * 1.7e-6)
-    ys = ticks if scenario != "quadrature" else (np.linspace(-1, 1, 39)**3 * 1.5e-6)
+    xs = ticks if scenario != "quadrature" else np.linspace(-1.7e-6, 1.7e-6, 47)
+    ys = ticks if scenario != "quadrature" else np.linspace(-1.5e-6, 1.5e-6, 39)
     xx, yy = np.meshgrid(xs, ys)
     waist = 0.4e-6
     radius_squared = (xx - 0.25e-6)**2 + (yy + 0.15e-6)**2
@@ -207,27 +206,39 @@ def test_catalog_fresnel_matches_complex_gaussian_and_vacuum(tmp_path, wavelengt
     if scenario == "quadrature":
         field[0, 0, :, :, 1] = (0.2 - 0.1j) * np.exp(-radius_squared / waist**2 + 1j * xx * yy / waist**2)
     zero = np.zeros_like(field.real)
-    axes = [
-        {"name":"frequency", "ticks":[299792458 / (wavelength_nm * 1e-9)], "unit":"Hz"},
-        {"name":"z", "ticks":[-0.355e-6], "unit":"m"},
-        {"name":"y", "ticks":ys.tolist(), "unit":"m"},
-        {"name":"x", "ticks":xs.tolist(), "unit":"m"},
-    ]
     fixture = {}
     incident_amplitude = 0.7 + 0.4j
     separation = 0.1e-6
     reference_leakage = zero + 0.001 - 0.002j
     scattered = field * incident_amplitude * np.exp(-2j*np.pi*separation/(wavelength_nm*1e-9)) + reference_leakage
+    spacing = [float(xs[1] - xs[0]), float(ys[1] - ys[0]), 1e-8]
+    size = [len(xs) * spacing[0], len(ys) * spacing[1], spacing[2]]
     for name, values in (("scattered", scattered), ("referenceScattered", reference_leakage), ("incident", zero + np.array([incident_amplitude, 0., 0.]))):
-        record_axes = [dict(axis) for axis in axes]
-        if name == "incident":
-            record_axes[1] = {"name":"z", "ticks":[-0.355e-6 + separation], "unit":"m"}
-        for part, data in (("real", values.real), ("imag", values.imag)):
-            fixture[f"{name}{wavelength_nm}.{part}"] = {
-                "dtype":"float64", "shape":list(field.shape), "data":data.ravel().tolist(),
-                "axes":record_axes, "tensorOrder":1, "unit":"V.m-1",
-                "quantityKind":"electromagnetism.ElectricFieldStrength",
-            }
+        plane_z = -0.355e-6 + (separation if name == "incident" else 0)
+        origin = [float(xs[0] - spacing[0] / 2), float(ys[0] - spacing[1] / 2), plane_z - spacing[2] / 2]
+        vector = values[0, 0].transpose(1, 0, 2)
+        polar = np.stack([np.abs(vector), np.angle(vector)], axis=-2)
+        fixture[name] = {
+            "dtype":"float64", "shape":[len(xs), len(ys), 1, 1, 1, 2, 3],
+            "data":polar.ravel().tolist(), "tensorOrder":1, "unit":"V.m-1",
+            "quantityKind":"electromagnetism.ElectricFieldStrength",
+            "axes":[
+                {"name":"x", "ticks":(xs - origin[0]).tolist(), "unit":"m"},
+                {"name":"y", "ticks":(ys - origin[1]).tolist(), "unit":"m"},
+                {"name":"z", "ticks":[spacing[2] / 2], "unit":"m"},
+                {"name":"time", "ticks":[0], "unit":"s"},
+                {"name":"frequency", "ticks":[299792458 / (wavelength_nm * 1e-9)], "unit":"Hz"},
+                {"name":"amplitudePhase", "ticks":["amplitude", "phase"]},
+                {"name":"component", "ticks":["x", "y", "z"]},
+            ],
+            "boxGrid":{
+                "version":1, "sampling":"point", "components":["x", "y", "z"],
+                "channels":["amplitude", "phase"], "channelUnits":["V.m-1", "rad"],
+                "frequencyKind":"sampled", "origin":origin, "size":size,
+                "rotation":[[1, 0, 0], [0, 1, 0], [0, 0, 1]], "lengthUnit":"m",
+                "gridShape":[len(xs), len(ys), 1], "source":"task", "rootId":name,
+            },
+        }
     input_path = tmp_path / "input.json"
     input_path.write_text(json.dumps(fixture), encoding="utf-8")
     output_path = tmp_path / "output.json"

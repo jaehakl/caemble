@@ -4,7 +4,7 @@ import { caeBatches } from '@/api/cae'
 import { resolveObjects } from '@/api/objectStorage'
 import { sha256Bytes, submitArtifact } from '@/api/submitArtifact'
 import { BUILD_VERSION, type BuildArtifact } from '@/contracts/build'
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
 import { fetchCatalogRuntimeSlice } from '@/features/viewer/workspace/catalogRuntime'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import { cadSourceHash, type ExperimentSourceDocument } from '@/lib/cad/source'
@@ -22,6 +22,7 @@ type PreflightResult = Readonly<{
   result_contracts: RecordedResultContracts
   schemas: RecordedDataSchemaTree
   recorded_data: RecordedData
+  visualizations?: MeasurementVisualizations
 }>
 
 export function usePreflight(
@@ -159,10 +160,22 @@ export function usePreflight(
           errors[name] = cause instanceof Error ? cause.message : String(cause)
         }
       }
+      const visualizations: Record<string, Record<string, MeasurementVisualizations[string][string]>> = {}
+      for (const [task, entries] of Object.entries(payload.visualizations ?? {})) {
+        visualizations[task] = {}
+        for (const [key, entry] of Object.entries(entries)) {
+          try {
+            visualizations[task][key] = { ...entry, data: await resolveObjects(browserClient, entry.data, signal) }
+          } catch (cause) {
+            signal.throwIfAborted()
+            errors[`@visualizations.${task}.${key}`] = cause instanceof Error ? cause.message : String(cause)
+          }
+        }
+      }
       signal.throwIfAborted()
       if (active.current !== execution) return
       setResult({
-        payload,
+        payload: { ...payload, visualizations },
         experiment,
         document,
         errors,
@@ -201,7 +214,13 @@ export function usePreflight(
       setStatus('취소됨')
     } else if (document.completedCandidateGeneration === request.generation) {
       pending.current = null
-      if (document.successfulCandidateGeneration === request.generation && document.successfulRevision === document.revision && document.variables && document.measurement && document.evaluatedSnapshot) {
+      if (
+        document.successfulCandidateGeneration === request.generation &&
+        document.successfulRevision === document.revision &&
+        document.variables &&
+        document.measurement &&
+        document.evaluatedSnapshot
+      ) {
         void runRef.current()
       } else {
         setBusy(false)

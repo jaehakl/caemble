@@ -1,47 +1,19 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import math
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import numpy as np
 
-from app.methods.geometry import TriangularMesh
-from app.methods.optics import perpendicular
-from app.kernel.api import BundleValue, FieldValue, StructuredGridValue
+from app.kernel.api import BundleValue
 from app.kernel.api.world import target_group
 
 from .domain import surface_triangle_keys
 
-PATH_OUTPUT_METHOD = "ray.paths"
-DETECTOR_OUTPUT_METHODS = frozenset(
-    {"ray.detector-power", "ray.detector-efficiency", "ray.detector-irradiance"}
-)
-
-
 @dataclass(slots=True)
 class Detector:
-    output: dict[str, Any]
     triangle_keys: set[tuple[str, int]]
-    normal: np.ndarray[Any, Any]
-    u_axis: np.ndarray[Any, Any]
-    v_axis: np.ndarray[Any, Any]
-    minimum_u: float
-    minimum_v: float
-    extent_u: float
-    extent_v: float
-    shape: tuple[int, int]
-    power: np.ndarray[Any, Any]
-
-    def deposit(self, position: np.ndarray[Any, Any], value: float) -> None:
-        u_value = float(np.dot(position, self.u_axis))
-        v_value = float(np.dot(position, self.v_axis))
-        column = min(self.shape[1] - 1, max(0, int((u_value - self.minimum_u) / self.extent_u * self.shape[1])))
-        row = min(self.shape[0] - 1, max(0, int((v_value - self.minimum_v) / self.extent_v * self.shape[0])))
-        self.power[row, column] += value
 
 
 @dataclass(slots=True)
@@ -49,6 +21,11 @@ class PathCollector:
     maximum_paths: int
     paths: list[Any] = field(default_factory=list)
     detected_power: float = 0.0
+    tallies: list[Any] = field(default_factory=list)
+
+    def score(self, origin, direction, length, power, absorption, wavelength):
+        for tally in self.tallies:
+            tally.score(origin, direction, length, power, absorption, wavelength)
 
     def finish(self, ray: Any) -> None:
         if len(self.paths) < self.maximum_paths and len(ray.vertices) >= 2:
@@ -90,142 +67,76 @@ class PathCollector:
         })
 
 
-def build_detectors(
-    config: dict[str, Any],
-    scene: dict[str, Any],
-    meshes: dict[str, TriangularMesh],
-) -> list[Detector]:
-    result: list[Detector] = []
-    for output in config["outputs"]:
-        method = output["methodId"]
-        if method not in DETECTOR_OUTPUT_METHODS:
-            continue
-        keys = surface_triangle_keys(scene, target_group(output, "surface"), meshes)
-        triangles = [
-            meshes[root_id].vertices[meshes[root_id].triangles[triangle_index]]
-            for root_id, triangle_index in keys
-        ]
-        triangle_values = np.asarray(triangles, dtype=np.float64)
-        crosses = np.cross(
-            triangle_values[:, 1] - triangle_values[:, 0],
-            triangle_values[:, 2] - triangle_values[:, 0],
-        )
-        lengths = np.linalg.norm(crosses, axis=1)
-        normal = (crosses / lengths[:, None])[0]
-        points = triangle_values.reshape((-1, 3))
-        u_axis = perpendicular(normal)
-        v_axis = np.cross(normal, u_axis)
-        u_values = points @ u_axis
-        v_values = points @ v_axis
-        extent_u = float(np.ptp(u_values))
-        extent_v = float(np.ptp(v_values))
-        shape = (1, 1)
-        if method == "ray.detector-irradiance":
-            shape_values = output["parameters"]["pixelShape"]
-            shape_values = shape_values.get("value") if isinstance(shape_values, dict) else shape_values
-            if isinstance(shape_values, np.ndarray):
-                shape_values = shape_values.tolist()
-            shape = (int(shape_values[0]), int(shape_values[1]))
-        result.append(
-            Detector(
-                output,
-                keys,
-                normal,
-                u_axis,
-                v_axis,
-                float(np.min(u_values)),
-                float(np.min(v_values)),
-                extent_u,
-                extent_v,
-                shape,
-                np.zeros(shape, dtype=np.float64),
-            )
-        )
-    return result
+def build_detectors(config, scene, meshes):
+    return [Detector(surface_triangle_keys(scene, target_group(rule, "surface"), meshes))
+            for rule in config["boundaryConditions"] if rule["methodId"] == "ray.absorbing-detector"]
 
 
-async def build_ray_outputs(
-    config: dict[str, Any],
-    detectors: list[Detector],
-    total_source_power: float,
-    path_bundle: BundleValue,
-    progress: Callable[[Any], Awaitable[None]],
-    descriptor: Mapping[str, Any],
-) -> dict[str, Any]:
-    artifacts: dict[str, Any] = {}
-    detector_by_key = {detector.output["key"]: detector for detector in detectors}
-    outputs = config["outputs"]
-    for index, output in enumerate(outputs):
-        method = output["methodId"]
-        key = output["key"]
-        if method == PATH_OUTPUT_METHOD:
-            artifacts[key] = path_bundle
-        elif method in DETECTOR_OUTPUT_METHODS:
-            detector = detector_by_key[key]
-            detected_power = float(np.sum(detector.power))
-            if method == "ray.detector-power":
-                artifacts[key] = {"value": detected_power}
-            elif method == "ray.detector-efficiency":
-                artifacts[key] = {
-                    "value": detected_power / total_source_power if total_source_power > 0 else 0.0
-                }
+@dataclass
+class VolumeTally:
+    key: str
+    grid: Any
+    data: Any
+    frequencies: np.ndarray
+    values: np.ndarray = field(init=False)
+
+    def __post_init__(self):
+        self.values = np.zeros((*self.grid.shape, len(self.frequencies), len(self.data["boxGrid"]["components"])), dtype=float)
+        from app.kernel.api.units import convert_ucum_value
+        scale = convert_ucum_value(1, self.grid.geometry["lengthUnit"], "m")
+        self.origin = np.asarray(self.grid.geometry["origin"], dtype=float) * scale
+        self.size = np.asarray(self.grid.geometry["size"], dtype=float) * scale
+        self.rotation = np.asarray(self.grid.geometry["rotation"], dtype=float)
+        self.widths = self.size / self.grid.shape
+        self.volume = np.prod(self.widths)
+
+    def interval(self, origin, direction, length=np.inf):
+        local = (np.asarray(origin) - self.origin) @ self.rotation
+        velocity = np.asarray(direction) @ self.rotation
+        start, end = 0.0, length
+        for axis in range(3):
+            if abs(velocity[axis]) <= 1e-15:
+                if local[axis] < 0 or local[axis] > self.size[axis]:
+                    return None
+                continue
+            first, last = sorted((-local[axis] / velocity[axis],
+                                  (self.size[axis] - local[axis]) / velocity[axis]))
+            start, end = max(start, first), min(end, last)
+        return (start, end, local, velocity) if end > start else None
+
+    def score(self, origin, direction, length, power, absorption, wavelength):
+        interval = self.interval(origin, direction, length)
+        if interval is None:
+            return
+        start, end, local, velocity = interval
+        crossings = [start, end]
+        for axis in range(3):
+            if abs(velocity[axis]) > 1e-15:
+                distances = (np.arange(1, self.grid.shape[axis]) * self.widths[axis] - local[axis]) / velocity[axis]
+                crossings.extend(distances[(distances > start) & (distances < end)])
+        crossings = np.unique(crossings)
+        frequency = int(np.searchsorted(self.frequencies, 299792458.0 / wavelength))
+        for first, last in zip(crossings[:-1], crossings[1:], strict=True):
+            position = local + velocity * ((first + last) / 2)
+            cell = tuple(np.clip(np.floor(position / self.widths).astype(int), 0, np.asarray(self.grid.shape) - 1))
+            integral = (power * (last - first) if absorption == 0 else
+                        power * math.exp(-absorption * first) * -math.expm1(-absorption * (last - first)) / absorption)
+            contribution = integral / self.volume
+            if self.values.shape[-1] == 3:
+                self.values[(*cell, frequency)] += contribution * np.asarray(direction)
             else:
-                pixel_area = detector.extent_u * detector.extent_v / math.prod(detector.shape)
-                u_ticks = (
-                    detector.minimum_u
-                    + (np.arange(detector.shape[1]) + 0.5) * detector.extent_u / detector.shape[1]
-                )
-                v_ticks = (
-                    detector.minimum_v
-                    + (np.arange(detector.shape[0]) + 0.5) * detector.extent_v / detector.shape[0]
-                )
-                axes = [
-                    {
-                        "ticks": v_ticks.tolist(),
-                        "spacing": detector.extent_v / detector.shape[0],
-                    },
-                    {
-                        "ticks": u_ticks.tolist(),
-                        "spacing": detector.extent_u / detector.shape[1],
-                    },
-                ]
-                data = next(
-                    item["data"]
-                    for item in descriptor["methods"]["outputs"]
-                    if item["methodId"] == method
-                )
-                artifacts[key] = FieldValue(
-                    domain=_detector_domain(detector, axes, descriptor["referenceLengthUnit"]),
-                    location="cell",
-                    values=detector.power / pixel_area,
-                    quantity_kind=data["quantityKind"],
-                    unit=data["unit"],
-                )
-        await progress({"stage": "output", "completed": index + 1, "total": len(outputs)})
-    return artifacts
+                self.values[(*cell, frequency, 0)] += contribution
+
+    def artifact(self):
+        from app.methods.fields.box_grid import pack_box_grid
+        return pack_box_grid(self.grid, self.data, self.values, frequencies=self.frequencies)
 
 
-def _detector_domain(
-    detector: Detector,
-    axes: list[dict[str, Any]],
-    reference_length_unit: str,
-) -> StructuredGridValue:
-    signature = {
-        "triangleKeys": sorted([list(key) for key in detector.triangle_keys]),
-        "shape": list(detector.shape),
-        "axes": axes,
-        "normal": detector.normal.tolist(),
-        "uAxis": detector.u_axis.tolist(),
-        "vAxis": detector.v_axis.tolist(),
-        "referenceLengthUnit": reference_length_unit,
-    }
-    identity = hashlib.sha256(
-        json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return StructuredGridValue(
-        shape=detector.shape,
-        axes=tuple(np.asarray(axis["ticks"], dtype=np.float64) for axis in axes),
-        unit=reference_length_unit,
-        identity=identity,
-        metadata={**signature, "spacings": [axis["spacing"] for axis in axes]},
-    )
+def build_volume_tallies(config, descriptor, wavelengths):
+    from app.methods.fields.box_grid import BoxGrid
+    frequencies = np.unique([299792458.0 / wavelength for wavelength in wavelengths])
+    if not len(frequencies):
+        frequencies = np.array([0.0])
+    definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
+    return [VolumeTally(rule["key"], BoxGrid(rule["boxGrid"]), definitions[rule["methodId"]]["data"], frequencies)
+            for rule in config["outputs"]]

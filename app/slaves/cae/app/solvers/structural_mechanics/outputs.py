@@ -8,43 +8,12 @@ from app.kernel.api import BundleValue, FieldValue, UnstructuredMeshValue
 
 from .continuum import element_response, integration_points, physical_rotation_vectors
 from .domain import distribute_resultant, parameter
-from .shells import shell_frame
 
 
 def configure_history(model, outputs):
-    """출력별 절점 순서는 유지하고, 저장에는 요청 절점의 합집합만 씁니다."""
-    lookup = {int(node): index for index, node in enumerate(model.node_ids)}
-    selected = []
-    for output in outputs:
-        if output["methodId"] == "fea.displacement-history":
-            physical_count = len(model.points) if model.physical_node_count is None else int(model.physical_node_count)
-            selected.extend(index for index in range(physical_count) if index not in selected)
-            continue
-        if output["methodId"] != "fea.history":
-            continue
-        parameters = output.get("parameters", {})
-        scope = parameter(parameters.get("scope", "cumulative"))
-        if scope not in ("cumulative", "latest-window", "final"):
-            raise ValueError("history scope must be cumulative, latest-window or final")
-        request = model.result_requests.get(output.get("key", ""))
-        if request is not None and request.get("regions"):
-            for name in request["regions"]:
-                if name not in model.boundary_regions:
-                    raise ValueError(f"history target {name!r} is not a structural surface region")
-                for index in model.boundary_regions[name]["nodes"]:
-                    if int(index) not in selected:
-                        selected.append(int(index))
-            continue
-        ids = np.asarray(parameter(parameters.get("nodeIds", model.node_ids)))
-        if ids.ndim != 1 or len(np.unique(ids)) != len(ids):
-            raise ValueError("history nodeIds must be a one-dimensional list of unique node IDs")
-        for node in ids:
-            if int(node) not in lookup:
-                raise ValueError(f"history node ID {int(node)} is absent from the structural model")
-            index = lookup[int(node)]
-            if index not in selected:
-                selected.append(index)
-    model.history_nodes = np.asarray(selected, dtype=int)
+    """Accepted physical-node history also supplies the automatic deformation viewer."""
+    count = len(model.points) if model.physical_node_count is None else model.physical_node_count
+    model.history_nodes = np.arange(count, dtype=int)
 
 
 def _region_history_members(model, solution, regions, scope, complete):
@@ -107,6 +76,10 @@ def history_members(model, solution, node_ids=None, scope="cumulative", complete
     stored_ids = model.node_ids[stored_nodes]
     requested = stored_ids if node_ids is None else np.asarray(node_ids)
     lookup = {int(node): index for index, node in enumerate(stored_ids)}
+    if len(np.unique(requested)) != len(requested):
+        raise ValueError("History node IDs must be unique")
+    if any(int(node) not in lookup for node in requested):
+        raise ValueError("History must contain every physical mesh node; requested IDs are absent")
     selection = np.asarray([lookup[int(node)] for node in requested], dtype=int)
     members = {"nodeIds": np.asarray(requested, dtype=np.int32)}
     nodal = {"displacement", "rotation", "velocity", "reaction", "reactionMoment"}
@@ -426,183 +399,161 @@ def _section_resultants(model, solution, request):
     }
 
 
-def build_outputs(config, descriptor, model, solution, motion=None, *, history_complete=True):
+def build_outputs(config, descriptor, model, solution, motion=None):
+    from app.methods.fields.box_grid import BoxGrid, TetrahedralSampler, pack_box_grid
+
     domain, cell_order = _physical_domain(model)
-    physical_count = len(model.points) if model.physical_node_count is None else int(model.physical_node_count)
-    interface = interface_members(model)
-    artifacts = {}
+    count = len(domain.points)
+    cells = np.asarray([model.elements[index].nodes for index in cell_order], dtype=int)
+    rotations = physical_rotation_vectors(model, solution.displacement, solution.orientations)
+    stresses = np.asarray([_tet_stress(model, solution, index) for index in cell_order]).reshape(-1, 3, 3)
+    compact = stresses[:, (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
+    histories = history_members(model, solution, model.node_ids[:count])
+    definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
+    artifacts, exports, visuals = {}, {}, {}
+    samplers = {}
     for output in config["outputs"]:
-        method, key = output["methodId"], output["key"]
-        definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == method)
-        data = definition["data"]
-        request = model.result_requests.get(key, {})
-        if method == "fea.displacement-history":
-            if parameter(config["parameters"].get("analysis", "static")) != "transient":
-                raise ValueError("displacement history requires transient analysis")
-            if set(domain.cells) != {"tet4"}:
-                raise ValueError("displacement history requires a tet4 volume mesh")
-            node_ids = np.asarray(domain.metadata["nodeIds"], dtype=np.int32)
-            stored_nodes = np.arange(len(model.points)) if model.history_nodes is None else model.history_nodes
-            if not set(map(int, node_ids)).issubset(set(map(int, model.node_ids[stored_nodes]))):
-                raise ValueError("displacement history requires every physical mesh node in stored history")
-            history = history_members(model, solution, node_ids)
-            times = np.asarray(history.get("times", []), dtype=float)
-            values = np.asarray(history.get("displacement", []), dtype=float)
-            if values.shape != (len(times), len(node_ids), 3):
-                raise ValueError("displacement history requires every physical mesh node at every time")
-            if not len(times) or not np.all(np.isfinite(times)) or not np.all(np.diff(times) > 0) or not np.all(np.isfinite(values)):
-                raise ValueError("displacement history requires finite values and strictly increasing times")
-            field_data = data["members"]["field"]
-            field = FieldValue(domain, "node", field_data["quantityKind"], field_data["unit"], values[-1], field_data.get("basis"), ("x", "y", "z"))
-            artifacts[key] = BundleValue(definition["artifactType"], {
-                "field": field,
-                "times": {"value": times, "axes": [{"ticks": times}]},
-                "values": {"value": values, "axes": [{"ticks": times}, {"ticks": node_ids}, {"implicitOrdinal": True}]},
-            })
-            continue
-        if method in ("fea.displacement", "fea.rotation", "fea.reaction") or (method == "fea.reaction-moment" and not request.get("regions")):
-            rotations = physical_rotation_vectors(model, solution.displacement, solution.orientations)
-            values = {
-                "fea.displacement": solution.displacement[:physical_count, :3],
-                "fea.rotation": rotations[:physical_count],
-                "fea.reaction": physical_support_reactions(
-                    model, solution.reaction, solution.displacement,
-                )[:physical_count, :3],
-                "fea.reaction-moment": solution.reaction[:physical_count, 3:],
-            }[method]
-            artifacts[key] = FieldValue(domain, "node", data["quantityKind"], data["unit"], values, data.get("basis"), ("x", "y", "z"))
-            continue
-        if method == "fea.stress-field":
-            stress_domain, stress_order = domain, cell_order
-            if request.get("regions"):
-                selected = []
-                for name in request["regions"]:
-                    if name not in model.cell_regions:
-                        raise ValueError(f"stress-field target {name!r} is not a structural volume region")
-                    selected.extend(np.asarray(model.cell_regions[name], dtype=int))
-                stress_domain, stress_order = _physical_domain(model, np.unique(selected))
-            values = []
-            for index in stress_order:
-                if model.elements[index].kind != "tet4":
-                    raise ValueError("stress-field currently requires a tet4 physical mesh")
-                stress = _tet_stress(model, solution, index)
-                values.append([stress[0, 0], stress[1, 1], stress[2, 2], stress[0, 1], stress[1, 2], stress[0, 2]])
-            artifacts[key] = FieldValue(
-                stress_domain, "cell", data["quantityKind"], data["unit"], np.asarray(values, dtype=float),
-                data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"),
-            )
-            continue
-        if method == "fea.interface":
-            artifacts[key] = BundleValue(
-                "caemble.mechanics/interface@1", interface, interface_metadata(model),
-            )
-            continue
-        if method == "fea.motion":
-            if motion is None:
-                raise ValueError("motion waveform output requires transient analysis")
-            artifacts[key] = motion
-            continue
-        if method == "fea.history":
-            parameters = output.get("parameters", {})
-            scope = parameter(parameters.get("scope", "cumulative"))
-            if request.get("regions"):
-                members = history_members(model, solution, scope=scope, complete=history_complete, regions=request["regions"])
-            else:
-                node_ids = parameter(parameters.get("nodeIds", model.node_ids))
-                members = history_members(model, solution, node_ids, scope, history_complete)
-        elif method == "fea.modes":
-            modes = solution.spectrum["modes"]
-            rotations = modes[:, :, 3:]
-            if model.physical_node_count is not None:
-                identity = np.tile(np.eye(3), (len(model.points), 1, 1))
-                rotations = np.asarray([physical_rotation_vectors(model, mode, identity, linear=True) for mode in modes])
-            members = {"frequencies": solution.spectrum["frequencies"], "displacement": modes[:, :physical_count, :3], "rotation": rotations[:, :physical_count]}
-        elif method == "fea.buckling":
-            modes = solution.spectrum["modes"]
-            rotations = modes[:, :, 3:]
-            if model.physical_node_count is not None:
-                identity = np.tile(np.eye(3), (len(model.points), 1, 1))
-                rotations = np.asarray([physical_rotation_vectors(model, mode, identity, linear=True) for mode in modes])
-            members = {"factors": solution.spectrum["factors"], "displacement": modes[:, :physical_count, :3], "rotation": rotations[:, :physical_count]}
-        elif method == "fea.harmonic":
-            value = solution.spectrum["response"]
-            rotations = value[:, :, 3:]
-            if model.physical_node_count is not None:
-                identity = np.tile(np.eye(3), (len(model.points), 1, 1))
-                rotations = np.asarray([physical_rotation_vectors(model, response, identity, linear=True) for response in value])
-            members = {"frequencies": solution.spectrum["frequencies"], "displacementReal": value[:, :physical_count, :3].real.copy(), "displacementImag": value[:, :physical_count, :3].imag.copy(), "rotationReal": rotations[:, :physical_count].real.copy(), "rotationImag": rotations[:, :physical_count].imag.copy()}
-        elif method == "fea.reaction-moment":
-            members = _region_resultants(model, solution, request)
-        elif method == "fea.section-forces":
-            if request.get("regions") and "origin" in request:
-                members = _section_resultants(model, solution, request)
-            else:
-                forces, moments = [], []
-                for element, result in zip(model.elements, solution.stresses):
-                    if element.kind == "beam2" and result is not None:
-                        forces.append(result["force"])
-                        moments.append(result["moment"])
-                members = {"force": np.asarray(forces, dtype=float).reshape(-1, 2, 3), "moment": np.asarray(moments, dtype=float).reshape(-1, 2, 3)}
-        elif method == "fea.stress":
-            ids, ply_ids, point_ids, stress_values, plastic_values, equivalent, stress_bases = [], [], [], [], [], [], []
-            for index, (element, result, history) in enumerate(zip(model.elements, solution.stresses, solution.element_history)):
-                if result is None or element.kind in ("beam2", "truss2"):
-                    continue
-                if element.kind == "shell4":
-                    local = result["plyStress"].reshape(-1, 3)
-                    # 각 적분점/층의 아래면, 위면 순서다. 이를 보존해야 특정 층 응력을 찾을 수 있다.
-                    point_count, ply_count = result["plyStress"].shape[:2]
-                    ply_ids.extend(np.tile(np.repeat(np.arange(ply_count), 2), point_count))
-                    point_ids.extend(np.repeat(np.arange(point_count), ply_count * 2))
+        method = output["methodId"]
+        data = definitions[method]["data"]
+        grid = BoxGrid(output["boxGrid"])
+        parameters = {key: parameter(value) for key, value in output.get("parameters", {}).items()}
+        times, frequencies = [0.0], [0.0]
+        scope = parameters.get("scope", "cumulative")
+        if scope not in ("cumulative", "latest-window", "final"):
+            raise ValueError("history scope must be cumulative, latest-window or final")
+        history = history_members(model, solution, model.node_ids[:count],
+                                  "cumulative" if scope == "final" else scope)
+        if scope == "final":
+            history = {name: value if name == "nodeIds" else value[-1:]
+                       for name, value in history.items()}
+        aggregate = data["boxGrid"]["sampling"] == "aggregate"
+        if aggregate:
+            if grid.shape != (1, 1, 1):
+                raise ValueError(f"{method} requires gridShape [1, 1, 1]")
+            if method == "fea.buckling-factor":
+                index = int(parameters["modeIndex"]) - 1
+                if index < 0 or index >= len(solution.spectrum["factors"]):
+                    raise ValueError("modeIndex is one-based and must identify a solved buckling mode")
+                sampled = solution.spectrum["factors"][index]
+            elif method in ("fea.reaction", "fea.reaction-moment"):
+                selected = grid.contains(model.points[:count])
+                reactions = physical_support_reactions(model, solution.reaction, solution.displacement)[:count]
+                if method == "fea.reaction":
+                    sampled = reactions[selected, :3].sum(axis=0)
                 else:
-                    local = np.asarray(result)
-                    if element.kind in ("tri3", "quad4"):
-                        # 평면변형률의 두께 방향 반응 응력까지 3D 재료 법칙으로
-                        # 회복한다. 내부 2D 조립에 쓰지 않는 성분도 출력에는 필요하다.
-                        local = element_response(element.kind, model.points[element.nodes, :2], solution.displacement[element.nodes, :2].ravel(), element.material["C"], element.section.get("thickness", 1.), element.section.get("plane", "stress"), full_stress=True)[1]
-                    ply_ids.extend([-1] * len(local))
-                    point_ids.extend(range(len(local)))
-                stress = np.zeros((len(local), 6))
-                if local.shape[1] == 3:
-                    stress[:, [0, 1, 3]] = local
-                else:
-                    stress[:] = local
-                ids.extend([index] * len(stress))
-                stress_values.extend(stress)
-                # 열 벡터가 응력 좌표축의 세계 XYZ 성분이다. 쉘은 기준 요소
-                # 축을 쓰므로, 이 행렬을 기록해야 곡면의 응력 방향을 복원할 수 있다.
-                basis = shell_frame(model.points[element.nodes])[1][:3, :3].T if element.kind == "shell4" else np.eye(3)
-                stress_bases.extend([basis] * len(stress))
-                plastic_values.extend(np.zeros_like(stress) if history is None else history["plasticStrain"])
-                equivalent.extend(np.zeros(len(stress)) if history is None else history["equivalentPlasticStrain"])
-            members = {"elementIds": np.asarray(ids, dtype=np.int32), "plyIds": np.asarray(ply_ids, dtype=np.int32), "integrationPointIds": np.asarray(point_ids, dtype=np.int32), "stress": np.asarray(stress_values, dtype=float).reshape(-1, 6), "plasticStrain": np.asarray(plastic_values, dtype=float).reshape(-1, 6), "equivalentPlasticStrain": np.asarray(equivalent, dtype=float), "stressBasis": np.asarray(stress_bases, dtype=float).reshape(-1, 3, 3)}
+                    reference = np.asarray(parameters["referencePoint"])
+                    positions = model.points[:count] + solution.displacement[:count, :3]
+                    sampled = (reactions[selected, 3:] + np.cross(positions[selected] - reference, reactions[selected, :3])).sum(axis=0)
+            elif method in ("fea.section-force", "fea.section-moment"):
+                force, moment_value = _box_section_resultant(model, solution, grid, parameters)
+                sampled = force if method == "fea.section-force" else moment_value
+            else:
+                names = {"fea.strain-energy-history": "strainEnergy", "fea.kinetic-energy-history": "kineticEnergy",
+                         "fea.power-history": "power", "fea.generator-speed-history": "generatorSpeed",
+                         "fea.generator-torque-history": "generatorTorque", "fea.rotor-speed-history": "rotorSpeed",
+                         "fea.pitch-history": "pitch"}
+                sampled = history[names[method]]
+                times = history["times"]
         else:
-            raise ValueError(f"unsupported structural output {method}")
-        # 배열의 shape만 기록하면 Calculation은 축의 실제 좌표를 알 수 없습니다.
-        # 기존 tensor의 value/axes 표현을 사용해 시간과 절점 ID를 함께 보냅니다.
-        # 이 포장은 기록 출력 경계에만 적용합니다. 연성 motion/interface와
-        # 계산 중의 history_members는 계속 원래의 수치 배열을 사용합니다.
-        coordinates = {"node": (members.get("nodeIds", model.node_ids[:physical_count]), None)}
-        if "regionIds" in members:
-            coordinates["region"] = (members["regionIds"], None)
-        if method == "fea.history":
-            coordinates["sample"] = (members["times"], "s")
-        if method == "fea.harmonic":
-            coordinates["frequency"] = (members["frequencies"], "Hz")
-        if method == "fea.section-forces" and "regionIds" not in members:
-            coordinates["element"] = (np.asarray([index for index, (element, result) in enumerate(zip(model.elements, solution.stresses)) if element.kind == "beam2" and result is not None]), None)
-        recorded_members = {}
-        for name, values in members.items():
-            axes = []
-            for axis in data["members"][name].get("axes", ()):
-                coordinate = coordinates.get(axis.get("name"))
-                if coordinate is None:
-                    # 모드 번호, 적분점 행 번호, 성분 번호는 물리 좌표가 아닌 순서입니다.
-                    axes.append({"implicitOrdinal": True})
+            identity = (tuple(grid.geometry["origin"]), tuple(grid.geometry["size"]),
+                        tuple(np.asarray(grid.geometry["rotation"]).ravel()), grid.shape)
+            if identity not in samplers:
+                samplers[identity] = TetrahedralSampler.prepare(model.points, cells, grid.points("m"))
+            sampler = samplers[identity]
+            location = "node"
+            if method == "fea.displacement":
+                values = solution.displacement[:, :3]
+            elif method == "fea.rotation":
+                values = rotations
+            elif method == "fea.stress-field":
+                values, location = compact, "cell"
+            elif method in ("fea.plastic-strain", "fea.equivalent-plastic-strain"):
+                name = "plasticStrain" if method == "fea.plastic-strain" else "equivalentPlasticStrain"
+                shape = (6,) if name == "plasticStrain" else ()
+                values = np.asarray([np.zeros(shape) if solution.element_history[index] is None else
+                                     np.asarray(solution.element_history[index][name]).mean(axis=0)
+                                     for index in cell_order])
+                if name == "plasticStrain":
+                    # The constitutive state stores engineering shear; public tensor components are epsilon_ij.
+                    values[:, 3:] *= 0.5
+                location = "cell"
+            elif method in ("fea.displacement-history", "fea.rotation-history", "fea.velocity-history"):
+                name = {"fea.displacement-history": "displacement", "fea.rotation-history": "rotation",
+                        "fea.velocity-history": "velocity"}[method]
+                values = np.moveaxis(history[name], 0, 1)
+                times = history["times"]
+            elif method in ("fea.modal-displacement", "fea.modal-rotation"):
+                modes = solution.spectrum["modes"]
+                if method.endswith("rotation"):
+                    identity_frames = np.tile(np.eye(3), (len(model.points), 1, 1))
+                    modes = np.asarray([physical_rotation_vectors(model, mode, identity_frames, linear=True) for mode in modes])
                 else:
-                    ticks, unit = coordinate
-                    axes.append({"ticks": ticks, **({"unit": unit} if unit is not None else {})})
-            recorded_members[name] = {"value": values, "axes": axes}
-        artifact_type = definition.get("artifactType", "caemble.mechanics/" + method.removeprefix("fea.") + "@1")
-        artifacts[key] = BundleValue(artifact_type, recorded_members)
-    return artifacts
+                    modes = modes[:, :, :3]
+                values = np.moveaxis(modes, 0, 1)
+                frequencies = solution.spectrum["frequencies"]
+            elif method in ("fea.harmonic-displacement", "fea.harmonic-rotation"):
+                response = solution.spectrum["response"]
+                if method.endswith("rotation"):
+                    identity_frames = np.tile(np.eye(3), (len(model.points), 1, 1))
+                    response = np.asarray([physical_rotation_vectors(model, item, identity_frames, linear=True) for item in response])
+                else:
+                    response = response[:, :, :3]
+                values = np.moveaxis(response, 0, 1)
+                frequencies = solution.spectrum["frequencies"]
+            elif method in ("fea.buckling-displacement", "fea.buckling-rotation"):
+                index = int(parameters["modeIndex"]) - 1
+                if index < 0 or index >= len(solution.spectrum["modes"]):
+                    raise ValueError("modeIndex is one-based and must identify a solved buckling mode")
+                mode = solution.spectrum["modes"][index]
+                values = (physical_rotation_vectors(model, mode, np.tile(np.eye(3), (len(model.points), 1, 1)), linear=True)
+                          if method.endswith("rotation") else mode[:, :3])
+            else:
+                raise ValueError(f"unsupported structural Box output {method!r}")
+            sampled = sampler.sample(values, location=location)
+        artifacts[output["key"]] = pack_box_grid(grid, data, sampled, times=times, frequencies=frequencies)
+
+    for output in config.get("exports", ()):
+        if output["methodId"] == "fea.interface":
+            exports[output["key"]] = BundleValue("caemble.mechanics/interface@1", interface_members(model), interface_metadata(model))
+        elif output["methodId"] == "fea.motion":
+            if motion is None:
+                raise ValueError("motion export requires transient analysis")
+            exports[output["key"]] = motion
+        else:
+            raise ValueError(f"unsupported structural native export {output['methodId']!r}")
+    for name, definition in descriptor.get("visualizations", {}).items():
+        data = definition["data"]
+        if name == "displacement":
+            visuals[name] = FieldValue(domain, "node", data["quantityKind"], data["unit"], solution.displacement[:count, :3], data.get("basis"), ("x", "y", "z"))
+        elif name == "stress":
+            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], compact, data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"))
+        elif name == "displacementHistory" and parameter(config["parameters"]["analysis"]) == "transient":
+            field_data = data["members"]["field"]
+            field = FieldValue(domain, "node", field_data["quantityKind"], field_data["unit"], histories["displacement"][-1], field_data.get("basis"), ("x", "y", "z"))
+            visuals[name] = BundleValue(definition["artifactType"], {
+                "field": field,
+                "times": {"value": histories["times"], "axes": [{"ticks": histories["times"]}]},
+                "values": {"value": histories["displacement"], "axes": [{"ticks": histories["times"]}, {"ticks": model.node_ids[:count]}, {"implicitOrdinal": True}]},
+            })
+    return artifacts, exports, visuals
+
+
+def _box_section_resultant(model, solution, grid, parameters):
+    """Integrate the solved stress over a clipped, oriented section of the probe Box."""
+    origin = np.asarray(parameters["origin"], dtype=float)
+    normal = np.asarray(parameters["normal"], dtype=float)
+    normal /= np.linalg.norm(normal)
+    reference = np.asarray(parameters["referencePoint"], dtype=float)
+    force, moment = np.zeros(3), np.zeros(3)
+    from app.methods.fields.box_grid import clip_box_polygon
+    for index, element in enumerate(model.elements):
+        stress = _tet_stress(model, solution, index)
+        triangles = _tet_plane_triangles(model.points[element.nodes], solution.displacement[element.nodes, :3], origin, normal)
+        for triangle in triangles:
+            world = clip_box_polygon(triangle, grid)
+            for item in range(1, len(world) - 1):
+                piece = world[[0, item, item + 1]]
+                traction = stress @ (np.cross(piece[1] - piece[0], piece[2] - piece[0]) / 2)
+                force += traction
+                moment += np.cross(piece.mean(axis=0) - reference, traction)
+    return force, moment

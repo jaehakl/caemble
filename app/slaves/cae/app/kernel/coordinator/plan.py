@@ -90,10 +90,11 @@ class RunPlan:
     material_snapshot: Mapping[str, Any]
     schemas: Mapping[str, Any]
     result_contracts: Mapping[str, Any] = field(default_factory=dict)
+    visualization_contracts: Mapping[str, Any] = field(default_factory=dict)
     tasks: TaskHandles = field(init=False)
 
     def __post_init__(self) -> None:
-        for name in ("task_specs", "scene", "material_snapshot", "schemas", "result_contracts"):
+        for name in ("task_specs", "scene", "material_snapshot", "schemas", "result_contracts", "visualization_contracts"):
             object.__setattr__(self, name, read_only(getattr(self, name)))
         object.__setattr__(self, "tasks", TaskHandles(self.task_specs))
 
@@ -186,17 +187,29 @@ class RunPlan:
             task_spec = specs.get(contract.get("task"))
             output = task_spec.output_specs.get(contract.get("output")) if task_spec else None
             if (not output or contract.get("solver") != task_spec.task["kernel"]
+                    or output.get("category") == "exports"
                     or contract.get("artifactType") != output["artifactType"]
                     or contract.get("catalogRevision") != solver_catalog.catalog_revision
                     or contract.get("visualization") != detached(output["data"].get("visualization"))
                     or contract.get("schema") != schemas[name]):
                 raise CaeError("invalid_record", f"RecordedData {name!r} does not match its frozen output contract")
+        visualization_contracts = measurement["experiment"]["simulationProgram"].get("visualizationContracts", {})
+        for task_name, task_spec in specs.items():
+            definitions = task_spec.descriptor.get("visualizations", {})
+            frozen = visualization_contracts.get(task_name, {})
+            if set(frozen) != set(definitions):
+                raise CaeError("invalid_record", f"Task {task_name!r} requires frozen visualization contracts")
+            for name, definition in definitions.items():
+                if (frozen[name].get("artifactType") != definition["artifactType"]
+                        or frozen[name].get("visualization") != detached(definition["data"]["visualization"])):
+                    raise CaeError("invalid_record", f"Task {task_name!r} has a changed visualization contract")
         return cls(
             task_specs=specs,
             scene=measurement["experiment"]["scene"],
             material_snapshot=experiment_materials,
             schemas=schemas,
             result_contracts=contracts,
+            visualization_contracts=visualization_contracts,
         )
 
     def resolve(self, task: Mapping[str, Any]) -> TaskSpec:

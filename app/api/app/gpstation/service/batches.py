@@ -3,7 +3,7 @@
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gpstation.db import Job, JobBatch, JobEvent, JobRecord
+from gpstation.db import Job, JobBatch, JobEvent, JobRecord, JobVisualization
 from gpstation.service.state import utcnow
 
 SERVER_ACTIVE_STATES = {"staged", "queued", "assigned", "running", "finalizing"}
@@ -63,6 +63,9 @@ async def finish_job(
             JobRecord.job_id == job.id, JobRecord.attempt_count == job.attempt_count
         )
     )
+    await db.execute(delete(JobVisualization).where(
+        JobVisualization.job_id == job.id, JobVisualization.attempt_count == job.attempt_count,
+    ))
     if job.batch_id is None:
         return True
     batch = await db.scalar(select(JobBatch).where(JobBatch.id == job.batch_id).with_for_update())

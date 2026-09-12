@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 from scipy import sparse
+from tests.test_box_grid_outputs import grid
+from app.kernel.catalog import solver_catalog
 
 from app.kernel.resources import ResourceStore
 import app.solvers.structural_mechanics.analysis as analysis_module
@@ -25,6 +27,7 @@ from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.meshing import brick_mesh
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.outputs import (
+    _physical_domain,
     _region_resultants,
     _section_resultants,
     build_outputs,
@@ -304,17 +307,19 @@ def test_physical_field_excludes_reference_nodes_and_section_integrates_tet_trac
     np.testing.assert_allclose(section["force"], [[3.2, 0., 0.]])
     np.testing.assert_allclose(section["moment"], [[0., 12.8 / 15, -12.8 / 15]])
 
-    descriptor = {"methods": {"outputs": [{
-        "methodId": "fea.stress-field", "artifactType": "caemble.mechanics/stress-field@1",
-        "data": {"quantityKind": "Pressure", "unit": "Pa"},
-    }]}}
-    artifact = build_outputs(
-        {"outputs": [{"methodId": "fea.stress-field", "key": "stress"}]},
-        descriptor, model, solution,
-    )["stress"]
-    assert artifact.domain.points.shape == (4, 3)
-    np.testing.assert_array_equal(artifact.domain.cells["tet4"], [[0, 1, 2, 3]])
-    np.testing.assert_allclose(artifact.values, [[10., 0., 0., 0., 0., 0.]])
+    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    artifacts, _, visuals = build_outputs(
+        {"parameters": {"analysis": "static"}, "outputs": [
+            {"methodId": "fea.stress-field", "key": "stress", "boxGrid": grid(shape=(1,1,1), size=(.1,.1,.1)).geometry},
+            {"methodId": "fea.section-force", "key": "section", "boxGrid": grid(shape=(1,1,1)).geometry,
+             "parameters": {"origin": [.2,0.,0.], "normal": [1.,0.,0.], "referencePoint": [.2,0.,0.]}}
+        ]}, descriptor, model, solution,
+    )
+    assert visuals["stress"].domain.points.shape == (4, 3)
+    np.testing.assert_array_equal(visuals["stress"].domain.cells["tet4"], [[0, 1, 2, 3]])
+    np.testing.assert_allclose(artifacts["stress"]["value"].reshape(6), [10.,0.,0.,0.,0.,0.])
+    np.testing.assert_allclose(artifacts["section"]["value"].reshape(3), [3.2,0.,0.])
+
 
 
 def test_stress_field_geometry_target_builds_a_consistent_cell_submesh():
@@ -353,19 +358,12 @@ def test_stress_field_geometry_target_builds_a_consistent_cell_submesh():
     model.result_requests["stress"] = {"regions": [target]}
     solution = initial_solution(model)
     solution.stresses = [np.tile([1., 0., 0., 0., 0., 0.], (4, 1)), np.tile([2., 0., 0., 0., 0., 0.], (4, 1))]
-    descriptor = {"methods": {"outputs": [{
-        "methodId": "fea.stress-field", "artifactType": "caemble.mechanics/stress-field@1",
-        "data": {"quantityKind": "Pressure", "unit": "Pa"},
-    }]}}
-    artifact = build_outputs(
-        {"outputs": [{"methodId": "fea.stress-field", "key": "stress", "target": [target]}]},
-        descriptor, model, solution,
-    )["stress"]
-    np.testing.assert_allclose(artifact.domain.points, TETRAHEDRON + [2., 0., 0.])
-    np.testing.assert_array_equal(artifact.domain.cells["tet4"], [[0, 1, 2, 3]])
-    np.testing.assert_allclose(artifact.values, [[2., 0., 0., 0., 0., 0.]])
-    assert artifact.domain.identity != model.identity
-    metadata = artifact.domain.metadata
+    domain, order = _physical_domain(model, np.array([1]))
+    np.testing.assert_allclose(domain.points, TETRAHEDRON + [2., 0., 0.])
+    np.testing.assert_array_equal(domain.cells["tet4"], [[0, 1, 2, 3]])
+    assert order == [1]
+    assert domain.identity != model.identity
+    metadata = domain.metadata
     np.testing.assert_array_equal(metadata["cellRegions"], [0])
     np.testing.assert_array_equal(metadata["regionIds"], ["experiment:second"])
     np.testing.assert_allclose(metadata["quality"]["cellVolumes"], [1 / 6])
@@ -417,9 +415,9 @@ def test_attachment_support_wrench_is_conserved_on_physical_field_and_history():
 
     descriptor = {"methods": {"outputs": [{"methodId": "fea.interface", "data": {}}]}}
     interface = build_outputs(
-        {"outputs": [{"methodId": "fea.interface", "key": "interface"}]},
+        {"outputs": [], "exports": [{"methodId": "fea.interface", "key": "interface"}]},
         descriptor, model, solution,
-    )["interface"]
+    )[1]["interface"]
     motion = predict_motion(model, solution, {
         "dt": .01, "windowSize": .01, "duration": .01,
     })
@@ -431,3 +429,19 @@ def test_attachment_support_wrench_is_conserved_on_physical_field_and_history():
             assert restored.metadata["regionReferences"] == {target: 4}
     finally:
         resources.close()
+
+
+
+def test_box_plastic_strain_uses_tensor_shear_without_mutating_native_history():
+    material = {"model": "mechanics.isotropic-elastic@1", "C": isotropic_elasticity(1., .2), "density": 1.}
+    model = StructuralModel(np.arange(4), TETRAHEDRON, [Element("tet4",np.arange(4),material)],
+                            np.arange(12),np.empty(0,dtype=int),np.zeros((4,6)),physical_node_count=4,identity="plastic-strain-output")
+    solution = initial_solution(model)
+    engineering = np.array([[.1,.2,.3,.4,.6,.8]])
+    solution.element_history[0] = {"plasticStrain": engineering, "equivalentPlasticStrain": np.array([.5])}
+    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    config = {"parameters": {"analysis": "static"}, "outputs": [{"methodId": "fea.plastic-strain", "key": "strain",
+              "boxGrid": grid(shape=(1,1,1),size=(.1,.1,.1)).geometry}]}
+    result = build_outputs(config,descriptor,model,solution)[0]["strain"]
+    np.testing.assert_allclose(result["value"].reshape(6), [.1,.2,.3,.2,.3,.4])
+    np.testing.assert_array_equal(engineering, [[.1,.2,.3,.4,.6,.8]])

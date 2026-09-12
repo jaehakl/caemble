@@ -175,7 +175,7 @@ def test_model_selection_rejects_unknown_empty_role():
 @pytest.mark.parametrize("reference", [None, {}, {"name": "unknown"}, {"name": []}])
 def test_applicable_geometry_requires_a_material_snapshot(reference):
     with open_catalog() as catalog:
-        descriptor = catalog.get_solver_manifest("fdtd", "3.0.0")["descriptor"]
+        descriptor = catalog.get_solver_manifest("fdtd", "5.0.0")["descriptor"]
     scene = {"roots": [{"id": "part", "material": reference}]}
     with pytest.raises(CaeError, match="geometry part requires an explicit Material"):
         select_material_models(descriptor, {}, {"experiment": scene}, {"experiment": {}}, {})
@@ -183,7 +183,7 @@ def test_applicable_geometry_requires_a_material_snapshot(reference):
 
 def test_groups_are_checked_for_each_material_and_require_explicit_ambiguity_selection(definitions):
     with open_catalog() as catalog:
-        descriptor = catalog.get_solver_manifest("dc-current-density", "1.0.0")["descriptor"]
+        descriptor = catalog.get_solver_manifest("dc-current-density", "2.0.0")["descriptor"]
     scene = {"roots": [{"id": name, "material": {"name": name}} for name in ("a", "b")],
              "geometryGroups": [{"name": "conductor", "rootIds": ["a", "b"]}]}
     config = {"initializations": [{"methodId": "dc.voxel-grid", "target": ["experiment.geometry.conductor"]}]}

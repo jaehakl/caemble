@@ -312,7 +312,8 @@ class Catalog:
                 (name, version),
             )
         }
-        descriptor["methods"] = {"initializations": [], "boundaryConditions": [], "outputs": []}
+        descriptor["methods"] = {"initializations": [], "boundaryConditions": [], "outputs": [], "exports": []}
+        descriptor["visualizations"] = {}
         for method in self._all(
             """
             SELECT * FROM solver_methods WHERE solver_name = ? AND solver_version = ?
@@ -352,7 +353,12 @@ class Catalog:
                 item["artifactType"] = method["artifact_type"]
             if method["data_json"] is not None:
                 item["data"] = _json(method["data_json"])
-            descriptor["methods"][method["category"]].append(item)
+            if method["category"] == "visualizations":
+                descriptor["visualizations"][method["method_id"]] = {
+                    "artifactType": item["artifactType"], "data": item["data"],
+                }
+            else:
+                descriptor["methods"][method["category"]].append(item)
         return {
             "implementation": solver["implementation"],
             "abiVersion": solver["implementation_abi"],
@@ -714,10 +720,9 @@ class Catalog:
         supported_models = set()
         for manifest in manifests:
             descriptor = manifest["descriptor"]
-            # Domain-preserving output references also record the common mesh metadata.
-            if any(method["data"].get("axes", [{}])[0:1] and
-                   method["data"].get("axes", [{}])[0].get("name") in ("node", "cell")
-                   for method in descriptor["methods"]["outputs"]):
+            # Automatic mesh visualizations carry the common mesh coordinates and connectivity metadata.
+            if any(contract["data"].get("recording") in {"mesh-field", "mesh-series"}
+                   for contract in descriptor.get("visualizations", {}).values()):
                 quantity_names.update(("Length", "Volume", "Dimensionless", "mechanics.ForceMagnitude"))
             quantity_names.update(row["quantity_kind"] for row in self._all(
                 "SELECT DISTINCT quantity_kind FROM solver_quantity_kind_usages WHERE solver_name = ? AND solver_version = ?",

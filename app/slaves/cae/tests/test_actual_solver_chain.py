@@ -101,9 +101,15 @@ def parameter(value: Any) -> dict[str, Any]:
     return {"value": value}
 
 
+def output_box(shape=(1, 1, 1)):
+    return {"origin": [-0.5, -0.1, -0.1], "size": [1., 0.2, 0.2],
+            "rotation": np.eye(3).tolist(), "lengthUnit": "m", "gridShape": list(shape),
+            "source": "experiment", "rootId": "conductor-root"}
+
+
 @pytest.mark.asyncio
 async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
-    dc_version, heat_version = "1.0.0", "1.0.0"
+    dc_version, heat_version = "2.0.0", "2.0.0"
     catalog = SolverCatalog.discover()
     executor = SpawnSolverExecutor()
     progress: list[Any] = []
@@ -135,13 +141,13 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
                     "parameters": {"voltage": parameter(0.0)},
                 },
             ],
+            "exports": [{"methodId": "dc.joule-heating", "key": "jouleHeating", "target": [], "parameters": {}}],
             "outputs": [
-                {"methodId": "dc.joule-heating", "key": "jouleHeating", "target": [], "parameters": {}},
                 {
                     "methodId": "dc.total-current",
-                    "key": "totalCurrent",
+                    "key": "totalCurrent", "boxGrid": output_box(),
                     "target": [],
-                    "parameters": {"crossSectionPosition": parameter(0.5)},
+                    "parameters": {"gridShape": parameter([1, 1, 1]), "crossSectionPosition": parameter(0.5)},
                 },
             ],
         },
@@ -162,7 +168,7 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     )
     electric = electric_transaction.value
     electric_transaction.commit()
-    joule = electric.artifacts["jouleHeating"]
+    joule = electric.exports["jouleHeating"]
     assert isinstance(joule, FieldValue)
     assert joule.domain.shape == (6, 4, 4)
     assert electric.artifacts["totalCurrent"]["value"] > 0
@@ -191,12 +197,12 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
                 },
             ],
             "outputs": [
-                {"methodId": "heat.temperature", "key": "temperature", "target": [], "parameters": {}},
+                {"methodId": "heat.temperature", "key": "temperature", "target": [], "boxGrid": output_box((6, 4, 4)), "parameters": {"gridShape": parameter([6, 4, 4])}},
                 {
                     "methodId": "heat.maximum-temperature",
-                    "key": "maximumTemperature",
+                    "key": "maximumTemperature", "boxGrid": output_box(),
                     "target": [],
-                    "parameters": {},
+                    "parameters": {"gridShape": parameter([1, 1, 1])},
                 },
             ],
         },
@@ -228,8 +234,8 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     )
     thermal = thermal_transaction.value
     thermal_transaction.commit()
-    temperature = np.asarray(thermal.artifacts["temperature"].values)
-    assert temperature.shape == (6, 4, 4)
+    temperature = np.asarray(thermal.artifacts["temperature"]["value"])
+    assert temperature.shape == (6, 4, 4, 1, 1, 1, 1)
     assert thermal.artifacts["maximumTemperature"]["value"] >= 300.0
     assert electric.state_patch.is_empty and thermal.state_patch.is_empty
     assert len(FileResourceCache(tmp_path).entry_paths()) == 1

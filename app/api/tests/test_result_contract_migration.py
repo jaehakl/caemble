@@ -30,7 +30,7 @@ class ResultContractMigrationTests(unittest.TestCase):
                     await connection.close()
 
             recorded = asyncio.run(seed())
-            _upgrade(database, "head")
+            _upgrade(database, "000000000010")
 
             async def verify():
                 connection = await asyncpg.connect(**_connect_arguments(database))
