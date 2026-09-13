@@ -35,7 +35,7 @@ export function BoxGridResult({
   rules: readonly RecordedDataRule[]
   data?: RecordedData
   displayUnit: UcumUnit
-  renderViewer: (data: HeatmapRenderData) => ReactNode
+  renderViewer: (data: HeatmapRenderData, geometryOpacity: number) => ReactNode
   canOverlayGeometry: boolean
   geometryBlockedReason?: string
   recordReference?: string
@@ -96,7 +96,7 @@ function BoxGridControls({
   name: string
   leaf: CalculationInputLeaf
   displayUnit: UcumUnit
-  renderViewer: (data: HeatmapRenderData) => ReactNode
+  renderViewer: (data: HeatmapRenderData, geometryOpacity: number) => ReactNode
   canOverlayGeometry: boolean
   geometryBlockedReason?: string
   recordReference: string
@@ -116,8 +116,8 @@ function BoxGridControls({
     leaf.shape[6] === 1 ? 0 : 'magnitude',
   )
   const [reduce, setReduce] = useViewerSetting<Partial<Record<ProjectionAxis, ProjectionReduction>>>('box.reduce', {})
-  const [overlay, setOverlay] = useViewerSetting('box.overlay', false)
-  const [opacity, setOpacity] = useViewerSetting('box.opacity', 0.8)
+  const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
+  const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.8)
   const [bins, setBins] = useViewerSetting<number | undefined>('box.bins', undefined)
   const [animation, setAnimation] = useViewerSetting<'off' | 'oscillation' | 'time' | 'frequency'>(
     'box.animation',
@@ -335,26 +335,10 @@ function BoxGridControls({
       leaf: spatial ? leaf : undefined,
       displayUnit,
       vectors: component === 'arrows' && arrowsAllowed ? result.vectors : undefined,
-      opacity,
       plane,
       range,
     })
-  }, [
-    result,
-    kind,
-    overlay,
-    axes,
-    reduce,
-    leaf,
-    name,
-    spatial,
-    displayUnit,
-    component,
-    arrowsAllowed,
-    opacity,
-    range,
-    axesKey,
-  ])
+  }, [result, kind, overlay, axes, reduce, leaf, name, spatial, displayUnit, component, arrowsAllowed, range, axesKey])
   const unit = animation !== 'oscillation' && representation === 'phase' ? 'rad' : leaf.unit
   const changeKind = (next: PlotKind) => {
     if (next === kind) return
@@ -362,7 +346,6 @@ function BoxGridControls({
     setKind(next)
     setPlaying(false)
     setAnimation('off')
-    setOverlay(false)
     setFixed(null)
     const nextAxes =
       next === 'line'
@@ -507,7 +490,6 @@ function BoxGridControls({
                       setAxes(next)
                       setPlaying(false)
                       setAnimation('off')
-                      setOverlay(false)
                       setFixed(null)
                       if (component === 'arrows' && !next.every((a) => ['x', 'y', 'z'].includes(a)))
                         setComponent('magnitude')
@@ -621,17 +603,17 @@ function BoxGridControls({
                 Geometry 겹치기
               </label>
             ) : null}
-            {kind === 'cloud' || overlay ? (
+            {(kind === 'cloud' || kind === 'heatmap') && overlay && spatial && canOverlayGeometry ? (
               <label>
-                투명도{' '}
+                Geometry 투명도{' '}
                 <input
-                  aria-label="투명도"
+                  aria-label="Geometry 투명도"
                   type="range"
                   min={0.05}
                   max={1}
                   step={0.05}
-                  value={opacity}
-                  onChange={(event) => setOpacity(Number(event.target.value))}
+                  value={geometryOpacity}
+                  onChange={(event) => setGeometryOpacity(Number(event.target.value))}
                 />
               </label>
             ) : null}
@@ -776,7 +758,7 @@ function BoxGridControls({
               <div className="flex h-full min-h-0 flex-col">
                 <div className="min-h-0 flex-1">
                   {overlay && canOverlayGeometry && spatial ? (
-                    renderViewer(renderData)
+                    renderViewer(renderData, geometryOpacity)
                   ) : (
                     <JscadViewer
                       layers={noLayers}

@@ -48,6 +48,7 @@ export function geometryWithSelectedPolygons(
   value: unknown,
   selectedPolygonIndices: ReadonlySet<number> | null,
   selectedOnly = false,
+  color: RenderColor = viewerSelectionColor,
 ) {
   if (typeof value !== 'object' || value === null || !('polygons' in value)) return value
   const geometry = value as RenderSolid
@@ -56,7 +57,7 @@ export function geometryWithSelectedPolygons(
   clone.polygons = geometry.polygons.flatMap((polygon, polygonIndex) => {
     const selected = selectedPolygonIndices === null || selectedPolygonIndices.has(polygonIndex)
     if (selectedOnly && !selected) return []
-    return [selected ? { ...polygon, color: [...viewerSelectionColor] } : polygon]
+    return [selected ? { ...polygon, color: [...color] } : polygon]
   })
   return clone
 }
@@ -66,30 +67,46 @@ export function createRenderParts(
   selections: ReadonlyMap<string, RenderPartSelection> = new Map(),
   xrayEnabled = false,
   forceWireframe = false,
+  geometryOpacity = 1,
 ): RenderPart[] {
+  const fillOpacity = xrayEnabled ? 0 : Math.max(0, Math.min(1, geometryOpacity))
   return parts.map((part) => {
     const color = scenePartColor(part)
     const selection = selections.get(part.id)
     const wireframe = forceWireframe ? !selection?.geometry : color === undefined
     const selectedSurface = selection && !selection.geometry && selection.polygonIndices.size > 0
-    const geometry = selection?.geometry ? geometryWithSelectedPolygons(part.geometry, null) : part.geometry
+    const selectionColor: RenderColor = [
+      viewerSelectionColor[0],
+      viewerSelectionColor[1],
+      viewerSelectionColor[2],
+      fillOpacity,
+    ]
+    const geometry = selection?.geometry
+      ? geometryWithSelectedPolygons(part.geometry, null, false, selectionColor)
+      : part.geometry
     const baseColor = color === undefined ? wireframeColor : colorFromHex(color)
     const edgeColor: RenderColor = forceWireframe
       ? [0, 0, 0, 1]
       : !wireframe && xrayEnabled
         ? [baseColor[0] * xrayEdgeBrightness, baseColor[1] * xrayEdgeBrightness, baseColor[2] * xrayEdgeBrightness, 1]
         : baseColor
-    let renderColor = baseColor
-    if (selection?.geometry) renderColor = viewerSelectionColor
-    else if (!wireframe && xrayEnabled) {
-      renderColor = [renderColor[0], renderColor[1], renderColor[2], xrayOpacity]
-    }
+    let renderColor: RenderColor = selection?.geometry
+      ? selectionColor
+      : [baseColor[0], baseColor[1], baseColor[2], fillOpacity]
+    if (!wireframe && xrayEnabled) renderColor = [renderColor[0], renderColor[1], renderColor[2], xrayOpacity]
     return {
       geometry,
       color: renderColor,
       edgeColor,
       ...(selectedSurface
-        ? { selectionGeometry: geometryWithSelectedPolygons(part.geometry, selection.polygonIndices, true) }
+        ? {
+            selectionGeometry: geometryWithSelectedPolygons(
+              part.geometry,
+              selection.polygonIndices,
+              true,
+              selectionColor,
+            ),
+          }
         : {}),
       wireframe,
     }

@@ -17,7 +17,6 @@ export function createPointCloudData(
     leaf?: CalculationInputLeaf
     displayUnit?: UcumUnit
     vectors?: number[][]
-    opacity?: number
     plane?: { axis: number; coordinate: number }
     range?: readonly number[]
   },
@@ -98,7 +97,6 @@ export function createPointCloudData(
     })
     if (options.plane) point[options.plane.axis] = options.plane.coordinate
     const color = plotColor(plot.values[flat], range)
-    color[3] = options.opacity ?? 0.85
     if (options.plane && spatial) {
       const corners = [
         [-1, -1],

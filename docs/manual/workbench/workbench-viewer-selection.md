@@ -17,7 +17,7 @@ Box Grid Output에서 Histogram, Line Chart, Heatmap, 3D Point cloud를 선택�
 
 표시하지 않는 축은 각각 mean으로 집계하며 sum·min·max·median·std·개별 index로 변경할 수 있습니다. **표본 조회**에서 축별 index와 실제 좌표·값을 확인합니다. 화면 표본 수 제한은 범례에 표시되며 집계·코드 복사는 전체 데이터로 수행합니다.
 
-공간 축만 사용하는 Heatmap/3D는 **Geometry 겹치기**와 투명도를 지원합니다. Heatmap은 남은 공간 축의 index 평면 또는 집계 시 Box 중앙 평면에 표시됩니다. Geometry와 저장 결과의 source/Vars가 일치해야 합니다. XYZ 벡터의 3D는 화살표가 기본이며 t/f가 표시 축에 포함되면 점 색상으로 표시합니다. 공간 좌표에는 Box 변환과 길이 단위를 적용합니다.
+공간 축만 사용하는 Heatmap/3D는 기본으로 **Geometry 겹치기**를 사용하며 Geometry 투명도를 지원합니다. 차트는 불투명하게 유지되고 Geometry만 투명해집니다. Heatmap은 남은 공간 축의 index 평면 또는 집계 시 Box 중앙 평면에 표시됩니다. Geometry와 저장 결과의 source/Vars가 일치해야 합니다. XYZ 벡터의 3D는 화살표가 기본이며 t/f가 표시 축에 포함되면 점 색상으로 표시합니다. 공간 좌표에는 Box 변환과 길이 단위를 적용합니다.
 
 **재생**에서 진폭·위상의 공통 위상 진동 또는 표시 축이 아닌 t/f의 index 순회를 선택합니다. Histogram에서는 t/f 순회 모두 가능합니다. 진동은 실제 다중 주파수 시간 이력 합성이 아닙니다. 재생·일시정지·프레임·속도·반복을 조절하고, 재생 중 값 범위와 카메라는 고정됩니다.
 

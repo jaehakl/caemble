@@ -88,7 +88,7 @@ it('oscillates cached phasors at quarter cycles with fixed range and unchanged t
     [180, -3],
     [360, 3],
   ]) {
-    const scene = oscillateSlice(cache, phase, [-amplitude, amplitude], 0.8)
+    const scene = oscillateSlice(cache, phase, [-amplitude, amplitude])
     expect(scene.geometries[0].colors[0] * 10 - 5).toBeCloseTo(expected, 5)
     expect(scene.geometries[0].positions).toBe(cache.scene.geometries[0].positions)
     expect(scene.geometries[0].indices).toBe(cache.scene.geometries[0].indices)
@@ -108,6 +108,7 @@ it('starts paused, seeks and resets frequency, stops on details/static/unmount a
       renderViewer={() => <div>scene</div>}
     />,
   )
+  expect(screen.getByLabelText('Geometry 투명도')).toHaveValue('0.8')
   fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'oscillating' } })
   expect(screen.getByRole('combobox', { name: /^성분/ })).toHaveValue('-1')
   expect(screen.getByLabelText('진동 위상')).toHaveValue('0')
@@ -133,8 +134,10 @@ it('starts paused, seeks and resets frequency, stops on details/static/unmount a
   fireEvent.change(screen.getByLabelText(/^주파수 \/ 진공 파장/), { target: { value: '0' } })
   fireEvent.click(screen.getByRole('button', { name: '재생' }))
   fireEvent.click(screen.getByLabelText(/Table \/ 2D/))
+  expect(screen.queryByLabelText('Geometry 투명도')).toBeNull()
   expect(callbacks.size).toBe(0)
   fireEvent.click(screen.getByLabelText(/Table \/ 2D/))
+  expect(screen.getByLabelText('Geometry 투명도')).toHaveValue('0.8')
   fireEvent.click(screen.getByRole('button', { name: '재생' }))
   fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'static' } })
   expect(callbacks.size).toBe(0)
@@ -178,7 +181,6 @@ it('keeps separate static and oscillation manual ranges and resets a different r
   expect(screen.getByLabelText('장 표시 모드')).toHaveValue('static')
 })
 
-
 it('preserves oscillation settings but stops playback and clamps the sample on data replacement', () => {
   const props = { name: 'field', contract, rules, displayUnit: 'm' as const, renderViewer: () => <div>slice</div> }
   const { rerender } = render(<StructuredFieldResult {...props} data={{ field: tensor }} />)
@@ -190,12 +192,15 @@ it('preserves oscillation settings but stops playback and clamps the sample on d
   expect(screen.getByLabelText('장 표시 모드')).toHaveValue('oscillating')
   expect(screen.getByLabelText('반복')).toBeChecked()
   fireEvent.change(screen.getByLabelText('주파수 / 진공 파장'), { target: { value: '1' } })
-  const smaller = { ...tensor, shape: [1, ...tensor.shape.slice(1)], axes: [{ ticks: [3e14] }, ...tensor.axes!.slice(1)] }
+  const smaller = {
+    ...tensor,
+    shape: [1, ...tensor.shape.slice(1)],
+    axes: [{ ticks: [3e14] }, ...tensor.axes!.slice(1)],
+  }
   rerender(<StructuredFieldResult {...props} data={{ field: smaller }} />)
   expect(screen.getByLabelText('주파수 / 진공 파장')).toHaveValue('0')
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
-
 
 it.each([
   { label: 'in-phase linear', re: [3, 4, 0], im: [0, 0, 0], peak: 5, values: [5, 0, 5, 5], frequency: 1 },
@@ -214,7 +219,7 @@ it.each([
   const cache = oscillationSlice(field, 'magnitude', 2, 0, 0, -1)
   expect(cache.phasors.length).toBe(6)
   for (const [index, phase] of [0, 90, 180, 360].entries()) {
-    const scene = oscillateSlice(cache, frequency === 0 ? 0 : phase, [0, peak || 1], 0.8)
+    const scene = oscillateSlice(cache, frequency === 0 ? 0 : phase, [0, peak || 1])
     expect(scene.geometries[0].colors[0] * (peak || 1)).toBeCloseTo(values[index], 5)
     expect(scene.geometries[0].positions).toBe(cache.scene.geometries[0].positions)
     expect(scene.geometries[0].indices).toBe(cache.scene.geometries[0].indices)
@@ -222,7 +227,16 @@ it.each([
 })
 
 it('retains total magnitude and phase, separates manual ranges, and opens formula help with keyboard focus', async () => {
-  render(<StructuredFieldResult name="field" contract={contract} rules={rules} data={{ field: tensor }} displayUnit="m" renderViewer={() => <div>scene</div>} />)
+  render(
+    <StructuredFieldResult
+      name="field"
+      contract={contract}
+      rules={rules}
+      data={{ field: tensor }}
+      displayUnit="m"
+      renderViewer={() => <div>scene</div>}
+    />,
+  )
   fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'oscillating' } })
   expect(screen.getByRole('combobox', { name: /^성분/ })).toHaveValue('-1')
   fireEvent.change(screen.getByLabelText('진동 위상'), { target: { value: '90' } })

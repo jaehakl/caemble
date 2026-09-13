@@ -21,7 +21,7 @@ export function StructuredFieldResult(props: {
   rules: readonly RecordedDataRule[]
   data?: RecordedData
   displayUnit: UcumUnit
-  renderViewer: (data: HeatmapRenderData) => ReactNode
+  renderViewer: (data: HeatmapRenderData, geometryOpacity: number) => ReactNode
 }) {
   const parsed = useMemo(() => {
     try {
@@ -73,7 +73,7 @@ function FieldControls({
     field.components.length === 1 ? 0 : -1,
   )
   const [representation, setRepresentation] = useViewerSetting('field.representation', 'abs')
-  const [opacity, setOpacity] = useViewerSetting('field.opacity', 0.8)
+  const [geometryOpacity, setGeometryOpacity] = useViewerSetting('field.geometryOpacity', 0.8)
   const [staticFixed, setStaticFixed] = useViewerSetting<readonly [number, number] | null>('field.staticFixed', null)
   const [details, setDetails] = useViewerSetting('field.details', false)
   const [oscillating, setOscillating] = useViewerSetting('field.oscillating', false)
@@ -151,13 +151,12 @@ function FieldControls({
   const slice = useMemo(() => {
     try {
       if (rendered.error || cached.error) return { error: rendered.error ?? cached.error }
-      if (cached.data)
-        return { data: oscillateSlice(cached.data, field.sampleTicks[sample] === 0 ? 0 : phase, range, opacity) }
-      return { data: fieldSlice(field, props.name, normal, index, sample, component, projection, range, opacity) }
+      if (cached.data) return { data: oscillateSlice(cached.data, field.sampleTicks[sample] === 0 ? 0 : phase, range) }
+      return { data: fieldSlice(field, props.name, normal, index, sample, component, projection, range) }
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
-  }, [field, props.name, normal, index, sample, component, projection, range, opacity, rendered.error, cached, phase])
+  }, [field, props.name, normal, index, sample, component, projection, range, rendered.error, cached, phase])
   const label =
     component < 0
       ? oscillating
@@ -269,19 +268,21 @@ function FieldControls({
               </select>
             </label>
           ) : null}
-          <label>
-            투명도{' '}
-            <input
-              aria-label="단면 투명도"
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={opacity}
-              onChange={(event) => setOpacity(Number(event.target.value))}
-            />{' '}
-            {opacity}
-          </label>
+          {!details ? (
+            <label>
+              Geometry 투명도{' '}
+              <input
+                aria-label="Geometry 투명도"
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={geometryOpacity}
+                onChange={(event) => setGeometryOpacity(Number(event.target.value))}
+              />{' '}
+              {geometryOpacity}
+            </label>
+          ) : null}
           <label>
             <input
               type="checkbox"
@@ -338,7 +339,7 @@ function FieldControls({
           {details ? (
             <ResultTensorView name={props.name} contract={props.contract} rules={props.rules} data={props.data} />
           ) : slice.data ? (
-            props.renderViewer(slice.data)
+            props.renderViewer(slice.data, geometryOpacity)
           ) : null}
         </div>
       )}

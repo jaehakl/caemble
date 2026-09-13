@@ -96,6 +96,7 @@ type JscadViewerProps = {
   preserveCameraOnUpdate?: boolean
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData
+  geometryOpacity?: number
   viewerExpanded?: boolean
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   visibleSources?: readonly CadViewerSource[]
@@ -322,6 +323,7 @@ function JscadViewer({
   meshIdentity,
   preserveCameraOnUpdate = false,
   heatmapRenderData,
+  geometryOpacity = 1,
   selectionQuery = null,
   selectionSourceStatus = {},
   viewerExpanded,
@@ -382,7 +384,7 @@ function JscadViewer({
   const heatmapVisualsRef = useRef<Record<string, unknown>>({
     drawCmd: 'drawHeatmap',
     show: true,
-    transparent: true,
+    transparent: false,
   })
   const heatmapEntities = useMemo(
     () =>
@@ -591,7 +593,7 @@ function JscadViewer({
         drawMesh: renderer.drawCommands.drawMesh,
         drawRayPaths,
         drawRecordedMesh: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, false),
-        drawHeatmap: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, true),
+        drawHeatmap: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, false),
       },
       entities: [],
       glOptions: { canvas, attributes: { preserveDrawingBuffer: true } },
@@ -697,11 +699,12 @@ function JscadViewer({
               match.surfaceId ?? null,
             ]),
             xray: xrayEnabled,
+            geometryOpacity,
           })
         : null
       let geometryEntities = cacheKey ? rendererEntityCacheRef.current.get(cacheKey) : undefined
       if (!geometryEntities) {
-        const renderParts = createLayerRenderParts(displayLayers, selectionMatches, xrayEnabled)
+        const renderParts = createLayerRenderParts(displayLayers, selectionMatches, xrayEnabled, geometryOpacity)
         const wireframeEntities = renderParts.flatMap((part) =>
           createWireframeGeometries(part, xrayEnabled).map((geometry) => ({
             geometry,
@@ -733,7 +736,11 @@ function JscadViewer({
                   ...entity,
                   extras: {
                     cull: { enable: false },
-                    depth: { enable: true, func: 'lequal' },
+                    depth: {
+                      enable: true,
+                      func: 'lequal',
+                      mask: (entity.visuals as { transparent?: boolean }).transparent !== true,
+                    },
                   },
                 }))
             : [],
@@ -797,6 +804,7 @@ function JscadViewer({
     renderScene,
     selectionMatches,
     xrayEnabled,
+    geometryOpacity,
   ])
 
   const renderWithControls = () => {

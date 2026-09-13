@@ -4,8 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
 import JscadViewer from './JscadViewer'
 import { createComparisonSettings, ViewerComparisonContext, type ViewerComparison } from './comparisonSettings'
+import { createRenderParts } from './renderParts'
+import { primitives } from '@jscad/modeling'
 
-const mocks = vi.hoisted(() => ({ draw: vi.fn() }))
+const mocks = vi.hoisted(() => ({ draw: vi.fn(), render: vi.fn() }))
 
 vi.mock('@jscad/regl-renderer', async (importOriginal) => {
   const original = await importOriginal<{ default: object }>()
@@ -20,6 +22,7 @@ vi.mock('@jscad/regl-renderer', async (importOriginal) => {
           { prop: (name: string) => name },
         )
         return (data: { entities?: { visuals: Record<string, unknown> }[] }) => {
+          mocks.render(data)
           for (const entity of data.entities ?? []) {
             const { visuals } = entity
             const command = String(visuals.drawCmd ?? '')
@@ -85,7 +88,7 @@ it('rebuilds heatmap draw commands when StrictMode recreates the renderer', () =
   expect(onRenderError).not.toHaveBeenCalled()
 })
 
-it('registers opaque mesh and transparent heatmap commands with the renderer entity argument', () => {
+it('registers recorded mesh and result chart commands as opaque depth-writing draws', () => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -103,21 +106,86 @@ it('registers opaque mesh and transparent heatmap commands with the renderer ent
   const options = vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
     drawCommands: Record<string, (builder: typeof regl, entity: object) => unknown>
   }
-  for (const [command, transparent] of [
-    ['drawRecordedMesh', false],
-    ['drawHeatmap', true],
-  ] as const) {
+  for (const command of ['drawRecordedMesh', 'drawHeatmap'] as const) {
     for (const primitive of ['triangles', 'lines']) {
       // regl-renderer passes the entity as the factory's second argument.
       options.drawCommands[command](regl, { primitive, visuals: { drawCmd: command } })
       expect(regl).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          blend: expect.objectContaining({ enable: transparent }),
-          depth: { enable: true, func: 'lequal', mask: !transparent },
+          blend: expect.objectContaining({ enable: false }),
+          depth: { enable: true, func: 'lequal', mask: true },
         }),
       )
     }
   }
+})
+
+it('applies overlay opacity to Geometry fills and lets X-ray override it', () => {
+  const part = {
+    id: 'body',
+    geometry: primitives.cuboid(),
+    materialRole: 'body',
+    surfaces: [],
+  }
+  const selection = new Map([['body', { geometry: true, polygonIndices: new Set<number>() }]])
+  expect(createRenderParts([part], selection, false, false, 0.4)[0].color[3]).toBe(0.4)
+  expect(createRenderParts([part], selection, true, false, 0.4)[0].color[3]).toBe(0)
+  expect(createRenderParts([part], new Map(), false, false, 0.4)[0].edgeColor[3]).toBe(1)
+})
+
+it('rebuilds transparent Geometry entities without making the result chart transparent', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const chartGeometry = {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    colors: new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]),
+    indices: new Uint16Array([0, 1, 2]),
+    primitive: 'triangles' as const,
+  }
+  const props = {
+    layers: [
+      {
+        source: 'experiment' as const,
+        lengthUnit: 'm' as const,
+        parts: [{ id: 'body', geometry: primitives.cuboid(), materialRole: 'body', surfaces: [] }],
+        tree: { key: 'root', label: 'Geometry', children: [] },
+      },
+    ],
+    lengthUnit: 'm' as const,
+    heatmapRenderData: {
+      identity: 'chart',
+      geometries: [chartGeometry],
+      bounds: { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] },
+    },
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+  }
+  const view = render(<JscadViewer {...props} geometryOpacity={0.4} />)
+  type TestEntity = {
+    extras?: { depth: { mask: boolean } }
+    geometry: { colors: ArrayLike<ArrayLike<number>> }
+    visuals: { drawCmd: string; transparent: boolean }
+  }
+  const entities = () => mocks.render.mock.calls[mocks.render.mock.calls.length - 1]?.[0].entities as TestEntity[]
+  const geometry = () => entities().find((entity) => entity.visuals.drawCmd === 'drawMesh')!
+  const chart = () => entities().find((entity) => entity.visuals.drawCmd === 'drawHeatmap')!
+  const geometryAlphas = () => Array.from(geometry().geometry.colors, (color) => color[3])
+  expect(geometry().visuals.transparent).toBe(true)
+  expect(geometry().extras?.depth.mask).toBe(false)
+  expect(geometryAlphas().every((alpha) => Math.abs(alpha - 0.4) < 1e-6)).toBe(true)
+  expect(chart().visuals.transparent).toBe(false)
+
+  view.rerender(<JscadViewer {...props} geometryOpacity={0.2} />)
+  expect(geometryAlphas().every((alpha) => Math.abs(alpha - 0.2) < 1e-6)).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle X-ray' }))
+  expect(geometryAlphas().every((alpha) => alpha === 0)).toBe(true)
+  expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
 it('keeps the camera when preflight mesh bounds and identity change', () => {

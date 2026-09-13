@@ -206,7 +206,7 @@ describe('Box Grid consumer contract', () => {
     const field = structuredField(record.rule.result, record.tensor, { kind: 'box-grid' }, 'm')
     expect(field.bounds).toEqual({ min: [6, 20, 30], max: [10, 22, 36] })
     expect(fieldScalar(field, [0, 0, 0], 0, 0, 'im')).toBeCloseTo(3)
-    const slice = fieldSlice(field, 'field', 2, 0, 0, 0, 'abs', [0, 3], 1)
+    const slice = fieldSlice(field, 'field', 2, 0, 0, 0, 'abs', [0, 3])
     expect(Array.from(slice.geometries[0].positions.slice(0, 3))).toEqual([10, 20, 33])
     expect(createDataTensorAccessor(record.rule.result, record.tensor).shape).toHaveLength(7)
   })

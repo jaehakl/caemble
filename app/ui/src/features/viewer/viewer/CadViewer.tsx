@@ -25,6 +25,7 @@ export type CadViewerProps = {
   preserveCameraOnUpdate?: boolean
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData
+  geometryOpacity?: number
   displayUnit?: UcumUnit
   selectionQuery?: CadViewerSelectionQuery | null
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
@@ -46,6 +47,7 @@ export function CadViewer({
   meshIdentity,
   preserveCameraOnUpdate = false,
   heatmapRenderData,
+  geometryOpacity,
   displayUnit,
   selectionQuery,
   selectionSourceStatus,
@@ -82,6 +84,7 @@ export function CadViewer({
         meshIdentity={meshIdentity}
         preserveCameraOnUpdate={preserveCameraOnUpdate}
         heatmapRenderData={heatmapRenderData}
+        geometryOpacity={geometryOpacity}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         visibleSources={content.visibleSources}

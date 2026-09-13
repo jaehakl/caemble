@@ -198,7 +198,6 @@ export function fieldSlice(
   component: number,
   representation: string,
   range: readonly [number, number],
-  opacity: number,
 ): HeatmapRenderData {
   const [u, v] = [0, 1, 2].filter((axis) => axis !== normal)
   const geometries: MeshRenderGeometry[] = []
@@ -244,7 +243,7 @@ export function fieldSlice(
               field.origin[axis] + row.reduce((sum, value, coordinate) => sum + value * point[coordinate], 0),
           ),
         )
-        colors.push(t, 1 - Math.abs(2 * t - 1), 1 - t, opacity)
+        colors.push(t, 1 - Math.abs(2 * t - 1), 1 - t, 1)
       }
       indices.push(start, start + 1, start + 2, start, start + 2, start + 3)
     }
@@ -261,7 +260,7 @@ export function oscillationSlice(
   sample: number,
   component: number,
 ) {
-  const scene = fieldSlice(field, identity, normal, index, sample, component, 're', [0, 0], 1)
+  const scene = fieldSlice(field, identity, normal, index, sample, component, 're', [0, 0])
   const [u, v] = [0, 1, 2].filter((axis) => axis !== normal)
   const componentCount = component < 0 ? field.components.length : 1
   const phasors = new Float32Array(field.spatial[u].ticks.length * field.spatial[v].ticks.length * componentCount * 2)
@@ -285,7 +284,6 @@ export function oscillateSlice(
   cached: ReturnType<typeof oscillationSlice>,
   phaseDegrees: number,
   range: readonly [number, number],
-  opacity: number,
 ): HeatmapRenderData {
   const phase = (phaseDegrees * Math.PI) / 180
   const cosine = Math.cos(phase),
@@ -304,7 +302,7 @@ export function oscillateSlice(
         if (cached.magnitude) value = Math.sqrt(value)
         const t = range[1] === range[0] ? 0.5 : Math.max(0, Math.min(1, (value - range[0]) / (range[1] - range[0])))
         for (let corner = 0; corner < 4; corner++)
-          colors.set([t, 1 - Math.abs(2 * t - 1), 1 - t, opacity], vertex + corner * 4)
+          colors.set([t, 1 - Math.abs(2 * t - 1), 1 - t, 1], vertex + corner * 4)
       }
       return { ...geometry, colors }
     }),

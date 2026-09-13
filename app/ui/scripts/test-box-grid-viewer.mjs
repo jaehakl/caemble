@@ -38,7 +38,7 @@ const server = await createServer({
       const noop=()=>{}; const root=createRoot(document.getElementById('fixture'));
       window.leaf={dtype:'float64',shape,data:values,axes,tensorOrder:1,boxGrid:grid,unit:'m'};
       window.executeCopy = (code) => new Function('samples','boxGrid','return '+code)({signal:window.leaf},boxGrid);
-      window.renderBox = (compatible=true)=>root.render(<BoxGridResult name="signal" rules={[rule]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={compatible} renderViewer={data=><JscadViewer layers={layers} lengthUnit="m" heatmapRenderData={data} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>}/>);
+      window.renderBox = (compatible=true)=>root.render(<BoxGridResult name="signal" rules={[rule]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={compatible} renderViewer={(data,geometryOpacity)=><JscadViewer layers={layers} lengthUnit="m" heatmapRenderData={data} geometryOpacity={geometryOpacity} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>}/>);
       window.renderSizedCalculation=(values=[0,1,-4,4])=>root.render(<CalculationOutputChart preview={{status:'success',output:normalizeCalculationOutput({dtype:'float64',data:values.map(value=>[[value]]),axes:[{name:'x',ticks:[0,1,2,3]},{name:'y',ticks:[0]},{name:'z',ticks:[0]}]})}}/>);
       window.pointPixelWidths=async()=>{
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -120,6 +120,16 @@ try {
   await ready()
   assert.equal(await page.getByLabel('표시 축 1', { exact: true }).inputValue(), 'x')
   assert.equal(await page.getByLabel('표시 축 2', { exact: true }).inputValue(), 'y')
+  assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)
+  assert.equal(await page.getByLabel('Geometry 투명도').count(), 1)
+  await page.getByRole('button', { name: 'Histogram', exact: true }).click()
+  await ready()
+  assert.equal(await page.getByLabel('Geometry 투명도').count(), 0)
+  await page.getByRole('button', { name: 'Heatmap', exact: true }).click()
+  await ready()
+  assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)
+  await page.getByLabel('Geometry 겹치기').uncheck()
+  assert.equal(await page.getByLabel('Geometry 투명도').count(), 0)
   await mkdir('node_modules/.tmp/viewer-qa', { recursive: true })
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap.png' })
   await page.getByRole('button', { name: 'Line Chart', exact: true }).click()
@@ -166,6 +176,7 @@ try {
   await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) !== 90)
   await page.getByRole('button', { name: '일시정지', exact: true }).click()
   await ready()
+  assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), false)
   await page.getByLabel('Geometry 겹치기').check()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/arrows-overlay.png' })
   assert.ok(await page.getByLabel('길이 Scale bar').textContent())
@@ -178,7 +189,7 @@ try {
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/mixed-cloud.png' })
   await page.getByRole('button', { name: 'Heatmap', exact: true }).click()
   await ready()
-  await page.getByLabel('Geometry 겹치기').check()
+  assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/plane-overlay.png' })
   await page.evaluate(() => window.renderBox(false))
   await ready()
@@ -208,7 +219,7 @@ try {
   await page.evaluate(() => window.renderWorkbench())
   await ready()
   assert.equal(await page.getByLabel('Viewer 결과 선택').inputValue(), 'signal')
-  await page.getByLabel('Geometry 겹치기').check()
+  assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)
   await page.waitForSelector('[aria-label="3D CAD Viewer"] canvas')
   assert.equal(await page.getByLabel('Geometry 겹치기').isEnabled(), true)
   await page.getByLabel('표시 축 2', { exact: true }).selectOption('frequency')
@@ -217,7 +228,7 @@ try {
   await page.getByRole('button', { name: '3D Point cloud', exact: true }).click()
   await ready()
   assert.equal(await page.getByLabel('Geometry 겹치기').isEnabled(), true)
-  await page.getByLabel('Geometry 겹치기').check()
+  assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/preflight-box-overlay.png' })
   await page.getByLabel('표시 축 3', { exact: true }).selectOption('time')
   await ready()

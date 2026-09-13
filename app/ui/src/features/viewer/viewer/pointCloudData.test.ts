@@ -24,6 +24,7 @@ it('transforms a spatial point by Box pose and unit, but normalizes mixed coordi
   }
   const data = createPointCloudData(plot, { identity: 'test', leaf, displayUnit: 'mm' })
   expect([...data.geometries[0].positions]).toEqual([500, 2500, 3500])
+  expect([...data.geometries[0].colors].filter((_, index) => index % 4 === 3)).toEqual([1])
   const mixed = createPointCloudData(
     { ...plot, axes: plot.axes.map((axis, i) => (i === 2 ? { ...axis, name: 'time' } : axis)) },
     { identity: 'test' },
@@ -36,6 +37,7 @@ it('puts a projected plane at the requested local coordinate and keeps cancellat
   const data = createPointCloudData(plane, { identity: 'test', leaf, plane: { axis: 2, coordinate: 0.25 } })
   expect(data.geometries[0].primitive).toBe('triangles')
   expect([...data.geometries[0].positions].filter((_, i) => i % 3 === 2)).toEqual([0.25, 0.25, 0.25, 0.25, 0.25, 0.25])
+  expect([...data.geometries[0].colors].filter((_, index) => index % 4 === 3).every((alpha) => alpha === 1)).toBe(true)
   const vector = createPointCloudData(plane, { identity: 'test', leaf, vectors: [[0], [0], [0]] })
   expect(vector.geometries[0].positions.length).toBeGreaterThan(0)
 })

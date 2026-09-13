@@ -116,7 +116,7 @@ function Pair({
               name={name}
               {...input[index]}
               displayUnit="m"
-              canOverlayGeometry
+              canOverlayGeometry={false}
               renderViewer={() => null}
             />
           </ViewerComparisonContext.Provider>

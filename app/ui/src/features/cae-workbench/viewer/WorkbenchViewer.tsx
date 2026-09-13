@@ -269,6 +269,7 @@ function ViewerContent({
     meshRenderData?: Parameters<NonNullable<Parameters<typeof MeshFieldResult>[0]['renderViewer']>>[0],
     deformationScale = 0,
     heatmapRenderData?: HeatmapRenderData,
+    geometryOpacity = 1,
   ) => (
     <>
       {deformationScale > 0 && selectedLines.length ? (
@@ -288,6 +289,7 @@ function ViewerContent({
         polylines={deformationScale > 0 ? [] : selectedLines}
         meshRenderData={meshRenderData}
         heatmapRenderData={heatmapRenderData}
+        geometryOpacity={geometryOpacity}
         meshIdentity={selectedField?.identity}
         displayUnit={displayUnit}
         preserveCameraOnUpdate={Boolean(comparison) || autoSelectResult}
@@ -412,7 +414,7 @@ function ViewerContent({
             displayUnit={displayUnit}
             canOverlayGeometry={canOverlayGeometry}
             geometryBlockedReason={geometryBlockedReason}
-            renderViewer={(data) => renderScene(undefined, 0, data)}
+            renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
             recordReference={recordReference}
           />
         ) : selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid ? (
@@ -423,7 +425,7 @@ function ViewerContent({
             rules={recordedRules}
             data={recordedData}
             displayUnit={displayUnit}
-            renderViewer={(data) => renderScene(undefined, 0, data)}
+            renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
           />
         ) : selectedContract && !['mesh-field', 'polyline'].includes(selectedContract.visualization.kind) ? (
           <ResultTensorView
