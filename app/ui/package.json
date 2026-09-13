@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:mesh-viewer": "node scripts/test-mesh-viewer.mjs",
+    "test:box-grid-viewer": "node scripts/test-box-grid-viewer.mjs",
     "test:catalog-examples": "esbuild scripts/test-catalog-examples.ts --loader:.md=text --bundle --platform=node --format=esm --external:typescript --external:@babel/* --alias:@=./src --outfile=node_modules/.tmp/test-catalog-examples.mjs && node node_modules/.tmp/test-catalog-examples.mjs",
     "test:spectrometer": "esbuild scripts/test-spectrometer.ts --loader:.md=text --bundle --platform=node --format=esm --external:typescript --external:@babel/* --alias:@=./src --outfile=node_modules/.tmp/test-spectrometer.mjs && node node_modules/.tmp/test-spectrometer.mjs",
     "test:unit:watch": "vitest",

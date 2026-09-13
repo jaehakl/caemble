@@ -80,6 +80,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     experimentIsDemo: workbench.experimentIsDemo,
     experimentManageable: workbench.experimentManageable,
   })
+  const [viewerCalculationSource, setViewerCalculationSource] = useState<string | undefined>()
   const [calculationDirty, setCalculationDirty] = useState(false)
   const [calculationSaveCommand, setCalculationSaveCommand] = useState(0)
   const [calculationSaveState, setCalculationSaveState] = useState<CalculationSaveState>({
@@ -368,6 +369,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
+          calculationSource={viewerCalculationSource}
           captureRef={viewerCaptureRef}
           activeExperimentTaskName={page.activeExperimentFile}
           experiment={preview?.experiment ?? workbench.experiment}
@@ -433,6 +435,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               />
             ) : page.activeSection === 'measurement' ? (
               <CalculationWorkbenchContainer
+                onSourceChange={setViewerCalculationSource}
                 authenticated={auth.isAuthenticated}
                 dataReadable={experimentDataReadable}
                 busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}

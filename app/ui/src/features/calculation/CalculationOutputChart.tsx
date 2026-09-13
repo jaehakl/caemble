@@ -1,3 +1,5 @@
+import { PointCloudPlot } from '@/features/viewer/viewer/PointCloudPlot'
+import { scalarPlotData } from '@/features/viewer/viewer/boxGridViewData'
 import { AlertCircle, LoaderCircle } from 'lucide-react'
 import type {
   CalculationExecutionErrorCode,
@@ -106,11 +108,15 @@ function ScalarHistogram({
 }
 
 export function CalculationOutputChart({
+  onRenderEnd,
+  onRenderError,
   comparisonMessage,
   measurementId = null,
   preview,
   scalarValues,
 }: {
+  onRenderEnd?: () => void
+  onRenderError?: (message: string) => void
   comparisonMessage?: string
   measurementId?: number | null
   preview: CalculationPreviewState
@@ -168,7 +174,7 @@ export function CalculationOutputChart({
 
   const output = preview.output
   const data = typeof output.data === 'number' ? output.data : (output.data as readonly number[])
-  const fillsHeatmapArea = output.shape.length === 2 && !output.shape.some((length) => length === 0)
+  const fillsHeatmapArea = output.shape.length >= 2 && !output.shape.some((length) => length === 0)
   return (
     <div className={fillsHeatmapArea ? 'flex h-full min-h-0 flex-col overflow-hidden p-3' : 'h-full overflow-auto p-3'}>
       <header className="mb-3 flex shrink-0 items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -207,6 +213,8 @@ export function CalculationOutputChart({
           values={data as readonly number[]}
           xTitle={`${output.axes[0].name} (${output.axes[0].unit ?? 'unitless'})`}
         />
+      ) : output.shape.length === 3 ? (
+        <div className="min-h-0 flex-1"><PointCloudPlot plot={scalarPlotData(output)} onRenderEnd={onRenderEnd} onRenderError={onRenderError} /></div>
       ) : (
         <div className="min-h-0 flex-1">
           <Heatmap

@@ -308,7 +308,7 @@ try {
       if (step === 1 || step === 2)
         assert.equal(await page.evaluate(() => window.meshUpdateCanvas === document.querySelector('canvas')), true)
       await page.getByLabel(`${selected.label} field component`).selectOption('material')
-      for (const label of ['Mesh edges', 'Supports / loads'])
+      for (const label of ['Mesh 경계선', '구속 / 하중'])
         if (await page.getByLabel(label).isChecked()) await page.getByLabel(label).uncheck()
       await page.getByLabel(`${selected.label} section axis`).selectOption('2')
       await page.getByLabel(`${selected.label} section position`).press('End')

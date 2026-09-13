@@ -78,6 +78,7 @@ export type CalculationWorkbenchProps = Readonly<{
   onCandidateVariableChange: (key: string, value: Tensor) => void
   onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
   onDeleteMeasurements: (rows: readonly SavedMeasurement[]) => Promise<boolean>
+  onSourceChange?: (source: string | undefined) => void
   onDirtyChange: (dirty: boolean) => void
   onOutputChartRatioChange: (ratio: number) => void
   onRequestLogin: () => void
@@ -121,6 +122,7 @@ export function CalculationWorkbench({
   onCandidateVariableChange,
   onColumnRatiosChange,
   onDeleteMeasurements,
+  onSourceChange,
   onDirtyChange,
   onOutputChartRatioChange,
   onRequestLogin,
@@ -354,6 +356,10 @@ export function CalculationWorkbench({
       measurementLoading,
     ],
   )
+  useEffect(() => {
+    onSourceChange?.(draft.sourceCode)
+  }, [draft.sourceCode, onSourceChange])
+  useEffect(() => () => onSourceChange?.(undefined), [onSourceChange])
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
   useEffect(

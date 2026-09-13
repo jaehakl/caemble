@@ -20,6 +20,18 @@ const actual: CalculationDataOutput = {
 }
 
 describe('shape-based Prediction metrics', () => {
+  it('compares rank-three scalar tensors by the same flattened index contract', () => {
+    const volume = {
+      ...reference,
+      shape: [1, 1, 2],
+      axes: [{ name: 'x', ticks: [0] }, { name: 'y', ticks: [0] }, reference.axes[0]],
+    }
+    expect(comparePredictionOutput(volume, { ...volume, data: [12, 24] })).toMatchObject({
+      compatible: true,
+      mae: 3,
+      maxAbsoluteError: 4,
+    })
+  })
   it('compares by index and applies the same rule to both inverse aggregate paths', () => {
     expect(comparePredictionOutput(reference, actual)).toMatchObject({
       compatible: true,

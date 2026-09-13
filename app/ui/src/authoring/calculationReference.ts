@@ -21,9 +21,11 @@ export const calculationAuthoringReference = {
       'A read-only dotted-path map of float32/float64 Box Grid Outputs with seven axes: x, y, z, time, frequency, amplitudePhase, component. Each leaf has Box pose, size and cell-center grid metadata. Complex fields use amplitude/phase channels in radians; convert these explicitly for complex arithmetic. Automatic visualizations are excluded.',
     dependencies:
       "Use only fixed record.member, record['dotted.path'], static object destructuring, or traceable const aliases. Dynamic keys, enumeration, spread, reassignment, and passing or returning the whole record are rejected when saving.",
-    output: 'Return { dtype, data, axes? }; shape is inferred from rank-0/1/2 finite real data.',
+    projection:
+      'The frozen global boxGrid.project(leaf, { axes, representation?, component?, reduce?, frame? }) projects channels/components before canonical x/y/z/time/frequency reductions. axes preserve their order; omitted axes default to mean. Reduction methods: sum, mean, min, max, median, std (population), index (zero-based). representation: amplitude or phase; phase requires a component index. component: numeric index or magnitude. frame.phase is radians; frame.axis/time-or-frequency and frame.index freeze a sweep. Returns { dtype: float64, data, axes }. Five-axis Histogram projections are intermediate values; reduce to rank 0/1/2/3 before returning.',
+    output: 'Return { dtype, data, axes? }; shape is inferred from rank-0/1/2/3 finite real data.',
     axes: 'Axes are optional. When supplied, every axis and tick must match the inferred shape and units use UCUM.',
-    validation: 'Complex final values, NaN, Infinity, ragged arrays, rank above 2, and explicit shape are rejected.',
+    validation: 'Complex final values, NaN, Infinity, ragged arrays, rank above 3, and explicit shape are rejected.',
     persistence:
       'Saving a new or source-changed Calculation requires a successful preflight; its source hash, ExperimentRecord dependencies, and exact dtype/shape/axes output layout become the stored contract.',
     indexing:

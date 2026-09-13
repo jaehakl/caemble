@@ -34,7 +34,8 @@ export type MeshRenderGeometry = Readonly<{
   positions: Float32Array
   colors: Float32Array
   indices: Uint16Array
-  primitive: 'triangles' | 'lines'
+  pointSizes?: Float32Array
+  primitive: 'triangles' | 'lines' | 'points'
 }>
 
 export type MeshFieldView = Readonly<{

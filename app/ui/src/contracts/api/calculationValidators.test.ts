@@ -65,14 +65,15 @@ describe('Calculation wire contracts', () => {
 
   it.each([
     [
-      'rank above two',
+      'rank above three',
       {
         dtype: 'float64',
-        shape: [1, 1, 1],
+        shape: [1, 1, 1, 1],
         axes: [
           { name: 'x', ticks: [0] },
           { name: 'y', ticks: [0] },
           { name: 'z', ticks: [0] },
+          { name: 'time', ticks: [0] },
         ],
         data: [1],
       },

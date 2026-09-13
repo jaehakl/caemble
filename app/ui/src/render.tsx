@@ -37,10 +37,16 @@ window.caembleRender = async (payload) => {
     if (payload.kind === 'calculation') {
       root.render(
         <div className="h-full p-6">
-          <CalculationOutputChart preview={{ status: 'success', output: payload.output }} />
+          <CalculationOutputChart
+            preview={{ status: 'success', output: payload.output }}
+            onRenderEnd={finish}
+            onRenderError={(error) => {
+              window.caembleRenderState = { ready: false, error }
+            }}
+          />
         </div>,
       )
-      finish()
+      if (payload.output.shape.length !== 3 || payload.output.shape.some((length) => length === 0)) finish()
       return
     }
     const snapshot = payload.input.measurement.experiment

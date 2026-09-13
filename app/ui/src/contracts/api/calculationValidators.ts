@@ -42,7 +42,7 @@ const calculationDataAxisSchema = z
   .passthrough()
 const calculationOutputLayoutFields = {
   dtype: calculationDataDTypeSchema,
-  shape: z.array(z.number().int().nonnegative()).max(2),
+  shape: z.array(z.number().int().nonnegative()).max(3),
   axes: z.array(calculationDataAxisSchema),
 }
 
@@ -144,7 +144,7 @@ const calculationDataAnalysisItemSchema = z
       z
         .object({
           kind: z.literal('tensor'),
-          rank: z.union([z.literal(1), z.literal(2)]),
+          rank: z.union([z.literal(1), z.literal(2), z.literal(3)]),
           count: z.number().int().nonnegative(),
           mean: z.number().nullable(),
           std: z.number().nullable(),

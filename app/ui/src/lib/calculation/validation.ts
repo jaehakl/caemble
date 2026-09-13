@@ -181,44 +181,40 @@ function inferOutputShape(value: unknown): readonly number[] {
   if (typeof value === 'number') return Object.freeze([])
   if (!Array.isArray(value)) throw new Error('Calculation output data must be a real scalar, array, or Math.js Matrix.')
   if (value.length === 0) return Object.freeze([0])
-  if (value.every((item) => !Array.isArray(item))) return Object.freeze([value.length])
-  if (value.some((item) => !Array.isArray(item))) throw new Error('Calculation output data is ragged.')
-  const rows = value as readonly unknown[][]
-  const columns = rows[0].length
-  if (rows.some((row) => row.length !== columns || row.some(Array.isArray))) {
-    throw new Error('Calculation output data is ragged or has rank greater than 2.')
-  }
-  return Object.freeze([rows.length, columns])
+  const childShape = inferOutputShape(value[0])
+  if (childShape.length >= 3) throw new Error('Calculation output rank must be 0, 1, 2, or 3.')
+  if (value.some((item) => JSON.stringify(inferOutputShape(item)) !== JSON.stringify(childShape))) throw new Error('Calculation output data is ragged.')
+  return Object.freeze([value.length, ...childShape])
 }
 
 function flattenOutputData(value: unknown, shape: readonly number[], path: string): number | readonly number[] {
   const matrix = isMathJsMatrix(value) ? value.toArray() : value
-  if (shape.length === 0) {
+  if (!shape.length) {
     if (typeof matrix !== 'number') throw new Error(`${path} must be a real scalar.`)
     return matrix
   }
   if (!Array.isArray(matrix)) throw new Error(`${path} must be an array or Math.js Matrix.`)
-  if (shape.length === 1) {
-    if (matrix.length !== shape[0] || matrix.some(Array.isArray))
-      throw new Error(`${path} does not match shape [${shape.join(', ')}].`)
-    return Object.freeze([...(matrix as unknown[])]) as readonly number[]
-  }
-  const size = shape[0] * shape[1]
+  const size = shape.reduce((a, b) => a * b, 1)
   if (matrix.every((item) => !Array.isArray(item))) {
-    if (matrix.length !== size) throw new Error(`${path} does not match shape [${shape.join(', ')}].`)
-    return Object.freeze([...(matrix as unknown[])]) as readonly number[]
+    if (matrix.length !== size) throw new Error(`${path} does not match shape.`)
+    return Object.freeze([...matrix]) as readonly number[]
   }
-  if (
-    matrix.length !== shape[0] ||
-    matrix.some((row) => !Array.isArray(row) || row.length !== shape[1] || row.some(Array.isArray))
-  ) {
-    throw new Error(`${path} is ragged or does not match shape [${shape.join(', ')}].`)
+  const flat: number[] = []
+  const visit = (item: unknown, depth: number) => {
+    if (depth === shape.length) {
+      if (typeof item !== 'number') throw new Error(`${path} must contain real numbers.`)
+      flat.push(item)
+      return
+    }
+    if (!Array.isArray(item) || item.length !== shape[depth]) throw new Error(`${path} is ragged or does not match shape.`)
+    item.forEach((child) => visit(child, depth + 1))
   }
-  return Object.freeze(matrix.flat()) as readonly number[]
+  visit(matrix, 0)
+  return Object.freeze(flat)
 }
 
 function defaultAxes(shape: readonly number[]) {
-  const names = shape.length === 1 ? ['index'] : ['row', 'column']
+  const names = shape.length === 1 ? ['index'] : ['row', 'column', 'depth']
   return Object.freeze(
     shape.map((length, index) =>
       Object.freeze({
@@ -245,7 +241,7 @@ function normalizeOutputParts(
   if (!calculationDtypes.includes(output.dtype as (typeof calculationDtypes)[number])) {
     throw new Error('Calculation output dtype is invalid.')
   }
-  if (shape.length > 2) throw new Error('Calculation output rank must be 0, 1, or 2.')
+  if (shape.length > 3) throw new Error('Calculation output rank must be 0, 1, 2, or 3.')
   const size = shape.reduce((product, length) => product * length, 1)
   if (size > CALCULATION_OUTPUT_MAX_ELEMENTS) {
     throw new CalculationExecutionError(

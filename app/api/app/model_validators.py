@@ -13,8 +13,8 @@ def validate_calculation_data_axis(value: Any) -> Any:
 
 
 def validate_calculation_output_layout(value: Any) -> Any:
-    if len(value.shape) > 2:
-        raise ValueError("Calculation output rank must be between 0 and 2.")
+    if len(value.shape) > 3:
+        raise ValueError("Calculation output rank must be between 0 and 3.")
     if any(isinstance(length, bool) or length < 0 for length in value.shape):
         raise ValueError("Calculation output shape lengths must be non-negative integers.")
     if len(value.axes) != len(value.shape):
@@ -28,8 +28,8 @@ def validate_calculation_output_layout(value: Any) -> Any:
 
 
 def validate_calculation_data_output(value: Any) -> Any:
-    if len(value.shape) > 2:
-        raise ValueError("CalculationData output rank must be between 0 and 2.")
+    if len(value.shape) > 3:
+        raise ValueError("CalculationData output rank must be between 0 and 3.")
     if any(isinstance(length, bool) or length < 0 for length in value.shape):
         raise ValueError("CalculationData shape lengths must be non-negative integers.")
     if len(value.axes) != len(value.shape):

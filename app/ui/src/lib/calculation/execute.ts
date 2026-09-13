@@ -1,3 +1,4 @@
+import { boxGrid } from './boxGridProject'
 import { CALCULATION_MATHJS_RUNTIME } from './mathRuntime'
 import { calculationIndex } from './indexGuard'
 import { CALCULATION_INDEX_GUARD_GLOBAL, CALCULATION_SHADOWED_GLOBAL_NAMES } from './runtimeGlobals'
@@ -33,7 +34,7 @@ export function executeCalculation(
   }
   const createRunner = new Function(
     'eval',
-    `return function(module, exports, require, Math, ${CALCULATION_INDEX_GUARD_GLOBAL}, ${CALCULATION_SHADOWED_GLOBAL_NAMES.join(', ')}) {
+    `return function(module, exports, require, Math, boxGrid, ${CALCULATION_INDEX_GUARD_GLOBAL}, ${CALCULATION_SHADOWED_GLOBAL_NAMES.join(', ')}) {
       "use strict";
       ${compiledSource.code}
       return module.exports;
@@ -46,6 +47,7 @@ export function executeCalculation(
     module.exports,
     requireMathJs,
     deterministicMath,
+    boxGrid,
     calculationIndex,
     ...CALCULATION_SHADOWED_GLOBAL_NAMES.map((name) => (name === 'console' ? calculationConsole : undefined)),
   )

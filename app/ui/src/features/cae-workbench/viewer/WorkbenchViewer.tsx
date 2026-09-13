@@ -1,3 +1,5 @@
+import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
+import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
 import { StructuredFieldResult } from '@/features/viewer/viewer/StructuredFieldResult'
 import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
 import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
@@ -15,7 +17,13 @@ import { isDataTensor } from '@/lib/cad/model/dataTensor'
 import { parseRecordedMeshFields } from '@/features/viewer/viewer/meshFields'
 import { MeshFieldResult } from '@/features/viewer/viewer/MeshFieldResult'
 
+// Box Grid carries its experiment placement in the recorded Box metadata.
+function usesExperimentCoordinates(visualization: NonNullable<RecordedResultContracts[string]>['visualization']) {
+  return visualization.kind === 'box-grid' || visualization.coordinateSpace === 'experiment'
+}
+
 export function WorkbenchViewer({
+  calculationSource,
   activeExperimentTaskName,
   experiment,
   experimentDocument,
@@ -38,6 +46,7 @@ export function WorkbenchViewer({
   autoSelectResult = false,
   captureRef,
 }: {
+  calculationSource?: string
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
   experimentDocument: CadDocumentController
@@ -116,12 +125,18 @@ export function WorkbenchViewer({
     ],
   )
 
-  const frameMatches = Boolean(
-    resultSourceHash &&
-    resultVarsHash &&
-    experimentDocument.evaluatedSnapshot?.sourceHash === resultSourceHash &&
-    materialVarsHash(experimentDocument.evaluatedSnapshot.variables) === resultVarsHash,
-  )
+  const snapshot = experimentDocument.evaluatedSnapshot
+  const frameBlockedReason =
+    !snapshot || !experimentDocument.scene
+      ? 'Geometry가 준비되지 않았습니다. 평가가 끝난 뒤 Geometry 겹치기를 사용할 수 있습니다.'
+      : !resultSourceHash || !resultVarsHash
+        ? '결과의 source/Vars 비교 정보가 없어 Geometry 겹치기를 사용할 수 없습니다.'
+        : snapshot.sourceHash !== resultSourceHash
+          ? 'Geometry와 결과의 source가 달라 Geometry 겹치기를 사용할 수 없습니다.'
+          : materialVarsHash(snapshot.variables) !== resultVarsHash
+            ? 'Geometry와 결과의 Vars가 달라 Geometry 겹치기를 사용할 수 없습니다.'
+            : undefined
+  const frameMatches = !frameBlockedReason
   useEffect(() => {
     if (!autoSelectResult || !recordedData || selectionMade.current) return
     const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
@@ -133,7 +148,7 @@ export function WorkbenchViewer({
     const spatial = candidates.filter(
       ([, result]) =>
         frameMatches &&
-        result.visualization.coordinateSpace === 'experiment' &&
+        usesExperimentCoordinates(result.visualization) &&
         (result.visualization.kind === 'mesh-field' ||
           result.visualization.kind === 'polyline' ||
           result.visualization.kind === 'box-grid' ||
@@ -145,9 +160,21 @@ export function WorkbenchViewer({
     )
     selectionMade.current = candidates.length > 0
   }, [autoSelectResult, recordedData, resultContracts, resultErrors, mesh, polylines, frameMatches])
-  const canOverlayGeometry =
-    frameMatches && (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
+  const geometryBlockedReason =
+    frameBlockedReason ??
+    (selectedContract && !usesExperimentCoordinates(selectedContract.visualization)
+      ? '이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.'
+      : undefined)
+  const canOverlayGeometry = !geometryBlockedReason
   const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
+  const recordReference = useMemo(() => {
+    if (!calculationSource) return undefined
+    try {
+      return calculationExperimentRecordReference(calculationSource, selectedView)
+    } catch {
+      return undefined
+    }
+  }, [calculationSource, selectedView])
   const gridAxis =
     selectedContract?.visualization.kind === 'box-grid' ? 0 : selectedContract?.visualization.grid?.xyzAxes[0]
   const gridUnit =
@@ -176,8 +203,8 @@ export function WorkbenchViewer({
       (overlay.includes(bundle.id) &&
         sameResultInvocation(bundle.id) &&
         frameMatches &&
-        resultContracts?.[bundle.id].visualization.coordinateSpace === 'experiment' &&
-        (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')),
+        usesExperimentCoordinates(resultContracts![bundle.id].visualization) &&
+        (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))),
   )
   const renderScene = (
     meshRenderData?: Parameters<NonNullable<Parameters<typeof MeshFieldResult>[0]['renderViewer']>>[0],
@@ -240,12 +267,16 @@ export function WorkbenchViewer({
               sameResultInvocation(name) &&
               polylines.bundles.some((bundle) => bundle.id === name) &&
               frameMatches &&
-              result.visualization.coordinateSpace === 'experiment' &&
-              (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
+              usesExperimentCoordinates(result.visualization) &&
+              (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
             return (
               <label
                 key={name}
-                title={compatible ? 'Geometry 좌표에 겹쳐 표시' : '선택 결과와 좌표계를 연결할 수 없습니다.'}
+                title={
+                  compatible
+                    ? 'Geometry 좌표에 겹쳐 표시'
+                    : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
+                }
               >
                 <input
                   type="checkbox"
@@ -285,7 +316,7 @@ export function WorkbenchViewer({
       </div>
       {!canOverlayGeometry && selectedView !== '' ? (
         <p role="status" className="p-2 text-xs">
-          현재 Geometry와 저장 결과의 source 또는 Vars 좌표가 달라 Geometry Overlay를 표시하지 않습니다.
+          {geometryBlockedReason}
         </p>
       ) : null}
       <div ref={captureRef} className="min-h-0 flex-1 overflow-auto">
@@ -305,8 +336,19 @@ export function WorkbenchViewer({
             displayUnit={displayUnit}
             renderViewer={(data, view) => renderScene(data, view.deformationScale)}
           />
-        ) : selectedContract?.visualization.kind === 'box-grid' ||
-          (selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid) ? (
+        ) : selectedContract?.visualization.kind === 'box-grid' ? (
+          <BoxGridResult
+            key={selectedView}
+            name={selectedView}
+            rules={recordedRules}
+            data={recordedData}
+            displayUnit={displayUnit}
+            canOverlayGeometry={canOverlayGeometry}
+            geometryBlockedReason={geometryBlockedReason}
+            renderViewer={(data) => renderScene(undefined, 0, data)}
+            recordReference={recordReference}
+          />
+        ) : selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid ? (
           <StructuredFieldResult
             key={selectedView}
             name={selectedView}

@@ -1182,6 +1182,46 @@ async def _verify_calculation_data_contract(database: str) -> None:
     "Set RUN_CALCULATION_DB_TESTS=1 to use disposable PostgreSQL databases.",
 )
 class CalculationDatabaseIntegrationTests(unittest.TestCase):
+    def test_rank_three_calculation_save_and_reload(self) -> None:
+        database = f"caemble_calculation_test_{uuid.uuid4().hex}"
+
+        async def verify() -> None:
+            owner_id, _, experiment_id, _, measurement_id, _, _, _ = await _seed_calculation_data(database)
+            engine = create_async_engine(make_async_db_url(_database_url(database)))
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            owner = UserData(id=owner_id, roles=[RoleEnum.user])
+            source = "export default function calculate(record) { return { dtype: 'float64', data: [[[1, 2]]] }; }"
+            source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+            layout = {"dtype": "float64", "shape": [1, 1, 2], "axes": [
+                {"name": "x", "ticks": [0.5], "unit": "m"},
+                {"name": "y", "ticks": [0.5], "unit": "m"},
+                {"name": "time", "ticks": [0, 1], "unit": "s"},
+            ]}
+            try:
+                async with sessions() as session:
+                    created = await upsert_calculations(session, [
+                        _ready_calculation(experiment_id, "Volume", source, measurement_id, output_layout=layout)
+                    ], user=owner)
+                    saved = await save_calculation_data(session, created[0]["id"], measurement_id, source_hash,
+                        CalculationDataOutput.model_validate({**layout, "data": [1, 2]}), user=owner)
+                async with sessions() as session:
+                    response = await list_calculation_data(session,
+                        CalculationDataListRequest(experiment_id=experiment_id, selected_ids=[saved["id"]], limit=None), user=owner)
+                    output = response["items"][0].data
+                    self.assertEqual(output.shape, [1, 1, 2])
+                    self.assertEqual(output.data, [1, 2])
+                    self.assertEqual([axis.model_dump(mode="json") for axis in output.axes], layout["axes"])
+            finally:
+                await engine.dispose()
+
+        try:
+            asyncio.run(_create_database(database))
+            _upgrade(database, "head")
+            asyncio.run(verify())
+        finally:
+            settings.db_url = ORIGINAL_DB_URL
+            asyncio.run(_drop_database(database))
+
     def test_measurement_coordinates_are_preserved_without_fixing_preflight_ticks(self) -> None:
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
 

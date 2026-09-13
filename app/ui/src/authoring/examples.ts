@@ -107,6 +107,25 @@ export default function calculate(record) {
       ],
     },
   },
+  {
+    id: 'calculation.example.projection',
+    title: 'Complete Calculation: project a Box Grid to three scalar axes',
+    source: `export default function calculate(record) {
+  return boxGrid.project(record['signal'], { axes: ['x', 'y', 'time'], component: 0 });
+}
+`,
+    input: calculationExampleInput,
+    expected: {
+      dtype: 'float64',
+      shape: [1, 1, 4],
+      data: [2, 4, 6, 8],
+      axes: [
+        { name: 'x', ticks: [0.5], unit: 'm' },
+        { name: 'y', ticks: [0.5], unit: 'm' },
+        { name: 'time', ticks: [0, 1, 2, 3], unit: 's' },
+      ],
+    },
+  },
 ]
 
 /** Invalid examples name the stage that rejects them; snippets are never advertised as full simulations. */

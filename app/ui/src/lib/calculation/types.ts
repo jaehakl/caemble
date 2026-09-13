@@ -48,13 +48,18 @@ export type MathJsMatrix = Readonly<{
 
 export type CalculationOutput = Readonly<{
   dtype: CalculationDtype
-  data: number | readonly number[] | readonly (readonly number[])[] | MathJsMatrix
+  data:
+    | number
+    | readonly number[]
+    | readonly (readonly number[])[]
+    | readonly (readonly (readonly number[])[])[]
+    | MathJsMatrix
   axes?: readonly CalculationAxis[]
 }>
 
 export type NormalizedCalculationOutput = Readonly<{
   dtype: CalculationDtype
-  shape: readonly [] | readonly [number] | readonly [number, number]
+  shape: readonly [] | readonly [number] | readonly [number, number] | readonly [number, number, number]
   data: number | readonly number[]
   axes: readonly CalculationAxis[]
 }>

@@ -27,6 +27,19 @@ const mathJsMembers = CALCULATION_MATHJS_NAMES.map(
 ).join('\n  ')
 
 export const CALCULATION_MONACO_DECLARATION = `
+type BoxGridProjectionAxis = 'x' | 'y' | 'z' | 'time' | 'frequency'
+type BoxGridProjectionData = number | readonly BoxGridProjectionData[]
+interface BoxGridProjectionOptions {
+  readonly axes: readonly BoxGridProjectionAxis[]
+  readonly representation?: 'amplitude' | 'phase'
+  readonly component?: number | 'magnitude'
+  readonly reduce?: Partial<Record<BoxGridProjectionAxis, { method: 'sum' | 'mean' | 'min' | 'max' | 'median' | 'std' | 'index'; index?: number }>>
+  readonly frame?: { phase?: number; axis?: 'time' | 'frequency'; index?: number }
+}
+declare const boxGrid: Readonly<{
+  project(leaf: CalculationInputLeaf, options: BoxGridProjectionOptions): { readonly dtype: 'float64'; readonly data: BoxGridProjectionData; readonly axes: readonly CalculationAxis[] }
+}>
+
 interface MathJsComplex {
   readonly isComplex: true
   readonly re: number
@@ -86,7 +99,7 @@ type CalculationInput = Readonly<Record<string, CalculationInputLeaf>>
 
 interface CalculationOutput {
   readonly dtype: CalculationDtype
-  readonly data: number | readonly number[] | readonly (readonly number[])[] | MathJsMatrix
+  readonly data: number | readonly number[] | readonly (readonly number[])[] | readonly (readonly (readonly number[])[])[] | MathJsMatrix
   readonly axes?: readonly CalculationAxis[]
 }
 

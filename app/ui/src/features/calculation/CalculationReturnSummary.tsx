@@ -1,7 +1,13 @@
 import type { CalculationPreviewState } from './CalculationOutputChart'
 
-function summarizedData(data: number | readonly number[], shape: readonly number[]) {
+function summarizedData(data: number | readonly number[], shape: readonly number[]): string {
   if (typeof data === 'number') return String(data)
+  if (shape.length === 3) {
+    const planes = shape[0],
+      stride = shape[1] * shape[2]
+    const selected = planes <= 2 ? Array.from({ length: planes }, (_, i) => i) : [0, planes - 1]
+    return `[\n${selected.map((index) => `  // plane ${index}\n${summarizedData(data.slice(index * stride, (index + 1) * stride), shape.slice(1))}`).join(planes > 2 ? `,\n  … ${planes - 2} planes omitted …,\n` : ',\n')}\n]`
+  }
   if (shape.length === 2) {
     const rows = shape[0] ?? 0
     const columns = shape[1] ?? 0

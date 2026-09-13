@@ -46,23 +46,24 @@ describe('mesh field inspection controls', () => {
     fireEvent.change(screen.getByLabelText('stress section axis'), { target: { value: '0' } })
     fireEvent.change(screen.getByLabelText('stress section position'), { target: { value: '0.25' } })
     expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-cut', '0.25')
-    fireEvent.click(screen.getByLabelText('Supports / loads'))
+    fireEvent.click(screen.getByLabelText('구속 / 하중'))
     expect(screen.queryByText(/Green: fixed nodes/)).not.toBeInTheDocument()
     expect(screen.queryByLabelText('stress displacement scale')).not.toBeInTheDocument()
   })
 })
 
-
 it('retains checkboxes and component/section settings while replacing field data', () => {
   const { rerender } = render(<MeshFieldResult field={field} />)
-  fireEvent.click(screen.getByLabelText('Mesh edges'))
-  fireEvent.click(screen.getByLabelText('Supports / loads'))
+  fireEvent.click(screen.getByLabelText('Mesh 경계선'))
+  fireEvent.click(screen.getByLabelText('구속 / 하중'))
   fireEvent.change(screen.getByLabelText('stress field component'), { target: { value: '0' } })
   fireEvent.change(screen.getByLabelText('stress section axis'), { target: { value: '0' } })
   fireEvent.change(screen.getByLabelText('stress section position'), { target: { value: '0.25' } })
-  rerender(<MeshFieldResult field={{ ...field, identity: 'new-mesh', values: new Float64Array([20, 0, 0, 0, 0, 0]) }} />)
-  expect(screen.getByLabelText('Mesh edges')).not.toBeChecked()
-  expect(screen.getByLabelText('Supports / loads')).not.toBeChecked()
+  rerender(
+    <MeshFieldResult field={{ ...field, identity: 'new-mesh', values: new Float64Array([20, 0, 0, 0, 0, 0]) }} />,
+  )
+  expect(screen.getByLabelText('Mesh 경계선')).not.toBeChecked()
+  expect(screen.getByLabelText('구속 / 하중')).not.toBeChecked()
   expect(screen.getByLabelText('stress field component')).toHaveValue('0')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '20')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-cut', '0.25')

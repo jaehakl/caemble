@@ -55,7 +55,7 @@ const sample = flat[base]
 
 `reshape`는 shape 변경, `mean`/`sum`은 축약, `subset`과 `index`는 slicing, `map`은 element-wise 변환, `transpose`와 `squeeze`는 축 정리에 사용합니다. 빈 축의 2차원 shape를 유지해야 할 때는 `zeros(rows, columns)`를 반환할 수 있습니다.
 
-작성하는 Output은 `dtype`, finite real `data`, 선택적인 `axes`만 가집니다. `shape`를 작성하면 오류이며 scalar는 `[]`, flat array는 `[length]`, 직사각 2D array는 `[rows, columns]`, Math.js Matrix는 `size()`에서 자동 추론합니다. axes를 생략하면 `index` 또는 `row`/`column` ordinal ticks를 생성하고, 제공하면 모든 축과 ticks 길이가 추론 shape에 정확히 맞아야 합니다. 성공한 preflight의 dtype·shape·축 이름·단위는 저장 뒤 강제 계약이 됩니다. 축 좌표(ticks)의 값은 Measurement마다 달라도 저장할 수 있으며, 각 결과의 실제 좌표를 보존해 표시합니다. ticks는 유한한 숫자이고 개수가 해당 shape와 일치해야 합니다. Prediction의 예측 결과 계약 검사도 같은 규칙으로 Measurement별 좌표 차이를 허용하지만, Predicted·Target·Re-predicted·Actual의 비교는 shape가 같으면 같은 배열 인덱스끼리 수행합니다. 축 좌표·이름·단위·숫자 dtype 차이는 비교를 막지 않으며, 겹쳐 표시할 때는 Predicted 또는 Target의 축을 사용합니다. 보간이나 단위 변환은 하지 않습니다. Output에는 QuantityKind와 값 unit이 없습니다. rank 0은 scalar, rank 1은 line, rank 2는 heatmap으로 표시합니다.
+작성하는 Output은 `dtype`, finite real `data`, 선택적인 `axes`만 가집니다. `shape`를 작성하면 오류이며 scalar는 `[]`, flat array는 `[length]`, 직사각 2D array는 `[rows, columns]`, 3D array는 `[rows, columns, depth]`, Math.js Matrix는 `size()`에서 자동 추론합니다. axes를 생략하면 `index` 또는 `row`/`column`/`depth` ordinal ticks를 생성하고, 제공하면 모든 축과 ticks 길이가 추론 shape에 정확히 맞아야 합니다. 성공한 preflight의 dtype·shape·축 이름·단위는 저장 뒤 강제 계약이 됩니다. 축 좌표(ticks)의 값은 Measurement마다 달라도 저장할 수 있으며, 각 결과의 실제 좌표를 보존해 표시합니다. ticks는 유한한 숫자이고 개수가 해당 shape와 일치해야 합니다. Prediction의 예측 결과 계약 검사도 같은 규칙으로 Measurement별 좌표 차이를 허용하지만, Predicted·Target·Re-predicted·Actual의 비교는 shape가 같으면 같은 배열 인덱스끼리 수행합니다. 축 좌표·이름·단위·숫자 dtype 차이는 비교를 막지 않으며, 겹쳐 표시할 때는 Predicted 또는 Target의 축을 사용합니다. 보간이나 단위 변환은 하지 않습니다. Output에는 QuantityKind와 값 unit이 없습니다. rank 0은 scalar, rank 1은 line, rank 2는 heatmap, rank 3는 Point cloud heatmap으로 표시합니다.
 2차원 heatmap은 tensor의 columns:rows shape 비율을 유지해 각 cell을 정사각형으로 표시하며, Output Chart의 가용 영역과 splitter 조절에 맞춰 확대됩니다. 숫자 축 라벨은 최대 유효숫자 5개로 반올림하지만 hover 좌표와 Return 데이터는 원본 정밀도를 유지합니다.
 
 ### 허용 Math.js API
@@ -72,4 +72,28 @@ const sample = flat[base]
 - 한 실행은 최대 30초이며 source, Measurement, Calculation 또는 Experiment가 바뀌면 이전 실행을 취소합니다.
 - 명시적인 `shape`, 불완전한 axes, ticks 길이 불일치, 유효하지 않은 UCUM axis unit은 Output 계약 오류입니다.
 - `console.log`는 호출당 4 KiB, 실행당 100건·64 KiB로 제한되며 초과분은 한 번의 truncation 경고로 대체됩니다.
-- `timeout`은 계산량을 줄이고, `input-too-large`는 필요한 RecordedData만 만드는 Experiment 계약으로 나누고, `output-too-large`는 downsample 또는 aggregate한 rank 0/1/2 결과를 반환해 해결합니다.
+- `timeout`은 계산량을 줄이고, `input-too-large`는 필요한 RecordedData만 만드는 Experiment 계약으로 나누고, `output-too-large`는 downsample 또는 aggregate한 rank 0/1/2/3 결과를 반환해 해결합니다.
+
+## Viewer 변환 코드 복사
+
+Box Grid Viewer의 **변환 코드 복사**는 현재 채널·성분·축·집계 설정을 `boxGrid.project` 한 줄로 복사합니다. 별도 import 없이 Calculation 함수 안에서 `return`을 붙여 실행합니다. 입력 매개변수 이름은 현재 편집 중인 함수에 맞추고 Record 이름은 정적 참조로 보존합니다.
+
+```js
+export default function calculate(record) {
+  return boxGrid.project(record['signal'], { axes: ['time'], component: 0 });
+}
+```
+
+`axes`는 유지할 축과 반환 순서입니다. 이름은 `x`, `y`, `z`, `time`, `frequency`이며 빈 배열이면 scalar입니다. `representation`은 `amplitude`(기본) 또는 `phase`, `component`는 0 기반 성분 index 또는 `magnitude`입니다. Phase에는 성분 하나를 지정합니다. 실수 scalar의 기본값은 성분 0이며 부호를 유지합니다.
+
+`reduce`는 축별 `{ method, index? }`입니다. `sum`, `mean`(기본), `min`, `max`, `median`, `std`, `index`를 지원합니다. 표본별 성분/크기를 계산한 뒤 x→y→z→time→frequency 순서로 남은 축을 집계합니다. sum은 표본 합, std는 모집단 표준편차이며 Phase에도 숫자 rad 값의 동일한 집계를 적용합니다. index는 0부터 시작합니다.
+
+```js
+export default function calculate(record) {
+  return boxGrid.project(record['signal'], { axes: ['x', 'y', 'z'], component: 'magnitude', reduce: { time: { method: 'index', index: 0 }, frequency: { method: 'mean' } } });
+}
+```
+
+Animation 복사는 현재 `frame.phase`(rad) 또는 `frame: { axis: 'time', index: 0 }`를 고정합니다. 진동은 `A*cos(φ+θ)`이며 0 Hz에서는 θ를 0으로 취급합니다. 화살표 보기는 X·Y·Z·벡터 크기 변환식 네 줄을 복사합니다. 원하는 식 하나를 return하거나 중간 변수에 할당하세요.
+
+Histogram 복사는 채널·성분 축을 제거한 `[x,y,z,time,frequency]` **5차원 중간값**입니다. 순회 축은 길이 1로 보존합니다. 5차원은 그대로 return할 수 없으며 추가 계산으로 0~3차원까지 줄여야 합니다. 모든 변환의 결과는 float64이며 `{ dtype, data, axes }` 형태를 유지합니다. 실행 가능한 예제는 CLI `reference show calculation.example.projection`에서도 확인할 수 있습니다.

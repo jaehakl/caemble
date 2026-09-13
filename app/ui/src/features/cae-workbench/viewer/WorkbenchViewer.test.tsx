@@ -75,7 +75,7 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
   const tensor = { shape: [1], axes: [{ ticks: [0] }], storage: { kind: 'inline' as const, value: [1] }, provenance }
   const props: Parameters<typeof WorkbenchViewer>[0] = {
     experiment: null,
-    experimentDocument: { evaluatedSnapshot: { sourceHash: 'source', variables: {} } } as Parameters<
+    experimentDocument: { scene: {}, evaluatedSnapshot: { sourceHash: 'source', variables: {} } } as Parameters<
       typeof WorkbenchViewer
     >[0]['experimentDocument'],
     onFindSelectionSource: vi.fn(),
@@ -96,7 +96,7 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
         catalogRevision: 'frozen',
         artifactType: 'fixture@1',
         schema,
-        visualization: { kind: 'mesh-field', coordinateSpace: 'experiment' },
+        visualization: { kind: 'box-grid' },
       },
     },
     visualizations: {
@@ -173,7 +173,7 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   }
   const props: Parameters<typeof WorkbenchViewer>[0] = {
     experiment: null,
-    experimentDocument: { evaluatedSnapshot: { sourceHash: 'source', variables: {} } } as Parameters<
+    experimentDocument: { scene: {}, evaluatedSnapshot: { sourceHash: 'source', variables: {} } } as Parameters<
       typeof WorkbenchViewer
     >[0]['experimentDocument'],
     onFindSelectionSource: vi.fn(),

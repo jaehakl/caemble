@@ -364,7 +364,7 @@ export function calculationOutputSample(
 }
 
 export function calculationOutputFromSample(sample: PredictionTensorSample): CalculationDataOutput {
-  if (sample.layout.shape.length > 2) throw new Error(`${sample.layout.key} 결과 rank는 2 이하여야 합니다.`)
+  if (sample.layout.shape.length > 3) throw new Error(`${sample.layout.key} 결과 rank는 3 이하여야 합니다.`)
   if (sample.layout.shape.some((length) => !Number.isSafeInteger(length) || length < 0)) {
     throw new Error(`${sample.layout.key} CalculationData shape가 올바르지 않습니다.`)
   }

@@ -1,3 +1,4 @@
+import { viewerScaleBar } from './scaleBar'
 import type { HeatmapRenderData } from './structuredField'
 import { measurements } from '@jscad/modeling'
 import { cameraClipping, panCamera } from './cameraClipping'
@@ -79,6 +80,7 @@ type JscadViewerProps = {
   emptyMessage?: string
   layers: readonly JscadViewerLayer[]
   lengthUnit: UcumUnit
+  showScaleBar?: boolean
   onRenderEnd: () => void
   onRenderError: (message: string) => void
   onRenderStart: () => void
@@ -139,6 +141,8 @@ function drawRecordedMesh(regl: ReglCommandBuilder, transparent = false) {
       precision mediump float;
       uniform mat4 view, projection;
       uniform float depthBias;
+      uniform float pointPixelRatio;
+      attribute float pointSize;
       attribute vec3 position;
       attribute vec4 color;
       varying vec4 vertexColor;
@@ -146,11 +150,17 @@ function drawRecordedMesh(regl: ReglCommandBuilder, transparent = false) {
         vertexColor = color;
         gl_Position = projection * view * vec4(position, 1.0);
         gl_Position.z -= depthBias * gl_Position.w;
+        gl_PointSize = pointSize * pointPixelRatio;
       }
     `,
     frag: rayPathFragmentShader,
-    attributes: { position: regl.prop('positions'), color: regl.prop('colors') },
+    attributes: {
+      position: regl.prop('positions'),
+      color: regl.prop('colors'),
+      pointSize: (_context: unknown, props: { pointSizes?: Float32Array }) => props.pointSizes ?? { constant: 5 },
+    },
     uniforms: {
+      pointPixelRatio: () => window.devicePixelRatio || 1,
       depthBias: (_context: unknown, props: { primitive: string }) => (props.primitive === 'lines' ? 2e-5 : 1e-5),
     },
     elements: regl.prop('indices'),
@@ -197,15 +207,16 @@ export function ViewerToolbar({
   return (
     <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-white px-2 py-1">
       <div aria-label="Camera views" className="flex items-center gap-1">
+        <span className="mr-1 text-xs font-semibold">카메라</span>
         {(['default', 'x', 'y', 'z'] as const).map((view) => (
           <button
             aria-label={`Set ${view} camera view`}
-            className="min-w-7 rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
+            className="min-w-7 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
             key={view}
             type="button"
             onClick={() => onSetCameraView(view)}
           >
-            {view === 'default' ? 'Default' : view.toUpperCase()}
+            {view === 'default' ? '전체 맞춤' : `${view.toUpperCase()} 방향`}
           </button>
         ))}
       </div>
@@ -215,7 +226,7 @@ export function ViewerToolbar({
           <button
             aria-label="Toggle X-ray"
             aria-pressed={xrayEnabled}
-            className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
+            className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
               xrayEnabled
                 ? 'border-sky-400 bg-sky-50 text-sky-900'
                 : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
@@ -232,7 +243,7 @@ export function ViewerToolbar({
               <button
                 aria-label={`Selection mode ${mode}`}
                 aria-pressed={pickMode === mode}
-                className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
                   pickMode === mode
                     ? 'border-orange-400 bg-orange-50 text-orange-900'
                     : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
@@ -257,7 +268,7 @@ export function ViewerToolbar({
               <button
                 aria-label={`Toggle ${source}`}
                 aria-pressed={available && visible}
-                className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
                   available && visible
                     ? 'border-slate-400 bg-slate-100 text-slate-900'
                     : 'border-slate-200 bg-white text-slate-400'
@@ -278,12 +289,13 @@ export function ViewerToolbar({
         <button
           aria-label={viewerExpanded ? 'Viewer 영역 복원' : 'Viewer 확장'}
           aria-pressed={viewerExpanded}
-          className="ml-auto flex size-7 items-center justify-center rounded border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
+          className="ml-auto flex h-8 items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
           title={viewerExpanded ? '좌측 및 하단 영역 복원' : '좌측 및 하단 영역 숨기기'}
           type="button"
           onClick={onToggleViewerExpanded}
         >
-          {viewerExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+          {viewerExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}{' '}
+          {viewerExpanded ? '영역 복원' : 'Viewer 확장'}
         </button>
       ) : null}
     </div>
@@ -295,6 +307,7 @@ function JscadViewer({
   emptyMessage = 'Waiting for model...',
   layers,
   lengthUnit,
+  showScaleBar = true,
   onRenderEnd,
   onRenderError,
   onRenderStart,
@@ -414,6 +427,7 @@ function JscadViewer({
   const sceneBoundsRef = useRef(sceneBounds)
   sceneBoundsRef.current = sceneBounds
   const raySegmentCount = polylines.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
+  const scaleBarRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const cameraRef = useRef<RendererState | null>(null)
   const controlsRef = useRef<RendererState | null>(null)
@@ -442,6 +456,8 @@ function JscadViewer({
     onSelectionSourcePathsChange?.(selectionSourcePaths)
   }, [onSelectionSourcePathsChange, selectionSourcePaths])
 
+  const lengthUnitRef = useRef(lengthUnit)
+  lengthUnitRef.current = lengthUnit
   const renderScene = useCallback(() => {
     if (!renderRef.current || !optionsRef.current) return false
     try {
@@ -453,6 +469,17 @@ function JscadViewer({
           cameraClipping(sceneBoundsRef.current, camera.position as number[], camera.target as number[]),
         )
         renderer.cameras.perspective.setProjection(camera, camera, { width: canvas.width, height: canvas.height })
+      }
+      if (camera && canvas && scaleBarRef.current) {
+        const position = camera.position as number[]
+        const target = camera.target as number[]
+        const scale = viewerScaleBar(
+          Math.hypot(...position.map((value, i) => value - target[i])),
+          Number(camera.fov),
+          canvas.clientHeight,
+        )
+        scaleBarRef.current.style.width = `${scale?.width ?? 0}px`
+        scaleBarRef.current.textContent = scale ? `${Number(scale.length.toPrecision(3))} ${lengthUnitRef.current}` : ''
       }
       renderRef.current(optionsRef.current)
       return true
@@ -513,17 +540,7 @@ function JscadViewer({
     lastFittedPartsRef.current = null
     lastFittedResultRef.current = null
     rendererEntityCacheRef.current.clear()
-    referenceEntitiesRef.current = [
-      {
-        size: [120, 120],
-        ticks: [10, 2],
-        visuals: { drawCmd: 'drawGrid', show: true },
-      },
-      {
-        size: 70,
-        visuals: { drawCmd: 'drawAxis', show: true },
-      },
-    ]
+    referenceEntitiesRef.current = []
 
     const options = {
       camera,
@@ -820,6 +837,18 @@ function JscadViewer({
       </div>
 
       <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        {showScaleBar ? (
+          <div
+            className="pointer-events-none absolute bottom-4 left-4 z-10 rounded bg-white/90 px-3 py-2 text-center text-xs text-slate-800"
+            title="카메라 중심 평면 기준 길이"
+          >
+            <div
+              ref={scaleBarRef}
+              aria-label="길이 Scale bar"
+              className="min-h-6 border-x-2 border-b-2 border-slate-800"
+            />
+          </div>
+        ) : null}
         <canvas
           ref={canvasRef}
           className={`block h-full w-full touch-none ${

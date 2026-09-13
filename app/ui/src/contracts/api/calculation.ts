@@ -63,7 +63,7 @@ export type CalculationDataScalar = Readonly<{ measurement_id: number; value: nu
 
 export type CalculationDataAnalysisSummary =
   | Readonly<{ kind: 'scalar'; value: number }>
-  | Readonly<{ kind: 'tensor'; rank: 1 | 2; count: number; mean: number | null; std: number | null }>
+  | Readonly<{ kind: 'tensor'; rank: 1 | 2 | 3; count: number; mean: number | null; std: number | null }>
 
 export type CalculationDataAnalysisItem = Readonly<{
   calculation_data_id: number

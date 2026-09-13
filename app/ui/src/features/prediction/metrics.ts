@@ -93,7 +93,7 @@ export function predictionOutputRange(outputs: readonly (CalculationDataOutput |
 
 function outputSignature(output: CalculationDataOutput) {
   if (
-    output.shape.length > 2 ||
+    output.shape.length > 3 ||
     output.axes.length !== output.shape.length ||
     output.axes.some(
       (axis, index) =>

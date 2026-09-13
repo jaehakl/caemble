@@ -1,6 +1,7 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { usePreflight } from './usePreflight'
+import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { ExperimentSourceDocument } from '@/lib/cad/source'
 
@@ -145,21 +146,40 @@ it('cancels an active job on selection change without publishing its result', as
   expect(mocks.request).not.toHaveBeenCalled()
 })
 
-
 it('waits for the requested Candidate generation and submits its new data exactly once', async () => {
   const generateCandidate = vi.fn(() => 2)
-  const initial = { ...document, generateCandidate, candidateGeneration: 1, completedCandidateGeneration: 1, successfulCandidateGeneration: 1 }
-  const { result, rerender } = renderHook(({ doc }) => usePreflight(experiment, doc, 'same'), { initialProps: { doc: initial } })
-  await act(async () => { await result.current.run() })
+  const initial = {
+    ...document,
+    generateCandidate,
+    candidateGeneration: 1,
+    completedCandidateGeneration: 1,
+    successfulCandidateGeneration: 1,
+  }
+  const { result, rerender } = renderHook(({ doc }) => usePreflight(experiment, doc, 'same'), {
+    initialProps: { doc: initial },
+  })
+  await act(async () => {
+    await result.current.run()
+  })
   const previous = result.current.result
   mocks.submit.mockClear()
-  await act(async () => { await result.current.run(true); await result.current.run(true) })
+  await act(async () => {
+    await result.current.run(true)
+    await result.current.run(true)
+  })
   expect(generateCandidate).toHaveBeenCalledTimes(1)
   expect(result.current.result).toBe(previous)
   expect(result.current.busy).toBe(true)
   rerender({ doc: { ...initial, revision: 2, candidateGeneration: 2 } })
   expect(mocks.submit).not.toHaveBeenCalled()
-  const completed = { ...initial, revision: 2, successfulRevision: 2, candidateGeneration: 2, completedCandidateGeneration: 2, successfulCandidateGeneration: 2 }
+  const completed = {
+    ...initial,
+    revision: 2,
+    successfulRevision: 2,
+    candidateGeneration: 2,
+    completedCandidateGeneration: 2,
+    successfulCandidateGeneration: 2,
+  }
   rerender({ doc: completed })
   await waitFor(() => expect(result.current.busy).toBe(false))
   expect(mocks.submit).toHaveBeenCalledTimes(1)
@@ -169,17 +189,114 @@ it('waits for the requested Candidate generation and submits its new data exactl
 })
 
 it.each(['cancel', 'source', 'failure', 'session'])('does not execute after pending generation %s', async (reason) => {
-  const initial = { ...document, generateCandidate: () => 2, candidateGeneration: 1, completedCandidateGeneration: 1, successfulCandidateGeneration: 1 }
+  const initial = {
+    ...document,
+    generateCandidate: () => 2,
+    candidateGeneration: 1,
+    completedCandidateGeneration: 1,
+    successfulCandidateGeneration: 1,
+  }
   const { result, rerender } = renderHook(({ doc, source, key }) => usePreflight(source, doc, key), {
     initialProps: { doc: initial, source: experiment, key: 'same' },
   })
-  await act(async () => { await result.current.run(true) })
-  if (reason === 'cancel') await act(async () => { await result.current.cancel() })
+  await act(async () => {
+    await result.current.run(true)
+  })
+  if (reason === 'cancel')
+    await act(async () => {
+      await result.current.cancel()
+    })
   rerender({
-    doc: { ...initial, revision: 2, candidateGeneration: 2, completedCandidateGeneration: 2, successfulCandidateGeneration: reason === 'failure' ? 1 : 2 },
+    doc: {
+      ...initial,
+      revision: 2,
+      candidateGeneration: 2,
+      completedCandidateGeneration: 2,
+      successfulCandidateGeneration: reason === 'failure' ? 1 : 2,
+    },
     source: reason === 'source' ? { ...experiment, sourceBundle: { files: { 'simulate.py': 'changed' } } } : experiment,
     key: reason === 'session' ? 'different' : 'same',
   })
   expect(result.current.busy).toBe(false)
   expect(mocks.submit).not.toHaveBeenCalled()
+})
+
+// Exercise the actual Preflight snapshot/payload → WorkbenchViewer boundary.
+// The browser suite exercises the child renderer and its spatial-axis controls.
+vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
+  BoxGridResult: ({
+    canOverlayGeometry,
+    geometryBlockedReason,
+  }: {
+    canOverlayGeometry: boolean
+    geometryBlockedReason?: string
+  }) => (
+    <button disabled={!canOverlayGeometry} title={geometryBlockedReason}>
+      Geometry 겹치기
+    </button>
+  ),
+}))
+vi.mock('@/features/viewer/viewer/CadViewer', () => ({ default: () => <div>Geometry preview</div> }))
+
+it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual overlay blockers', async () => {
+  const contract = {
+    task: 'solid',
+    output: 'field',
+    solver: { name: 'fixture', version: '1' },
+    catalogRevision: 'frozen',
+    artifactType: 'fixture@1',
+    schema: payload.schemas.field,
+    visualization: { kind: 'box-grid' },
+  }
+  mocks.request.mockResolvedValue({ ...payload, result_contracts: { field: contract } })
+  const { result } = renderHook(() => usePreflight(experiment, document, 'overlay'))
+  await act(async () => {
+    await result.current.run()
+  })
+  const preview = result.current.result!
+  expect(preview).not.toBeNull()
+  const props: Parameters<typeof WorkbenchViewer>[0] = {
+    experiment: preview.experiment,
+    experimentDocument: preview.document,
+    resultContracts: {
+      ...preview.payload.result_contracts,
+      scalar: { ...preview.payload.result_contracts.field, visualization: { kind: 'tensor' } },
+    },
+    resultSourceHash: preview.payload.source_hash,
+    resultVarsHash: preview.payload.vars_hash,
+    recordedData: { ...preview.data, scalar: preview.data.field },
+    recordedRules: preview.rules,
+    autoSelectResult: true,
+    onFindSelectionSource: vi.fn(),
+    onSelectionQueryChange: vi.fn(),
+    onSelectionSourcePathsChange: vi.fn(),
+    onToggleViewerExpanded: vi.fn(),
+    selectionQuery: null,
+    selectionSourceStatus: {},
+    viewerExpanded: false,
+  }
+  const { rerender } = render(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('field')
+  expect(screen.getByRole('button', { name: 'Geometry 겹치기' })).toBeEnabled()
+  expect(screen.queryByText(/source가 달라|Vars가 달라/)).toBeNull()
+  for (const [override, reason] of [
+    [{ resultSourceHash: 'different' }, /source가 달라/],
+    [{ resultVarsHash: 'different' }, /Vars가 달라/],
+    [{ resultSourceHash: undefined }, /비교 정보가 없어/],
+    [{ resultVarsHash: undefined }, /비교 정보가 없어/],
+    [{ experimentDocument: { ...document, scene: null } }, /Geometry가 준비되지/],
+    [{ experimentDocument: { ...document, evaluatedSnapshot: null } }, /Geometry가 준비되지/],
+  ] as const) {
+    rerender(<WorkbenchViewer {...props} {...override} />)
+    expect(screen.getByRole('button', { name: 'Geometry 겹치기' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Geometry 겹치기' }).title).toMatch(reason)
+    expect(screen.getByText(reason)).toBeInTheDocument()
+  }
+  rerender(
+    <WorkbenchViewer
+      {...props}
+      resultContracts={{ field: { ...preview.payload.result_contracts.field, visualization: { kind: 'tensor' } } }}
+    />,
+  )
+  expect(screen.getByText('이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.')).toBeInTheDocument()
 })

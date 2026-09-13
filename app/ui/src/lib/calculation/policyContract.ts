@@ -41,6 +41,7 @@ export const CALCULATION_ALLOWED_RUNTIME_GLOBALS = Object.freeze([
   'Uint8ClampedArray',
   'WeakMap',
   'WeakSet',
+  'boxGrid',
   'arguments',
   'atob',
   'btoa',

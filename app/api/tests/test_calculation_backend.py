@@ -184,6 +184,26 @@ class CalculationBackendContractTests(unittest.TestCase):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 CalculationDataOutput.model_validate(payload)
 
+    def test_rank_three_output_layout_and_storage_round_trip(self) -> None:
+        from service.calculation_data import _tensor_summary
+
+        payload = {
+            "dtype": "float64", "shape": [2, 1, 2], "data": [1, 2, 3, 4],
+            "axes": [
+                {"name": "x", "ticks": [0.25, 0.75], "unit": "m"},
+                {"name": "y", "ticks": [0.5], "unit": "m"},
+                {"name": "time", "ticks": [0, 1], "unit": "s"},
+            ],
+        }
+        output = CalculationDataOutput.model_validate(payload)
+        layout = api_models.CalculationOutputLayout.model_validate({key: value for key, value in payload.items() if key != "data"})
+        self.assertEqual(layout.shape, [2, 1, 2])
+        self.assertEqual(CalculationDataOutput.model_validate_json(output.model_dump_json()).model_dump(), payload)
+        self.assertEqual(_tensor_summary(output)["rank"], 3)
+        self.assertEqual(_tensor_summary(output)["count"], 4)
+        with self.assertRaises(ValidationError):
+            CalculationDataOutput.model_validate({**payload, "shape": [1, 2, 1, 2]})
+
     def test_calculation_data_list_requires_an_exact_positive_id_selection(self) -> None:
         request = CalculationDataListRequest(experiment_id=7, selected_ids=[3, 9])
         self.assertEqual(request.selected_ids, [3, 9])
