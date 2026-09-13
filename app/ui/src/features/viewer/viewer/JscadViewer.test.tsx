@@ -1,6 +1,6 @@
-import { render } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { prepareRender } from '@jscad/regl-renderer'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
 import JscadViewer from './JscadViewer'
 import { createComparisonSettings, ViewerComparisonContext, type ViewerComparison } from './comparisonSettings'
@@ -41,7 +41,11 @@ vi.mock('@jscad/regl-renderer', async (importOriginal) => {
   }
 })
 
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600))
+})
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -145,6 +149,7 @@ it('keeps the camera when preflight mesh bounds and identity change', () => {
   }
   options.camera.position = [7, 8, 9]
   options.camera.target = [1, 2, 3]
+  const renderedBeforeUpdate = props.onRenderEnd.mock.calls.length
   rerender(
     <JscadViewer
       {...props}
@@ -155,7 +160,169 @@ it('keeps the camera when preflight mesh bounds and identity change', () => {
   expect(Array.from(options.camera.position)).toEqual([7, 8, 9])
   expect(Array.from(options.camera.target)).toEqual([1, 2, 3])
   expect(props.onRenderError).not.toHaveBeenCalled()
-  expect(props.onRenderEnd).toHaveBeenCalledTimes(2)
+  expect(props.onRenderEnd).toHaveBeenCalledTimes(renderedBeforeUpdate + 1)
+})
+
+it('fits delayed small geometry instead of saving the empty initial camera, including StrictMode', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const comparison: ViewerComparison = {
+    settings: createComparisonSettings(),
+    item: '',
+    side: 'preview',
+    controlsHost: null,
+    controlsOwner: true,
+    suspended: false,
+    camera: { current: null },
+  }
+  const props = {
+    layers: [],
+    lengthUnit: 'm' as const,
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+  }
+  const empty = render(
+    <StrictMode>
+      <ViewerComparisonContext.Provider value={comparison}>
+        <JscadViewer {...props} />
+      </ViewerComparisonContext.Provider>
+    </StrictMode>,
+  )
+  empty.unmount()
+  expect(comparison.camera.current).toBeNull()
+  const view = render(
+    <StrictMode>
+      <ViewerComparisonContext.Provider value={comparison}>
+        <JscadViewer {...props} />
+      </ViewerComparisonContext.Provider>
+    </StrictMode>,
+  )
+  view.rerender(
+    <StrictMode>
+      <ViewerComparisonContext.Provider value={comparison}>
+        <JscadViewer
+          {...props}
+          meshIdentity="loaded"
+          meshRenderData={{
+            geometries: [],
+            bounds: { min: [0.004, 0.002, 0.001], max: [0.005, 0.003, 0.002] },
+            minimum: 0,
+            maximum: 1,
+            cut: Infinity,
+          }}
+        />
+      </ViewerComparisonContext.Provider>
+    </StrictMode>,
+  )
+  const camera = (
+    vi.mocked(prepareRender).mock.calls.slice(-1)[0]![0] as unknown as {
+      camera: { position: number[]; target: number[] }
+    }
+  ).camera
+  expect(Array.from(camera.target)).toEqual([0.0045000000000000005, 0.0025, 0.0015])
+  expect(Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))).toBeLessThan(0.01)
+  view.unmount()
+  expect(comparison.camera.current?.initialized).toBe(true)
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
+it('defers fit until a hidden viewport is visible and preserves the camera on later resize', () => {
+  let width = 0
+  const callbacks: Array<() => void> = []
+  vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(
+    () => new DOMRect(0, 0, width, width ? 600 : 0),
+  )
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        callbacks.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const props = {
+    layers: [],
+    lengthUnit: 'm' as const,
+    preserveCameraOnUpdate: true,
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+    meshRenderData: {
+      geometries: [],
+      bounds: { min: [3, 4, 5], max: [4, 5, 6] },
+      minimum: 0,
+      maximum: 1,
+      cut: Infinity,
+    },
+  }
+  render(<JscadViewer {...props} />)
+  const camera = (
+    vi.mocked(prepareRender).mock.calls.slice(-1)[0]![0] as unknown as {
+      camera: { position: number[]; target: number[] }
+    }
+  ).camera
+  expect(Array.from(camera.target)).toEqual([0, 0, 0])
+  act(() => {
+    width = 200
+    callbacks.forEach((callback) => callback())
+  })
+  expect(Array.from(camera.target)).toEqual([3.5, 4.5, 5.5])
+  const fittedPosition = Array.from(camera.position)
+  act(() => {
+    width = 400
+    callbacks.forEach((callback) => callback())
+  })
+  expect(Array.from(camera.position)).toEqual(fittedPosition)
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
+it('uses the current content center and size when the user requests full fit', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const props = {
+    layers: [],
+    lengthUnit: 'm' as const,
+    preserveCameraOnUpdate: true,
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+    meshRenderData: {
+      geometries: [],
+      bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      minimum: 0,
+      maximum: 1,
+      cut: Infinity,
+    },
+  }
+  const view = render(<JscadViewer {...props} />)
+  const camera = (
+    vi.mocked(prepareRender).mock.calls.slice(-1)[0]![0] as unknown as {
+      camera: { position: number[]; target: number[] }
+    }
+  ).camera
+  camera.position = [100, 100, 100]
+  camera.target = [50, 50, 50]
+  view.rerender(
+    <JscadViewer {...props} meshRenderData={{ ...props.meshRenderData, bounds: { min: [3, 4, 5], max: [4, 5, 6] } }} />,
+  )
+  expect(Array.from(camera.position)).toEqual([100, 100, 100])
+  fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
+  expect(Array.from(camera.target)).toEqual([3.5, 4.5, 5.5])
+  expect(Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))).toBeLessThan(10)
+  expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
 it('restores each comparison camera independently after a result renderer remounts', () => {

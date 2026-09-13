@@ -2,7 +2,7 @@ import { viewerScaleBar } from './scaleBar'
 import { useViewerComparison } from './comparisonSettings'
 import type { HeatmapRenderData } from './structuredField'
 import { measurements } from '@jscad/modeling'
-import { cameraClipping, panCamera } from './cameraClipping'
+import { cameraClipping, fitCameraToBounds, panCamera } from './cameraClipping'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
 import { Copy, Focus, Maximize2, Minimize2, SearchCode, X } from 'lucide-react'
@@ -397,7 +397,9 @@ function JscadViewer({
     heatmapRenderData?.identity,
     polylines.map((bundle) => bundle.id),
   ])
-  const lastFittedResultRef = useRef<string | null>(null)
+  const lastRenderedResultRef = useRef<string | null>(null)
+  const cameraInitializedRef = useRef(false)
+  const [viewportReady, setViewportReady] = useState(false)
   const geometryBounds = useMemo(() => {
     const boxes = displayLayers.flatMap((layer) =>
       layer.parts.map((part) =>
@@ -424,7 +426,10 @@ function JscadViewer({
         min[index % 3] = Math.min(min[index % 3], value)
         max[index % 3] = Math.max(max[index % 3], value)
       })
-    return min.every(Number.isFinite) && max.every(Number.isFinite) ? ([min, max] as const) : null
+    return min.every((value, axis) => Number.isFinite(value) && Number.isFinite(max[axis]) && value <= max[axis]) &&
+      max.some((value, axis) => value > min[axis])
+      ? ([min, max] as const)
+      : null
   }, [geometryBounds, meshRenderData, heatmapRenderData, rayPathGeometries])
   const sceneBoundsRef = useRef(sceneBounds)
   sceneBoundsRef.current = sceneBounds
@@ -433,7 +438,7 @@ function JscadViewer({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const cameraRef = useRef<RendererState | null>(null)
   const controlsRef = useRef<RendererState | null>(null)
-  const lastFittedPartsRef = useRef<readonly CadScenePart[] | null>(null)
+  const lastRenderedPartsRef = useRef<readonly CadScenePart[] | null>(null)
   const lastPointRef = useRef<{
     button: 0 | 2
     moved: boolean
@@ -492,6 +497,34 @@ function JscadViewer({
     }
   }, [])
 
+  const fitCamera = useCallback(() => {
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    const bounds = sceneBoundsRef.current
+    const viewport = canvasRef.current?.parentElement?.getBoundingClientRect()
+    if (!camera || !controls || !bounds || !viewport) return false
+    const fitted = fitCameraToBounds({
+      bounds,
+      position: camera.position as number[],
+      target: camera.target as number[],
+      up: camera.up as number[],
+      fov: Number(camera.fov),
+      width: viewport.width,
+      height: viewport.height,
+    })
+    if (!fitted) return false
+    Object.assign(camera, fitted)
+    const diameter = Math.hypot(...bounds[1].map((value, axis) => value - bounds[0][axis]))
+    Object.assign(controls, {
+      phiDelta: 0,
+      thetaDelta: 0,
+      scale: 1,
+      limits: { ...(controls.limits as object), minDistance: diameter * 1e-6, maxDistance: diameter * 1e6 },
+    })
+    cameraInitializedRef.current = true
+    return true
+  }, [])
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -536,15 +569,16 @@ function JscadViewer({
         panSpeed: 1,
       },
     })
-    if (savedCamera?.current) {
+    if (savedCamera?.current?.initialized) {
       Object.assign(camera, structuredClone(savedCamera.current.camera))
       Object.assign(controls, structuredClone(savedCamera.current.controls))
     }
 
     cameraRef.current = camera
     controlsRef.current = controls
-    lastFittedPartsRef.current = null
-    lastFittedResultRef.current = savedCamera?.current ? 'restored' : null
+    lastRenderedPartsRef.current = null
+    lastRenderedResultRef.current = null
+    cameraInitializedRef.current = savedCamera?.current?.initialized === true
     rendererEntityCacheRef.current.clear()
     referenceEntitiesRef.current = []
 
@@ -589,8 +623,11 @@ function JscadViewer({
 
     const resize = () => {
       const rect = canvas.parentElement?.getBoundingClientRect()
-      const width = Math.max(1, Math.floor(rect?.width ?? canvas.clientWidth))
-      const height = Math.max(1, Math.floor(rect?.height ?? canvas.clientHeight))
+      const visibleWidth = rect?.width ?? canvas.clientWidth
+      const visibleHeight = rect?.height ?? canvas.clientHeight
+      setViewportReady(visibleWidth > 0 && visibleHeight > 0)
+      const width = Math.max(1, Math.floor(visibleWidth))
+      const height = Math.max(1, Math.floor(visibleHeight))
       const ratio = window.devicePixelRatio || 1
 
       canvas.width = Math.floor(width * ratio)
@@ -608,8 +645,12 @@ function JscadViewer({
     resize()
 
     return () => {
-      if (savedCamera && lastFittedResultRef.current !== null) {
-        savedCamera.current = { camera: structuredClone(camera), controls: structuredClone(controls) }
+      if (savedCamera && cameraInitializedRef.current) {
+        savedCamera.current = {
+          initialized: true,
+          camera: structuredClone(camera),
+          controls: structuredClone(controls),
+        }
       }
       canvas.removeEventListener('wheel', wheelHandler)
       resizeObserver.disconnect()
@@ -621,10 +662,11 @@ function JscadViewer({
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
 
-    const sceneChanged = lastFittedPartsRef.current !== parts || lastFittedResultRef.current !== resultIdentity
+    const sceneChanged = lastRenderedPartsRef.current !== parts || lastRenderedResultRef.current !== resultIdentity
     const shouldFit =
+      viewportReady &&
       Boolean(sceneBounds) &&
-      (lastFittedResultRef.current === null || (!preserveCameraOnUpdate && !savedCamera && sceneChanged))
+      (!cameraInitializedRef.current || (!preserveCameraOnUpdate && !savedCamera && sceneChanged))
     if (sceneBounds) {
       const diameter = Math.max(
         Math.hypot(...sceneBounds[1].map((value, axis) => value - sceneBounds[0][axis])),
@@ -714,17 +756,7 @@ function JscadViewer({
         ...heatmapEntities,
         ...rayPathEntities,
       ]
-      if (shouldFit) {
-        const zoomed = renderer.controls.orbit.zoomToFit({
-          camera: cameraRef.current,
-          controls: controlsRef.current,
-          entities: [
-            { geometry: { positions: sceneBounds, transforms: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] } },
-          ],
-        })
-        Object.assign(cameraRef.current, zoomed.camera)
-        Object.assign(controlsRef.current, zoomed.controls)
-      }
+      if (shouldFit) fitCamera()
 
       const updated = renderer.controls.orbit.update({
         camera: cameraRef.current,
@@ -735,8 +767,8 @@ function JscadViewer({
       renderer.cameras.perspective.update(cameraRef.current, cameraRef.current)
       if (!renderScene()) return
       if (shouldFit || sceneChanged) {
-        lastFittedPartsRef.current = parts
-        lastFittedResultRef.current = resultIdentity
+        lastRenderedPartsRef.current = parts
+        lastRenderedResultRef.current = resultIdentity
         onRenderEnd()
       }
     } catch (error) {
@@ -745,6 +777,8 @@ function JscadViewer({
     }
   }, [
     displayLayers,
+    viewportReady,
+    fitCamera,
     preserveCameraOnUpdate,
     savedCamera,
     sceneBounds,
@@ -799,6 +833,7 @@ function JscadViewer({
       up: view === 'z' ? [0, 1, 0] : [0, 0, 1],
     })
     Object.assign(controlsRef.current, { phiDelta: 0, scale: 1, thetaDelta: 0 })
+    if (view === 'default') fitCamera()
     renderWithControls()
   }
 

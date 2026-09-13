@@ -1,3 +1,72 @@
+/** Fits every bounding-box corner inside the perspective viewport with a 10% margin. */
+export function fitCameraToBounds({
+  bounds,
+  position,
+  target,
+  up,
+  fov,
+  width,
+  height,
+}: {
+  bounds: readonly [readonly number[], readonly number[]] | null
+  position: readonly number[]
+  target: readonly number[]
+  up: readonly number[]
+  fov: number
+  width: number
+  height: number
+}) {
+  if (
+    !bounds ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(fov) ||
+    fov <= 0 ||
+    fov >= Math.PI
+  )
+    return null
+  const [min, max] = bounds
+  if (min.some((value, axis) => !Number.isFinite(value) || !Number.isFinite(max[axis]) || max[axis] < value))
+    return null
+  const diameter = Math.hypot(...max.map((value, axis) => value - min[axis]))
+  if (!Number.isFinite(diameter) || diameter <= 0) return null
+  const center = min.map((value, axis) => value + (max[axis] - value) / 2)
+  const distance = Math.hypot(...target.map((value, axis) => value - position[axis]))
+  const forward =
+    Number.isFinite(distance) && distance > 0
+      ? target.map((value, axis) => (value - position[axis]) / distance)
+      : [-1 / Math.sqrt(3), -1 / Math.sqrt(3), -1 / Math.sqrt(3)]
+  const cross = (left: readonly number[], right: readonly number[]) => [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0],
+  ]
+  let cameraUp = up
+  let right = cross(forward, cameraUp)
+  if (!Number.isFinite(Math.hypot(...right)) || Math.hypot(...right) < 1e-12) {
+    cameraUp = Math.abs(forward[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]
+    right = cross(forward, cameraUp)
+  }
+  const rightLength = Math.hypot(...right)
+  right = right.map((value) => value / rightLength)
+  const screenUp = cross(right, forward)
+  const vertical = Math.tan(fov / 2) * 0.9
+  const horizontal = (vertical * width) / height
+  let fittedDistance = diameter * 1e-4
+  for (let corner = 0; corner < 8; corner++) {
+    const offset = center.map((value, axis) => (corner & (1 << axis) ? max[axis] : min[axis]) - value)
+    const depth = offset.reduce((sum, value, axis) => sum + value * forward[axis], 0)
+    const x = offset.reduce((sum, value, axis) => sum + value * right[axis], 0)
+    const y = offset.reduce((sum, value, axis) => sum + value * screenUp[axis], 0)
+    fittedDistance = Math.max(fittedDistance, Math.abs(x) / horizontal - depth, Math.abs(y) / vertical - depth)
+  }
+  const fittedPosition = center.map((value, axis) => value - forward[axis] * (fittedDistance + diameter * 1e-4))
+  if (!fittedPosition.every(Number.isFinite)) return null
+  return { position: fittedPosition, target: center, up: [...cameraUp] }
+}
+
 /** Camera-space depth range of the visible content, independent of display units. */
 export function cameraClipping(
   bounds: readonly [readonly number[], readonly number[]] | null,

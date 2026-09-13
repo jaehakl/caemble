@@ -33,7 +33,7 @@ export function createComparisonSettings() {
 
 export type ComparisonSettings = ReturnType<typeof createComparisonSettings>
 export type ComparisonCamera = {
-  current: { camera: Record<string, unknown>; controls: Record<string, unknown> } | null
+  current: { initialized: true; camera: Record<string, unknown>; controls: Record<string, unknown> } | null
 }
 export type ViewerComparison = {
   settings: ComparisonSettings
