@@ -588,7 +588,7 @@ export function useCaePageChrome({
       ),
     },
     {
-      sectionId: 'measurement',
+      sectionId: 'calculation',
       label: 'Calculation',
       content: (
         <>

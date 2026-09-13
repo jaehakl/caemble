@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useViewerComparison, useViewerSetting } from './comparisonSettings'
+import { useEffect, useRef } from 'react'
 
 export function SpectralPlayback({
   frequency,
@@ -11,14 +12,17 @@ export function SpectralPlayback({
   phase: number
   onPhase: (degrees: number) => void
 }) {
-  const [playing, setPlaying] = useState(false)
-  const [repeat, setRepeat] = useState(true)
-  const [speed, setSpeed] = useState(1)
-  useEffect(() => { setPlaying(false) }, [dataVersion, frequency])
+  const comparison = useViewerComparison()
+  const [playing, setPlaying] = useViewerSetting('spectralPlayback.playing', false)
+  const [repeat, setRepeat] = useViewerSetting('spectralPlayback.repeat', true)
+  const [speed, setSpeed] = useViewerSetting('spectralPlayback.speed', 1)
+  useEffect(() => {
+    if (!comparison) setPlaying(false)
+  }, [dataVersion, frequency, comparison, setPlaying])
   const phaseRef = useRef(phase)
   phaseRef.current = phase
   useEffect(() => {
-    if (!playing || frequency <= 0) return
+    if (!playing || frequency <= 0 || comparison?.suspended) return
     const start = performance.now()
     const initialPhase = phaseRef.current
     let animation = 0
@@ -34,7 +38,7 @@ export function SpectralPlayback({
     }
     animation = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animation)
-  }, [playing, repeat, speed, frequency, onPhase])
+  }, [playing, repeat, speed, frequency, onPhase, comparison, setPlaying])
   return (
     <div className="flex flex-wrap items-center gap-3 border-b p-2 text-xs" aria-label="주파수 성분 진동 재생">
       <span>주파수 성분 진동 · 원래 펄스의 시간 이력 아님</span>

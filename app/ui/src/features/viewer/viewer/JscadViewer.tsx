@@ -1,4 +1,5 @@
 import { viewerScaleBar } from './scaleBar'
+import { useViewerComparison } from './comparisonSettings'
 import type { HeatmapRenderData } from './structuredField'
 import { measurements } from '@jscad/modeling'
 import { cameraClipping, panCamera } from './cameraClipping'
@@ -326,6 +327,7 @@ function JscadViewer({
   viewerExpanded,
   visibleSources,
 }: JscadViewerProps) {
+  const savedCamera = useViewerComparison()?.camera
   const [pickMode, setPickMode] = useState<CadViewerPickMode>('off')
   const [xrayEnabled, setXrayEnabled] = useState(false)
   const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
@@ -534,11 +536,15 @@ function JscadViewer({
         panSpeed: 1,
       },
     })
+    if (savedCamera?.current) {
+      Object.assign(camera, structuredClone(savedCamera.current.camera))
+      Object.assign(controls, structuredClone(savedCamera.current.controls))
+    }
 
     cameraRef.current = camera
     controlsRef.current = controls
     lastFittedPartsRef.current = null
-    lastFittedResultRef.current = null
+    lastFittedResultRef.current = savedCamera?.current ? 'restored' : null
     rendererEntityCacheRef.current.clear()
     referenceEntitiesRef.current = []
 
@@ -602,19 +608,23 @@ function JscadViewer({
     resize()
 
     return () => {
+      if (savedCamera && lastFittedResultRef.current !== null) {
+        savedCamera.current = { camera: structuredClone(camera), controls: structuredClone(controls) }
+      }
       canvas.removeEventListener('wheel', wheelHandler)
       resizeObserver.disconnect()
       renderRef.current = null
       optionsRef.current = null
     }
-  }, [renderScene])
+  }, [renderScene, savedCamera])
 
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
 
     const sceneChanged = lastFittedPartsRef.current !== parts || lastFittedResultRef.current !== resultIdentity
     const shouldFit =
-      Boolean(sceneBounds) && (lastFittedResultRef.current === null || (!preserveCameraOnUpdate && sceneChanged))
+      Boolean(sceneBounds) &&
+      (lastFittedResultRef.current === null || (!preserveCameraOnUpdate && !savedCamera && sceneChanged))
     if (sceneBounds) {
       const diameter = Math.max(
         Math.hypot(...sceneBounds[1].map((value, axis) => value - sceneBounds[0][axis])),
@@ -736,6 +746,7 @@ function JscadViewer({
   }, [
     displayLayers,
     preserveCameraOnUpdate,
+    savedCamera,
     sceneBounds,
     resultIdentity,
     lengthUnit,

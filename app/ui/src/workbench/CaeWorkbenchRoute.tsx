@@ -1,3 +1,4 @@
+import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
 import { usePreflight } from '@/features/measurement/usePreflight'
 import { Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -117,6 +118,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     validateDisabledReason: 'Prediction 결과가 필요합니다.',
   })
   const [predictionActivated, setPredictionActivated] = useState(false)
+  const [measurementActivated, setMeasurementActivated] = useState(false)
   const commandSequence = useRef(0)
   const selectionSourceFiles =
     workbench.experiment?.kind === 'experiment' ? workbench.experiment.sourceBundle.files : null
@@ -143,6 +145,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   useEffect(() => {
     if (page.activeSection === 'prediction') setPredictionActivated(true)
+    if (page.activeSection === 'measurement') setMeasurementActivated(true)
   }, [page.activeSection])
 
   useEffect(() => {
@@ -155,7 +158,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       const changeSection = () => {
         setLayout((current) => ({ ...current, activeSection: nextSection }))
       }
-      if (currentSection === 'measurement' && nextSection !== 'measurement' && calculationDirty) {
+      if (currentSection === 'calculation' && nextSection !== 'calculation' && calculationDirty) {
         guardReplacement(changeSection)
       } else {
         changeSection()
@@ -257,7 +260,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const activeRecordedRules = workbench.selection.recordedRules
 
   const leftPane =
-    page.activeSection === 'experiment' ? null : page.activeSection === 'measurement' ? null : page.activeSection ===
+    page.activeSection === 'experiment' ? null : page.activeSection === 'calculation' ? null : page.activeSection ===
       'prediction' ? (
       <div
         key="prediction-vars"
@@ -309,7 +312,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           />
         </div>
       </div>
-    ) : page.activeSection === 'measurement' || page.activeSection === 'prediction' ? null : page.activeSection ===
+    ) : page.activeSection === 'calculation' || page.activeSection === 'prediction' ? null : page.activeSection ===
       'analysis' ? (
       <Suspense fallback={<PaneLoading label="Analysis를 불러오는 중입니다." />}>
         <AnalysisWorkspace
@@ -424,7 +427,26 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         onHeightRatioChange={(bottomHeightRatio) => page.setLayout((current) => ({ ...current, bottomHeightRatio }))}
       >
         <div aria-busy={!page.initialized} className="relative h-full min-h-0" inert={!page.initialized}>
-          <div className="h-full min-h-0">
+          {measurementActivated ? (
+            <div
+              className={page.activeSection === 'measurement' ? 'h-full min-h-0' : 'hidden'}
+              hidden={page.activeSection !== 'measurement'}
+            >
+              <MeasurementWorkspace
+                key={`${workbench.workspaceSession}:${JSON.stringify(workbench.experiment?.sourceBundle)}`}
+                workbench={workbench}
+                authenticated={auth.isAuthenticated}
+                dataReadable={experimentDataReadable}
+                active={page.activeSection === 'measurement'}
+                menubar={menubar}
+                onActivity={runtimeConsole.append}
+              />
+            </div>
+          ) : null}
+          <div
+            className={page.activeSection === 'measurement' ? 'hidden' : 'h-full min-h-0'}
+            hidden={page.activeSection === 'measurement'}
+          >
             {page.activeSection === 'experiment' ? (
               <ExperimentWorkspace
                 menubar={menubar}
@@ -433,7 +455,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 editor={rightPane}
                 expanded={page.viewerExpanded}
               />
-            ) : page.activeSection === 'measurement' ? (
+            ) : page.activeSection === 'calculation' ? (
               <CalculationWorkbenchContainer
                 onSourceChange={setViewerCalculationSource}
                 authenticated={auth.isAuthenticated}

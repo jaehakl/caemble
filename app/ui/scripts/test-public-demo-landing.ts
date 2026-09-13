@@ -29,7 +29,10 @@ function experiment(id: number, options: Partial<AvailableExperimentRecord> = {}
 }
 
 assert(defaultWorkbenchLayoutState.activeSection === 'experiment', 'bare Workbench must start in Experiment')
-assert(workbenchSectionIds.includes('admin'), 'Workbench must define the admin section')
+assert(
+  workbenchSectionIds.join(',') === 'experiment,measurement,calculation,prediction,analysis',
+  'Workbench must expose Measurement separately from Calculation in authoring order',
+)
 
 const recent = experiment(1)
 const lastReady = experiment(2)

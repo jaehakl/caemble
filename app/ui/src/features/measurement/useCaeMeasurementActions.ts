@@ -16,6 +16,21 @@ import type { SavedMeasurement } from '@/features/cae-workbench/types'
 import type { CalculationDataActions, CalculationDataRunSummary } from '../calculation/useCalculationDataActions'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { invalidateMeasurementMutation } from './queryInvalidation'
+import type { Vars } from '@/lib/cad/model/types'
+import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
+
+export type ReviewedMeasurementInput = Readonly<{
+  candidateId: string
+  vars: Readonly<Vars>
+  materialSnapshot?: MeasurementMaterialSnapshot
+  measurementId?: number
+}>
+
+export type ReviewedMeasurementProgress = Readonly<{
+  measurementId: number | null
+  state: string
+  error: string | null
+}>
 
 export type SaveAndRunCompletion = Readonly<{
   attemptId: number
@@ -146,8 +161,10 @@ export function useCaeMeasurementActions({
       request: BrowserBatchIntent,
       nextOperation: 'generate-and-run' | 'save-and-run' | 'measurement',
       onBatchProgress?: (progress: CandidateBatchProgress) => void,
+      onBatchState?: (batch: CaeBatch) => void,
     ) => {
-      if (active.current || operation) throw new Error('다른 Measurement 작업이 진행 중입니다.')
+      if (active.current || operation === 'save' || operation === 'delete')
+        throw new Error('다른 Measurement 작업이 진행 중입니다.')
       const run = {
         controller: new AbortController(),
         batchId: null as string | null,
@@ -190,6 +207,7 @@ export function useCaeMeasurementActions({
         let snapshot = update(registered)
         while (true) {
           signal.throwIfAborted()
+          onBatchState?.(snapshot)
           const jobs = snapshot.jobs
           for (const job of jobs) {
             if (job.state === 'succeeded' && job.measurement_id) run.completed.add(job.measurement_id)
@@ -325,6 +343,31 @@ export function useCaeMeasurementActions({
     setError(message)
     latest.current.onActivity?.({ source: 'cae', level: 'error', message })
   }, [])
+  const runReviewed = useCallback(
+    async (input: ReviewedMeasurementInput, onProgress?: (progress: ReviewedMeasurementProgress) => void) => {
+      const identity = requireExperiment()
+      const completion = await submit(
+        {
+          ...identity,
+          request_id: crypto.randomUUID(),
+          mode: input.measurementId ? 'measurement' : 'candidate',
+          measurement_id: input.measurementId,
+          vars: input.vars,
+          material_snapshot: input.materialSnapshot,
+          evaluation_timeout_ms: experimentDocument.evaluationTimeoutMs,
+        },
+        input.measurementId ? 'measurement' : 'save-and-run',
+        undefined,
+        (batch) => {
+          const job = batch.jobs[0]
+          if (job) onProgress?.({ measurementId: job.measurement_id, state: job.state, error: job.last_error })
+        },
+      )
+      if (!completion) throw new Error('CAE 결과를 찾을 수 없습니다.')
+      return { ...completion, candidateId: input.candidateId }
+    },
+    [experimentDocument.evaluationTimeoutMs, requireExperiment, submit],
+  )
   const saveAndRunCurrentAsync = useCallback(async (): Promise<SaveAndRunCompletion> => {
     const result = await submit(
       {
@@ -535,6 +578,7 @@ export function useCaeMeasurementActions({
     repeatGenerateAndRun,
     runSelected,
     runCandidatesAsync,
+    runReviewed,
     saveAndRunCurrent,
     saveAndRunCurrentAsync,
     saveCurrent,

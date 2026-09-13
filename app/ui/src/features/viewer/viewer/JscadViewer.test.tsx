@@ -3,6 +3,7 @@ import { prepareRender } from '@jscad/regl-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
 import JscadViewer from './JscadViewer'
+import { createComparisonSettings, ViewerComparisonContext, type ViewerComparison } from './comparisonSettings'
 
 const mocks = vi.hoisted(() => ({ draw: vi.fn() }))
 
@@ -155,4 +156,75 @@ it('keeps the camera when preflight mesh bounds and identity change', () => {
   expect(Array.from(options.camera.target)).toEqual([1, 2, 3])
   expect(props.onRenderError).not.toHaveBeenCalled()
   expect(props.onRenderEnd).toHaveBeenCalledTimes(2)
+})
+
+it('restores each comparison camera independently after a result renderer remounts', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const settings = createComparisonSettings()
+  const preview: ViewerComparison = {
+    settings,
+    item: 'signal',
+    side: 'preview',
+    controlsHost: null,
+    controlsOwner: false,
+    suspended: false,
+    camera: { current: null },
+  }
+  const actual: ViewerComparison = { ...preview, side: 'actual', camera: { current: null } }
+  const props = {
+    layers: [],
+    lengthUnit: 'm' as const,
+    meshIdentity: 'first',
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+    meshRenderData: {
+      geometries: [],
+      bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      minimum: 0,
+      maximum: 1,
+      cut: Infinity,
+    },
+  }
+  const view = render(
+    <>
+      <ViewerComparisonContext.Provider value={preview}>
+        <JscadViewer {...props} />
+      </ViewerComparisonContext.Provider>
+      <ViewerComparisonContext.Provider value={actual}>
+        <JscadViewer {...props} />
+      </ViewerComparisonContext.Provider>
+    </>,
+  )
+  const cameras = vi
+    .mocked(prepareRender)
+    .mock.calls.map(([options]) => (options as unknown as { camera: { position: number[]; target: number[] } }).camera)
+  cameras[0].position = [7, 8, 9]
+  cameras[0].target = [1, 2, 3]
+  cameras[1].position = [12, 13, 14]
+  view.unmount()
+  render(
+    <>
+      <ViewerComparisonContext.Provider value={preview}>
+        <JscadViewer {...props} meshIdentity="updated" />
+      </ViewerComparisonContext.Provider>
+      <ViewerComparisonContext.Provider value={actual}>
+        <JscadViewer {...props} meshIdentity="updated" />
+      </ViewerComparisonContext.Provider>
+    </>,
+  )
+  const restored = vi
+    .mocked(prepareRender)
+    .mock.calls.slice(-2)
+    .map(([options]) => (options as unknown as { camera: { position: number[]; target: number[] } }).camera)
+  expect(Array.from(restored[0].position)).toEqual([7, 8, 9])
+  expect(Array.from(restored[0].target)).toEqual([1, 2, 3])
+  expect(Array.from(restored[1].position)).toEqual([12, 13, 14])
+  expect(props.onRenderError).not.toHaveBeenCalled()
 })

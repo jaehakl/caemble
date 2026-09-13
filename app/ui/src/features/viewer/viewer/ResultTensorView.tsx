@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
+import { useMemo } from 'react'
 import type { RecordedResultContract } from '@/contracts/results'
 import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
@@ -15,13 +16,14 @@ export function ResultTensorView({
   rules: readonly RecordedDataRule[]
   data?: RecordedData | null
 }) {
+  const comparison = useViewerComparison()
   const members = rules.filter((rule) => rule.label === name || rule.label.startsWith(`${name}.`))
   const preferred = contract.visualization.valuePath ? `${name}.${contract.visualization.valuePath}` : name
-  const [representation, setRepresentation] = useState('abs')
-  const [member, setMember] = useState(preferred)
-  const rule = members.find((item) => item.label === member) ?? members[0]
-  const [indices, setIndices] = useState<Record<number, number>>({})
-  const [axes, setAxes] = useState<readonly number[] | null>(null)
+  const [representation, setRepresentation] = useViewerSetting('tensor.representation', 'abs')
+  const [member, setMember] = useViewerSetting('tensor.member', preferred)
+  const rule = members.find((item) => item.label === member) ?? (comparison ? undefined : members[0])
+  const [indices, setIndices] = useViewerSetting<Record<number, number>>('tensor.indices', {})
+  const [axes, setAxes] = useViewerSetting<readonly number[] | null>('tensor.axes', null)
   const value = rule && data?.[rule.label]
   const result = useMemo(() => {
     try {
@@ -31,11 +33,27 @@ export function ResultTensorView({
       const displayAxes =
         axes ?? (contract.visualization.spatialAxes ?? Array.from({ length: rank }, (_, i) => i)).slice(-2)
       const selected = displayAxes.filter((axis) => axis >= 0 && axis < rank)
+      if (
+        comparison &&
+        (selected.length !== displayAxes.length ||
+          accessor.shape.some(
+            (length, axis) =>
+              !selected.includes(axis) &&
+              (!Number.isInteger(indices[axis] ?? 0) || (indices[axis] ?? 0) < 0 || (indices[axis] ?? 0) >= length),
+          ))
+      )
+        return {
+          accessor,
+          selected: displayAxes,
+          error: '저장된 축·인덱스 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.',
+        }
       const shape = selected.map((axis) => accessor.shape[axis])
       if (accessor.shape.some((length) => length === 0)) return { error: '빈 결과입니다.' }
       const count = shape.reduce((a, b) => a * b, 1)
       const sliced = Array.from({ length: count }, (_, flat) => {
-        const position = accessor.shape.map((length, axis) => Math.min(indices[axis] ?? 0, Math.max(0, length - 1)))
+        const position = accessor.shape.map((length, axis) =>
+          comparison ? (indices[axis] ?? 0) : Math.min(indices[axis] ?? 0, Math.max(0, length - 1)),
+        )
         for (let dimension = selected.length - 1; dimension >= 0; dimension--) {
           position[selected[dimension]] = flat % shape[dimension]
           flat = Math.floor(flat / shape[dimension])
@@ -89,7 +107,7 @@ export function ResultTensorView({
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
-  }, [rule, value, axes, indices, contract, representation])
+  }, [rule, value, axes, indices, contract, representation, comparison])
   return (
     <div className="h-full overflow-auto p-3" data-result-visualization={contract.visualization.kind}>
       {contract.visualization.kind === 'bundle' ? (
@@ -97,72 +115,74 @@ export function ResultTensorView({
           구성 데이터의 상세 보기입니다. 구조 변형 재생에는 mesh와 전체 절점의 시간 이력이 연결된 결과가 필요합니다.
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-3 text-xs">
-        {rule?.result.dtype === 'complex64' ? (
-          <label>
-            복소수 표현{' '}
-            <select value={representation} onChange={(event) => setRepresentation(event.target.value)}>
-              <option value="abs">진폭</option>
-              <option value="re">실수부</option>
-              <option value="im">허수부</option>
-              <option value="arg">위상 (rad)</option>
-            </select>
-          </label>
-        ) : null}
-        {members.length > 1 ? (
-          <label>
-            데이터{' '}
-            <select
-              aria-label="결과 구성 데이터"
-              value={rule?.label ?? ''}
-              onChange={(event) => {
-                setMember(event.target.value)
-                setIndices({})
-                setAxes(null)
-              }}
-            >
-              {members.map((item) => (
-                <option key={item.label} value={item.label}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {result.accessor?.shape.map((length, axis) => (
-          <label key={axis}>
-            {rule.result.axes?.[axis]?.name ?? `Axis ${axis}`}{' '}
-            <input
-              aria-label={`표시 축 ${axis}`}
-              type="checkbox"
-              checked={result.selected?.includes(axis) ?? false}
-              onChange={(event) =>
-                setAxes(
-                  event.target.checked
-                    ? [...(result.selected ?? []).slice(-1), axis].sort((a, b) => a - b)
-                    : (result.selected ?? []).filter((item) => item !== axis),
-                )
-              }
-            />
-            {!result.selected?.includes(axis) ? (
+      <ViewerControls>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          {rule?.result.dtype === 'complex64' ? (
+            <label>
+              복소수 표현{' '}
+              <select value={representation} onChange={(event) => setRepresentation(event.target.value)}>
+                <option value="abs">진폭</option>
+                <option value="re">실수부</option>
+                <option value="im">허수부</option>
+                <option value="arg">위상 (rad)</option>
+              </select>
+            </label>
+          ) : null}
+          {members.length > 1 ? (
+            <label>
+              데이터{' '}
+              <select
+                aria-label="결과 구성 데이터"
+                value={rule?.label ?? ''}
+                onChange={(event) => {
+                  setMember(event.target.value)
+                  setIndices({})
+                  setAxes(null)
+                }}
+              >
+                {members.map((item) => (
+                  <option key={item.label} value={item.label}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {result.accessor?.shape.map((length, axis) => (
+            <label key={axis}>
+              {rule?.result.axes?.[axis]?.name ?? `Axis ${axis}`}{' '}
               <input
-                className="w-20 rounded border"
-                aria-label={`축 ${axis} index`}
-                type="number"
-                min={0}
-                max={Math.max(0, length - 1)}
-                value={indices[axis] ?? 0}
+                aria-label={`표시 축 ${axis}`}
+                type="checkbox"
+                checked={result.selected?.includes(axis) ?? false}
                 onChange={(event) =>
-                  setIndices({
-                    ...indices,
-                    [axis]: Math.min(length - 1, Math.max(0, Math.trunc(Number(event.target.value) || 0))),
-                  })
+                  setAxes(
+                    event.target.checked
+                      ? [...(result.selected ?? []).slice(-1), axis].sort((a, b) => a - b)
+                      : (result.selected ?? []).filter((item) => item !== axis),
+                  )
                 }
               />
-            ) : null}
-          </label>
-        ))}
-      </div>
+              {!result.selected?.includes(axis) ? (
+                <input
+                  className="w-20 rounded border"
+                  aria-label={`축 ${axis} index`}
+                  type="number"
+                  min={0}
+                  max={Math.max(0, length - 1)}
+                  value={indices[axis] ?? 0}
+                  onChange={(event) =>
+                    setIndices({
+                      ...indices,
+                      [axis]: Math.min(length - 1, Math.max(0, Math.trunc(Number(event.target.value) || 0))),
+                    })
+                  }
+                />
+              ) : null}
+            </label>
+          ))}
+        </div>
+      </ViewerControls>
       {result.error ? (
         <p role="alert">{result.error}</p>
       ) : result.rule && result.tensor ? (

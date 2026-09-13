@@ -28,6 +28,26 @@ const draft: WorkbenchDraft = {
 beforeEach(() => sessionStorage.clear())
 
 describe('Workbench draft storage', () => {
+  it('migrates v3 Calculation selection without discarding Vars or source', async () => {
+    sessionStorage.setItem(
+      workbenchDraftStorageKey('public'),
+      JSON.stringify({
+        version: 3,
+        ownerScope: 'public',
+        draft: {
+          ...draft,
+          candidate: { vars: { x: 0.5 }, materialSnapshot: null },
+          layout: { ...draft.layout, activeSection: 'measurement' },
+        },
+      }),
+    )
+    const restored = await loadWorkbenchDraft('public')
+    expect(restored?.layout.activeSection).toBe('calculation')
+    expect(restored?.candidate.vars).toEqual({ x: 0.5 })
+    expect(restored?.experiment).toEqual(draft.experiment)
+    await saveWorkbenchDraft('public', { ...restored!, layout: { ...restored!.layout, activeSection: 'measurement' } })
+    expect((await loadWorkbenchDraft('public'))?.layout.activeSection).toBe('measurement')
+  })
   it('migrates the retired Agent dock to Console without discarding the saved draft', async () => {
     const storageKey = workbenchDraftStorageKey('public')
     sessionStorage.setItem(

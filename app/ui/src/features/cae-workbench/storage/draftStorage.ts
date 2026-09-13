@@ -12,7 +12,7 @@ import {
 } from '../types'
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
-export const WORKBENCH_DRAFT_SCHEMA_VERSION = 3 as const
+export const WORKBENCH_DRAFT_SCHEMA_VERSION = 4 as const
 const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbench-draft:v1', 'caemble.ai-helper.agent-session', 'caemble.ai-helper.conversation-v1'] as const
 
 const sourceBundleSchema = z.object({ files: z.record(z.string(), z.string()) }).passthrough()
@@ -115,7 +115,12 @@ export async function loadWorkbenchDraft(ownerScope: PrivateQueryScope): Promise
   const serialized = sessionStorage.getItem(storageKey)
   if (serialized === null) return null
   try {
-    const envelope = storedDraftEnvelopeSchema.parse(JSON.parse(serialized))
+    const stored = JSON.parse(serialized)
+    if (stored?.version === 3 && stored.ownerScope === ownerScope) {
+      stored.version = WORKBENCH_DRAFT_SCHEMA_VERSION
+      if (stored.draft?.layout?.activeSection === 'measurement') stored.draft.layout.activeSection = 'calculation'
+    }
+    const envelope = storedDraftEnvelopeSchema.parse(stored)
     if (envelope.ownerScope !== ownerScope) throw new Error('Draft belongs to another scope.')
     return normalizeStoredDraft(envelope.draft)
   } catch {

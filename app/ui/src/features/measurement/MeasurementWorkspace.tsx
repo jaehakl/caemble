@@ -1,0 +1,852 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { dbTables, getListRequest } from '@/api'
+import { usePrivateQueryScope } from '@/features/auth/use-auth'
+import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
+import type { SavedMeasurement } from '@/features/cae-workbench/types'
+import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
+import {
+  createComparisonSettings,
+  type ComparisonCamera,
+  type ViewerComparison,
+} from '@/features/viewer/viewer/comparisonSettings'
+import { visualizationData } from '@/features/viewer/viewer/visualizationData'
+import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
+import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
+import type { Vars } from '@/lib/cad/model/types'
+import { varsFingerprint, varsSchemaFingerprint } from '@/lib/cad/model/vars'
+import { materialVarsHash } from '@/lib/material/resolution'
+import { createCadSourceDocument } from '@/lib/cad/source'
+import { measurementsQueryOptions } from './queryOptions'
+import { invalidateMeasurementMutation } from './queryInvalidation'
+import { useCaeDataSelection } from './useCaeDataSelection'
+import { useMeasurementForward } from './useMeasurementForward'
+import type { ReviewedMeasurementProgress } from './useCaeMeasurementActions'
+import { MeasurementSplit } from './MeasurementSplit'
+import { MeasurementVarsEditor } from './MeasurementVarsEditor'
+import { MeasurementPcaChart } from './MeasurementPcaChart'
+import {
+  projectSpace,
+  sampleMeasurementVars,
+  spaceValues,
+  varsAtProjection,
+  type MeasurementProjection,
+  type VarsPoint,
+} from './measurementSpace'
+
+type Candidate = VarsPoint & {
+  state: 'candidate' | 'running' | 'failed' | 'cancelled'
+  error?: string
+  measurementId?: number
+}
+const controlClass = 'h-8 rounded border bg-background px-2 text-xs disabled:opacity-50'
+
+export function MeasurementWorkspace({
+  workbench,
+  authenticated,
+  dataReadable,
+  active,
+  menubar,
+  onActivity,
+}: {
+  workbench: CaeWorkbenchState
+  authenticated: boolean
+  dataReadable: boolean
+  active: boolean
+  menubar: ReactNode
+  onActivity?: RuntimeActivityCallback
+}) {
+  const queryClient = useQueryClient()
+  const queryScope = usePrivateQueryScope()
+  const [vars, setVars] = useState<Readonly<Vars> | null>(
+    workbench.candidateVars ?? workbench.selection.variables ?? workbench.experimentDocument.variables,
+  )
+  const [evaluatedVars, setEvaluatedVars] = useState(vars)
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [currentId, setCurrentId] = useState('draft')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selectedVar, setSelectedVar] = useState<string | null>(null)
+  const [valid, setValid] = useState(true)
+  const [count, setCount] = useState('10')
+  const [algorithm, setAlgorithm] = useState<'random' | 'empty-lhs'>('random')
+  const [error, setError] = useState('')
+  const [operation, setOperation] = useState<string | null>(null)
+  const [execution, setExecution] = useState<Record<string, ReviewedMeasurementProgress>>({})
+  const [selectedResult, setSelectedResult] = useState('')
+  const [comparisonSettings] = useState(createComparisonSettings)
+  const [controlsHost, setControlsHost] = useState<HTMLDivElement | null>(null)
+  const previewCamera = useRef<ComparisonCamera['current']>(null)
+  const actualCamera = useRef<ComparisonCamera['current']>(null)
+  const [pcaRevision, setPcaRevision] = useState(0)
+  const [projection, setProjection] = useState<MeasurementProjection | null>(null)
+  const [pcaError, setPcaError] = useState('')
+  const [pcaBusy, setPcaBusy] = useState(false)
+  const worker = useRef<Worker | null>(null)
+  const pcaSequence = useRef(0)
+  const selectionSequence = useRef(0)
+  const initialSelectionApplied = useRef(false)
+  const stopQueue = useRef(false)
+  const mounted = useRef(true)
+  const latest = useRef(workbench)
+  latest.current = workbench
+  const actual = useCaeDataSelection(workbench.experimentId, 'visible')
+  const { loadMeasurement: loadActualMeasurement } = actual
+  const recordedSource = useMemo(
+    () =>
+      workbench.experimentRecord?.source_bundle
+        ? createCadSourceDocument('experiment', workbench.experimentRecord.source_bundle)
+        : workbench.experiment,
+    [workbench.experimentRecord?.source_bundle, workbench.experiment],
+  )
+  const { experimentDocument: document } = useCadWorkspace(workbench.experiment, undefined, {
+    candidateVars: evaluatedVars ?? undefined,
+    resetKey: workbench.workspaceSession,
+    onActivity,
+  })
+  const { experimentDocument: actualDocument } = useCadWorkspace(
+    actual.measurement ? recordedSource : null,
+    undefined,
+    {
+      candidateVars: actual.variables,
+      candidateProvenance: 'persisted-measurement',
+      persistedMaterialSnapshot: actual.materialSnapshot,
+      resetKey: workbench.workspaceSession,
+      onActivity,
+    },
+  )
+  const schema = document.varsSchema ?? workbench.experimentDocument.varsSchema
+  const schemaKey = schema ? varsSchemaFingerprint(schema) : ''
+  const sourceHash = workbench.experimentRecord?.source_hash ?? ''
+  const contextKey = `${queryScope}:${workbench.experimentId}:${sourceHash}:${schemaKey}`
+  const query = useQuery({
+    ...measurementsQueryOptions(queryScope, workbench.experimentId, {
+      ...getListRequest('visible'),
+      filter: { experiment_id: [workbench.experimentId, workbench.experimentId] },
+      limit: null,
+      sort: ['id', 'asc'],
+    }),
+    enabled: dataReadable && workbench.experimentId !== null,
+    refetchOnWindowFocus: active,
+  })
+  const measurements = useMemo(() => (query.data?.items ?? []) as SavedMeasurement[], [query.data?.items])
+  const currentKey = varsFingerprint(vars)
+  const ready =
+    (document.status === 'Ready' || document.status === 'Rendering') &&
+    document.successfulRevision === document.revision &&
+    varsFingerprint(document.variables) === currentKey &&
+    document.materialSnapshot !== null
+  const busy = operation !== null || workbench.measurementActions.busy || workbench.calculationDataActions.busy
+  const persistable =
+    authenticated && workbench.experimentClean && workbench.experimentManageable && !document.draftTaskNames.length
+  const forward = useMeasurementForward({
+    experimentId: workbench.experimentId,
+    contextKey,
+    document,
+    measurements,
+    vars,
+    ready,
+    active,
+    onActivity,
+  })
+  const comparisonContracts = {
+    ...document.simulationProgram?.resultContracts,
+    ...actual.resultContracts,
+    ...visualizationData(actual.visualizations ?? {}).contracts,
+  }
+  const actualHasSelectedData =
+    Object.keys(actual.flatRecordedData ?? {}).some(
+      (name) => name === selectedResult || name.startsWith(`${selectedResult}.`),
+    ) || selectedResult.startsWith('@visualizations.')
+  const controlsSide =
+    actual.measurement &&
+    (!forward.data?.[selectedResult] || (actualHasSelectedData && !actual.resultErrors?.[selectedResult])) &&
+    (!selectedResult || actual.resultContracts?.[selectedResult] || selectedResult.startsWith('@visualizations.'))
+      ? 'actual'
+      : 'preview'
+  const comparison = useMemo(() => {
+    const common = {
+      settings: comparisonSettings,
+      item: selectedResult,
+      controlsHost,
+      suspended: !active || !ready || forward.predicting || actual.loading,
+    }
+    return {
+      preview: {
+        ...common,
+        side: 'preview',
+        controlsOwner: controlsSide === 'preview',
+        camera: previewCamera,
+      } as ViewerComparison,
+      actual: {
+        ...common,
+        side: 'actual',
+        controlsOwner: controlsSide === 'actual',
+        camera: actualCamera,
+      } as ViewerComparison,
+    }
+  }, [
+    comparisonSettings,
+    selectedResult,
+    controlsHost,
+    active,
+    ready,
+    forward.predicting,
+    actual.loading,
+    controlsSide,
+  ])
+  const topology = candidates.map((candidate) => candidate.id).join('|')
+  const points = useMemo<VarsPoint[]>(
+    () => [...measurements.map((row) => ({ id: `measurement:${row.id}`, vars: row.vars as Vars })), ...candidates],
+    [measurements, candidates],
+  )
+  const pointsRef = useRef(points)
+  pointsRef.current = points
+  const varsRef = useRef(vars)
+  varsRef.current = vars
+  const currentIdRef = useRef(currentId)
+  currentIdRef.current = currentId
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEvaluatedVars(vars), 180)
+    return () => clearTimeout(timer)
+  }, [vars])
+  useEffect(() => {
+    if (!vars && document.variables) {
+      setVars(document.variables)
+      setEvaluatedVars(document.variables)
+    }
+  }, [vars, document.variables])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      stopQueue.current = true
+    }
+  }, [])
+  useEffect(() => {
+    const initial = workbench.selection.measurement
+    if (initialSelectionApplied.current || !initial?.recorded_at) return
+    initialSelectionApplied.current = true
+    if (selectionSequence.current !== 0) return
+    setVars(initial.vars as Vars)
+    setCurrentId(`measurement:${initial.id}`)
+    setSelected(new Set([`measurement:${initial.id}`]))
+    void loadActualMeasurement(initial).catch((cause: unknown) => {
+      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
+    })
+    return () => {
+      if (!mounted.current) initialSelectionApplied.current = false
+    }
+  }, [loadActualMeasurement, workbench.selection.measurement])
+  useEffect(() => {
+    const instance = new Worker(new URL('./measurementSpace.worker.ts', import.meta.url), { type: 'module' })
+    worker.current = instance
+    instance.onmessage = (event: MessageEvent<{ id: number; projection?: MeasurementProjection; error?: string }>) => {
+      if (event.data.id !== pcaSequence.current) return
+      setProjection(event.data.projection ?? null)
+      setPcaError(event.data.error ?? '')
+      setPcaBusy(false)
+    }
+    instance.onerror = () => {
+      setPcaError('PCA Worker 오류입니다. 탭을 다시 열거나 새로고침하세요.')
+      setPcaBusy(false)
+    }
+    return () => {
+      worker.current = null
+      instance.terminate()
+    }
+  }, [])
+  useEffect(() => {
+    if (!schema || !worker.current) return
+    setPcaBusy(true)
+    const input = [...pointsRef.current]
+    if (
+      currentIdRef.current === 'draft' &&
+      varsRef.current &&
+      !input.some((point) => varsFingerprint(point.vars) === varsFingerprint(varsRef.current))
+    )
+      input.push({ id: 'draft', vars: varsRef.current })
+    worker.current.postMessage({ id: ++pcaSequence.current, schema, points: input })
+    // Editing projects into the existing snapshot; only membership/data refreshes rebuild it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaKey, measurements, topology, pcaRevision])
+
+  const changeVars = useCallback(
+    (next: Vars) => {
+      selectionSequence.current += 1
+      setVars(next)
+      setError('')
+      setExecution((states) => {
+        const nextStates = { ...states }
+        delete nextStates[currentId]
+        return nextStates
+      })
+      if (currentId.startsWith('candidate:'))
+        setCandidates((rows) =>
+          rows.map((row) =>
+            row.id === currentId
+              ? { ...row, vars: next, state: 'candidate', error: undefined, measurementId: undefined }
+              : row,
+          ),
+        )
+      else {
+        setCurrentId('draft')
+        setSelected(new Set())
+      }
+    },
+    [currentId],
+  )
+  const selectPoint = useCallback(
+    async (id: string, additive: boolean) => {
+      if (!valid || busy) return
+      const sequence = ++selectionSequence.current
+      setSelected((ids) => {
+        const next = additive ? new Set(ids) : new Set<string>()
+        if (additive && next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+      setError('')
+      if (id === 'draft') {
+        const point = projection?.points.find((point) => point.id === id)
+        if (point && projection) {
+          const { spaceVars } = await import('./measurementSpace')
+          if (sequence === selectionSequence.current) {
+            setVars(spaceVars(projection.layouts, point.values))
+            setCurrentId(id)
+          }
+        }
+        return
+      }
+      const candidate = candidates.find((row) => row.id === id)
+      if (candidate) {
+        setVars(candidate.vars)
+        setCurrentId(id)
+        return
+      }
+      const row = measurements.find((row) => `measurement:${row.id}` === id)
+      if (!row) return
+      setVars(row.vars as Vars)
+      setCurrentId(id)
+      if (row.recorded_at) {
+        try {
+          await actual.loadMeasurement(row)
+        } catch (cause) {
+          if (sequence === selectionSequence.current) setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      }
+    },
+    [actual, busy, candidates, measurements, projection, valid],
+  )
+
+  const generate = () => {
+    if (!schema || !valid || busy) return
+    selectionSequence.current += 1
+    try {
+      const existing = points.map((point) => point.vars)
+      if (vars && currentId === 'draft') existing.push(vars)
+      const generated = sampleMeasurementVars(schema, existing, Number(count), algorithm).map((value): Candidate => ({
+        id: `candidate:${crypto.randomUUID()}`,
+        vars: value,
+        state: 'candidate',
+      }))
+      setCandidates((rows) => [...rows, ...generated])
+      setVars(generated[0].vars)
+      setCurrentId(generated[0].id)
+      setSelected(new Set(generated.map((point) => point.id)))
+      setError('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  const addCandidate = () => {
+    if (!vars || !valid || busy) return
+    selectionSequence.current += 1
+    if (points.some((point) => varsFingerprint(point.vars) === currentKey)) {
+      setError('동일한 Vars의 점이 이미 있습니다.')
+      return
+    }
+    const candidate: Candidate = { id: `candidate:${crypto.randomUUID()}`, vars, state: 'candidate' }
+    setCandidates((rows) => [...rows, candidate])
+    setCurrentId(candidate.id)
+    setSelected(new Set([candidate.id]))
+  }
+  const save = async () => {
+    if (
+      !persistable ||
+      !ready ||
+      !valid ||
+      busy ||
+      !vars ||
+      !document.materialSnapshot ||
+      !workbench.experimentId ||
+      currentId.startsWith('measurement:')
+    )
+      return
+    const savedId = currentId
+    setOperation('저장 중')
+    setError('')
+    try {
+      const result = await dbTables.Measurement.create({
+        experiment_id: workbench.experimentId,
+        experiment_source_hash: sourceHash,
+        vars,
+        material_snapshot: document.materialSnapshot,
+      })
+      await invalidateMeasurementMutation(queryClient, queryScope, workbench.experimentId, [result.id])
+      if (!mounted.current) return
+      setCandidates((rows) => rows.filter((row) => row.id !== savedId))
+      setCurrentId(`measurement:${result.id}`)
+      setSelected(new Set([`measurement:${result.id}`]))
+    } catch (cause) {
+      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (mounted.current) setOperation(null)
+    }
+  }
+  const run = async (all: boolean) => {
+    if (!persistable || !ready || !valid || busy || !vars) return
+    const ids = all
+      ? candidates.filter((row) => row.state !== 'running').map((row) => row.id)
+      : selected.size
+        ? [...selected]
+        : [currentId]
+    if (all && currentId === 'draft') ids.push('draft')
+    const queue = ids.flatMap((id) => {
+      const candidate = candidates.find((row) => row.id === id)
+      const row = measurements.find((row) => `measurement:${row.id}` === id || row.id === candidate?.measurementId)
+      if (row?.recorded_at || (!row && !candidate && id !== 'draft')) return []
+      return [
+        {
+          candidateId: id,
+          vars: structuredClone(row ? (row.vars as Vars) : (candidate?.vars ?? vars)),
+          measurementId: row?.id ?? candidate?.measurementId,
+          materialSnapshot:
+            row?.material_snapshot ?? (id === currentId ? (document.materialSnapshot ?? undefined) : undefined),
+        },
+      ]
+    })
+    if (!queue.length) {
+      setError('실행할 후보 또는 Prepared Measurement를 선택하세요.')
+      return
+    }
+    stopQueue.current = false
+    setOperation(`실행 0/${queue.length}`)
+    setError('')
+    for (let index = 0; index < queue.length; index++) {
+      if (stopQueue.current || !mounted.current) break
+      const item = queue[index]
+      let recordedId: number | null = null
+      setOperation(`실행 ${index + 1}/${queue.length}`)
+      setCandidates((rows) =>
+        rows.map((row) => (row.id === item.candidateId ? { ...row, state: 'running', error: undefined } : row)),
+      )
+      try {
+        const completion = await latest.current.measurementActions.runReviewed(item, (progress) => {
+          if (!mounted.current) return
+          if (progress.state === 'succeeded') recordedId = progress.measurementId
+          setExecution((states) => ({ ...states, [item.candidateId]: progress }))
+          if (progress.measurementId)
+            setCandidates((rows) =>
+              rows.map((row) =>
+                row.id === item.candidateId ? { ...row, measurementId: progress.measurementId! } : row,
+              ),
+            )
+        })
+        if (!mounted.current) break
+        setCandidates((rows) => rows.filter((row) => row.id !== item.candidateId))
+        setSelected((ids) => {
+          const next = new Set(ids)
+          next.delete(item.candidateId)
+          next.add(`measurement:${completion.measurementId}`)
+          return next
+        })
+        if (currentIdRef.current === item.candidateId) {
+          setCurrentId(`measurement:${completion.measurementId}`)
+          await actual.loadMeasurement(completion.measurementId)
+        }
+      } catch (cause) {
+        if (!mounted.current) break
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setError(`${item.candidateId}: ${message}`)
+        if (recordedId) {
+          // CAE results remain valid when only the subsequent Calculation phase fails.
+          const measurementId = recordedId
+          setCandidates((rows) => rows.filter((row) => row.id !== item.candidateId))
+          setSelected((ids) => {
+            const next = new Set(ids)
+            next.delete(item.candidateId)
+            next.add(`measurement:${measurementId}`)
+            return next
+          })
+          if (currentIdRef.current === item.candidateId) {
+            setCurrentId(`measurement:${measurementId}`)
+            await actual.loadMeasurement(measurementId).catch(() => null)
+          }
+          continue
+        }
+        setExecution((states) => ({
+          ...states,
+          [item.candidateId]: {
+            measurementId: states[item.candidateId]?.measurementId ?? item.measurementId ?? null,
+            state: stopQueue.current ? 'cancelled' : 'failed',
+            error: message,
+          },
+        }))
+        setCandidates((rows) =>
+          rows.map((row) =>
+            row.id === item.candidateId
+              ? { ...row, state: stopQueue.current ? 'cancelled' : 'failed', error: message }
+              : row,
+          ),
+        )
+      }
+    }
+    if (mounted.current) {
+      setOperation(null)
+      void query.refetch()
+    }
+  }
+
+  const chartPoints =
+    projection?.points.map((point) => {
+      const row = measurements.find((row) => point.id === `measurement:${row.id}`)
+      const candidate = candidates.find((row) => row.id === point.id)
+      const progress = execution[point.id]
+      return {
+        id: point.id,
+        xy: point.xy,
+        label: row
+          ? `Measurement #${row.id}`
+          : point.id === 'draft'
+            ? '편집 후보'
+            : `후보 ${candidates.findIndex((row) => row.id === point.id) + 1}`,
+        state: row?.recorded_at
+          ? 'recorded'
+          : progress
+            ? progress.state === 'succeeded'
+              ? 'recorded'
+              : progress.state === 'failed' || progress.state === 'cancelled'
+                ? progress.state
+                : 'running'
+            : row
+              ? 'prepared'
+              : (candidate?.state ?? 'candidate'),
+      }
+    }) ?? []
+  let currentProjection: number[] | undefined
+  try {
+    if (projection && vars) currentProjection = projectSpace(projection, spaceValues(projection.layouts, vars))
+  } catch {
+    /* A new schema waits for its matching PCA snapshot. */
+  }
+  const viewerBase = {
+    experiment: workbench.experiment,
+    selectionQuery: null,
+    selectionSourceStatus: {},
+    viewerExpanded: false,
+    onFindSelectionSource: () => {},
+    onSelectionQueryChange: () => {},
+    onSelectionSourcePathsChange: () => {},
+    selectedResult,
+    onSelectedResultChange: setSelectedResult,
+    showToolbar: false,
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {menubar}
+      <div aria-label="Measurement 작업" className="flex shrink-0 flex-wrap items-center gap-2 border-b p-2">
+        <select
+          aria-label="후보 생성 방식"
+          className={controlClass}
+          value={algorithm}
+          onChange={(event) => setAlgorithm(event.target.value as typeof algorithm)}
+        >
+          <option value="random">Random</option>
+          <option value="empty-lhs">빈 구간 LHS</option>
+        </select>
+        <input
+          aria-label="후보 생성 개수 N"
+          className={`${controlClass} w-16`}
+          type="number"
+          min={1}
+          step={1}
+          value={count}
+          onChange={(event) => setCount(event.target.value)}
+        />
+        <button className={controlClass} disabled={!schema || busy || !valid || query.isFetching} onClick={generate}>
+          후보 생성
+        </button>
+        <button className={controlClass} disabled={!vars || busy || !valid} onClick={addCandidate}>
+          후보 추가
+        </button>
+        <button
+          className={controlClass}
+          disabled={!persistable || !ready || !valid || busy || currentId.startsWith('measurement:')}
+          onClick={() => void save()}
+        >
+          Prepared 저장
+        </button>
+        <button
+          className={controlClass}
+          disabled={!persistable || !ready || !valid || busy}
+          onClick={() => void run(false)}
+        >
+          선택 Run
+        </button>
+        <button
+          className={controlClass}
+          disabled={!persistable || !ready || !valid || busy || (!candidates.length && currentId !== 'draft')}
+          onClick={() => void run(true)}
+        >
+          전체 후보 Run
+        </button>
+        {operation && operation !== '저장 중' ? (
+          <button
+            className={controlClass}
+            onClick={() => {
+              stopQueue.current = true
+              latest.current.measurementActions.cancel()
+            }}
+          >
+            취소
+          </button>
+        ) : null}
+        <button
+          className={controlClass}
+          disabled={!dataReadable || !ready || forward.building || busy}
+          onClick={() => void forward.build()}
+        >
+          {forward.building ? '모델 생성 중…' : forward.model ? '모델 업데이트' : 'Forward 모델 생성'}
+        </button>
+        <span className="text-xs text-muted-foreground">
+          {operation ??
+            workbench.measurementActions.stage ??
+            (forward.outdated
+              ? '새 데이터 · 모델 업데이트 필요'
+              : forward.model
+                ? 'Forward 모델 준비됨'
+                : 'Forward 모델 없음')}
+        </span>
+      </div>
+      {!persistable ? (
+        <p className="border-b px-3 py-1 text-xs text-muted-foreground">
+          실행·저장에는 로그인과 저장된 편집 가능한 Experiment가 필요합니다.
+        </p>
+      ) : null}
+      {error || query.isError ? (
+        <p role="alert" className="border-b px-3 py-1 text-xs text-destructive">
+          {error || 'Measurement를 불러오지 못했습니다.'}
+        </p>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        <MeasurementSplit
+          label="Measurement 좌우 너비 조절"
+          first={
+            <MeasurementSplit
+              vertical
+              label="PCA와 Vars 높이 조절"
+              first={
+                <section className="flex h-full min-h-0 flex-col">
+                  <header className="flex shrink-0 flex-wrap items-center gap-2 border-b p-2 text-xs">
+                    <strong>Vars PCA</strong>
+                    <span>
+                      {measurements.length} Measurements · {candidates.length} 후보
+                    </span>
+                    <button
+                      className={controlClass}
+                      disabled={!schema || pcaBusy || !valid}
+                      onClick={() => setPcaRevision((value) => value + 1)}
+                    >
+                      PCA 갱신
+                    </button>
+                    <button
+                      className={controlClass}
+                      disabled={busy || !valid || ![...selected].some((id) => id.startsWith('candidate:'))}
+                      onClick={() => {
+                        setCandidates((rows) => rows.filter((row) => !selected.has(row.id)))
+                        if (selected.has(currentId)) setCurrentId('draft')
+                        setSelected(new Set())
+                      }}
+                    >
+                      선택 후보 삭제
+                    </button>
+                    {pcaBusy ? <span>계산 중…</span> : null}
+                  </header>
+                  {pcaError ? (
+                    <p role="alert" className="p-2 text-xs text-destructive">
+                      {pcaError}
+                    </p>
+                  ) : null}
+                  <MeasurementPcaChart
+                    projection={projection}
+                    points={chartPoints}
+                    current={currentProjection}
+                    selected={selected}
+                    disabled={!valid || busy || pcaBusy}
+                    onSelect={(id, additive) => void selectPoint(id, additive)}
+                    onSpace={(xy) => {
+                      if (projection) changeVars(varsAtProjection(projection, xy))
+                    }}
+                  />
+                  <label className="flex shrink-0 items-center gap-2 border-t p-2 text-xs">
+                    점 선택
+                    <select
+                      className={`${controlClass} min-w-0 flex-1`}
+                      value={currentId}
+                      disabled={!valid || busy}
+                      onChange={(event) => void selectPoint(event.target.value, false)}
+                    >
+                      <option value="draft">편집 후보</option>
+                      {measurements.map((row) => (
+                        <option key={row.id} value={`measurement:${row.id}`}>
+                          #{row.id} · {row.recorded_at ? 'Recorded' : 'Prepared'}
+                        </option>
+                      ))}
+                      {candidates.map((row, index) => (
+                        <option key={row.id} value={row.id}>
+                          후보 {index + 1} · {row.state}
+                          {row.error ? ` · ${row.error}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </section>
+              }
+              second={
+                <MeasurementVarsEditor
+                  schema={schema}
+                  vars={vars}
+                  selectedKey={selectedVar}
+                  onSelectedKeyChange={setSelectedVar}
+                  onVarsChange={changeVars}
+                  onValidityChange={setValid}
+                  disabled={busy}
+                />
+              }
+            />
+          }
+          second={
+            <div className="flex h-full min-h-0 flex-col">
+              <div
+                aria-label="비교 Viewer 공통 툴바"
+                className="max-h-[45%] shrink-0 overflow-auto border-b bg-background [&_button]:min-h-8 [&_button]:rounded [&_button]:border [&_button]:px-2 [&_button:disabled]:opacity-40 [&_input[type=number]]:w-20 [&_input[type=number]]:rounded [&_input[type=number]]:border [&_select]:min-h-8 [&_select]:rounded [&_select]:border [&_select]:bg-background [&_select]:px-2"
+              >
+                <label className="flex items-center gap-2 p-2 text-xs">
+                  데이터
+                  <select
+                    aria-label="Viewer 결과 선택"
+                    value={selectedResult}
+                    onChange={(event) => setSelectedResult(event.target.value)}
+                    className="min-w-0 flex-1"
+                  >
+                    <option value="">Geometry</option>
+                    {selectedResult && !comparisonContracts[selectedResult] ? (
+                      <option value={selectedResult}>{selectedResult} · 결과 없음</option>
+                    ) : null}
+                    {Object.keys(comparisonContracts).map((name) => (
+                      <option key={name} value={name}>
+                        {name.startsWith('@visualizations.')
+                          ? `${name.slice('@visualizations.'.length)} · 시각화`
+                          : `${name} · Output`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div ref={setControlsHost} />
+              </div>
+              <div className="min-h-0 flex-1">
+                <MeasurementSplit
+                  label="미리보기와 실제 결과 너비 조절"
+                  first={
+                    <section aria-label="미리보기 Viewer" className="flex h-full min-h-0 flex-col">
+                      <header className="shrink-0 border-b p-2 text-xs">
+                        <strong>미리보기 · 현재 Vars</strong>
+                        <span className="ml-2 text-muted-foreground">
+                          {!ready
+                            ? '구조 평가 중…'
+                            : forward.predicting
+                              ? 'Forward 갱신 중…'
+                              : forward.model
+                                ? 'Forward 예측'
+                                : '구조 · 모델을 생성하면 Output을 예측합니다.'}
+                        </span>
+                        {document.error ? (
+                          <p role="alert" className="text-destructive">
+                            {document.error.message}
+                          </p>
+                        ) : null}
+                        {forward.error ? (
+                          <p role="alert" className="text-destructive">
+                            {forward.error}
+                          </p>
+                        ) : null}
+                        {forward.model &&
+                          Object.values(forward.model.errors).map((message, index) => (
+                            <p className="text-muted-foreground" key={index}>
+                              {message}
+                            </p>
+                          ))}
+                      </header>
+                      <div className="min-h-0 flex-1">
+                        <WorkbenchViewer
+                          {...viewerBase}
+                          comparison={comparison.preview}
+                          experimentDocument={document}
+                          resultContracts={document.simulationProgram?.resultContracts}
+                          recordedData={forward.data}
+                          recordedRules={forward.model?.rules}
+                          resultSourceHash={document.evaluatedSnapshot?.sourceHash}
+                          resultVarsHash={vars ? materialVarsHash(vars) : null}
+                          loading={!ready || forward.predicting}
+                        />
+                      </div>
+                    </section>
+                  }
+                  second={
+                    <section aria-label="실제 결과 Viewer" className="flex h-full min-h-0 flex-col">
+                      <header className="shrink-0 border-b p-2 text-xs">
+                        <strong>실제 결과 {actual.measurement ? `· Measurement #${actual.measurement.id}` : ''}</strong>
+                        {actual.variables && varsFingerprint(actual.variables) !== currentKey ? (
+                          <span className="ml-2 text-amber-700">비교 기준 · 현재 Vars와 다름</span>
+                        ) : null}
+                        {actualDocument.error ? (
+                          <p role="alert" className="text-destructive">
+                            {actualDocument.error.message}
+                          </p>
+                        ) : null}
+                      </header>
+                      <div className="min-h-0 flex-1">
+                        {actual.measurement || actual.loading ? (
+                          <WorkbenchViewer
+                            {...viewerBase}
+                            comparison={comparison.actual}
+                            experimentDocument={actualDocument}
+                            resultContracts={actual.resultContracts}
+                            recordedData={actual.flatRecordedData}
+                            recordedRules={actual.recordedRules}
+                            resultErrors={actual.resultErrors}
+                            visualizations={actual.visualizations}
+                            resultSourceHash={actual.materialSnapshot?.sourceHash}
+                            resultVarsHash={actual.materialSnapshot?.varsHash}
+                            loading={actual.loading}
+                            downloadProgress={actual.downloadProgress}
+                          />
+                        ) : (
+                          <p className="grid h-full place-items-center p-3 text-sm text-muted-foreground">
+                            Recorded Measurement를 선택하면 실제 결과를 표시합니다.
+                          </p>
+                        )}
+                      </div>
+                    </section>
+                  }
+                />
+              </div>
+            </div>
+          }
+        />
+      </div>
+    </div>
+  )
+}

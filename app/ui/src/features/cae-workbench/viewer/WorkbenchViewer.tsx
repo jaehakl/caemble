@@ -1,3 +1,10 @@
+import {
+  ViewerComparisonContext,
+  useViewerComparison,
+  useViewerSetting,
+  ViewerControls,
+  type ViewerComparison,
+} from '@/features/viewer/viewer/comparisonSettings'
 import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
 import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
 import { StructuredFieldResult } from '@/features/viewer/viewer/StructuredFieldResult'
@@ -22,7 +29,77 @@ function usesExperimentCoordinates(visualization: NonNullable<RecordedResultCont
   return visualization.kind === 'box-grid' || visualization.coordinateSpace === 'experiment'
 }
 
-export function WorkbenchViewer({
+export type WorkbenchViewerProps = {
+  calculationSource?: string
+  activeExperimentTaskName?: string | null
+  experiment: ExperimentSourceDocument | null
+  experimentDocument: CadDocumentController
+  onFindSelectionSource: (value: string) => void
+  onSelectionQueryChange: (query: CadViewerSelectionQuery | null) => void
+  onSelectionSourcePathsChange: (values: readonly string[]) => void
+  onToggleViewerExpanded?: () => void
+  resultErrors?: Readonly<Record<string, string>>
+  resultContracts?: RecordedResultContracts | null
+  visualizations?: MeasurementVisualizations
+  resultSourceHash?: string | null
+  resultVarsHash?: string | null
+  selectionQuery: CadViewerSelectionQuery | null
+  selectionSourceStatus: Readonly<Record<string, CadViewerSourceLookupStatus>>
+  viewerExpanded: boolean
+  recordedData?: RecordedData
+  recordedRules?: readonly RecordedDataRule[]
+  loading?: boolean
+  downloadProgress?: Readonly<{ completed: number; total: number }> | null
+  autoSelectResult?: boolean
+  captureRef?: Ref<HTMLDivElement>
+  selectedResult?: string
+  onSelectedResultChange?: (name: string) => void
+  comparison?: ViewerComparison
+  showToolbar?: boolean
+}
+
+export function WorkbenchViewer(props: WorkbenchViewerProps) {
+  const previous = useRef<WorkbenchViewerProps | null>(null)
+  const name = props.selectedResult ?? ''
+  const visualName = name.startsWith('@visualizations.')
+  const present =
+    !name ||
+    Boolean(
+      visualName
+        ? visualizationData(props.visualizations ?? {}).data[name]
+        : Object.keys(props.recordedData ?? {}).some((key) => key === name || key.startsWith(`${name}.`)),
+    )
+  if (present && !props.loading && !props.resultErrors?.[name]) previous.current = props
+  const retained =
+    props.comparison && (!present || props.resultErrors?.[name]) && previous.current?.selectedResult === name
+      ? previous.current
+      : null
+  const unavailable = Boolean(props.comparison && name && (!present || props.resultErrors?.[name]))
+  return (
+    <ViewerComparisonContext.Provider value={props.comparison ?? null}>
+      <div className="relative h-full min-h-0">
+        <div className={`h-full min-h-0 ${unavailable ? 'invisible' : ''}`}>
+          <ViewerContent
+            {...props}
+            recordedData={retained?.recordedData ?? props.recordedData}
+            recordedRules={retained?.recordedRules ?? props.recordedRules}
+            resultContracts={retained?.resultContracts ?? props.resultContracts}
+            visualizations={retained?.visualizations ?? props.visualizations}
+            resultErrors={unavailable && retained ? retained.resultErrors : props.resultErrors}
+          />
+        </div>
+        {unavailable ? (
+          <p role="status" className="absolute inset-0 grid place-items-center p-3 text-sm">
+            {props.resultErrors?.[name] ??
+              (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
+          </p>
+        ) : null}
+      </div>
+    </ViewerComparisonContext.Provider>
+  )
+}
+
+function ViewerContent({
   calculationSource,
   activeExperimentTaskName,
   experiment,
@@ -45,30 +122,11 @@ export function WorkbenchViewer({
   downloadProgress,
   autoSelectResult = false,
   captureRef,
-}: {
-  calculationSource?: string
-  activeExperimentTaskName?: string | null
-  experiment: ExperimentSourceDocument | null
-  experimentDocument: CadDocumentController
-  onFindSelectionSource: (value: string) => void
-  onSelectionQueryChange: (query: CadViewerSelectionQuery | null) => void
-  onSelectionSourcePathsChange: (values: readonly string[]) => void
-  onToggleViewerExpanded: () => void
-  resultErrors?: Readonly<Record<string, string>>
-  resultContracts?: RecordedResultContracts | null
-  visualizations?: MeasurementVisualizations
-  resultSourceHash?: string | null
-  resultVarsHash?: string | null
-  selectionQuery: CadViewerSelectionQuery | null
-  selectionSourceStatus: Readonly<Record<string, CadViewerSourceLookupStatus>>
-  viewerExpanded: boolean
-  recordedData?: RecordedData
-  recordedRules?: readonly RecordedDataRule[]
-  loading?: boolean
-  downloadProgress?: Readonly<{ completed: number; total: number }> | null
-  autoSelectResult?: boolean
-  captureRef?: Ref<HTMLDivElement>
-}) {
+  selectedResult,
+  onSelectedResultChange,
+  showToolbar = true,
+}: WorkbenchViewerProps) {
+  const comparison = useViewerComparison()
   const visual = useMemo(() => visualizationData(visualizations), [visualizations])
   const resultContracts = useMemo(
     () =>
@@ -101,8 +159,9 @@ export function WorkbenchViewer({
     () => parseResultPolylines(resultContracts ?? {}, recordedRules, recordedData),
     [resultContracts, recordedRules, recordedData],
   )
-  const [overlay, setOverlay] = useState<readonly string[]>([])
-  const [selectedView, setSelectedView] = useState('')
+  const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [])
+  const [localSelectedView, setSelectedView] = useState('')
+  const selectedView = selectedResult ?? localSelectedView
   const selectionMade = useRef(false)
   const selectedField = mesh.fields.find((field) => field.label === selectedView)
   const selectedContract = resultContracts?.[selectedView]
@@ -138,7 +197,7 @@ export function WorkbenchViewer({
             : undefined
   const frameMatches = !frameBlockedReason
   useEffect(() => {
-    if (!autoSelectResult || !recordedData || selectionMade.current) return
+    if (selectedResult !== undefined || !autoSelectResult || !recordedData || selectionMade.current) return
     const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
       if (resultErrors[name]) return false
       if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
@@ -159,7 +218,7 @@ export function WorkbenchViewer({
         '',
     )
     selectionMade.current = candidates.length > 0
-  }, [autoSelectResult, recordedData, resultContracts, resultErrors, mesh, polylines, frameMatches])
+  }, [selectedResult, autoSelectResult, recordedData, resultContracts, resultErrors, mesh, polylines, frameMatches])
   const geometryBlockedReason =
     frameBlockedReason ??
     (selectedContract && !usesExperimentCoordinates(selectedContract.visualization)
@@ -231,7 +290,7 @@ export function WorkbenchViewer({
         heatmapRenderData={heatmapRenderData}
         meshIdentity={selectedField?.identity}
         displayUnit={displayUnit}
-        preserveCameraOnUpdate={autoSelectResult}
+        preserveCameraOnUpdate={Boolean(comparison) || autoSelectResult}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         onToggleViewerExpanded={onToggleViewerExpanded}
@@ -241,79 +300,87 @@ export function WorkbenchViewer({
   )
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
-        <select
-          aria-label="Viewer 결과 선택"
-          value={selectedView}
-          onChange={(event) => {
-            selectionMade.current = true
-            setSelectedView(event.target.value)
-          }}
-        >
-          <option value="">Geometry</option>
-          {selectedView && !selectedContract ? <option value={selectedView}>{selectedView} · 결과 없음</option> : null}
-          {Object.keys(resultContracts ?? {}).map((name) => (
-            <option key={name} value={name}>
-              {name.startsWith('@visualizations.')
-                ? `${name.slice('@visualizations.'.length)} · 시각화`
-                : `${name} · Output`}
-            </option>
-          ))}
-        </select>
-        {Object.entries(resultContracts ?? {})
-          .filter(([, result]) => result.visualization.kind === 'polyline')
-          .map(([name, result]) => {
-            const compatible =
-              sameResultInvocation(name) &&
-              polylines.bundles.some((bundle) => bundle.id === name) &&
-              frameMatches &&
-              usesExperimentCoordinates(result.visualization) &&
-              (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
-            return (
-              <label
-                key={name}
-                title={
-                  compatible
-                    ? 'Geometry 좌표에 겹쳐 표시'
-                    : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
-                }
-              >
+      <ViewerControls>
+        <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
+          {showToolbar ? (
+            <select
+              aria-label="Viewer 결과 선택"
+              value={selectedView}
+              onChange={(event) => {
+                selectionMade.current = true
+                setSelectedView(event.target.value)
+                onSelectedResultChange?.(event.target.value)
+              }}
+            >
+              <option value="">Geometry</option>
+              {selectedView && !selectedContract ? (
+                <option value={selectedView}>{selectedView} · 결과 없음</option>
+              ) : null}
+              {Object.keys(resultContracts ?? {}).map((name) => (
+                <option key={name} value={name}>
+                  {name.startsWith('@visualizations.')
+                    ? `${name.slice('@visualizations.'.length)} · 시각화`
+                    : `${name} · Output`}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          {Object.entries(resultContracts ?? {})
+            .filter(([, result]) => result.visualization.kind === 'polyline')
+            .map(([name, result]) => {
+              const compatible =
+                sameResultInvocation(name) &&
+                polylines.bundles.some((bundle) => bundle.id === name) &&
+                frameMatches &&
+                usesExperimentCoordinates(result.visualization) &&
+                (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
+              return (
+                <label
+                  key={name}
+                  title={
+                    compatible
+                      ? 'Geometry 좌표에 겹쳐 표시'
+                      : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`${name} Overlay`}
+                    disabled={!compatible || name === selectedView}
+                    checked={name === selectedView || overlay.includes(name)}
+                    onChange={(event) =>
+                      setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
+                    }
+                  />{' '}
+                  {name}
+                  {overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
+                </label>
+              )
+            })}
+          {overlay
+            .filter((name) => !resultContracts?.[name])
+            .map((name) => (
+              <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
                 <input
                   type="checkbox"
+                  checked
                   aria-label={`${name} Overlay`}
-                  disabled={!compatible || name === selectedView}
-                  checked={name === selectedView || overlay.includes(name)}
-                  onChange={(event) =>
-                    setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
-                  }
-                />{' '}
-                {name}
-                {overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
+                  onChange={() => setOverlay(overlay.filter((item) => item !== name))}
+                />
+                {name} · 결과 없음
               </label>
-            )
-          })}
-        {overlay
-          .filter((name) => !resultContracts?.[name])
-          .map((name) => (
-            <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
-              <input
-                type="checkbox"
-                checked
-                aria-label={`${name} Overlay`}
-                onChange={() => setOverlay(overlay.filter((item) => item !== name))}
-              />
-              {name} · 결과 없음
-            </label>
-          ))}
-        {loading ? (
-          <span role="status">
-            저장 결과 불러오는 중{downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
-          </span>
-        ) : null}
-        {!resultContracts && recordedRules.length ? (
-          <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
-        ) : null}
-      </div>
+            ))}
+          {loading ? (
+            <span role="status">
+              저장 결과 불러오는 중
+              {downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
+            </span>
+          ) : null}
+          {!resultContracts && recordedRules.length ? (
+            <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
+          ) : null}
+        </div>
+      </ViewerControls>
       {!canOverlayGeometry && selectedView !== '' ? (
         <p role="status" className="p-2 text-xs">
           {geometryBlockedReason}

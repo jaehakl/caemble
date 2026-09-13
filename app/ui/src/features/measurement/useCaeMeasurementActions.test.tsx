@@ -168,6 +168,34 @@ beforeEach(() => {
 })
 
 describe('server-owned CAE measurement actions', () => {
+  it('runs reviewed Vars without regenerating them and preserves the candidate/result identity', async () => {
+    const rendered = renderActions()
+    const progress = vi.fn()
+    await act(async () => {
+      const result = await rendered.result.current.runReviewed(
+        {
+          candidateId: 'candidate:a',
+          vars: { length: 23 },
+          materialSnapshot,
+        },
+        progress,
+      )
+      expect(result).toMatchObject({ candidateId: 'candidate:a', measurementId: 41 })
+    })
+    expect(progress).toHaveBeenCalledWith({ measurementId: 41, state: 'succeeded', error: null })
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'candidate', vars: { length: 23 }, material_snapshot: materialSnapshot }),
+    )
+    expect(mocks.generate).not.toHaveBeenCalled()
+    await act(async () => {
+      await rendered.result.current.runReviewed({
+        candidateId: 'measurement:42',
+        measurementId: 42,
+        vars: { length: 25 },
+      })
+    })
+    expect(mocks.create).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'measurement', measurement_id: 42 }))
+  })
   it('submits one multi-Candidate batch and continues after Calculation failures across result pages', async () => {
     const completed = batch(Array.from({ length: 102 }, (_, index) => index + 1))
     mocks.create.mockResolvedValue({ ...completed, jobs: completed.jobs.slice(0, 100) })

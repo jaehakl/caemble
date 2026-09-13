@@ -1,5 +1,6 @@
+import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, type ReactNode } from 'react'
 import type { RecordedResultContract } from '@/contracts/results'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { isDataTensor } from '@/lib/cad/model/dataTensor'
@@ -49,30 +50,43 @@ function FieldControls({
   field: ReturnType<typeof structuredField>
   rule: RecordedDataRule
 }) {
-  const [secondaryIndex, setSecondaryIndex] = useState(0)
+  const comparison = useViewerComparison()
+  const [secondaryIndex, setSecondaryIndex] = useViewerSetting('field.secondaryIndex', 0)
   const field = useMemo(
     () => ({
       ...sourceField,
-      secondaryIndex: Math.min(secondaryIndex, Math.max(0, sourceField.secondaryTicks.length - 1)),
+      secondaryIndex: comparison
+        ? secondaryIndex
+        : Math.min(secondaryIndex, Math.max(0, sourceField.secondaryTicks.length - 1)),
     }),
-    [sourceField, secondaryIndex],
+    [sourceField, secondaryIndex, comparison],
   )
   const singleton = field.spatial.findIndex((axis) => axis.ticks.length === 1)
-  const [normal, setNormal] = useState(singleton < 0 ? 2 : singleton)
-  const [sliceIndex, setIndex] = useState(Math.floor(field.spatial[singleton < 0 ? 2 : singleton].ticks.length / 2))
-  const [sampleIndex, setSample] = useState(0)
-  const [componentIndex, setComponent] = useState(field.components.length === 1 ? 0 : -1)
-  const [representation, setRepresentation] = useState('abs')
-  const [opacity, setOpacity] = useState(0.8)
-  const [staticFixed, setStaticFixed] = useState<readonly [number, number] | null>(null)
-  const [details, setDetails] = useState(false)
-  const [oscillating, setOscillating] = useState(false)
-  const [phase, setPhase] = useState(0)
-  const [oscillationFixed, setOscillationFixed] = useState<readonly [number, number] | null>(null)
-  const index = Math.min(sliceIndex, field.spatial[normal].ticks.length - 1)
-  const sample = Math.min(sampleIndex, field.sampleTicks.length - 1)
-  const component = componentIndex >= field.components.length ? -1 : componentIndex
+  const [normal, setNormal] = useViewerSetting('field.normal', singleton < 0 ? 2 : singleton)
+  const [sliceIndex, setIndex] = useViewerSetting(
+    'field.sliceIndex',
+    Math.floor(field.spatial[singleton < 0 ? 2 : singleton].ticks.length / 2),
+  )
+  const [sampleIndex, setSample] = useViewerSetting('field.sampleIndex', 0)
+  const [componentIndex, setComponent] = useViewerSetting(
+    'field.componentIndex',
+    field.components.length === 1 ? 0 : -1,
+  )
+  const [representation, setRepresentation] = useViewerSetting('field.representation', 'abs')
+  const [opacity, setOpacity] = useViewerSetting('field.opacity', 0.8)
+  const [staticFixed, setStaticFixed] = useViewerSetting<readonly [number, number] | null>('field.staticFixed', null)
+  const [details, setDetails] = useViewerSetting('field.details', false)
+  const [oscillating, setOscillating] = useViewerSetting('field.oscillating', false)
+  const [phase, setPhase] = useViewerSetting('field.phase', 0)
+  const [oscillationFixed, setOscillationFixed] = useViewerSetting<readonly [number, number] | null>(
+    'field.oscillationFixed',
+    null,
+  )
+  const index = comparison ? sliceIndex : Math.min(sliceIndex, field.spatial[normal].ticks.length - 1)
+  const sample = comparison ? sampleIndex : Math.min(sampleIndex, field.sampleTicks.length - 1)
+  const component = comparison ? componentIndex : componentIndex >= field.components.length ? -1 : componentIndex
   useEffect(() => {
+    if (comparison) return
     setIndex(index)
     setSample(sample)
     setComponent(component)
@@ -85,8 +99,11 @@ function FieldControls({
       )
     )
       setOscillating(false)
-  }, [field, rule, index, sample, component])
-  const [magnitudeFixed, setMagnitudeFixed] = useState<readonly [number, number] | null>(null)
+  }, [field, rule, index, sample, component, comparison, setIndex, setSample, setComponent, setOscillating])
+  const [magnitudeFixed, setMagnitudeFixed] = useViewerSetting<readonly [number, number] | null>(
+    'field.magnitudeFixed',
+    null,
+  )
   const fixed = oscillating ? (component < 0 ? magnitudeFixed : oscillationFixed) : staticFixed
   const setFixed = oscillating ? (component < 0 ? setMagnitudeFixed : setOscillationFixed) : setStaticFixed
   const spectral = field.grid.sampleKind === 'frequency'
@@ -95,8 +112,25 @@ function FieldControls({
     field.boxGrid?.channels.length === 2 ||
     field.boxGrid?.frequencyKind === 'modal'
   const projection = oscillating ? 're' : component < 0 ? 'abs' : complex ? representation : 're'
+  const invalidSetting =
+    comparison &&
+    (!Number.isInteger(index) ||
+      index < 0 ||
+      index >= field.spatial[normal].ticks.length ||
+      !Number.isInteger(sample) ||
+      sample < 0 ||
+      sample >= field.sampleTicks.length ||
+      !Number.isInteger(component) ||
+      component < -1 ||
+      component >= field.components.length ||
+      secondaryIndex < 0 ||
+      secondaryIndex >= Math.max(1, field.secondaryTicks.length) ||
+      (oscillating && (!spectral || !complex)))
+      ? '저장된 단면·성분·표본 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
+      : ''
   const rendered = useMemo(() => {
     try {
+      if (invalidSetting) throw new Error(invalidSetting)
       const limits = fieldRange(field, sample, component, oscillating ? 'peak' : projection)
       if (!oscillating) return { range: limits, zero: false }
       const amplitude = limits[1]
@@ -104,15 +138,16 @@ function FieldControls({
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
-  }, [field, sample, component, projection, oscillating])
+  }, [field, sample, component, projection, oscillating, invalidSetting])
   const range = useMemo(() => fixed ?? rendered.range ?? ([0, 0] as const), [fixed, rendered.range])
   const cached = useMemo(() => {
     try {
+      if (invalidSetting) throw new Error(invalidSetting)
       return oscillating ? { data: oscillationSlice(field, props.name, normal, index, sample, component) } : {}
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
-  }, [field, props.name, normal, index, sample, component, oscillating])
+  }, [field, props.name, normal, index, sample, component, oscillating, invalidSetting])
   const slice = useMemo(() => {
     try {
       if (rendered.error || cached.error) return { error: rendered.error ?? cached.error }
@@ -133,158 +168,160 @@ function FieldControls({
   const current = field.sampleTicks[sample]
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b p-2 text-xs">
-        {spectral && complex ? (
+      <ViewerControls>
+        <div className="flex flex-wrap items-center gap-3 border-b p-2 text-xs">
+          {spectral && complex ? (
+            <label>
+              표시 모드{' '}
+              <select
+                aria-label="장 표시 모드"
+                value={oscillating ? 'oscillating' : 'static'}
+                onChange={(event) => {
+                  const next = event.target.value === 'oscillating'
+                  setOscillating(next)
+                }}
+              >
+                <option value="static">정적</option>
+                <option value="oscillating">진동</option>
+              </select>
+            </label>
+          ) : null}
           <label>
-            표시 모드{' '}
+            단면{' '}
             <select
-              aria-label="장 표시 모드"
-              value={oscillating ? 'oscillating' : 'static'}
+              value={normal}
               onChange={(event) => {
-                const next = event.target.value === 'oscillating'
-                setOscillating(next)
+                const n = Number(event.target.value)
+                setNormal(n)
+                setIndex(Math.floor(field.spatial[n].ticks.length / 2))
               }}
             >
-              <option value="static">정적</option>
-              <option value="oscillating">진동</option>
+              <option value={2}>XY</option>
+              <option value={0}>YZ</option>
+              <option value={1}>XZ</option>
             </select>
           </label>
-        ) : null}
-        <label>
-          단면{' '}
-          <select
-            value={normal}
-            onChange={(event) => {
-              const n = Number(event.target.value)
-              setNormal(n)
-              setIndex(Math.floor(field.spatial[n].ticks.length / 2))
-            }}
-          >
-            <option value={2}>XY</option>
-            <option value={0}>YZ</option>
-            <option value={1}>XZ</option>
-          </select>
-        </label>
-        <label>
-          위치{' '}
-          <input
-            aria-label="단면 위치"
-            type="range"
-            min={0}
-            max={field.spatial[normal].ticks.length - 1}
-            value={index}
-            onChange={(event) => setIndex(Number(event.target.value))}
-          />{' '}
-          {field.spatial[normal].ticks[index].toPrecision(5)} {props.displayUnit}
-        </label>
-        <label>
-          {spectral ? '주파수 / 진공 파장' : '시간'}{' '}
-          <select
-            value={sample}
-            onChange={(event) => {
-              setSample(Number(event.target.value))
-              setPhase(0)
-            }}
-          >
-            {field.sampleTicks.map((tick, i) => (
-              <option key={i} value={i}>
-                {tick.toPrecision(6)} {spectral ? 'Hz' : 's'}
-                {spectral && tick > 0 ? ` · ${(299792458e9 / tick).toPrecision(6)} nm` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          성분{' '}
-          <select value={component} onChange={(event) => setComponent(Number(event.target.value))}>
-            <option value={-1}>{oscillating ? '전체 크기 · 순간값' : '전체 크기'}</option>
-            {field.components.map((name, i) => (
-              <option key={name} value={i}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {field.secondaryAxis !== null && field.secondaryTicks.length > 1 ? (
           <label>
-            {field.secondaryAxis === 3 ? '시간' : '주파수'}{' '}
+            위치{' '}
+            <input
+              aria-label="단면 위치"
+              type="range"
+              min={0}
+              max={field.spatial[normal].ticks.length - 1}
+              value={index}
+              onChange={(event) => setIndex(Number(event.target.value))}
+            />{' '}
+            {field.spatial[normal].ticks[index]?.toPrecision(5)} {props.displayUnit}
+          </label>
+          <label>
+            {spectral ? '주파수 / 진공 파장' : '시간'}{' '}
             <select
-              aria-label={field.secondaryAxis === 3 ? '시간 선택' : '주파수 선택'}
-              value={field.secondaryIndex}
-              onChange={(event) => setSecondaryIndex(Number(event.target.value))}
+              value={sample}
+              onChange={(event) => {
+                setSample(Number(event.target.value))
+                setPhase(0)
+              }}
             >
-              {field.secondaryTicks.map((tick, index) => (
-                <option key={index} value={index}>
-                  {tick.toPrecision(6)} {field.secondaryAxis === 3 ? 's' : 'Hz'}
+              {field.sampleTicks.map((tick, i) => (
+                <option key={i} value={i}>
+                  {tick.toPrecision(6)} {spectral ? 'Hz' : 's'}
+                  {spectral && tick > 0 ? ` · ${(299792458e9 / tick).toPrecision(6)} nm` : ''}
                 </option>
               ))}
             </select>
           </label>
-        ) : null}
-        {spectral && complex ? <FieldFormulaTooltip label="성분 수식 도움말" unit={rule.result.unit} /> : null}
-        {complex && component >= 0 && !oscillating ? (
           <label>
-            표현{' '}
-            <select value={representation} onChange={(event) => setRepresentation(event.target.value)}>
-              <option value="abs">진폭</option>
-              <option value="re">실수부</option>
-              <option value="im">허수부</option>
-              <option value="arg">위상</option>
+            성분{' '}
+            <select value={component} onChange={(event) => setComponent(Number(event.target.value))}>
+              <option value={-1}>{oscillating ? '전체 크기 · 순간값' : '전체 크기'}</option>
+              {field.components.map((name, i) => (
+                <option key={name} value={i}>
+                  {name}
+                </option>
+              ))}
             </select>
           </label>
+          {field.secondaryAxis !== null && field.secondaryTicks.length > 1 ? (
+            <label>
+              {field.secondaryAxis === 3 ? '시간' : '주파수'}{' '}
+              <select
+                aria-label={field.secondaryAxis === 3 ? '시간 선택' : '주파수 선택'}
+                value={field.secondaryIndex}
+                onChange={(event) => setSecondaryIndex(Number(event.target.value))}
+              >
+                {field.secondaryTicks.map((tick, index) => (
+                  <option key={index} value={index}>
+                    {tick.toPrecision(6)} {field.secondaryAxis === 3 ? 's' : 'Hz'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {spectral && complex ? <FieldFormulaTooltip label="성분 수식 도움말" unit={rule.result.unit} /> : null}
+          {complex && component >= 0 && !oscillating ? (
+            <label>
+              표현{' '}
+              <select value={representation} onChange={(event) => setRepresentation(event.target.value)}>
+                <option value="abs">진폭</option>
+                <option value="re">실수부</option>
+                <option value="im">허수부</option>
+                <option value="arg">위상</option>
+              </select>
+            </label>
+          ) : null}
+          <label>
+            투명도{' '}
+            <input
+              aria-label="단면 투명도"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={opacity}
+              onChange={(event) => setOpacity(Number(event.target.value))}
+            />{' '}
+            {opacity}
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={fixed !== null}
+              onChange={(event) => setFixed(event.target.checked ? (rendered.range ?? [0, 1]) : null)}
+            />{' '}
+            색상 범위 고정
+          </label>
+          {fixed ? (
+            <>
+              {[0, 1].map((end) => (
+                <input
+                  key={end}
+                  aria-label={end ? '색상 최댓값' : '색상 최솟값'}
+                  className="w-24 border"
+                  type="number"
+                  min={oscillating && component < 0 ? 0 : undefined}
+                  value={fixed[end]}
+                  onChange={(event) => {
+                    const next: [number, number] = [...fixed]
+                    next[end] = Number(event.target.value)
+                    if (Number.isFinite(next[end]) && !(oscillating && component < 0 && next[end] < 0)) setFixed(next)
+                  }}
+                />
+              ))}
+            </>
+          ) : null}
+          <label>
+            <input type="checkbox" checked={details} onChange={(event) => setDetails(event.target.checked)} /> Table /
+            2D 상세
+          </label>
+        </div>
+        {oscillating && !details && !invalidSetting ? (
+          <SpectralPlayback frequency={current} phase={phase} onPhase={setPhase} dataVersion={field} />
         ) : null}
-        <label>
-          투명도{' '}
-          <input
-            aria-label="단면 투명도"
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={opacity}
-            onChange={(event) => setOpacity(Number(event.target.value))}
-          />{' '}
-          {opacity}
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={fixed !== null}
-            onChange={(event) => setFixed(event.target.checked ? (rendered.range ?? [0, 1]) : null)}
-          />{' '}
-          색상 범위 고정
-        </label>
-        {fixed ? (
-          <>
-            {[0, 1].map((end) => (
-              <input
-                key={end}
-                aria-label={end ? '색상 최댓값' : '색상 최솟값'}
-                className="w-24 border"
-                type="number"
-                min={oscillating && component < 0 ? 0 : undefined}
-                value={fixed[end]}
-                onChange={(event) => {
-                  const next: [number, number] = [...fixed]
-                  next[end] = Number(event.target.value)
-                  if (Number.isFinite(next[end]) && !(oscillating && component < 0 && next[end] < 0)) setFixed(next)
-                }}
-              />
-            ))}
-          </>
-        ) : null}
-        <label>
-          <input type="checkbox" checked={details} onChange={(event) => setDetails(event.target.checked)} /> Table / 2D
-          상세
-        </label>
-      </div>
-      {oscillating && !details ? (
-        <SpectralPlayback frequency={current} phase={phase} onPhase={setPhase} dataVersion={field} />
-      ) : null}
+      </ViewerControls>
       <div className="flex items-center gap-2 p-2 text-xs" role="status">
         {oscillating && rendered.zero ? <span>영장 · 모든 표본의 진폭 0</span> : null}
         <span>
-          {label} [{unit}] · {current.toPrecision(6)} {spectral ? 'Hz' : 's'}
+          {label} [{unit}] · {current?.toPrecision(6)} {spectral ? 'Hz' : 's'}
         </span>
         {spectral && complex ? <FieldFormulaTooltip label="범례 수식 도움말" unit={rule.result.unit} /> : null}
         <span>{range[0].toPrecision(4)}</span>

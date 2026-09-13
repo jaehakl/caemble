@@ -21,7 +21,7 @@ export type DefinitionStatus = 'empty' | 'new' | 'saved-clean' | 'saved-dirty'
 /** @deprecated The v14 editor dock is retained only for draft migration. */
 export type WorkbenchTabId = 'experiment' | 'experiments' | 'recorded-data'
 
-export const workbenchSectionIds = ['experiment', 'measurement', 'prediction', 'analysis'] as const
+export const workbenchSectionIds = ['experiment', 'measurement', 'calculation', 'prediction', 'analysis'] as const
 export type WorkbenchSectionId = (typeof workbenchSectionIds)[number]
 
 export const bottomDockModes = ['hidden', 'console'] as const

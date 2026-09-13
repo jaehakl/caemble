@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useViewerComparison, useViewerSetting } from './comparisonSettings'
+import { useEffect, useRef } from 'react'
 import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
 import { meshFrameAtTime } from './meshDeformation'
 
@@ -13,15 +14,18 @@ export function MeshPlayback({
   frame: number
   onFrame: (frame: number) => void
 }) {
-  const [playing, setPlaying] = useState(false)
-  const [repeat, setRepeat] = useState(false)
-  const [speed, setSpeed] = useState(1)
-  useEffect(() => { setPlaying(false) }, [times])
+  const comparison = useViewerComparison()
+  const [playing, setPlaying] = useViewerSetting('meshPlayback.playing', false)
+  const [repeat, setRepeat] = useViewerSetting('meshPlayback.repeat', false)
+  const [speed, setSpeed] = useViewerSetting('meshPlayback.speed', 1)
+  useEffect(() => {
+    if (!comparison) setPlaying(false)
+  }, [times, comparison, setPlaying])
   const frameRef = useRef(frame)
   frameRef.current = frame
   const duration = times[times.length - 1] - times[0]
   useEffect(() => {
-    if (!playing || duration <= 0) return
+    if (!playing || duration <= 0 || !Number.isFinite(times[frameRef.current]) || comparison?.suspended) return
     const startTime = times[frameRef.current]
     const start = performance.now()
     let animation = 0
@@ -37,7 +41,7 @@ export function MeshPlayback({
     }
     animation = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animation)
-  }, [duration, onFrame, playing, repeat, speed, times])
+  }, [duration, onFrame, playing, repeat, speed, times, comparison, setPlaying])
   const seek = (value: number) => {
     setPlaying(false)
     onFrame(value)
@@ -73,7 +77,7 @@ export function MeshPlayback({
         onChange={(event) => seek(meshFrameAtTime(times, Number(event.target.value)))}
       />
       <span>
-        {times[frame].toPrecision(5)} {unit} · {frame + 1}/{times.length}
+        {times[frame]?.toPrecision(5)} {unit} · {frame + 1}/{times.length}
       </span>
       <label>
         <input type="checkbox" checked={repeat} onChange={(event) => setRepeat(event.target.checked)} /> 반복

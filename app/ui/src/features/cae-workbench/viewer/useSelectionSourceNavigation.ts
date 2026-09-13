@@ -69,7 +69,7 @@ export function useSelectionSourceNavigation({
           viewerExpanded: false,
         }))
       }
-      if (activeSection === 'measurement' && calculationDirty) guardReplacement(reveal)
+      if (activeSection === 'calculation' && calculationDirty) guardReplacement(reveal)
       else reveal()
     },
     [activeSection, calculationDirty, guardReplacement, setLayout],

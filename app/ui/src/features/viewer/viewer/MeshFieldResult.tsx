@@ -1,3 +1,4 @@
+import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   automaticDeformationScale,
@@ -26,7 +27,8 @@ export function MeshFieldResult({
   displayUnit?: typeof field.lengthUnit
   renderViewer?: (data: ReturnType<typeof createMeshFieldRenderData>, view: MeshFieldView) => ReactNode
 }) {
-  const [view, setView] = useState<MeshFieldView>({
+  const comparison = useViewerComparison()
+  const [view, setView] = useViewerSetting<MeshFieldView>('mesh.view', {
     component: field.valueKind === 'stress' ? 'vonMises' : 'magnitude',
     wireframe: true,
     overlays: true,
@@ -44,7 +46,10 @@ export function MeshFieldResult({
         : [],
     [field, displacementFields],
   )
-  const [selectedDisplacement, setSelectedDisplacement] = useState<string | null>(null)
+  const [selectedDisplacement, setSelectedDisplacement] = useViewerSetting<string | null>(
+    'mesh.selectedDisplacement',
+    null,
+  )
   const displacement =
     field.valueKind === 'displacement'
       ? field
@@ -53,19 +58,20 @@ export function MeshFieldResult({
         : candidates.length === 1
           ? candidates[0]
           : undefined
-  const [deformed, setDeformed] = useState(true)
-  const [scaleMode, setScaleMode] = useState('auto')
-  const [manualScale, setManualScale] = useState(1)
-  const [frameIndex, setFrame] = useState(0)
-  const frame = Math.min(frameIndex, Math.max(0, (field.times?.length ?? 1) - 1))
+  const [deformed, setDeformed] = useViewerSetting('mesh.deformed', true)
+  const [scaleMode, setScaleMode] = useViewerSetting('mesh.scaleMode', 'auto')
+  const [manualScale, setManualScale] = useViewerSetting('mesh.manualScale', 1)
+  const [frameIndex, setFrame] = useViewerSetting('mesh.frameIndex', 0)
+  const frame = comparison ? frameIndex : Math.min(frameIndex, Math.max(0, (field.times?.length ?? 1) - 1))
   useEffect(() => {
+    if (comparison) return
     setFrame(frame)
     setView((current) =>
       typeof current.component === 'number' && current.component >= field.componentCount
         ? { ...current, component: 'magnitude' }
         : current,
     )
-  }, [field, frame])
+  }, [field, frame, comparison, setFrame, setView])
   const canDeform = Boolean(displacement?.location === 'node' && displacement.componentCount === 3)
   const autoScale = useMemo(() => (displacement ? automaticDeformationScale(displacement) : 1), [displacement])
   const deformationScale =
@@ -81,9 +87,19 @@ export function MeshFieldResult({
     [field, frame],
   )
   const frameDisplacement = displacement === field ? currentField : displacement
+  const invalidSetting =
+    comparison &&
+    (!Number.isInteger(frame) ||
+      frame < 0 ||
+      frame >= (field.times?.length ?? 1) ||
+      (typeof view.component === 'number' && (view.component < 0 || view.component >= field.componentCount)) ||
+      (view.component === 'vonMises' && field.valueKind !== 'stress') ||
+      (selectedDisplacement && !displacement))
+      ? '저장된 성분·프레임·변위 설정을 현재 데이터에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
+      : ''
   const range = useMemo(
-    () => (field.times ? meshHistoryRange(field, view.component) : undefined),
-    [field, view.component],
+    () => (field.times && !invalidSetting ? meshHistoryRange(field, view.component) : undefined),
+    [field, view.component, invalidSetting],
   )
   const animationBounds = useMemo(
     () => (field.times ? meshHistoryBounds(field, deformationScale, displayUnit) : undefined),
@@ -91,15 +107,16 @@ export function MeshFieldResult({
   )
   const animationTopology = useMemo(
     () =>
-      field.times && view.clipAxis < 0
+      field.times && view.clipAxis < 0 && !invalidSetting
         ? createMeshFieldRenderData(field, { ...view, deformationScale }, displayUnit).geometries
         : undefined,
-    [field, view, deformationScale, displayUnit],
+    [field, view, deformationScale, displayUnit, invalidSetting],
   )
   const effectiveView = { ...view, deformationScale }
   const [error, setError] = useState<string | null>(null)
   const rendered = useMemo(() => {
     try {
+      if (invalidSetting) throw new Error(invalidSetting)
       const data = createMeshFieldRenderData(
         currentField,
         { ...view, deformationScale },
@@ -113,7 +130,17 @@ export function MeshFieldResult({
     } catch (error) {
       return { data: null, error: error instanceof Error ? error.message : String(error) }
     }
-  }, [currentField, view, deformationScale, displayUnit, frameDisplacement, range, animationBounds, animationTopology])
+  }, [
+    currentField,
+    view,
+    deformationScale,
+    displayUnit,
+    frameDisplacement,
+    range,
+    animationBounds,
+    animationTopology,
+    invalidSetting,
+  ])
   const onRender = useCallback(() => {}, [])
   const component = typeof view.component === 'number' ? field.components[view.component] : view.component
   return (
@@ -127,151 +154,153 @@ export function MeshFieldResult({
         {(field.points.length / 3).toLocaleString()} nodes · {(field.cells.length / 4).toLocaleString()} tetrahedra ·{' '}
         {field.location} values · coordinates {field.lengthUnit}
       </p>
-      <details
-        open
-        className="max-h-[40%] shrink-0 overflow-auto border-b [&_select]:min-h-8 [&_select]:rounded [&_select]:border [&_select]:bg-white [&_select]:px-2"
-      >
-        <summary className="cursor-pointer px-2 py-1 text-sm font-semibold">시각화 · 성분 / 단면 / 변형 설정</summary>
-        <div className="flex flex-wrap items-center gap-3 p-2 text-sm text-slate-700">
-          <label>
-            성분{' '}
-            <select
-              aria-label={`${field.label} field component`}
-              className="rounded border p-1"
-              value={String(view.component)}
-              onChange={(event) =>
-                setView({
-                  ...view,
-                  component: /^\d+$/u.test(event.target.value)
-                    ? Number(event.target.value)
-                    : (event.target.value as MeshFieldView['component']),
-                })
-              }
-            >
-              <option value="magnitude">{field.componentCount === 1 ? 'Value' : 'Magnitude'}</option>
-              {field.valueKind === 'stress' ? <option value="vonMises">von Mises</option> : null}
-              {field.components.map((name, index) => (
-                <option key={index} value={index}>
-                  {name}
-                </option>
-              ))}
-              <option value="material">Material regions</option>
-            </select>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={view.wireframe}
-              onChange={(event) => setView({ ...view, wireframe: event.target.checked })}
-            />{' '}
-            Mesh 경계선
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={view.overlays}
-              onChange={(event) => setView({ ...view, overlays: event.target.checked })}
-            />{' '}
-            구속 / 하중
-          </label>
-          <label>
-            단면{' '}
-            <select
-              aria-label={`${field.label} section axis`}
-              className="rounded border p-1"
-              value={view.clipAxis}
-              onChange={(event) =>
-                setView({ ...view, clipAxis: Number(event.target.value) as MeshFieldView['clipAxis'] })
-              }
-            >
-              <option value={-1}>None</option>
-              <option value={0}>X</option>
-              <option value={1}>Y</option>
-              <option value={2}>Z</option>
-            </select>
-          </label>
-          {view.clipAxis >= 0 ? (
-            <label className="flex items-center gap-2">
-              Position{' '}
-              <input
-                aria-label={`${field.label} section position`}
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={view.clipFraction}
-                onChange={(event) => setView({ ...view, clipFraction: Number(event.target.value) })}
-              />
-              {rendered.data?.cut.toPrecision(4)} {field.lengthUnit}
-            </label>
-          ) : null}
-          {field.valueKind === 'stress' ? (
+      <ViewerControls>
+        <details
+          open
+          className="max-h-[40%] shrink-0 overflow-auto border-b [&_select]:min-h-8 [&_select]:rounded [&_select]:border [&_select]:bg-white [&_select]:px-2"
+        >
+          <summary className="cursor-pointer px-2 py-1 text-sm font-semibold">시각화 · 성분 / 단면 / 변형 설정</summary>
+          <div className="flex flex-wrap items-center gap-3 p-2 text-sm text-slate-700">
             <label>
-              변위 결과{' '}
+              성분{' '}
               <select
-                aria-label="Deformation result"
-                value={displacement?.label ?? ''}
-                onChange={(event) => setSelectedDisplacement(event.target.value)}
+                aria-label={`${field.label} field component`}
+                className="rounded border p-1"
+                value={String(view.component)}
+                onChange={(event) =>
+                  setView({
+                    ...view,
+                    component: /^\d+$/u.test(event.target.value)
+                      ? Number(event.target.value)
+                      : (event.target.value as MeshFieldView['component']),
+                  })
+                }
               >
-                <option value="">{candidates.length ? '선택 안 함' : '호환되는 정적 변위 없음'}</option>
-                {candidates.map((candidate) => (
-                  <option key={candidate.label} value={candidate.label}>
-                    {candidate.label}
+                <option value="magnitude">{field.componentCount === 1 ? 'Value' : 'Magnitude'}</option>
+                {field.valueKind === 'stress' ? <option value="vonMises">von Mises</option> : null}
+                {field.components.map((name, index) => (
+                  <option key={index} value={index}>
+                    {name}
                   </option>
                 ))}
+                <option value="material">Material regions</option>
               </select>
             </label>
-          ) : null}
-          {canDeform ? (
-            <>
-              <label>
-                형상{' '}
-                <select
-                  value={deformed ? 'deformed' : 'original'}
-                  onChange={(event) => setDeformed(event.target.value === 'deformed')}
-                >
-                  <option value="original">원형</option>
-                  <option value="deformed">변형</option>
-                </select>
-              </label>
-              <label>
-                변형 배율{' '}
-                <select value={scaleMode} onChange={(event) => setScaleMode(event.target.value)}>
-                  <option value="auto">자동 확대</option>
-                  <option value="actual">실제 크기 1×</option>
-                  <option value="manual">직접 입력</option>
-                </select>
-              </label>
-              {scaleMode === 'manual' ? (
+            <label>
+              <input
+                type="checkbox"
+                checked={view.wireframe}
+                onChange={(event) => setView({ ...view, wireframe: event.target.checked })}
+              />{' '}
+              Mesh 경계선
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={view.overlays}
+                onChange={(event) => setView({ ...view, overlays: event.target.checked })}
+              />{' '}
+              구속 / 하중
+            </label>
+            <label>
+              단면{' '}
+              <select
+                aria-label={`${field.label} section axis`}
+                className="rounded border p-1"
+                value={view.clipAxis}
+                onChange={(event) =>
+                  setView({ ...view, clipAxis: Number(event.target.value) as MeshFieldView['clipAxis'] })
+                }
+              >
+                <option value={-1}>None</option>
+                <option value={0}>X</option>
+                <option value={1}>Y</option>
+                <option value={2}>Z</option>
+              </select>
+            </label>
+            {view.clipAxis >= 0 ? (
+              <label className="flex items-center gap-2">
+                Position{' '}
                 <input
-                  aria-label={`${field.label} displacement scale`}
-                  className="w-20 rounded border p-1"
-                  type="number"
+                  aria-label={`${field.label} section position`}
+                  type="range"
                   min={0}
-                  step="any"
-                  value={manualScale}
-                  onChange={(event) => {
-                    const value = Number(event.target.value)
-                    if (Number.isFinite(value) && value >= 0) setManualScale(value)
-                  }}
+                  max={1}
+                  step={0.01}
+                  value={view.clipFraction}
+                  onChange={(event) => setView({ ...view, clipFraction: Number(event.target.value) })}
                 />
-              ) : null}
-              <strong>표시 배율 {deformationScale.toPrecision(4)}×</strong>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={view.compareOriginal ?? false}
-                  onChange={(event) => setView({ ...view, compareOriginal: event.target.checked })}
-                />{' '}
-                원형 윤곽 비교
+                {rendered.data?.cut.toPrecision(4)} {field.lengthUnit}
               </label>
-            </>
-          ) : null}
-        </div>
-      </details>
-      {field.times ? (
-        <MeshPlayback times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
-      ) : null}
+            ) : null}
+            {field.valueKind === 'stress' ? (
+              <label>
+                변위 결과{' '}
+                <select
+                  aria-label="Deformation result"
+                  value={displacement?.label ?? ''}
+                  onChange={(event) => setSelectedDisplacement(event.target.value)}
+                >
+                  <option value="">{candidates.length ? '선택 안 함' : '호환되는 정적 변위 없음'}</option>
+                  {candidates.map((candidate) => (
+                    <option key={candidate.label} value={candidate.label}>
+                      {candidate.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {canDeform ? (
+              <>
+                <label>
+                  형상{' '}
+                  <select
+                    value={deformed ? 'deformed' : 'original'}
+                    onChange={(event) => setDeformed(event.target.value === 'deformed')}
+                  >
+                    <option value="original">원형</option>
+                    <option value="deformed">변형</option>
+                  </select>
+                </label>
+                <label>
+                  변형 배율{' '}
+                  <select value={scaleMode} onChange={(event) => setScaleMode(event.target.value)}>
+                    <option value="auto">자동 확대</option>
+                    <option value="actual">실제 크기 1×</option>
+                    <option value="manual">직접 입력</option>
+                  </select>
+                </label>
+                {scaleMode === 'manual' ? (
+                  <input
+                    aria-label={`${field.label} displacement scale`}
+                    className="w-20 rounded border p-1"
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={manualScale}
+                    onChange={(event) => {
+                      const value = Number(event.target.value)
+                      if (Number.isFinite(value) && value >= 0) setManualScale(value)
+                    }}
+                  />
+                ) : null}
+                <strong>표시 배율 {deformationScale.toPrecision(4)}×</strong>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={view.compareOriginal ?? false}
+                    onChange={(event) => setView({ ...view, compareOriginal: event.target.checked })}
+                  />{' '}
+                  원형 윤곽 비교
+                </label>
+              </>
+            ) : null}
+          </div>
+        </details>
+        {field.times ? (
+          <MeshPlayback times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
+        ) : null}
+      </ViewerControls>
       {field.valueKind === 'displacement' && !field.times ? (
         <p className="my-2 text-xs text-slate-500">
           단일 상태의 변위입니다. 애니메이션에는 mesh와 전체 절점의 시간 이력이 필요합니다.
