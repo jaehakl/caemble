@@ -1,3 +1,4 @@
+import { WorkbenchRibbonGroup } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { dbTables, getListRequest } from '@/api'
@@ -39,7 +40,8 @@ type Candidate = VarsPoint & {
   error?: string
   measurementId?: number
 }
-const controlClass = 'h-8 rounded border bg-background px-2 text-xs disabled:opacity-50'
+const controlClass =
+  'h-9 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45'
 
 export function MeasurementWorkspace({
   workbench,
@@ -556,79 +558,93 @@ export function MeasurementWorkspace({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {menubar}
-      <div aria-label="Measurement 작업" className="flex shrink-0 flex-wrap items-center gap-2 border-b p-2">
-        <select
-          aria-label="후보 생성 방식"
-          className={controlClass}
-          value={algorithm}
-          onChange={(event) => setAlgorithm(event.target.value as typeof algorithm)}
-        >
-          <option value="random">Random</option>
-          <option value="empty-lhs">빈 구간 LHS</option>
-        </select>
-        <input
-          aria-label="후보 생성 개수 N"
-          className={`${controlClass} w-16`}
-          type="number"
-          min={1}
-          step={1}
-          value={count}
-          onChange={(event) => setCount(event.target.value)}
-        />
-        <button className={controlClass} disabled={!schema || busy || !valid || query.isFetching} onClick={generate}>
-          후보 생성
-        </button>
-        <button className={controlClass} disabled={!vars || busy || !valid} onClick={addCandidate}>
-          후보 추가
-        </button>
-        <button
-          className={controlClass}
-          disabled={!persistable || !ready || !valid || busy || currentId.startsWith('measurement:')}
-          onClick={() => void save()}
-        >
-          Prepared 저장
-        </button>
-        <button
-          className={controlClass}
-          disabled={!persistable || !ready || !valid || busy}
-          onClick={() => void run(false)}
-        >
-          선택 Run
-        </button>
-        <button
-          className={controlClass}
-          disabled={!persistable || !ready || !valid || busy || (!candidates.length && currentId !== 'draft')}
-          onClick={() => void run(true)}
-        >
-          전체 후보 Run
-        </button>
-        {operation && operation !== '저장 중' ? (
-          <button
-            className={controlClass}
-            onClick={() => {
-              stopQueue.current = true
-              latest.current.measurementActions.cancel()
-            }}
-          >
-            취소
-          </button>
-        ) : null}
-        <button
-          className={controlClass}
-          disabled={!dataReadable || !ready || forward.building || busy}
-          onClick={() => void forward.build()}
-        >
-          {forward.building ? '모델 생성 중…' : forward.model ? '모델 업데이트' : 'Forward 모델 생성'}
-        </button>
-        <span className="text-xs text-muted-foreground">
-          {operation ??
-            workbench.measurementActions.stage ??
-            (forward.outdated
-              ? '새 데이터 · 모델 업데이트 필요'
-              : forward.model
-                ? 'Forward 모델 준비됨'
-                : 'Forward 모델 없음')}
-        </span>
+      <div aria-label="Measurement 리본" className="shrink-0 overflow-x-auto border-b bg-muted/20 px-1 py-1">
+        <div className="flex min-w-max items-stretch">
+          <WorkbenchRibbonGroup label="후보 생성">
+            <select
+              aria-label="후보 생성 방식"
+              className={controlClass}
+              value={algorithm}
+              onChange={(event) => setAlgorithm(event.target.value as typeof algorithm)}
+            >
+              <option value="random">Random</option>
+              <option value="empty-lhs">빈 구간 LHS</option>
+            </select>
+            <input
+              aria-label="후보 생성 개수 N"
+              className={`${controlClass} w-16`}
+              type="number"
+              min={1}
+              step={1}
+              value={count}
+              onChange={(event) => setCount(event.target.value)}
+            />
+            <button
+              className={controlClass}
+              disabled={!schema || busy || !valid || query.isFetching}
+              onClick={generate}
+            >
+              후보 생성
+            </button>
+            <button className={controlClass} disabled={!vars || busy || !valid} onClick={addCandidate}>
+              후보 추가
+            </button>
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="저장">
+            <button
+              className={controlClass}
+              disabled={!persistable || !ready || !valid || busy || currentId.startsWith('measurement:')}
+              onClick={() => void save()}
+            >
+              Prepared 저장
+            </button>
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="시뮬레이션 실행">
+            <button
+              className={`${controlClass} border-primary bg-primary text-primary-foreground hover:bg-primary/90`}
+              disabled={!persistable || !ready || !valid || busy}
+              onClick={() => void run(false)}
+            >
+              선택 Run
+            </button>
+            <button
+              className={controlClass}
+              disabled={!persistable || !ready || !valid || busy || (!candidates.length && currentId !== 'draft')}
+              onClick={() => void run(true)}
+            >
+              전체 후보 Run
+            </button>
+            {operation && operation !== '저장 중' ? (
+              <button
+                className={controlClass}
+                onClick={() => {
+                  stopQueue.current = true
+                  latest.current.measurementActions.cancel()
+                }}
+              >
+                취소
+              </button>
+            ) : null}
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Forward 모델">
+            <button
+              className={controlClass}
+              disabled={!dataReadable || !ready || forward.building || busy}
+              onClick={() => void forward.build()}
+            >
+              {forward.building ? '모델 생성 중…' : forward.model ? '모델 업데이트' : 'Forward 모델 생성'}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {operation ??
+                workbench.measurementActions.stage ??
+                (forward.outdated
+                  ? '새 데이터 · 모델 업데이트 필요'
+                  : forward.model
+                    ? 'Forward 모델 준비됨'
+                    : 'Forward 모델 없음')}
+            </span>
+          </WorkbenchRibbonGroup>
+        </div>
       </div>
       {!persistable ? (
         <p className="border-b px-3 py-1 text-xs text-muted-foreground">

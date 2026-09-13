@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FilePlus2, LoaderCircle, Trash2 } from 'lucide-react'
+import { Braces, Database, FileCode2, FilePlus2, LoaderCircle, RefreshCw, Save, Trash2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -13,7 +13,15 @@ import {
 import { toast } from 'sonner'
 import { dbTables, getListRequest, type CalculationOutputLayout, type ExperimentRecordedDataRecord } from '@/api'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { WorkbenchRibbonGroup, WorkbenchRibbonActions } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { MeasurementExplorer } from '@/features/measurement'
 import type { SavedMeasurement, WorkbenchCalculationSelection } from '@/features/cae-workbench/types'
@@ -24,7 +32,7 @@ import {
   calculationSourceSkeleton,
   calculationSourceHash,
 } from '@/lib/calculation'
-import type { RecordedData, RecordedDataRule, Tensor, Vars, VarsSchemaEntry } from '@/lib/cad/model'
+import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import { cn } from '@/lib/utils'
 import { buildCalculationRecordedData, summarizeCalculationRecordedData } from './calculationRecordedData'
 import {
@@ -45,8 +53,6 @@ import { buildExperimentRecordCatalogItems, requiredCalculationRecordedDataRules
 import { CalculationSourceEditor, type CalculationSourceEditorHandle } from './CalculationSourceEditor'
 import { ResizableCalculationLayout } from './ResizableCalculationLayout'
 import { useCalculationPreview } from './useCalculationPreview'
-import { VarsPanel } from './VarsPanel'
-import { compatibleVarsResetValues } from './varsTensor'
 import { experimentRecordsQueryOptions } from '../experiment/queryOptions'
 import { measurementsQueryOptions } from '../measurement/queryOptions'
 import { invalidateCalculationMutation } from './queryInvalidation'
@@ -61,9 +67,6 @@ export type CalculationWorkbenchProps = Readonly<{
   dataReadable: boolean
   busy: boolean
   calculationDataBusy: boolean
-  candidateEditingDisabled: boolean
-  candidateSessionKey: string
-  candidateVars: Readonly<Vars> | null
   columnRatios: readonly number[]
   contextPending: boolean
   persistable: boolean
@@ -75,14 +78,12 @@ export type CalculationWorkbenchProps = Readonly<{
   menubar: ReactNode
   onActivity: RuntimeActivityCallback
   onCalculationSelectionChange: (selection: WorkbenchCalculationSelection) => boolean
-  onCandidateVariableChange: (key: string, value: Tensor) => void
-  onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
+  onColumnRatiosChange: (ratios: readonly [number, number, number]) => void
   onDeleteMeasurements: (rows: readonly SavedMeasurement[]) => Promise<boolean>
   onSourceChange?: (source: string | undefined) => void
   onDirtyChange: (dirty: boolean) => void
   onOutputChartRatioChange: (ratio: number) => void
   onRequestLogin: () => void
-  onRowRatiosChange: (ratios: readonly [number, number, number]) => void
   onSaveStateChange: (state: CalculationSaveState) => void
   onUsageChanged: () => Promise<void>
   publicDemoMutable: boolean
@@ -90,12 +91,10 @@ export type CalculationWorkbenchProps = Readonly<{
   onClearMeasurement: () => void
   recordedData: RecordedData | null | undefined
   recordedRules: readonly RecordedDataRule[]
-  ribbon: ReactNode
-  rowRatios: readonly number[]
+  ribbon: (controls: ReactNode) => ReactNode
   saveCommand: number
   outputChartRatio: number
   selectedCalculationId: number | null
-  varsSchema: Readonly<Record<string, VarsSchemaEntry>> | null
   viewer: ReactNode
   viewerExpanded: boolean
 }>
@@ -105,9 +104,6 @@ export function CalculationWorkbench({
   dataReadable,
   busy,
   calculationDataBusy,
-  candidateEditingDisabled,
-  candidateSessionKey,
-  candidateVars,
   columnRatios,
   contextPending,
   persistable,
@@ -119,14 +115,12 @@ export function CalculationWorkbench({
   menubar,
   onActivity,
   onCalculationSelectionChange,
-  onCandidateVariableChange,
   onColumnRatiosChange,
   onDeleteMeasurements,
   onSourceChange,
   onDirtyChange,
   onOutputChartRatioChange,
   onRequestLogin,
-  onRowRatiosChange,
   onSaveStateChange,
   onUsageChanged,
   publicDemoMutable,
@@ -135,11 +129,9 @@ export function CalculationWorkbench({
   recordedData,
   recordedRules,
   ribbon,
-  rowRatios,
   saveCommand,
   outputChartRatio,
   selectedCalculationId,
-  varsSchema,
   viewer,
   viewerExpanded,
 }: CalculationWorkbenchProps) {
@@ -154,7 +146,7 @@ export function CalculationWorkbench({
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
-  const [inputPanel, setInputPanel] = useState<'measurements' | 'vars'>('measurements')
+  const [picker, setPicker] = useState<'measurements' | 'calculations' | 'records' | null>(null)
   const draftRef = useRef(draft)
   draftRef.current = draft
   const appliedExperimentRef = useRef(experimentId)
@@ -222,30 +214,6 @@ export function CalculationWorkbench({
   const defaultMeasurement = defaultMeasurementQuery.data?.items.find(
     (row): row is SavedMeasurement => typeof row.id === 'number',
   )
-  const resetMeasurementsRequest = useMemo(
-    () => ({
-      ...getListRequest('visible'),
-      limit: null,
-      filter: { experiment_id: [experimentId, experimentId] },
-      null_filter: { recorded_at: 'is_not_null' as const },
-      sort: ['id', 'asc'] as const,
-    }),
-    [experimentId],
-  )
-  const resetMeasurementsQuery = useQuery({
-    ...measurementsQueryOptions(queryScope, experimentId, resetMeasurementsRequest),
-    enabled: dataReadable && experimentId !== null && inputPanel === 'vars' && varsSchema !== null,
-  })
-  const candidateResetValues = useMemo(
-    () =>
-      compatibleVarsResetValues(
-        (resetMeasurementsQuery.data?.items ?? []).flatMap((measurement) =>
-          measurement.vars ? [measurement.vars as Readonly<Vars>] : [],
-        ),
-        varsSchema ?? {},
-      ),
-    [resetMeasurementsQuery.data?.items, varsSchema],
-  )
   const experimentRecordsQuery = useQuery({
     ...experimentRecordsQueryOptions(queryScope, experimentId),
     enabled: dataReadable && experimentId !== null,
@@ -285,13 +253,13 @@ export function CalculationWorkbench({
     () => buildCalculationRecordedData(requiredRules, recordedData),
     [recordedData, requiredRules],
   )
-  const { invalidatePreview, preview } = useCalculationPreview({
+  const { invalidatePreview, preview, logs, refreshPreview } = useCalculationPreview({
     calculationDataBusy,
     contextPending,
     dependencyError: dependencyState.error,
     draft,
     experimentId,
-    experimentRecordsPending: experimentRecordsQuery.isPending,
+    experimentRecordsPending: dataReadable && experimentId !== null && experimentRecordsQuery.isPending,
     measurementId,
     measurementLoading,
     onActivity,
@@ -731,6 +699,8 @@ export function CalculationWorkbench({
       const reference = calculationExperimentRecordReference(draft.sourceCode, recordName)
       if (!sourceEditorRef.current?.insertAtSelection(reference)) {
         toast.error('Source Editor가 준비되지 않았습니다. 잠시 후 다시 시도하세요.')
+      } else {
+        setPicker(null)
       }
     } catch (cause: unknown) {
       toast.error(cause instanceof Error ? cause.message : String(cause))
@@ -741,89 +711,182 @@ export function CalculationWorkbench({
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <header className="shrink-0">
         {menubar}
-        {ribbon}
+        {ribbon(
+          <>
+            <WorkbenchRibbonGroup label="입력 선택">
+              {(['measurements', 'calculations', 'records'] as const).map((kind) => (
+                <Dialog key={kind} open={picker === kind} onOpenChange={(open) => setPicker(open ? kind : null)}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" className="h-10 max-w-56" disabled={contextPending}>
+                      {kind === 'measurements' ? <Database /> : kind === 'calculations' ? <FileCode2 /> : <Braces />}
+                      <span className="truncate">
+                        {kind === 'measurements'
+                          ? measurementLoading
+                            ? 'Measurement 로딩 중…'
+                            : `Measurement${measurementId === null ? ' 선택' : ` #${measurementId}`}`
+                          : kind === 'calculations'
+                            ? draft.name || 'Calculations 선택'
+                            : 'ExperimentRecord'}
+                      </span>
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="flex h-[70dvh] max-h-[85dvh] flex-col overflow-hidden sm:max-w-4xl">
+                    <DialogHeader>
+                      <DialogTitle>
+                        {kind === 'measurements'
+                          ? 'Measurement 선택'
+                          : kind === 'calculations'
+                            ? 'Calculations'
+                            : 'ExperimentRecord'}
+                      </DialogTitle>
+                      <DialogDescription>현재 Experiment의 데이터를 확인하고 선택하세요.</DialogDescription>
+                    </DialogHeader>
+                    <div className="min-h-0 flex-1 overflow-auto">
+                      {kind === 'measurements' ? (
+                        <MeasurementExplorer
+                          busy={busy}
+                          calculationTotal={
+                            calculationsQuery.isError
+                              ? 'error'
+                              : calculationsQuery.isFetching || !calculationsQuery.isSuccess
+                                ? 'loading'
+                                : rows.length
+                          }
+                          className="min-h-0 gap-2"
+                          enabled={dataReadable}
+                          experimentId={experimentId}
+                          selectedId={measurementId}
+                          onClearSelection={() => {
+                            invalidatePreview('Measurement 선택을 해제하는 중…')
+                            onClearMeasurement()
+                          }}
+                          onDelete={persistable ? onDeleteMeasurements : undefined}
+                          publicDataWarning={publicDemoMutable}
+                          onSelect={(row) => {
+                            invalidatePreview('Measurement RecordedData를 불러오는 중…')
+                            onSelectMeasurement(row)
+                            setPicker(null)
+                          }}
+                        />
+                      ) : kind === 'calculations' ? (
+                        <section className="flex h-full min-h-0 flex-col gap-2 p-2" aria-label="Calculation 목록">
+                          <header className="flex shrink-0 items-center justify-between gap-2">
+                            <h2 className="text-sm font-semibold">Calculations</h2>
+                            <div className="flex gap-1">
+                              <Button
+                                aria-label="선택한 Calculation 삭제"
+                                disabled={
+                                  saving ||
+                                  deleting ||
+                                  calculationDataBusy ||
+                                  (draft.id === null ? !sourceEditable || !dirty : !persistable)
+                                }
+                                size="icon"
+                                title="Delete"
+                                type="button"
+                                variant="outline"
+                                onClick={() => void deleteCurrent()}
+                              >
+                                {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+                              </Button>
+                            </div>
+                          </header>
+                          <div className="min-h-0 flex-1 overflow-auto rounded border">
+                            {experimentId === null ? (
+                              <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
+                                먼저 저장된 Experiment를 여세요.
+                              </div>
+                            ) : calculationsQuery.isLoading ? (
+                              <div className="grid h-full min-h-24 place-items-center text-xs text-muted-foreground">
+                                <LoaderCircle className="size-4 animate-spin" />
+                              </div>
+                            ) : calculationsQuery.isError ? (
+                              <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-destructive">
+                                Calculation 목록을 불러오지 못했습니다.
+                              </div>
+                            ) : rows.length ? (
+                              <ul className="divide-y">
+                                {rows.map((row) => (
+                                  <li key={row.id}>
+                                    <button
+                                      aria-current={draft.id === row.id ? 'true' : undefined}
+                                      className={cn(
+                                        'w-full px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                                        draft.id === row.id && 'bg-accent',
+                                      )}
+                                      disabled={saving || deleting || calculationDataBusy}
+                                      type="button"
+                                      onClick={() => {
+                                        if (replaceDraft(calculationDraftFromRecord(row), row.id, row)) setPicker(null)
+                                      }}
+                                    >
+                                      <span className="block truncate font-medium text-foreground">{row.name}</span>
+                                      <span className="mt-0.5 block truncate text-muted-foreground">
+                                        {row.description || `Calculation #${row.id}`}
+                                      </span>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
+                                저장된 Calculation이 없습니다.
+                              </div>
+                            )}
+                          </div>
+                        </section>
+                      ) : (
+                        <ExperimentRecordCatalog
+                          analysisError={dependencyState.error?.message ?? null}
+                          experimentId={experimentId}
+                          insertDisabledReason={insertDisabledReason}
+                          items={experimentRecordCatalogItems}
+                          loading={experimentRecordsQuery.isLoading}
+                          loadError={experimentRecordsQuery.isError}
+                          onInsert={insertExperimentRecord}
+                        />
+                      )}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              ))}
+            </WorkbenchRibbonGroup>
+            <WorkbenchRibbonGroup label="Calculation 작성">
+              <WorkbenchRibbonActions
+                actions={[
+                  {
+                    id: 'new-calculation',
+                    label: '새 Calculation',
+                    icon: <FilePlus2 />,
+                    disabled: sourceEditorDisabled || experimentId === null,
+                    onSelect: () => {
+                      defaultCalculationExperimentRef.current = experimentId
+                      replaceDraft(emptyCalculationDraft(experimentRecords[0]?.name), null)
+                    },
+                  },
+                  {
+                    id: 'save-calculation',
+                    label: '저장',
+                    icon: <Save />,
+                    primary: true,
+                    disabled: !!saveDisabledReason,
+                    disabledReason: saveDisabledReason,
+                    onSelect: openSaveDialog,
+                  },
+                  {
+                    id: 'refresh-preview',
+                    label: '미리보기 갱신',
+                    icon: <RefreshCw />,
+                    disabled: contextPending || measurementLoading || calculationDataBusy || measurementId === null,
+                    onSelect: refreshPreview,
+                  },
+                ]}
+              />
+            </WorkbenchRibbonGroup>
+          </>,
+        )}
       </header>
       <ResizableCalculationLayout
-        calculationList={
-          <section className="flex h-full min-h-0 flex-col gap-2 p-2" aria-label="Calculation 목록">
-            <header className="flex shrink-0 items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">Calculations</h2>
-              <div className="flex gap-1">
-                <Button
-                  aria-label="새 Calculation"
-                  disabled={!sourceEditable || experimentId === null || saving || deleting || calculationDataBusy}
-                  size="icon"
-                  title="New"
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    defaultCalculationExperimentRef.current = experimentId
-                    replaceDraft(emptyCalculationDraft(experimentRecords[0]?.name), null)
-                  }}
-                >
-                  <FilePlus2 />
-                </Button>
-                <Button
-                  aria-label="선택한 Calculation 삭제"
-                  disabled={
-                    saving ||
-                    deleting ||
-                    calculationDataBusy ||
-                    (draft.id === null ? !sourceEditable || !dirty : !persistable)
-                  }
-                  size="icon"
-                  title="Delete"
-                  type="button"
-                  variant="outline"
-                  onClick={() => void deleteCurrent()}
-                >
-                  {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
-                </Button>
-              </div>
-            </header>
-            <div className="min-h-0 flex-1 overflow-auto rounded border">
-              {experimentId === null ? (
-                <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
-                  먼저 저장된 Experiment를 여세요.
-                </div>
-              ) : calculationsQuery.isLoading ? (
-                <div className="grid h-full min-h-24 place-items-center text-xs text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" />
-                </div>
-              ) : calculationsQuery.isError ? (
-                <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-destructive">
-                  Calculation 목록을 불러오지 못했습니다.
-                </div>
-              ) : rows.length ? (
-                <ul className="divide-y">
-                  {rows.map((row) => (
-                    <li key={row.id}>
-                      <button
-                        aria-current={draft.id === row.id ? 'true' : undefined}
-                        className={cn(
-                          'w-full px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                          draft.id === row.id && 'bg-accent',
-                        )}
-                        disabled={saving || deleting || calculationDataBusy}
-                        type="button"
-                        onClick={() => replaceDraft(calculationDraftFromRecord(row), row.id, row)}
-                      >
-                        <span className="block truncate font-medium text-foreground">{row.name}</span>
-                        <span className="mt-0.5 block truncate text-muted-foreground">
-                          {row.description || `Calculation #${row.id}`}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
-                  저장된 Calculation이 없습니다.
-                </div>
-              )}
-            </div>
-          </section>
-        }
         columnRatios={columnRatios}
         editor={
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
@@ -847,65 +910,11 @@ export function CalculationWorkbench({
             </div>
           </section>
         }
-        measurementExplorer={
-          <section className="flex h-full min-h-0 flex-col p-2">
-            <Tabs
-              className="flex min-h-0 flex-1 flex-col"
-              value={inputPanel}
-              onValueChange={(value) => setInputPanel(value as 'measurements' | 'vars')}
-            >
-              <TabsList aria-label="Candidate 입력 패널" className="mb-2 h-8 shrink-0 self-start">
-                <TabsTrigger className="h-6 px-2 text-xs" value="measurements">
-                  Measurements
-                </TabsTrigger>
-                <TabsTrigger className="h-6 px-2 text-xs" value="vars">
-                  Vars
-                </TabsTrigger>
-              </TabsList>
-              {inputPanel === 'measurements' ? (
-                <MeasurementExplorer
-                  busy={busy}
-                  calculationTotal={
-                    calculationsQuery.isError
-                      ? 'error'
-                      : calculationsQuery.isFetching || !calculationsQuery.isSuccess
-                        ? 'loading'
-                        : rows.length
-                  }
-                  className="min-h-0 gap-2"
-                  enabled={dataReadable}
-                  experimentId={experimentId}
-                  selectedId={measurementId}
-                  onClearSelection={() => {
-                    invalidatePreview('Measurement 선택을 해제하는 중…')
-                    onClearMeasurement()
-                  }}
-                  onDelete={persistable ? onDeleteMeasurements : undefined}
-                  publicDataWarning={publicDemoMutable}
-                  onSelect={(row) => {
-                    invalidatePreview('Measurement RecordedData를 불러오는 중…')
-                    onSelectMeasurement(row)
-                  }}
-                />
-              ) : (
-                <VarsPanel
-                  candidateSessionKey={candidateSessionKey}
-                  disabled={candidateEditingDisabled}
-                  resetValues={candidateResetValues}
-                  schema={varsSchema}
-                  vars={candidateVars}
-                  onVariableChange={onCandidateVariableChange}
-                />
-              )}
-            </Tabs>
-          </section>
-        }
-        onColumnRatiosChange={(ratios) => onColumnRatiosChange(ratios as readonly [number, number, number, number])}
-        onRowRatiosChange={(ratios) => onRowRatiosChange(ratios as readonly [number, number, number])}
+        onColumnRatiosChange={(ratios) => onColumnRatiosChange(ratios as readonly [number, number, number])}
         output={
           <section className="flex h-full min-h-0 flex-col">
             <header className="shrink-0 border-b px-3 py-2">
-              <h2 className="text-sm font-semibold">Output Chart</h2>
+              <h2 className="text-sm font-semibold">Return 차트</h2>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
                 Preview와 저장된 Measurement별 CalculationData를 비교합니다.
               </p>
@@ -930,24 +939,13 @@ export function CalculationWorkbench({
                 }
                 measurementId={measurementId}
                 preview={preview}
+                logs={logs}
                 scalarValues={scalarQuery.isFetching ? undefined : scalarQuery.data?.items.map((item) => item.value)}
                 onChartRatioChange={onOutputChartRatioChange}
               />
             </div>
           </section>
         }
-        recordedDataSummary={
-          <ExperimentRecordCatalog
-            analysisError={dependencyState.error?.message ?? null}
-            experimentId={experimentId}
-            insertDisabledReason={insertDisabledReason}
-            items={experimentRecordCatalogItems}
-            loading={experimentRecordsQuery.isLoading}
-            loadError={experimentRecordsQuery.isError}
-            onInsert={insertExperimentRecord}
-          />
-        }
-        rowRatios={rowRatios}
         viewer={viewer}
         viewerExpanded={viewerExpanded}
       />

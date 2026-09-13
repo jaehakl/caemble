@@ -91,7 +91,7 @@ export function useCaePageChrome({
   requestExperimentSaveAs?: () => void
   fileBusy?: boolean
 }) {
-  const [repeatCountInput, setRepeatCountInput] = useState('10')
+  const [repeatCountInput] = useState('10')
   const repeatCount = Number(repeatCountInput)
   const repeatCountValid = repeatCountInput.trim() !== '' && Number.isSafeInteger(repeatCount) && repeatCount > 0
   const [samplingCountInput, setSamplingCountInput] = useState('10')
@@ -171,6 +171,7 @@ export function useCaePageChrome({
           }),
       },
       saveExperiment: {
+        primary: true,
         id: 'save-experiment',
         label: 'Save',
         icon: <Save />,
@@ -592,10 +593,7 @@ export function useCaePageChrome({
       label: 'Calculation',
       content: (
         <>
-          <WorkbenchRibbonGroup label="Calculation">
-            <WorkbenchRibbonActions actions={[actions.saveCalculation]} />
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Calculation Data">
+          <WorkbenchRibbonGroup label="후처리 데이터">
             <WorkbenchRibbonActions
               actions={
                 workbench.calculationDataActions.busy
@@ -614,29 +612,6 @@ export function useCaePageChrome({
                 </span>
               </div>
             ) : null}
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Measurement">
-            <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Run">
-            <WorkbenchRibbonActions actions={[actions.saveAndRunCurrent, actions.generateAndRun]} />
-            <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
-              <input
-                aria-label="Monte Carlo Sample & Run 횟수"
-                aria-invalid={!repeatCountValid}
-                className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
-                min="1"
-                step="1"
-                type="number"
-                value={repeatCountInput}
-                onChange={(event) => setRepeatCountInput(event.target.value)}
-              />
-              <span>Random · N</span>
-            </label>
-            <WorkbenchRibbonActions
-              actions={[actions.repeatGenerateAndRun, actions.runSelected, actions.analyzeMeasurements]}
-            />
           </WorkbenchRibbonGroup>
         </>
       ),

@@ -14,11 +14,9 @@ import { workbenchLayoutLimits } from '@/features/cae-workbench/types'
 
 const handleSizePx = 8
 const columnMinimumPx = 190
-const rowMinimumPx = 96
 
 type DragState = Readonly<{
   index: number
-  orientation: 'horizontal' | 'vertical'
   startClient: number
   startBeforePx: number
   startAfterPx: number
@@ -33,28 +31,18 @@ function normalizedRatios(values: readonly number[], fallback: readonly number[]
 }
 
 export function ResizableCalculationLayout({
-  calculationList,
   columnRatios,
   editor,
-  measurementExplorer,
   onColumnRatiosChange,
-  onRowRatiosChange,
   output,
-  recordedDataSummary,
-  rowRatios,
   viewer,
   viewerExpanded = false,
   className,
 }: {
-  calculationList: ReactNode
   columnRatios: readonly number[]
   editor: ReactNode
-  measurementExplorer: ReactNode
   onColumnRatiosChange: (ratios: readonly number[]) => void
-  onRowRatiosChange: (ratios: readonly number[]) => void
   output: ReactNode
-  recordedDataSummary: ReactNode
-  rowRatios: readonly number[]
   viewer: ReactNode
   viewerExpanded?: boolean
   className?: string
@@ -62,12 +50,12 @@ export function ResizableCalculationLayout({
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 1280, height: 600 })
   const [drag, setDrag] = useState<DragState | null>(null)
-  const columns = normalizedRatios(columnRatios, [0.22, 0.26, 0.26, 0.26])
-  const rows = normalizedRatios(rowRatios, [0.45, 0.25, 0.3])
-  const availableWidth = Math.max(1, size.width - handleSizePx * 3)
-  const availableHeight = Math.max(1, size.height - handleSizePx * 2)
+  const columns = normalizedRatios(columnRatios, [0.3, 0.4, 0.3])
+
+  const availableWidth = Math.max(1, size.width - handleSizePx * 2)
+
   const columnPixels = columns.map((ratio) => ratio * availableWidth)
-  const rowPixels = rows.map((ratio) => ratio * availableHeight)
+
   useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -87,23 +75,22 @@ export function ResizableCalculationLayout({
   useEffect(() => {
     if (!drag) return
     const move = (event: PointerEvent) => {
-      const currentClient = drag.orientation === 'vertical' ? event.clientX : event.clientY
+      const currentClient = event.clientX
       const delta = currentClient - drag.startClient
       const pairTotal = drag.startBeforePx + drag.startAfterPx
-      const minimum = drag.orientation === 'vertical' ? columnMinimumPx : rowMinimumPx
+      const minimum = Math.min(columnMinimumPx, pairTotal / 2)
       const before = Math.min(pairTotal - minimum, Math.max(minimum, drag.startBeforePx + delta))
-      const source = drag.orientation === 'vertical' ? columnPixels : rowPixels
+      const source = columnPixels
       const next = [...source]
       next[drag.index] = before
       next[drag.index + 1] = pairTotal - before
       const total = next.reduce((sum, value) => sum + value, 0)
-      if (drag.orientation === 'vertical') onColumnRatiosChange(next.map((value) => value / total))
-      else onRowRatiosChange(next.map((value) => value / total))
+      onColumnRatiosChange(next.map((value) => value / total))
     }
     const stop = () => setDrag(null)
     const previousCursor = document.body.style.cursor
     const previousSelection = document.body.style.userSelect
-    document.body.style.cursor = drag.orientation === 'vertical' ? 'col-resize' : 'row-resize'
+    document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop)
@@ -115,20 +102,16 @@ export function ResizableCalculationLayout({
       window.removeEventListener('pointerup', stop)
       window.removeEventListener('pointercancel', stop)
     }
-  }, [columnPixels, drag, onColumnRatiosChange, onRowRatiosChange, rowPixels, size.height])
+  }, [columnPixels, drag, onColumnRatiosChange, size.height])
 
-  const resizeWithKeyboard = (
-    event: ReactKeyboardEvent<HTMLDivElement>,
-    orientation: 'horizontal' | 'vertical',
-    index: number,
-  ) => {
-    const negative = orientation === 'vertical' ? event.key === 'ArrowLeft' : event.key === 'ArrowUp'
-    const positive = orientation === 'vertical' ? event.key === 'ArrowRight' : event.key === 'ArrowDown'
+  const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, index: number) => {
+    const negative = event.key === 'ArrowLeft'
+    const positive = event.key === 'ArrowRight'
     if (!negative && !positive && event.key !== 'Home' && event.key !== 'End') return
     event.preventDefault()
-    const source = orientation === 'vertical' ? columnPixels : rowPixels
-    const minimum = orientation === 'vertical' ? columnMinimumPx : rowMinimumPx
+    const source = columnPixels
     const pairTotal = source[index] + source[index + 1]
+    const minimum = Math.min(columnMinimumPx, pairTotal / 2)
     const step = event.shiftKey ? 64 : 16
     const before =
       event.key === 'Home'
@@ -140,24 +123,18 @@ export function ResizableCalculationLayout({
     next[index] = before
     next[index + 1] = pairTotal - before
     const total = next.reduce((sum, value) => sum + value, 0)
-    if (orientation === 'vertical') onColumnRatiosChange(next.map((value) => value / total))
-    else onRowRatiosChange(next.map((value) => value / total))
+    onColumnRatiosChange(next.map((value) => value / total))
   }
 
-  const startDragging = (
-    event: ReactPointerEvent<HTMLDivElement>,
-    orientation: 'horizontal' | 'vertical',
-    index: number,
-  ) => {
+  const startDragging = (event: ReactPointerEvent<HTMLDivElement>, index: number) => {
     if (event.button !== 0) return
     event.preventDefault()
-    const source = orientation === 'vertical' ? columnPixels : rowPixels
+    const source = columnPixels
     setDrag({
       index,
-      orientation,
       startAfterPx: source[index + 1],
       startBeforePx: source[index],
-      startClient: orientation === 'vertical' ? event.clientX : event.clientY,
+      startClient: event.clientX,
     })
   }
 
@@ -167,70 +144,40 @@ export function ResizableCalculationLayout({
       ref={containerRef}
       style={
         {
-          gridTemplateColumns: `${columnPixels[0]}px ${handleSizePx}px ${columnPixels[1]}px ${handleSizePx}px ${columnPixels[2]}px ${handleSizePx}px minmax(${columnMinimumPx}px, ${columnPixels[3]}px)`,
+          gridTemplateColumns: `${columnPixels[0]}px ${handleSizePx}px ${columnPixels[1]}px ${handleSizePx}px minmax(0, ${columnPixels[2]}px)`,
           minHeight: workbenchLayoutLimits.viewerMinHeightPx,
         } satisfies CSSProperties
       }
     >
-      <section
-        aria-label="Measurement, ExperimentRecord와 RecordedData, Calculation 목록"
-        className={cn('grid min-h-0 min-w-0 overflow-hidden', viewerExpanded && 'hidden')}
-        hidden={viewerExpanded}
-        style={{
-          gridTemplateRows: `${rowPixels[0]}px ${handleSizePx}px ${rowPixels[1]}px ${handleSizePx}px minmax(${rowMinimumPx}px, ${rowPixels[2]}px)`,
-        }}
-      >
-        <div className="min-h-0 overflow-hidden">{measurementExplorer}</div>
-        <ResizeHandle
-          label="1번째 행 경계 조절"
-          orientation="horizontal"
-          onKeyDown={(event) => resizeWithKeyboard(event, 'horizontal', 0)}
-          onPointerDown={(event) => startDragging(event, 'horizontal', 0)}
-        />
-        <div className="min-h-0 overflow-hidden">{recordedDataSummary}</div>
-        <ResizeHandle
-          label="2번째 행 경계 조절"
-          orientation="horizontal"
-          onKeyDown={(event) => resizeWithKeyboard(event, 'horizontal', 1)}
-          onPointerDown={(event) => startDragging(event, 'horizontal', 1)}
-        />
-        <div className="min-h-0 overflow-hidden">{calculationList}</div>
-      </section>
-      {viewerExpanded ? null : (
-        <ResizeHandle
-          label="1번째 열 경계 조절"
-          orientation="vertical"
-          onKeyDown={(event) => resizeWithKeyboard(event, 'vertical', 0)}
-          onPointerDown={(event) => startDragging(event, 'vertical', 0)}
-        />
+      {viewerExpanded ? (
+        <section aria-label="3D Viewer" className="col-span-5 min-h-0 min-w-0 overflow-hidden">
+          {viewer}
+        </section>
+      ) : (
+        <>
+          <section aria-label="3D Viewer" className="min-h-0 min-w-0 overflow-hidden">
+            {viewer}
+          </section>
+          <ResizeHandle
+            label="Viewer와 편집기 너비 조절"
+            orientation="vertical"
+            onKeyDown={(event) => resizeWithKeyboard(event, 0)}
+            onPointerDown={(event) => startDragging(event, 0)}
+          />
+          <section aria-label="Calculation Source Editor" className="min-h-0 min-w-0 overflow-hidden">
+            {editor}
+          </section>
+          <ResizeHandle
+            label="편집기와 출력 너비 조절"
+            orientation="vertical"
+            onKeyDown={(event) => resizeWithKeyboard(event, 1)}
+            onPointerDown={(event) => startDragging(event, 1)}
+          />
+          <section aria-label="Calculation 출력" className="min-h-0 min-w-0 overflow-hidden">
+            {output}
+          </section>
+        </>
       )}
-      <section
-        aria-label="3D Viewer"
-        className="min-h-0 min-w-0 overflow-hidden"
-        style={{
-          gridColumn: viewerExpanded ? '1 / 4' : undefined,
-        }}
-      >
-        {viewer}
-      </section>
-      <ResizeHandle
-        label="2번째 열 경계 조절"
-        orientation="vertical"
-        onKeyDown={(event) => resizeWithKeyboard(event, 'vertical', 1)}
-        onPointerDown={(event) => startDragging(event, 'vertical', 1)}
-      />
-      <section aria-label="Calculation Source Editor" className="min-h-0 min-w-0 overflow-hidden">
-        {editor}
-      </section>
-      <ResizeHandle
-        label="3번째 열 경계 조절"
-        orientation="vertical"
-        onKeyDown={(event) => resizeWithKeyboard(event, 'vertical', 2)}
-        onPointerDown={(event) => startDragging(event, 'vertical', 2)}
-      />
-      <section aria-label="Calculation Output Chart" className="min-h-0 min-w-0 overflow-hidden">
-        {output}
-      </section>
     </div>
   )
 }

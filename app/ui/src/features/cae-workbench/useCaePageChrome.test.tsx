@@ -1,8 +1,10 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, render, renderHook, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import type { CalculationSaveState } from '@/features/calculation'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { useCaePageChrome } from './useCaePageChrome'
+import { WorkbenchRibbon } from './chrome/WorkbenchRibbon'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 function workbenchStub() {
   return {
@@ -83,6 +85,13 @@ it('uses the sole New action to open Templates and removes the old Examples and 
   expect(result.current.actions.newExperiment).toMatchObject({ id: 'new-experiment', label: 'New' })
   expect(result.current.actions).not.toHaveProperty('examples')
   expect(result.current.actions).not.toHaveProperty('loadExperiment')
+  render(
+    <TooltipProvider>
+      <WorkbenchRibbon activeSectionId="calculation" panels={result.current.ribbonPanels} />
+    </TooltipProvider>,
+  )
+  expect(screen.queryByRole('button', { name: /Candidate|Run|Analysis|Sample/ })).not.toBeInTheDocument()
+  expect(screen.getByRole('region', { name: '후처리 데이터' })).toBeInTheDocument()
 
   act(() => result.current.actions.newExperiment.onSelect())
   expect(setDialog).toHaveBeenCalledExactlyOnceWith('templates')

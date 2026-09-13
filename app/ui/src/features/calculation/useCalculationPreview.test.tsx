@@ -41,6 +41,61 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('useCalculationPreview', () => {
+  it('replaces logs on refresh and selection, ignores stale logs, and retains logs before failure', async () => {
+    const requests: Parameters<typeof runCalculation>[0][] = []
+    const failures: Array<(error: Error) => void> = []
+    vi.mocked(runCalculation).mockImplementation((request) => {
+      requests.push(request)
+      return new Promise((_resolve, reject) => failures.push(reject))
+    })
+    const onActivity = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ measurementId }) =>
+        useCalculationPreview({
+          calculationDataBusy: false,
+          contextPending: false,
+          dependencyError: null,
+          draft: baseDraft,
+          experimentId: 2,
+          experimentRecordsPending: false,
+          measurementId,
+          measurementLoading: false,
+          onActivity,
+          recordedSnapshot,
+          selectedCalculationId: 3,
+        }),
+      { initialProps: { measurementId: 5 } },
+    )
+    const log = (index: number, message: string) =>
+      requests[index].onLog?.({
+        requestId: `run-${index}`,
+        revision: 1,
+        sourceHash: 'hash',
+        sequence: 1,
+        message,
+      })
+    await act(async () => vi.advanceTimersByTime(500))
+    act(() => log(0, 'first\nvalue'))
+    expect(result.current.logs.map((entry) => entry.message)).toEqual(['first\nvalue'])
+    act(() => result.current.refreshPreview())
+    expect(requests[0].signal?.aborted).toBe(true)
+    expect(result.current.logs).toEqual([])
+    act(() => log(0, 'stale'))
+    expect(result.current.logs).toEqual([])
+    await act(async () => vi.advanceTimersByTime(500))
+    act(() => log(1, 'before failure'))
+    await act(async () => failures[1](new Error('failed')))
+    expect(result.current.preview.status).toBe('error')
+    expect(result.current.logs.map((entry) => entry.message)).toEqual(['before failure'])
+    rerender({ measurementId: 6 })
+    expect(result.current.logs).toEqual([])
+    act(() => log(1, 'stale failure'))
+    expect(result.current.logs).toEqual([])
+    await act(async () => vi.advanceTimersByTime(500))
+    act(() => log(2, 'new measurement'))
+    expect(result.current.logs.map((entry) => entry.message)).toEqual(['new measurement'])
+  })
+
   it('aborts and ignores an older preview when source changes quickly', async () => {
     const pending: Array<{
       resolve: (value: NormalizedCalculationOutput) => void

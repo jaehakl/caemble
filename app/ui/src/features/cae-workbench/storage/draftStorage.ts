@@ -13,17 +13,32 @@ import {
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
 export const WORKBENCH_DRAFT_SCHEMA_VERSION = 4 as const
-const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbench-draft:v1', 'caemble.ai-helper.agent-session', 'caemble.ai-helper.conversation-v1'] as const
+const RETIRED_DRAFT_KEYS = [
+  'caemble:cae-workbench-draft',
+  'caemble:cae-workbench-draft:v1',
+  'caemble.ai-helper.agent-session',
+  'caemble.ai-helper.conversation-v1',
+] as const
 
 const sourceBundleSchema = z.object({ files: z.record(z.string(), z.string()) }).passthrough()
 const ratioSchema = z.number().finite().min(0).max(1)
 const tensorSchema: z.ZodType<unknown> = z.lazy(() => z.union([z.number().finite(), z.array(tensorSchema)]))
-const materialSnapshotSchema = z.object({
-  materials: z.record(z.string(), z.object({
-    color: z.string().optional(),
-    models: z.record(z.string(), z.object({ model: z.string(), parameters: z.record(z.string(), z.unknown()) }).strict()),
-  }).strict()),
-}).strict()
+const materialSnapshotSchema = z
+  .object({
+    materials: z.record(
+      z.string(),
+      z
+        .object({
+          color: z.string().optional(),
+          models: z.record(
+            z.string(),
+            z.object({ model: z.string(), parameters: z.record(z.string(), z.unknown()) }).strict(),
+          ),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
 const storedDraftBaseSchema = z
   .object({
     savedAt: z.number().finite(),
@@ -31,7 +46,10 @@ const storedDraftBaseSchema = z
       record: savedExperimentRecordSchema.nullable(),
       calculations: z.array(calculationDefinitionSchema).optional(),
       baselineBundle: sourceBundleSchema.nullable(),
-      document: z.object({ kind: z.literal('experiment'), sourceBundle: sourceBundleSchema }).passthrough().nullable(),
+      document: z
+        .object({ kind: z.literal('experiment'), sourceBundle: sourceBundleSchema })
+        .passthrough()
+        .nullable(),
       name: z.string(),
       description: z.string(),
     }),
@@ -41,8 +59,13 @@ const storedDraftBaseSchema = z
         .object({
           experiment: materialSnapshotSchema,
           tasks: z.record(z.string(), materialSnapshotSchema),
-          sourceHash: z.string(), varsHash: z.string(), modelDefinitions: z.array(z.unknown()),
-          selections: z.record(z.string(), z.record(z.string(), z.record(z.string(), z.record(z.string(), z.string())))),
+          sourceHash: z.string(),
+          varsHash: z.string(),
+          modelDefinitions: z.array(z.unknown()),
+          selections: z.record(
+            z.string(),
+            z.record(z.string(), z.record(z.string(), z.record(z.string(), z.string()))),
+          ),
         })
         .passthrough()
         .nullable(),
@@ -61,11 +84,8 @@ const storedDraftBaseSchema = z
           leftWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.leftWidthRatio),
           rightWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.rightWidthRatio),
           calculationColumnRatios: z
-            .tuple([ratioSchema, ratioSchema, ratioSchema, ratioSchema])
-            .catch([...defaultWorkbenchLayoutState.calculationColumnRatios!] as [number, number, number, number]),
-          calculationLeftRowRatios: z
             .tuple([ratioSchema, ratioSchema, ratioSchema])
-            .catch([...defaultWorkbenchLayoutState.calculationLeftRowRatios!] as [number, number, number]),
+            .catch([...defaultWorkbenchLayoutState.calculationColumnRatios!] as [number, number, number]),
           calculationOutputChartRatio: ratioSchema.catch(defaultWorkbenchLayoutState.calculationOutputChartRatio!),
           bottomMode: z.preprocess(
             (value) => (value === 'agent' ? 'console' : value),
@@ -91,16 +111,19 @@ const storedDraftSchema = storedDraftBaseSchema.extend({
   }),
 })
 const storedDraftEnvelopeSchema = z
-  .object({ version: z.literal(WORKBENCH_DRAFT_SCHEMA_VERSION), ownerScope: z.string().min(1), draft: storedDraftSchema })
+  .object({
+    version: z.literal(WORKBENCH_DRAFT_SCHEMA_VERSION),
+    ownerScope: z.string().min(1),
+    draft: storedDraftSchema,
+  })
   .passthrough()
 
-function normalizeStoredDraft(
-  draft: z.infer<typeof storedDraftSchema>,
-): WorkbenchDraft {
+function normalizeStoredDraft(draft: z.infer<typeof storedDraftSchema>): WorkbenchDraft {
   const experimentId = draft.experiment.record?.id ?? null
-  const selection: WorkbenchSelectionContext = experimentId !== null && draft.selection.experimentId === experimentId
-    ? { ...draft.selection, experimentId }
-    : { experimentId, measurementId: null, calculationId: null }
+  const selection: WorkbenchSelectionContext =
+    experimentId !== null && draft.selection.experimentId === experimentId
+      ? { ...draft.selection, experimentId }
+      : { experimentId, measurementId: null, calculationId: null }
   return { ...draft, selection } as WorkbenchDraft
 }
 

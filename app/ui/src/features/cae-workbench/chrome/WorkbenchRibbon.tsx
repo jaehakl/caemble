@@ -22,7 +22,8 @@ export function WorkbenchRibbonAction({ action, className }: { action: Workbench
           aria-label={accessibleLabel}
           aria-pressed={action.pressed}
           className={cn(
-            'flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-md px-1 text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-disabled:hover:bg-transparent',
+            'flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-disabled:hover:bg-transparent',
+            action.primary && 'bg-primary text-primary-foreground hover:bg-primary/90',
             action.pressed && 'bg-accent text-accent-foreground ring-1 ring-primary/35',
             className,
           )}
@@ -31,10 +32,10 @@ export function WorkbenchRibbonAction({ action, className }: { action: Workbench
           }}
           type="button"
         >
-          <span aria-hidden="true" className="flex h-8 items-center justify-center [&_svg]:size-7">
+          <span aria-hidden="true" className="flex items-center justify-center [&_svg]:size-4">
             {action.icon}
           </span>
-          <span className="w-full truncate text-center text-[11px] leading-4">{action.label}</span>
+          <span className="text-xs leading-4 font-medium whitespace-nowrap">{action.label}</span>
         </button>
       </TooltipTrigger>
       <TooltipContent>
@@ -54,7 +55,7 @@ export function WorkbenchRibbonActions({
   className?: string
 }) {
   return (
-    <div className={cn('flex items-center gap-0.5', className)}>
+    <div className={cn('flex items-center gap-1', className)}>
       {actions.map((action) => (
         <WorkbenchRibbonAction action={action} key={action.id} />
       ))}
@@ -72,8 +73,15 @@ export function WorkbenchRibbonGroup({
   className?: string
 }) {
   return (
-    <section aria-label={label} className={cn('flex shrink-0 items-center border-r px-1 last:border-r-0', className)}>
-      {children}
+    <section
+      aria-label={label}
+      className={cn(
+        'flex shrink-0 flex-col justify-center gap-2 border-r border-border/70 px-3 py-1 last:border-r-0',
+        className,
+      )}
+    >
+      <div className="flex min-h-10 items-center gap-2">{children}</div>
+      <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground">{label}</h2>
     </section>
   )
 }
@@ -94,7 +102,7 @@ export function WorkbenchRibbon({
   return (
     <section
       aria-label={activePanel ? `${activePanel.label} 리본` : 'CAE 리본'}
-      className={cn('overflow-x-auto border-b bg-background px-2 py-1', className)}
+      className={cn('overflow-x-auto border-b bg-muted/20 px-1 py-1', className)}
     >
       {activePanel ? (
         <div className="flex min-w-max items-stretch">{activePanel.content}</div>

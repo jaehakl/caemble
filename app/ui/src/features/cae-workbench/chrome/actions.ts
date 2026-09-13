@@ -8,6 +8,7 @@ export type WorkbenchAction = Readonly<{
   shortcut?: string
   disabled?: boolean
   disabledReason?: string
+  primary?: boolean
   pressed?: boolean
   onSelect: () => void
 }>

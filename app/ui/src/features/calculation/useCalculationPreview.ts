@@ -1,5 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
-import { CalculationExecutionError, runCalculation, type CalculationInput } from '@/lib/calculation'
+import {
+  CalculationExecutionError,
+  runCalculation,
+  type CalculationLogEntry,
+  type CalculationInput,
+} from '@/lib/calculation'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import type { CalculationPreviewState } from './CalculationOutputChart'
 import type { buildCalculationRecordedData } from './calculationRecordedData'
@@ -34,16 +39,25 @@ export function useCalculationPreview({
     status: 'idle',
     message: 'Recorded Measurement와 Calculation source를 선택하세요.',
   })
+  const [logs, setLogs] = useState<readonly CalculationLogEntry[]>([])
+  const [refreshRevision, setRefreshRevision] = useState(0)
   const sequenceRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
 
   const invalidatePreview = useCallback((message: string) => {
     sequenceRef.current += 1
     abortRef.current?.abort()
+    setLogs([])
     setPreview({ status: 'loading', message })
   }, [])
 
+  const refreshPreview = useCallback(() => {
+    invalidatePreview('미리보기를 갱신하는 중…')
+    setRefreshRevision((revision) => revision + 1)
+  }, [invalidatePreview])
+
   useLayoutEffect(() => {
+    setLogs([])
     const sequence = ++sequenceRef.current
     const controller = new AbortController()
     abortRef.current = controller
@@ -67,6 +81,10 @@ export function useCalculationPreview({
       setPreview({ status: 'loading', message: 'CalculationData 일괄 계산이 진행 중…' })
       return cancel
     }
+    if (measurementId === null) {
+      setPreview({ status: 'idle', message: 'Recorded Measurement를 선택하면 Output을 자동 계산합니다.' })
+      return cancel
+    }
     if (experimentRecordsPending) {
       setPreview({ status: 'loading', message: 'ExperimentRecord 계약을 불러오는 중…' })
       return cancel
@@ -78,10 +96,6 @@ export function useCalculationPreview({
         message: dependencyError.message,
         status: 'error',
       })
-      return cancel
-    }
-    if (measurementId === null) {
-      setPreview({ status: 'idle', message: 'Recorded Measurement를 선택하면 Output을 자동 계산합니다.' })
       return cancel
     }
     if (!recordedSnapshot.input) {
@@ -106,6 +120,7 @@ export function useCalculationPreview({
         input: recordedSnapshot.input as CalculationInput,
         onLog: (entry) => {
           if (sequence !== sequenceRef.current || controller.signal.aborted) return
+          setLogs((current) => [...current, entry])
           onActivity({
             source: 'calculation',
             level: 'info',
@@ -156,6 +171,7 @@ export function useCalculationPreview({
       cancel()
     }
   }, [
+    refreshRevision,
     contextPending,
     calculationDataBusy,
     dependencyError,
@@ -170,5 +186,5 @@ export function useCalculationPreview({
     selectedCalculationId,
   ])
 
-  return { invalidatePreview, preview }
+  return { invalidatePreview, preview, logs, refreshPreview }
 }

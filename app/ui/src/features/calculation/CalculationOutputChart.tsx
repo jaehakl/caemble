@@ -61,7 +61,7 @@ function ScalarHistogram({
     <div className="h-full min-h-0 overflow-auto" data-result-visualization="histogram">
       <svg
         aria-label="Calculation scalar output histogram"
-        className="h-full min-h-56 w-full min-w-[420px]"
+        className="h-full min-h-40 w-full"
         role="img"
         viewBox="0 0 640 230"
       >
@@ -160,11 +160,11 @@ export function CalculationOutputChart({
                   {'^'.repeat(Math.max(1, diagnostic.range.endColumn - diagnostic.range.startColumn))}
                 </code>
               </pre>
-              <p className="mt-2 text-xs leading-5">동일한 상세 내용은 중앙 하단 Console에도 기록됩니다.</p>
+              <p className="mt-2 text-xs leading-5">동일한 상세 내용은 우측 하단 로그에도 기록됩니다.</p>
             </>
           ) : (
             <p className="mt-1 text-xs leading-5">
-              {preview.code === 'policy' ? preview.message : '상세 오류는 중앙 하단 Console에서 확인하세요.'}
+              {preview.code === 'policy' ? preview.message : '상세 오류는 우측 하단 로그에서 확인하세요.'}
             </p>
           )}
         </div>
@@ -187,16 +187,11 @@ export function CalculationOutputChart({
         scalarValues?.length ? (
           <ScalarHistogram current={data as number} measurementId={measurementId} values={scalarValues} />
         ) : (
-          <div className="space-y-3" data-result-visualization="scalar">
-            <div
-              aria-label="Calculation scalar output"
-              className="flex min-h-40 items-center justify-center rounded border bg-slate-50 px-4 font-mono text-3xl text-slate-900"
-            >
-              {String(data)}
-            </div>
-            <p className="text-center text-xs text-muted-foreground">
-              {comparisonMessage ?? '저장된 비교 데이터가 없습니다.'}
-            </p>
+          <div className="flex h-full min-h-0 flex-col" data-result-visualization="scalar">
+            <ScalarHistogram current={data as number} measurementId={measurementId} values={[data as number]} />
+            {comparisonMessage ? (
+              <p className="text-center text-xs text-muted-foreground">{comparisonMessage}</p>
+            ) : null}
           </div>
         )
       ) : output.shape.some((length) => length === 0) ? (
@@ -214,7 +209,9 @@ export function CalculationOutputChart({
           xTitle={`${output.axes[0].name} (${output.axes[0].unit ?? 'unitless'})`}
         />
       ) : output.shape.length === 3 ? (
-        <div className="min-h-0 flex-1"><PointCloudPlot plot={scalarPlotData(output)} onRenderEnd={onRenderEnd} onRenderError={onRenderError} /></div>
+        <div className="min-h-0 flex-1">
+          <PointCloudPlot plot={scalarPlotData(output)} onRenderEnd={onRenderEnd} onRenderError={onRenderError} />
+        </div>
       ) : (
         <div className="min-h-0 flex-1">
           <Heatmap

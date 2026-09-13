@@ -17,20 +17,16 @@ src/api/index.ts
 src/components/ui/dialog.tsx
 src/features/calculation/calculationDataBatch.ts
 src/features/calculation/calculationHistogram.ts
-src/features/calculation/CalculationOutputChart.tsx
 src/features/calculation/calculationRecordedData.ts
 src/features/calculation/CalculationSourceEditor.tsx
 src/features/calculation/calculationSourceInsertion.ts
 src/features/calculation/ExperimentRecordCatalog.tsx
 src/features/calculation/experimentRecordCatalogModel.ts
-src/features/calculation/ResizableCalculationLayout.tsx
-src/features/calculation/ResizableCalculationOutput.tsx
 src/features/calculation/tensorDisplayDomain.ts
 src/features/cae-workbench/chrome/index.ts
 src/features/cae-workbench/chrome/ResizableWorkbenchLayout.tsx
 src/features/cae-workbench/chrome/WorkbenchBottomDock.tsx
 src/features/cae-workbench/chrome/WorkbenchMenubar.tsx
-src/features/cae-workbench/chrome/WorkbenchRibbon.tsx
 src/features/cae-workbench/chrome/WorkbenchShell.tsx
 src/features/cae-workbench/dialogs/index.ts
 src/features/experiment/index.ts
@@ -41,7 +37,6 @@ src/features/measurement/recordedData.ts
 src/features/prediction/diagnostics.ts
 src/features/prediction/knn.ts
 src/features/prediction/metrics.ts
-src/features/cae-workbench/storage/draftStorage.ts
 src/features/cae/client.ts
 src/features/cae/manifests.ts
 src/features/runtime-console/index.ts
@@ -97,7 +92,6 @@ src/features/analysis/analysis-engine.ts
 src/features/analysis/analysis-types.ts
 src/features/analysis/analysis.worker.ts
 src/features/cae-workbench/CaeWorkbenchDialogs.tsx
-src/features/cae-workbench/GeometryAuthoringRibbon.tsx
 src/features/jobs/JobsPage.tsx
 src/features/launchers/LaunchersPage.tsx
 src/features/materials/CatalogPickerDialog.tsx

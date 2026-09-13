@@ -95,7 +95,7 @@ for (const detail of [
 const runtimeErrorMarkup = renderToStaticMarkup(
   <CalculationOutputChart preview={{ status: 'error', code: 'runtime', message: 'sensitive runtime detail' }} />,
 )
-assert.ok(runtimeErrorMarkup.includes('상세 오류는 중앙 하단 Console에서 확인하세요.'))
+assert.ok(runtimeErrorMarkup.includes('상세 오류는 우측 하단 로그에서 확인하세요.'))
 assert.equal(runtimeErrorMarkup.includes('sensitive runtime detail'), false)
 
 const outlierHistogram = buildScalarHistogram([0, 1, 2, 3], 10)

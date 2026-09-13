@@ -419,7 +419,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   )
 
   return (
-    <main className="flex h-full min-h-[560px] min-w-[1280px] flex-col overflow-hidden bg-background text-foreground">
+    <main className="flex h-full min-h-[560px] min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <WorkbenchConsoleLayout
         console={bottomDock}
         heightRatio={page.layout.bottomHeightRatio}
@@ -462,9 +462,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 dataReadable={experimentDataReadable}
                 busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
                 calculationDataBusy={workbench.calculationDataActions.busy}
-                candidateEditingDisabled={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
-                candidateSessionKey={`${workbench.experimentId ?? 'none'}`}
-                candidateVars={workbench.candidateVars}
                 contextPending={workbench.selectionRestoring}
                 persistable={calculationAccess.persistable}
                 sourceEditable={calculationAccess.sourceEditable}
@@ -474,7 +471,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 measurementSelectionPending={workbench.selectionRestoring}
                 menubar={menubar}
                 onActivity={runtimeConsole.append}
-                onCandidateVariableChange={workbench.setCandidateVariable}
                 onCalculationSelectionChange={workbench.selectCalculation}
                 onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
                 onDirtyChange={setCalculationDirty}
@@ -486,10 +482,26 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}
                 recordedData={activeFlatRecordedData}
                 recordedRules={activeRecordedRules}
-                ribbon={ribbon}
+                ribbon={(controls) => (
+                  <WorkbenchRibbon
+                    activeSectionId="calculation"
+                    panels={chrome.ribbonPanels.map((panel) =>
+                      panel.sectionId === 'calculation'
+                        ? {
+                            ...panel,
+                            content: (
+                              <>
+                                {controls}
+                                {panel.content}
+                              </>
+                            ),
+                          }
+                        : panel,
+                    )}
+                  />
+                )}
                 saveCommand={calculationSaveCommand}
                 selectedCalculationId={workbench.selectionContext.calculationId}
-                varsSchema={workbench.experimentDocument.varsSchema}
                 viewer={viewerPane}
               />
             ) : (

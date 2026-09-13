@@ -7,13 +7,15 @@ import {
 } from 'react'
 import type { CalculationPreviewState } from './CalculationOutputChart'
 import { CalculationOutputChart } from './CalculationOutputChart'
-import { CalculationReturnSummary } from './CalculationReturnSummary'
+import type { CalculationLogEntry } from '@/lib/calculation'
+import { CalculationLogPanel } from './CalculationLogPanel'
 
 const handleHeight = 4
 const chartMinimum = 160
-const returnMinimum = 112
+const logMinimum = 112
 
 export function ResizableCalculationOutput({
+  logs,
   chartRatio,
   comparisonMessage,
   measurementId,
@@ -21,6 +23,7 @@ export function ResizableCalculationOutput({
   preview,
   scalarValues,
 }: {
+  logs: readonly CalculationLogEntry[]
   chartRatio: number
   comparisonMessage?: string
   measurementId?: number | null
@@ -32,9 +35,9 @@ export function ResizableCalculationOutput({
   const [height, setHeight] = useState(0)
   const [drag, setDrag] = useState<{ startChart: number; startClient: number } | null>(null)
   const available = Math.max(0, height - handleHeight)
-  const canConstrain = available >= chartMinimum + returnMinimum
+  const canConstrain = available >= chartMinimum + logMinimum
   const chartHeight = canConstrain
-    ? Math.min(available - returnMinimum, Math.max(chartMinimum, chartRatio * available))
+    ? Math.min(available - logMinimum, Math.max(chartMinimum, chartRatio * available))
     : available * Math.min(0.9, Math.max(0.1, chartRatio))
 
   useEffect(() => {
@@ -51,7 +54,7 @@ export function ResizableCalculationOutput({
       if (available <= 0) return
       const unconstrained = drag.startChart + event.clientY - drag.startClient
       const next = canConstrain
-        ? Math.min(available - returnMinimum, Math.max(chartMinimum, unconstrained))
+        ? Math.min(available - logMinimum, Math.max(chartMinimum, unconstrained))
         : Math.min(available, Math.max(0, unconstrained))
       onChartRatioChange(next / available)
     }
@@ -79,11 +82,11 @@ export function ResizableCalculationOutput({
     if (event.key === 'ArrowUp') next -= step
     else if (event.key === 'ArrowDown') next += step
     else if (event.key === 'Home') next = canConstrain ? chartMinimum : 0
-    else if (event.key === 'End') next = canConstrain ? available - returnMinimum : available
+    else if (event.key === 'End') next = canConstrain ? available - logMinimum : available
     else return
     event.preventDefault()
     const constrained = canConstrain
-      ? Math.min(available - returnMinimum, Math.max(chartMinimum, next))
+      ? Math.min(available - logMinimum, Math.max(chartMinimum, next))
       : Math.min(available, Math.max(0, next))
     onChartRatioChange(constrained / available)
   }
@@ -109,7 +112,7 @@ export function ResizableCalculationOutput({
         />
       </div>
       <div
-        aria-label="Output Chart와 Return 요약 높이 조절"
+        aria-label="Return 차트와 로그 높이 조절"
         aria-orientation="horizontal"
         className="relative z-10 cursor-row-resize bg-border outline-none after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-primary focus-visible:bg-primary"
         role="separator"
@@ -118,7 +121,7 @@ export function ResizableCalculationOutput({
         onPointerDown={pointerDown}
       />
       <div className="min-h-0 overflow-hidden">
-        <CalculationReturnSummary preview={preview} />
+        <CalculationLogPanel logs={logs} preview={preview} />
       </div>
     </div>
   )

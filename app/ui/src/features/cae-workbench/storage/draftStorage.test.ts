@@ -28,6 +28,33 @@ const draft: WorkbenchDraft = {
 beforeEach(() => sessionStorage.clear())
 
 describe('Workbench draft storage', () => {
+  it('restores old four-column layouts with new defaults while preserving the draft', async () => {
+    sessionStorage.setItem(
+      workbenchDraftStorageKey('public'),
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'public',
+        draft: {
+          ...draft,
+          layout: {
+            ...draft.layout,
+            calculationColumnRatios: [0.22, 0.26, 0.26, 0.26],
+            calculationOutputChartRatio: 0.7,
+          },
+        },
+      }),
+    )
+    const restored = await loadWorkbenchDraft('public')
+    expect(restored?.experiment).toEqual(draft.experiment)
+    expect(restored?.layout.calculationColumnRatios).toEqual([0.3, 0.4, 0.3])
+    expect(restored?.layout.calculationOutputChartRatio).toBe(0.7)
+    await saveWorkbenchDraft('public', {
+      ...restored!,
+      layout: { ...restored!.layout, calculationColumnRatios: [0.2, 0.5, 0.3] },
+    })
+    expect((await loadWorkbenchDraft('public'))?.layout.calculationColumnRatios).toEqual([0.2, 0.5, 0.3])
+  })
+
   it('migrates v3 Calculation selection without discarding Vars or source', async () => {
     sessionStorage.setItem(
       workbenchDraftStorageKey('public'),
