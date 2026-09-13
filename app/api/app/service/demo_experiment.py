@@ -182,22 +182,6 @@ async def replace_demo_experiments(
             },
         )
 
-    counts = await _prediction_counts(db, ids)
-    unavailable_ids = [
-        experiment_id
-        for experiment_id in ids
-        if not all(counts[experiment_id][key] > 0 for key in counts[experiment_id])
-    ]
-    if unavailable_ids:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": "demo_prediction_data_required",
-                "message": "Demo Experiments require recorded Measurements and ready CalculationData.",
-                "experimentIds": unavailable_ids,
-            },
-        )
-
     await db.execute(delete(ExperimentDemo))
     await db.flush()
     db.add_all(

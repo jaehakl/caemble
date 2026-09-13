@@ -198,10 +198,14 @@ export function AdminWorkspace({
                 </p>
               ) : null}
               <div className="flex items-center gap-2 border-t pt-3">
-                <select className="h-9 min-w-72 rounded-md border bg-background px-2 text-sm" id="demo-candidate">
+                <select
+                  aria-label="Experiment 선택"
+                  className="h-9 min-w-72 rounded-md border bg-background px-2 text-sm"
+                  id="demo-candidate"
+                >
                   <option value="">Experiment 선택</option>
                   {availableToAdd.map((experiment) => (
-                    <option disabled={!experiment.predictionReady} key={experiment.id} value={experiment.id}>
+                    <option key={experiment.id} value={experiment.id}>
                       {experiment.name} ·{' '}
                       {experiment.predictionReady ? countLabel(experiment) : 'Prediction 준비 안 됨'}
                     </option>

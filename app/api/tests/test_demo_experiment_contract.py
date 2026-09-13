@@ -124,7 +124,7 @@ class DemoExperimentContractTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_curation_rejects_owner_and_readiness_then_preserves_requested_order(self) -> None:
+    def test_curation_rejects_owner_and_allows_missing_prediction_data_while_preserving_order(self) -> None:
         class Result:
             def __init__(self, values):
                 self.values = values
@@ -142,20 +142,9 @@ class DemoExperimentContractTests(unittest.TestCase):
                 add_all=Mock(),
             )
             request = DemoExperimentUpdateRequest(experiment_ids=[2, 1], default_experiment_id=1)
-            with (
-                patch(
-                    "service.demo_experiment._prediction_counts",
-                    new=AsyncMock(
-                        return_value={
-                            1: {"recordedMeasurements": 1, "readyCalculations": 1, "calculationData": 1},
-                            2: {"recordedMeasurements": 2, "readyCalculations": 1, "calculationData": 2},
-                        }
-                    ),
-                ),
-                patch(
-                    "service.demo_experiment.available_experiments",
-                    new=AsyncMock(return_value={"mine": [], "demos": []}),
-                ),
+            with patch(
+                "service.demo_experiment.available_experiments",
+                new=AsyncMock(return_value={"mine": [], "demos": []}),
             ):
                 await replace_demo_experiments(
                     database,
@@ -179,29 +168,6 @@ class DemoExperimentContractTests(unittest.TestCase):
                     user=SimpleNamespace(id="admin", roles=["admin"]),
                 )
             self.assertEqual(422, invalid_owner.exception.status_code)
-
-            not_ready_database = SimpleNamespace(
-                scalars=AsyncMock(
-                    side_effect=[Result([SimpleNamespace(id=1, user_id="admin")]), Result(["admin"])]
-                )
-            )
-            with (
-                patch(
-                    "service.demo_experiment._prediction_counts",
-                    new=AsyncMock(
-                        return_value={
-                            1: {"recordedMeasurements": 1, "readyCalculations": 1, "calculationData": 0}
-                        }
-                    ),
-                ),
-                self.assertRaises(HTTPException) as not_ready,
-            ):
-                await replace_demo_experiments(
-                    not_ready_database,
-                    DemoExperimentUpdateRequest(experiment_ids=[1], default_experiment_id=1),
-                    user=SimpleNamespace(id="admin", roles=["admin"]),
-                )
-            self.assertEqual(422, not_ready.exception.status_code)
 
         import asyncio
 
