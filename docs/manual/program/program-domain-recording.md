@@ -10,15 +10,13 @@ Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고�
 
 - `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 변형 배율을, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
 - `polyline`: 계약에 연결된 정점과 offset으로 경로를 구성합니다. 여러 결과를 독립적으로 선택할 수 있습니다.
-- `structured-field`: 기록된 공간 축의 slice와 나머지 시간·주파수·component 축의 index를 선택합니다.
-- `tensor`: chart/table/heatmap과 추가 축의 index 선택을 제공합니다.
-- `bundle`: 계약에 선언된 구성 데이터를 상세 항목으로 선택합니다. stress 상세 bundle도 이 방식으로 표시합니다.
+- `box-grid`: Histogram, Line Chart, Heatmap, 3D Point cloud로 수치 Output을 표시합니다. 채널·성분·표시 축과 나머지 축의 집계 또는 개별 index를 선택합니다.
 
 초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변형 배율이 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.
 
 Box Grid 데이터는 float32 또는 float64이며 축 순서는 항상 `[x, y, z, time, frequency, amplitudePhase, component]`입니다. 사용하지 않는 축도 길이 1로 보존합니다. 실수는 `value` 채널 하나, 복소수는 `amplitude`, `phase` 두 채널로 저장하며 위상 단위는 rad입니다. 각 RecordedData의 ExperimentRecord ID는 Calculation dependency로 사용합니다. 자동 시각화는 별도 `/measurement/{id}/visualizations` 조회와 CLI export에 포함됩니다.
 
-[Catalog 공식 예제](/?help=examples)에서 현재 Box Grid outputs와 자동 mesh·ray 시각화의 실행 소스를 확인하세요.
+[Catalog 공식 예제](/doc?help=examples)에서 현재 Box Grid outputs와 자동 mesh·ray 시각화의 실행 소스를 확인하세요.
 
 ## 변형 형상과 시간 이력
 
@@ -61,68 +59,35 @@ Spectral field와 시간 기록 모두 `[x, y, z, time, frequency, amplitudePhas
 진폭은 장의 물리 단위, 위상은 rad이며 진폭이 0인 표본의 저장 위상도 0입니다.
 저장·attachment·CLI export는 같은 7차원 형식을 사용합니다.
 
-공간 의미가 기록된 structured-field는 Geometry와 같은 3D 장면의 XY·YZ·XZ
-단면으로 표시합니다. x·y·z ticks는 Box의 local 좌표이며 각 셀 중심에서 표본을
-구합니다. 저장된 `boxGrid`의 origin과 rotation으로 world 좌표에 배치하므로 회전된
-Box도 표시할 수 있습니다. 공간 계약이나 source/Vars가 호환되지 않으면 Geometry
-Overlay를 표시하지 않습니다. 해석 영역 밖 표본은 0입니다.
+Box Grid의 표시 방식은 **Histogram / Line Chart / Heatmap / 3D Point cloud**에서
+선택합니다. 공간 축만 사용하는 Heatmap과 3D는 저장된 Box의 origin, rotation과
+길이 단위로 Geometry에 겹칩니다. x·y·z ticks는 Box local 셀 중심이며 해석
+영역 밖 표본은 0입니다. Geometry와 결과의 source/Vars가 일치해야 겹칠 수 있습니다.
 
-기본 표시는 전체 장 크기 `sqrt(Σ|component|²)`이며 광강도가 아닙니다.
-Ex·Ey·Ez 또는 Hx·Hy·Hz를 선택하면 개별 성분을 볼 수 있습니다. 복소수 성분은
-진폭·실수부·허수부·위상을 선택하며 위상은 rad로 표시합니다. 진폭 0의 위상은
-미정의로 표시에서 제외합니다. 주파수는 Hz와 진공 파장을 함께 표시하고 0 Hz에는
-파장을 표시하지 않습니다.
+기본 채널은 실수 장의 Value 또는 복소수 장의 Amplitude입니다. 벡터는
+절대값(크기)이나 개별 성분을 선택하고, Phase는 성분 하나의 위상을 rad로
+표시합니다. 전체 크기는 `sqrt(Σ|component|²)`이며 광강도가 아닙니다.
+표시하지 않는 축은 기본 mean으로 집계하므로 특정 시점·주파수·단면을 보려면
+해당 축을 **개별 index**로 바꿉니다. 공간 Heatmap의 남은 공간 축을 집계하면
+Box 중앙 평면에 표시합니다. 상세한 기본 축 선택과 표본 조회는
+[Output 시각화](../workbench/workbench-viewer-selection.md#output-시각화)를 따릅니다.
 
-단일 표본 축이 있으면 그 검출 평면으로 시작하고 일반 격자는 중앙 Z의 XY 단면으로
-시작합니다. 위치·시간/주파수·성분·Geometry 투명도(기본 opacity 0.8)를 조절할 수 있습니다.
-검출 평면은 불투명하게 유지되고 Geometry만 투명해집니다.
-자동 색상 범위는 선택한 시간/주파수의 공간 전체에서 정해지므로 단면 이동 중에는
-변하지 않습니다. 범위를 직접 고정하거나 Table / 2D 상세로 전환할 수 있습니다.
-단면·주파수·성분 변경은 카메라를 자동 맞춤하지 않습니다.
+### 진동과 시간·주파수 순회
 
-직접 확인할 때는 최신 **Gold FCC Array** 예제를 열고 새 기록에서
-`referenceScattered`, `incident`, `scattered`를 차례로 선택합니다. 각 결과에서
-1000 nm·1500 nm, Ex·Ey·Ez와 전체 크기, 진폭·위상을 전환하세요. 기존 X 편광과
-무관하게 모든 전기장 성분이 보존됩니다. Geometry 위 검출 평면 위치, Geometry 투명도,
-색상 범위 고정, 카메라 유지와 Measurement 전환 시 선택 초기화를 확인합니다.
-과거 저장 결과를 새 주파수·성분 계약으로 변환하지 않습니다.
+**재생**에서 **진동 · 공통 위상**을 선택하면 복소 성분을
+`amplitude × cos(phase + φ)`로 표시합니다. 벡터 크기는 각 성분의 순간값으로
+구한 크기입니다. 이는 저장된 DFT 계수의 공통 위상 변화이며 원래 광대역 펄스나
+다중 주파수의 실제 시간 이력을 합성하지 않습니다. 실수부·허수부를 별도
+저장 채널로 추가하지 않습니다.
 
-### 주파수 성분 진동
+시간 또는 주파수가 표시 축에 포함되지 않으면 해당 축의 **index 순회**를
+선택할 수 있습니다. Histogram은 둘 다 순회할 수 있습니다. 재생·일시정지,
+프레임·속도·반복을 조절하며 재생 중 값 범위와 카메라를 유지합니다.
 
-polar spectral 결과의 3D 단면에서 `표시 모드 → 진동`을 선택하면 저장된
-진폭과 위상을 `amplitude × cos(phase + φ)`로 표시합니다. DFT 계수의 크기를
-그대로 사용하며 원래 광대역 펄스의 시간 이력을 복원하는 기능은 아닙니다.
-전체 크기에서 전환하면 Ex 또는 Hx가 선택됩니다. 진동 모드에서는 개별 성분만
-선택하며 범례는 해당 성분의 물리 단위로 표시됩니다.
-
-처음에는 0°에서 정지합니다. 재생을 누르면 기본 한 주기 2초로 반복하며,
-위상 슬라이더로 0–360°를 직접 선택하면 재생이 정지합니다. 속도는
-0.25×–4×로 조절합니다. 화면의 주기 T와 상대 시간 t는 기록된 Hz를 기준으로
-계산한 물리 시간이고, 재생 속도는 눈으로 관찰하기 위한 표시 속도입니다.
-0 Hz는 정적 실수부만 표시합니다.
-
-자동 범례는 공간 전체의 최대 진폭 A로 정한 `[-A, A]`이며 재생 중 고정됩니다.
-모두 0이면 영장 표시와 `[-1, 1]` 범위를 사용합니다. 수동 범위는 정적 모드와
-별도로 유지됩니다. 단면·성분 변경은 현재 위상을 유지하고, 주파수 변경은
-정지 후 0°로 돌아갑니다. 정적 모드·2D 상세·다른 결과나 Measurement로 전환하면
-재생을 중지합니다.
-
-Gold FCC에서는 결과를 선택한 뒤 `진동`, 1000 nm 또는 1500 nm, Ex·Ey·Ez를
-차례로 선택하고 재생하세요. 0°는 실수부, 90°는 허수부의 음수, 180°는 실수부의
-음수입니다. 단면을 옮겨도 카메라와 범례가 자동으로 바뀌지 않는지 확인하세요.
-
-진동 모드에서 **전체 크기 · 순간값**을 선택하면 각 성분의 순간값
-`Fi(φ) = Re(Fi) cosφ − Im(Fi) sinφ`를 구한 뒤
-`√(Fx(φ)² + Fy(φ)² + Fz(φ)²)`를 표시합니다. 정적 전체 크기 `√Σ|Fi|²`와
-구분되며, 성분 선택과 범례 옆 **수식 ⓘ**에 마우스를 올리거나 키보드로
-포커스하면 식과 단위를 확인할 수 있습니다. `φ = 2πft`이며 화면은 도(°)를 사용합니다.
-
-Gold FCC에서 주파수를 고르고 전체 크기를 선택한 채 진동 모드로 전환하세요.
-위상 슬라이더를 움직여 분포 변화를 확인하고, Ex·Ey·Ez와 전체 크기를 오갈 때
-위상이 유지되는지 확인합니다. 자동 범례는 공간 전체·한 주기의 최대 순간 크기로
-고정되며, 전체 크기 수동 범위는 개별 성분의 범위와 따로 유지됩니다.
-순간 크기는 음수가 없고 반 주기마다 반복되며 광강도나 원래 펄스의 시간 이력이
-아닙니다. 0 Hz는 실수 벡터 크기만 표시하며 재생하지 않습니다.
+Gold FCC Array의 새 결과에서 `referenceScattered`, `incident`, `scattered`를
+선택하고 Heatmap의 공간 축과 frequency 개별 index를 지정하세요. 성분과
+Amplitude·Phase를 바꾸고, **진동 · 공통 위상** 및 **frequency index 순회**를
+차례로 확인합니다. Geometry 겹치기, 투명도, 값 범위 고정과 표본 조회도 확인하세요.
 
 ### Catalog·Draft에서 임시 실행
 

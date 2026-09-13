@@ -17,9 +17,9 @@ from app.solvers.structural_mechanics import outputs
 def test_complete_displacement_history_recording(monkeypatch, samples):
     ids = np.array([10, 20, 30, 40], dtype=np.int32)
     domain = UnstructuredMeshValue(np.zeros((4, 3)), {"tet4": np.array([[0, 1, 2, 3]], dtype=np.int32)}, "m", "domain", {"nodeIds": ids})
-    model = SimpleNamespace(points=domain.points, physical_node_count=4, node_ids=ids, history_nodes=None, result_requests={}, elements=[SimpleNamespace(nodes=np.arange(4))])
+    model = SimpleNamespace(points=domain.points, physical_node_count=4, node_ids=ids, history_nodes=None, elements=[SimpleNamespace(nodes=np.arange(4))])
     config = {"parameters": {"analysis": "transient"}, "outputs": []}
-    outputs.configure_history(model, config["outputs"])
+    outputs.configure_history(model)
     np.testing.assert_array_equal(model.history_nodes, [0, 1, 2, 3])
     # Store history in a different order to exercise ID mapping at the output boundary.
     model.history_nodes = np.array([2, 0, 3, 1])

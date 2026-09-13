@@ -9,6 +9,9 @@ import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
 const mocks = vi.hoisted(() => ({
   measurement: null as { id: number; recorded_at: string | null } | null,
   viewerMounts: 0,
+  isDemo: false,
+  manageable: false,
+  restoring: false,
 }))
 
 vi.mock('@/features/auth/use-auth', () => ({
@@ -17,6 +20,9 @@ vi.mock('@/features/auth/use-auth', () => ({
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
     experimentDocument: { resultSessionKey: 'session' },
+    experimentIsDemo: mocks.isDemo,
+    experimentManageable: mocks.manageable,
+    selectionRestoring: mocks.restoring,
     workspaceSession: {},
     selection: {
       recordedData: {},
@@ -50,7 +56,13 @@ vi.mock('@/features/cae/CaeBatchProvider', () => ({ useCaeBatches: () => ({ insp
 vi.mock('@/features/cae/useCaeBatchConsole', () => ({ useCaeBatchConsole: () => undefined }))
 vi.mock('@/lib/cad/model', () => ({ parsePolylineBundles: () => [] }))
 vi.mock('@/features/cae-workbench/chrome', () => ({
-  defaultWorkbenchSections: [{ id: 'experiment' }, { id: 'measurement' }, { id: 'prediction' }, { id: 'analysis' }],
+  defaultWorkbenchSections: [
+    { id: 'experiment' },
+    { id: 'measurement' },
+    { id: 'calculation' },
+    { id: 'prediction' },
+    { id: 'analysis' },
+  ],
   WorkbenchMenubar: ({
     sections,
     onActiveSectionChange,
@@ -144,7 +156,19 @@ vi.mock('@/features/runtime-console', () => ({
   RuntimeConsoleSummary: () => null,
   RuntimeConsoleView: () => null,
 }))
-vi.mock('./CalculationWorkbenchContainer', () => ({ CalculationWorkbenchContainer: () => null }))
+vi.mock('./CalculationWorkbenchContainer', () => ({
+  CalculationWorkbenchContainer: ({
+    publicDemoMutable,
+    measurementSelectionPending,
+  }: {
+    publicDemoMutable: boolean
+    measurementSelectionPending: boolean
+  }) => (
+    <output aria-label="Calculation context">
+      {JSON.stringify({ publicDemoMutable, measurementSelectionPending })}
+    </output>
+  ),
+}))
 vi.mock('@/features/cae/CaeBatchPanel', () => ({ CaeBatchPanel: () => null }))
 vi.mock('@/features/jobs/JobsPage', () => ({ JobsWorkspace: () => null }))
 vi.mock('@/features/launchers/LaunchersPage', () => ({ LaunchersWorkspace: () => null }))
@@ -155,6 +179,9 @@ vi.mock('@/features/cae-workbench/WorkbenchDetails', () => ({ ExperimentDetail: 
 beforeEach(() => {
   mocks.measurement = null
   mocks.viewerMounts = 0
+  mocks.isDemo = false
+  mocks.manageable = false
+  mocks.restoring = false
 })
 
 describe('Workbench section navigation', () => {
@@ -222,5 +249,40 @@ describe('Workbench Viewer result updates', () => {
     expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-auto-select-result', 'true')
     expect(screen.getByTestId('workbench-viewer')).toHaveAttribute('data-mount', '1')
     expect(mocks.viewerMounts).toBe(1)
+  })
+})
+
+it.each([
+  [true, true, true],
+  [true, false, false],
+  [false, true, false],
+] as const)('passes Demo=%s, manageable=%s mutation context and pending restoration', (isDemo, manageable, mutable) => {
+  mocks.isDemo = isDemo
+  mocks.manageable = manageable
+  mocks.restoring = true
+  const client = new QueryClient()
+  const { rerender } = render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <CaeWorkbenchRoute />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'calculation' }))
+  expect(JSON.parse(screen.getByLabelText('Calculation context').textContent!)).toEqual({
+    publicDemoMutable: mutable,
+    measurementSelectionPending: true,
+  })
+  mocks.restoring = false
+  rerender(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <CaeWorkbenchRoute />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(JSON.parse(screen.getByLabelText('Calculation context').textContent!)).toEqual({
+    publicDemoMutable: mutable,
+    measurementSelectionPending: false,
   })
 })

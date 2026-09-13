@@ -77,7 +77,7 @@ const references: readonly AuthoringReference[] = [
     sourcePaths: [
       'app/ui/src/lib/cad/source/sourceAnalysis.ts',
       'app/ui/src/authoring/examples.ts',
-      'app/ui/src/authoring/authoring.test.ts',
+      'app/ui/src/authoring/authoring.integration.test.ts',
     ],
   },
   {
@@ -229,7 +229,7 @@ const references: readonly AuthoringReference[] = [
     kind: 'example',
     summary: 'Executable synthetic fixture with full source, input and expected normalized output.',
     content: `This is a local test fixture, not server data or save preflight.\n\ncalculation.js:\n\n\`\`\`javascript\n${example.source}\`\`\`\n\nInput:\n\n\`\`\`json\n${JSON.stringify(example.input, null, 2)}\n\`\`\`\n\nExpected normalized output:\n\n\`\`\`json\n${JSON.stringify(example.expected, null, 2)}\n\`\`\``,
-    sourcePaths: ['app/ui/src/authoring/examples.ts', 'app/ui/src/authoring/authoring.test.ts'],
+    sourcePaths: ['app/ui/src/authoring/examples.ts', 'app/ui/src/authoring/authoring.integration.test.ts'],
     example: { source: example.source, input: example.input, expected: example.expected },
   })),
   {
@@ -240,7 +240,7 @@ const references: readonly AuthoringReference[] = [
     content: calculationInvalidExamples
       .map(({ id, stage, source }) => `${id}: expected rejection by ${stage}\n\n\`\`\`javascript\n${source}\n\`\`\``)
       .join('\n\n'),
-    sourcePaths: ['app/ui/src/authoring/examples.ts', 'app/ui/src/authoring/authoring.test.ts'],
+    sourcePaths: ['app/ui/src/authoring/examples.ts', 'app/ui/src/authoring/authoring.integration.test.ts'],
   },
 ]
 

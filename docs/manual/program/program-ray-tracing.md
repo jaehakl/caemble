@@ -12,13 +12,13 @@ Catalog의 `ray-tracing`은 미리 정한 표면 순서를 따르지 않고, 광
 
 `<coating>` element를 따로 만들지 마세요. Solver가 canonical `<shell>`의 **각 layer에 대한 물리적 두께**를 판정합니다. 두께가 엄격히 `50 µm` 미만인 layer는 transfer-matrix method(TMM) 박막으로 적응형 처리하고, 인접한 박막 layer는 하나의 multilayer stack으로 계산합니다. 정확히 `50 µm`인 layer와 그보다 두꺼운 layer는 일반 광선–표면 collision으로 추적됩니다.
 
-박막과 체적에 사용할 광학 모델과 계수는 `material.tsx`에 명시합니다. Solver의 지원 모델과 입력 규격은 [Model Catalog](/?help=materials)에서 확인하세요. 주파수 표본 모델은 Hz로 엄격히 증가하는 표본열을 받아 광원 파장의 `frequency = c / wavelength`에서 각 성분을 선형 보간합니다. 표본 범위 밖에서는 가장 가까운 끝점 값을 사용합니다. 복소 굴절률 모델의 부호 및 감쇠 해석은 모델의 관례를 따릅니다.
+박막과 체적에 사용할 광학 모델과 계수는 `material.tsx`에 명시합니다. Solver의 지원 모델과 입력 규격은 [Model Catalog](/doc?help=materials)에서 확인하세요. 주파수 표본 모델은 Hz로 엄격히 증가하는 표본열을 받아 광원 파장의 `frequency = c / wavelength`에서 각 성분을 선형 보간합니다. 표본 범위 밖에서는 가장 가까운 끝점 값을 사용합니다. 복소 굴절률 모델의 부호 및 감쇠 해석은 모델의 관례를 따릅니다.
 
 ### Detector와 ray path
 
 수치 output은 Box 내부의 fluence rate와 radiant flux density입니다. `ray.fluence-rate`는 방향을 합한 스칼라, `ray.radiant-flux-density`는 방향 성분을 가진 벡터를 기록하며 둘 다 Box target과 `gridShape`를 받습니다. 흡수 검출면의 detected power는 실행 observation으로 확인합니다. 경로는 자동 시각화로 포함되므로 outputs나 `recordedData`에 선언하지 않습니다. Task가 반복 실행되면 마지막 성공 invocation의 경로 snapshot을 표시합니다. Catalog의 polyline 계약이 경로 구성 데이터와 표시 방식을 결정합니다. 다른 Solver의 mesh field와도 같은 Viewer에서 선택하거나 Overlay할 수 있으며 Calculation·Analysis·Prediction 입력에는 포함하지 않습니다.
 
-[Catalog 예제에서 Folded Ray-Tracing Bench의 source와 현재 Solver 계약 확인하기](/?help=examples)
+[Catalog 예제에서 Folded Ray-Tracing Bench의 source와 현재 Solver 계약 확인하기](/doc?help=examples)
 
 ### 회절격자 Spectrometer
 
@@ -30,4 +30,4 @@ Examples에서 **Czerny–Turner Spectrometer**를 열면 슬릿, 두 오목거�
 
 검출기는 기준 파장의 +1차 광로에 배치되어 있습니다. 3D Viewer에서 파장별 광선과 diffraction 이벤트, Box Grid의 fluence rate와 radiant flux density를 확인하세요. 거울은 정점 곡률을 초점거리에 맞춘 편평 타원면 오목거울입니다. 격자의 효율과 거울 광학 상수는 교육용 지정값이며, 홈 형상에 따른 편광·파장별 효율, 위상 지연과 회절 한계 분해능은 계산하지 않습니다.
 
-[Catalog 예제에서 Spectrometer의 source와 현재 Solver 계약 확인하기](/?help=examples)
+[Catalog 예제에서 Spectrometer의 source와 현재 Solver 계약 확인하기](/doc?help=examples)

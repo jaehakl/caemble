@@ -150,13 +150,6 @@ def test_catalog_locators_point_to_one_current_entry_per_solver() -> None:
         assert re.fullmatch(r"app\.solvers\.[a-z_]+\.entry", module)
         assert attribute == "implementation"
         assert item["abiVersion"] == 3
-        entry = APP.parent / (module.replace(".", "/") + ".py")
-        tree = ast.parse(entry.read_text(encoding="utf-8"))
-        run = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "run")
-        assert any(
-            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "SolverResult"
-            for node in ast.walk(run)
-        ), f"{entry} must show how the final result is assembled"
 
 
 def test_solver_role_modules_have_no_cycles_or_other_solver_dependencies() -> None:

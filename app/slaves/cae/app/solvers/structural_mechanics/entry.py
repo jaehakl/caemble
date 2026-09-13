@@ -53,7 +53,7 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     ):
         raise ValueError("control input requires a fea.rotor initialization")
     model = await build_geometry_model(invocation)
-    configure_history(model, invocation.config["outputs"])
+    configure_history(model)
     if invocation.cancellation is not None:
         invocation.cancellation.raise_if_cancelled()
     matrices = prepare_matrices(model)

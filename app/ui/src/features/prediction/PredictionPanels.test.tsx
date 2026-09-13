@@ -1,7 +1,8 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { CalculationDataOutput } from '@/api'
-import { PredictionCalculationPane, type PredictionCalculationPaneItem } from './PredictionPanels'
+import { VarsPanel } from '../calculation/VarsPanel'
+import { PredictionVarsPane, PredictionCalculationPane, type PredictionCalculationPaneItem } from './PredictionPanels'
 import { comparePredictionOutput } from './metrics'
 
 vi.mock('@/components/tensor-editor', () => ({
@@ -107,4 +108,47 @@ describe('Prediction calculation result display', () => {
     expect(screen.getByText(/Target ↔ Re-predicted.*MAE 1/)).toBeInTheDocument()
     expect(screen.getByText(/Target ↔ Actual.*MAE 2/)).toBeInTheDocument()
   })
+})
+
+it('keeps shared Vars collapsed and expands Prediction data once without undoing a manual collapse', () => {
+  const schema = { width: { min: 0, max: 10, shape: [] } }
+  const onVariableChange = vi.fn()
+  const { rerender } = render(
+    <VarsPanel
+      candidateSessionKey="candidate"
+      disabled={false}
+      schema={schema}
+      vars={{ width: 2 }}
+      onVariableChange={onVariableChange}
+    />,
+  )
+  expect(screen.getByRole('button', { name: /width/ })).toHaveAttribute('aria-expanded', 'false')
+  const props = {
+    candidateSessionKey: 'candidate',
+    currentExperimentId: null,
+    demos: [],
+    mine: [],
+    direction: 'forward' as const,
+    disabled: false,
+    guideVisible: false,
+    isDemo: false,
+    manageable: true,
+    loadingExperiments: false,
+    schema,
+    samplingRanges: {},
+    resetValues: {},
+    status: 'Ready',
+    updating: false,
+    onDismissGuide: vi.fn(),
+    onExperimentChange: vi.fn(),
+    onSamplingRangeChange: vi.fn(),
+    onVariableChange,
+  }
+  rerender(<PredictionVarsPane {...props} vars={null} />)
+  rerender(<PredictionVarsPane {...props} vars={{ width: 2 }} />)
+  const toggle = screen.getByRole('button', { name: /width/ })
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  fireEvent.click(toggle)
+  rerender(<PredictionVarsPane {...props} vars={{ width: 3 }} />)
+  expect(screen.getByRole('button', { name: /width/ })).toHaveAttribute('aria-expanded', 'false')
 })

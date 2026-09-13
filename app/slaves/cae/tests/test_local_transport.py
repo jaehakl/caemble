@@ -88,6 +88,9 @@ def test_doctor_and_catalog_use_checkout_sources_and_do_not_modify_sqlite():
     assert Path(report["catalogPath"]).resolve() == catalog_path().resolve()
     assert report["runtimeCatalogRevision"] == report["catalogRevision"]
     assert report["dependencies"]["pytest"]["version"] == pytest.__version__
+    for package in ("scipy", "netgen-mesher"):
+        assert report["dependencies"][package]["version"]
+        assert Path(report["dependencies"][package]["modulePath"]).is_file()
     assert all(item["available"] for item in report["dependencies"].values())
     runtime = bridge("catalog", "runtime")
     assert runtime.returncode == 0, runtime.stderr
@@ -98,18 +101,19 @@ def test_doctor_and_catalog_use_checkout_sources_and_do_not_modify_sqlite():
     assert hashlib.sha256(catalog_path().read_bytes()).hexdigest() == before
 
 
-def test_doctor_reports_missing_declared_dependency(monkeypatch):
+@pytest.mark.parametrize("missing", ["websockets", "scipy", "netgen-mesher"])
+def test_doctor_reports_missing_declared_dependency(monkeypatch, missing):
     original_version = local.importlib.metadata.version
 
     def version(package):
-        if package == "websockets":
+        if package == missing:
             raise local.importlib.metadata.PackageNotFoundError(package)
         return original_version(package)
 
     monkeypatch.setattr(local.importlib.metadata, "version", version)
     report = local.doctor()
     assert report["ready"] is False
-    assert report["dependencies"]["websockets"]["available"] is False
+    assert report["dependencies"][missing]["available"] is False
     assert report["dependencies"]["numpy"]["available"] is True
 
 

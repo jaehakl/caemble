@@ -1,3 +1,4 @@
+import { draftNeedsLandingPreservation } from '../experimentLandingPolicy'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { defaultWorkbenchLayoutState, type WorkbenchDraft } from '../types'
 import {
@@ -296,4 +297,40 @@ it('preserves example Calculations through draft storage', async () => {
       experiment: expect.objectContaining({ calculations }),
     }),
   )
+})
+
+it('replaces a pristine Starter on landing but preserves a renamed or edited local draft', () => {
+  const starterBundle = { files: { 'experiment.tsx': 'starter' } }
+  const starter: WorkbenchDraft = {
+    ...draft,
+    experiment: {
+      ...draft.experiment,
+      record: null,
+      name: 'Starter Experiment',
+      baselineBundle: starterBundle,
+      document: { kind: 'experiment', sourceBundle: starterBundle },
+    },
+  }
+  expect(draftNeedsLandingPreservation(starter, starterBundle)).toBe(false)
+  expect(
+    draftNeedsLandingPreservation(
+      {
+        ...starter,
+        experiment: { ...starter.experiment, name: 'My local draft' },
+      },
+      starterBundle,
+    ),
+  ).toBe(true)
+  expect(
+    draftNeedsLandingPreservation(
+      {
+        ...starter,
+        experiment: {
+          ...starter.experiment,
+          document: { kind: 'experiment', sourceBundle: { files: { 'experiment.tsx': 'edited' } } },
+        },
+      },
+      starterBundle,
+    ),
+  ).toBe(true)
 })

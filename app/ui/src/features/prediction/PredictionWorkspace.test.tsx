@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useCallback, useState, type PropsWithChildren } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import type { CalculationDataOutput } from '@/api'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { BrowserBatchCandidates } from '@/features/measurement/buildBatchArtifact'
@@ -9,6 +10,9 @@ import type { CandidateBatchProgress } from '@/features/measurement/useCaeMeasur
 import { PredictionWorkspace, type PredictionWorkspaceCommand } from './PredictionWorkspace'
 
 const mocks = vi.hoisted(() => ({
+  manageable: true,
+  calculateMeasurement: vi.fn(),
+  calculateMissing: () => {},
   calculationSource: 'calculation-source',
   contextFingerprint: 'before',
   forwardOutputs: vi.fn(),
@@ -103,7 +107,20 @@ vi.mock('./PredictionPanels', () => ({
     </section>
   ),
   PredictionDetailsDialog: () => null,
-  PredictionSetupDialog: () => null,
+  PredictionSetupDialog: ({
+    calculateMissingDisabled,
+    onCalculateMissing,
+  }: {
+    calculateMissingDisabled: boolean
+    onCalculateMissing: () => void
+  }) => {
+    mocks.calculateMissing = onCalculateMissing
+    return (
+      <button disabled={calculateMissingDisabled} onClick={onCalculateMissing}>
+        Calculate missing
+      </button>
+    )
+  },
   PredictionVarsPane: ({ onVariableChange }: { onVariableChange: (key: string, value: number) => void }) => (
     <button type="button" onClick={() => onVariableChange('x', 2)}>
       Edit Vars
@@ -142,7 +159,7 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
   const [command, setCommand] = useState<PredictionWorkspaceCommand | null>(null)
   const onChromeStateChange = useCallback(() => undefined, [])
   const workbench = {
-    calculationDataActions: { busy: false, cancel: vi.fn(), calculateMeasurement: vi.fn() },
+    calculationDataActions: { busy: false, cancel: vi.fn(), calculateMeasurement: mocks.calculateMeasurement },
     candidateVars: candidate,
     experiment: { sourceBundle: { files: { 'experiment.tsx': 'export default 1' } } },
     experimentClean: true,
@@ -157,7 +174,7 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
     },
     experimentId: 10,
     experimentIsDemo: false,
-    experimentManageable: true,
+    experimentManageable: mocks.manageable,
     experimentRecord: null,
     measurementActions: {
       busy: false,
@@ -180,13 +197,13 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
           Finish Candidate Evaluation
         </button>
       ) : null}
-      <button type="button" onClick={() => setCommand({ id: Date.now(), type: 'validate' })}>
+      <button type="button" onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'validate' })}>
         Validate
       </button>
       <button type="button" onClick={() => setCandidate({ x: 4 })}>
         Change Candidate
       </button>
-      <button type="button" onClick={() => setCommand({ id: Date.now(), type: 'sample', sampleCount: 3 })}>
+      <button type="button" onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'sample', sampleCount: 3 })}>
         Sample
       </button>
       <PredictionWorkspace
@@ -205,15 +222,19 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
   )
 }
 
-function renderWorkspace(deferCandidateEvaluation = false) {
+async function renderWorkspace(deferCandidateEvaluation = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: PropsWithChildren) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
-  return render(<TestWorkspace deferCandidateEvaluation={deferCandidateEvaluation} />, { wrapper })
+  await act(async () => {
+    render(<TestWorkspace deferCandidateEvaluation={deferCandidateEvaluation} />, { wrapper })
+  })
 }
 
 beforeEach(() => {
+  mocks.manageable = true
+  mocks.calculateMeasurement.mockReset()
   mocks.runCandidates.mockReset()
   mocks.nextSample.mockReset()
   mocks.acceptSample.mockReset()
@@ -279,7 +300,7 @@ describe('Prediction Save & Run snapshot display', () => {
         })
       },
     )
-    renderWorkspace()
+    await renderWorkspace()
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
     fireEvent.click(screen.getByRole('button', { name: 'Sample' }))
     await waitFor(() => expect(mocks.runCandidates).toHaveBeenCalledOnce())
@@ -297,7 +318,7 @@ describe('Prediction Save & Run snapshot display', () => {
       if (scenario === 'invalid') mocks.actual = { ...scalar(18), data: Number.NaN }
       if (scenario === 'source') mocks.actualSource = 'changed-source'
       if (scenario === 'missing') mocks.actual = null
-      renderWorkspace()
+      await renderWorkspace()
       await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
       fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
       await waitFor(() => expect(mocks.saveAndRun).toHaveBeenCalled())
@@ -314,7 +335,7 @@ describe('Prediction Save & Run snapshot display', () => {
     mocks.forwardOutputs
       .mockResolvedValueOnce(predictionResult('forward', 10))
       .mockResolvedValue(predictionResult('forward', 99))
-    renderWorkspace()
+    await renderWorkspace()
 
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
     fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
@@ -342,7 +363,7 @@ describe('Prediction Save & Run snapshot display', () => {
       .mockResolvedValueOnce(predictionResult('forward', 19))
       .mockResolvedValue(predictionResult('forward', 77))
     mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
-    renderWorkspace()
+    await renderWorkspace()
 
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
     fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
@@ -373,7 +394,7 @@ describe('Prediction Save & Run snapshot display', () => {
     repredicted.calculated.values[1] = { ...scalar(19), dtype: 'float32' }
     mocks.forwardOutputs.mockResolvedValueOnce(predictionResult('forward', 10)).mockResolvedValue(repredicted)
     mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
-    renderWorkspace()
+    await renderWorkspace()
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
     fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '19'))
@@ -388,7 +409,7 @@ describe('Prediction Save & Run snapshot display', () => {
       .mockResolvedValueOnce(predictionResult('forward', 10))
       .mockResolvedValue(predictionResult('forward', 19))
     mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
-    renderWorkspace(true)
+    await renderWorkspace(true)
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
     fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
     await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledOnce())
@@ -405,7 +426,7 @@ describe('Prediction Save & Run snapshot display', () => {
       mocks.calculationSource = 'changed-source'
       return { measurementId: 2 }
     })
-    renderWorkspace()
+    await renderWorkspace()
 
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
     fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
@@ -417,4 +438,21 @@ describe('Prediction Save & Run snapshot display', () => {
       expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual-status', 'unavailable'),
     )
   })
+})
+
+it('blocks validation, sampling and missing-data writes without persistent Experiment access', async () => {
+  const denied = vi.spyOn(toast, 'error').mockImplementation(() => 'denied')
+  mocks.manageable = false
+  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+  await renderWorkspace()
+  await screen.findByTestId('calculation-1')
+  expect(screen.getByRole('button', { name: 'Calculate missing' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Sample' }))
+  expect(denied).toHaveBeenCalledTimes(2)
+  for (const call of denied.mock.calls) expect(call[0]).toBe('이 Experiment의 데이터를 변경할 권한이 없습니다.')
+  await act(async () => mocks.calculateMissing())
+  expect(mocks.saveAndRun).not.toHaveBeenCalled()
+  expect(mocks.runCandidates).not.toHaveBeenCalled()
+  expect(mocks.calculateMeasurement).not.toHaveBeenCalled()
 })

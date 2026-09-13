@@ -80,6 +80,10 @@ describe('shared documentation sources', () => {
       for (const match of text.replace(/`[^`\n]+`/g, '').matchAll(/\]\(([^\s)]+)\)/g)) {
         const href = match[1]
         if (/^[a-z][a-z\d+.-]*:/i.test(href)) continue
+        if (href.startsWith('/?help=')) {
+          failures.push(`${file}: obsolete Documentation route ${href}; use /doc?help=`)
+          continue
+        }
         if (href.startsWith('/doc?help=')) {
           const url = new URL(href, 'https://caemble.invalid')
           if (

@@ -1,6 +1,6 @@
 # Primitive 선택과 operation 규칙
 
-표현할 수 있다면 `Box`, `Cylinder`, `Sphere`부터 사용하세요. Primitive는 `@caemble/core`에서 PascalCase로 import하고 operation은 lowercase JSX tag로 작성합니다. 곡선 단면·표면이 실제 요구사항일 때만 `CurvedEdgeCylinder`, `CurvedSurfaceSphere`, `Fiber`를 선택하면 parameter와 mesh 비용을 줄일 수 있습니다. 각 prop의 type, 필수 여부, 기본값, 제약, 기준 원점, surface 의미와 실행 가능한 예제는 [Geometry Catalog](/?help=geometry)가 공식 원본입니다.
+표현할 수 있다면 `Box`, `Cylinder`, `Sphere`부터 사용하세요. Primitive는 `@caemble/core`에서 PascalCase로 import하고 operation은 lowercase JSX tag로 작성합니다. 곡선 단면·표면이 실제 요구사항일 때만 `CurvedEdgeCylinder`, `CurvedSurfaceSphere`, `Fiber`를 선택하면 parameter와 mesh 비용을 줄일 수 있습니다. 각 prop의 type, 필수 여부, 기본값, 제약, 기준 원점, surface 의미와 실행 가능한 예제는 [Geometry Catalog](/doc?help=geometry)가 공식 원본입니다.
 
 | Operation   | child 계약                                              | 핵심 규칙                                                             |
 | ----------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -15,4 +15,4 @@
 
 Boolean child 순서는 source 계약의 일부입니다. ring은 큰 cylinder 하나로 근사하지 말고, 큰 cylinder에서 더 높고 작은 cylinder를 빼서 실제 annular solid를 만드세요. 0 두께, 음수 크기, NaN/Infinity, 퇴화한 축처럼 유효하지 않은 입력은 evaluator가 거부합니다.
 
-Material은 root에서 역할 map으로 주입하고 leaf에서 `body`로 remap합니다. 생략하면 parent map을 상속하고, 명시하면 교체하며, `materials={{}}`는 상속을 지웁니다. 자세한 모델 입력과 역할 계약은 [Material과 Model Parameter](/?help=manual&item=program-materials)을 참고하세요.
+Material은 root에서 역할 map으로 주입하고 leaf에서 `body`로 remap합니다. 생략하면 parent map을 상속하고, 명시하면 교체하며, `materials={{}}`는 상속을 지웁니다. 자세한 모델 입력과 역할 계약은 [Material과 Model Parameter](/doc?help=manual&item=program-materials)을 참고하세요.

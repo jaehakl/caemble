@@ -47,7 +47,6 @@ class StructuralModel:
     physical_node_count: int | None = None
     boundary_regions: dict[str, dict[str, Any]] = field(default_factory=dict)
     cell_regions: dict[str, np.ndarray] = field(default_factory=dict)
-    result_requests: dict[str, Any] = field(default_factory=dict)
 
     @property
     def size(self) -> int:

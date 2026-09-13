@@ -49,6 +49,6 @@ second Catalog or fixture into Markdown.
 
 Run `npm run check:docs` in `app/ui` to check the registry, links, anchors,
 required instruction targets, Markdown extraction, and CLI/web parity. Existing
-authoring tests verify the executable syntax fixtures. Run `npm run check` and
+authoring tests verify the executable syntax fixtures. Run `npm run check:full` and
 `npm run build` before publishing documentation changes; these include the
 documentation check and the independent browser/CLI build boundaries.

@@ -7,7 +7,6 @@ import {
 } from '@/features/viewer/viewer/comparisonSettings'
 import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
 import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
-import { StructuredFieldResult } from '@/features/viewer/viewer/StructuredFieldResult'
 import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
 import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
@@ -416,16 +415,6 @@ function ViewerContent({
             geometryBlockedReason={geometryBlockedReason}
             renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
             recordReference={recordReference}
-          />
-        ) : selectedContract?.visualization.kind === 'structured-field' && selectedContract.visualization.grid ? (
-          <StructuredFieldResult
-            key={selectedView}
-            name={selectedView}
-            contract={selectedContract}
-            rules={recordedRules}
-            data={recordedData}
-            displayUnit={displayUnit}
-            renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
           />
         ) : selectedContract && !['mesh-field', 'polyline'].includes(selectedContract.visualization.kind) ? (
           <ResultTensorView

@@ -6,7 +6,6 @@ from tests.test_box_grid_outputs import grid
 import numpy as np
 import pytest
 
-from app.kernel.api import BundleValue
 from app.kernel.coordinator.contracts import validate_artifact_payload
 from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ArtifactStore
@@ -24,7 +23,7 @@ from app.solvers.structural_mechanics.state import append_history, encode_state,
 def history_case():
     model = StructuralModel(np.array([10, 20, 90]), np.zeros((3, 3)), [], np.array([0, 6, 12]), np.empty(0, dtype=int), np.zeros((3, 6)), identity="selected-history")
     model.masses = [(node, 1., np.zeros((3, 3))) for node in range(3)]
-    configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [90, 10], "scope": "final"}}])
+    configure_history(model)
     solution = initial_solution(model)
     solution.velocity[:, 0] = [.1, .2, .3]
     append_history(model, solution, pitch=.2)
@@ -35,7 +34,7 @@ def history_case():
 
 def test_automatic_history_contains_all_nodes_and_requested_internal_order():
     model, solution, _, _ = history_case()
-    configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [90, 20]}}, {"methodId": "fea.history", "parameters": {"nodeIds": [20, 10]}}])
+    configure_history(model)
     solution.history = {}
     solution.displacement[:, 0] = model.node_ids
     append_history(model, solution)
@@ -63,55 +62,56 @@ def test_window_chunks_restart_replay_and_initial_sample_are_preserved():
     np.testing.assert_array_equal(history_members(model, first)["displacement"], history_members(model, replay)["displacement"])
     assert len(checkpoint["history"]["times"]) == 1
     second = advance_window(invocation, model, read_state(model, encode_state(model, first)), settings, matrices)[0]
-    complete = history_members(model, second, scope="final", complete=True)
+    complete = history_members(model, second)
     np.testing.assert_allclose(complete["times"], [0., .01, .02, .03, .04])
     np.testing.assert_allclose(complete["displacement"][:, :, 0], complete["times"][:, None] * [.1, .2, .3])
     np.testing.assert_allclose(history_members(model, second, scope="latest-window")["times"], [.03, .04])
     np.testing.assert_allclose(complete["pitch"], .2)
 
 
-def test_final_scope_empty_tensors_obey_actual_artifact_and_resource_contract():
-    model, solution, _, _ = history_case()
-    members = history_members(model, solution, [90, 10], "final", complete=False)
-    assert members["times"].shape == (0,)
-    assert members["displacement"].shape == (0, 2, 3)
-    contract = {"resourceKind": "structuredBundle", "members": {}}
-    for name, values in members.items():
-        member = {"dtype": str(values.dtype), "axes": [{"name": "node"}] if name == "nodeIds" else [{"name": "sample"}]}
-        if values.ndim == 3:
-            member.update(axes=[{"name": "sample"}, {"name": "node"}], tensorOrder=1, basis=["x", "y", "z"])
-        contract["members"][name] = member
-    value = BundleValue("caemble.mechanics/history@1", members)
-    validate_artifact_payload(value, contract, "history")
-    store = ResourceStore()
-    try:
-        store.ingest(value)
-    finally:
-        store.close()
+@pytest.mark.parametrize("scope", ["cumulative", "latest-window", "final"])
+def test_box_history_scopes_preserve_accepted_windows_and_cumulative_visualization(scope):
+    model, initial, settings, invocation = history_case()
+    matrices = prepare_matrices(model)
+    first = advance_window(invocation, model, initial, settings, matrices)[0]
+    second = advance_window(invocation, model, read_state(model, encode_state(model, first)), settings, matrices)[0]
+    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    config = {"parameters": {"analysis": "transient"}, "outputs": [{
+        "methodId": "fea.pitch-history", "key": "pitch", "boxGrid": grid(shape=(1, 1, 1)).geometry,
+        "parameters": {"scope": scope},
+    }]}
+    for solution, cumulative, window in (
+        (first, [0., .01, .02], [.01, .02]),
+        (second, [0., .01, .02, .03, .04], [.03, .04]),
+    ):
+        artifacts, _, visuals = build_outputs(config, descriptor, model, solution)
+        expected = cumulative if scope == "cumulative" else window if scope == "latest-window" else cumulative[-1:]
+        value = artifacts["pitch"]
+        assert value["value"].shape == (1, 1, 1, len(expected), 1, 1, 1)
+        np.testing.assert_allclose(value["axes"][3]["ticks"], expected)
+        np.testing.assert_allclose(value["value"], .2)
+        np.testing.assert_allclose(visuals["displacementHistory"].members["times"]["value"], cumulative)
+        np.testing.assert_allclose(
+            visuals["displacementHistory"].members["values"]["value"][:, :, 0],
+            np.asarray(cumulative)[:, None] * [.1, .2, .3],
+        )
 
 
 def test_scalar_mechanical_history_survives_without_requested_node_output():
     model, solution, settings, _ = history_case()
-    configure_history(model, [])
+    configure_history(model)
     solution.history = {}
     append_history(model, solution, pitch=.3)
     assert solution.history["displacement"][0].shape == (1, 3, 3)
     np.testing.assert_allclose(predict_motion(model, solution, settings).members["pitch"], .3)
     saved = encode_state(model, solution)
-    configure_history(model, [{"methodId": "fea.history", "parameters": {"nodeIds": [90]}}])
+    configure_history(model)
     np.testing.assert_array_equal(read_state(model, saved).history["displacement"][0], solution.history["displacement"][0])
 
 
 def test_recorded_scalar_history_retains_physical_time_on_box_axes():
-    """실제 ABI/기록 경계를 통과해도 시간/표면 영역 좌표가 남아야 합니다."""
+    """Preserve Box Grid time and geometry through the artifact/recording boundary."""
     model, solution, _, _ = history_case()
-    target = "experiment.surface.measurement"
-    model.boundary_regions[target] = {
-        "faces": np.empty((0, 3), dtype=int), "nodes": np.array([2, 0]),
-        "weights": np.array([.25, .75]), "area": 1., "rootId": "fixture",
-        "referencePoint": np.zeros(3),
-    }
-    model.result_requests["history"] = {"regions": [target]}
     descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
     config = {"parameters": {"analysis": "static"}, "outputs": [{"methodId": "fea.pitch-history", "key": "history", "boxGrid": grid(shape=(1,1,1)).geometry, "parameters": {"scope": "final"}}]}
     definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.pitch-history")

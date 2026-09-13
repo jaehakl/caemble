@@ -1,8 +1,8 @@
 import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: {
     alias: {
@@ -27,8 +27,9 @@ export default defineConfig({
         url: 'http://localhost/',
       },
     },
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: mode === 'integration' ? ['src/**/*.integration.test.{ts,tsx}'] : ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: [...configDefaults.exclude, ...(mode === 'integration' ? [] : ['src/**/*.integration.test.{ts,tsx}'])],
     restoreMocks: true,
     setupFiles: ['./src/test/setup.ts'],
   },
-})
+}))

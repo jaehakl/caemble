@@ -1,4 +1,6 @@
 // @vitest-environment node
+import type { EvaluatedExperimentSnapshot } from '@/lib/cad/execution'
+import { buildMeasurement } from '@/lib/cad/execution/measurement'
 import path from 'node:path'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { compileCatalogExample, readCatalogExamples } from '../../../scripts/catalog-example-support'
@@ -271,3 +273,64 @@ describe('per-Material Solver model selection', () => {
     ).toThrow(/does not address an applicable/u)
   })
 })
+
+it.each([false, true])(
+  'validates an Output Box through Solver Material roles (physical input: %s)',
+  (physicalInput) => {
+    const solver = catalog.solvers.find((item) => item.name === 'ray-tracing')!
+    const probe = { id: 'output-grid', materialRole: 'body', geometry: null, surfaces: [] }
+    const scene: CadScene = {
+      lengthUnit: 'm',
+      parts: [],
+      geometryGroups: [],
+      surfaceGroups: [],
+      tree: { key: 'root', label: 'root', children: [] },
+    }
+    const experimentScene = scene
+    const taskScene = {
+      ...scene,
+      parts: [probe],
+      geometryGroups: [
+        {
+          id: 'outputGrid',
+          name: 'outputGrid',
+          kind: 'geometry' as const,
+          geometryIds: [probe.id],
+          surfaceIds: [],
+          memberIds: [probe.id],
+          missingMemberIds: [],
+        },
+      ],
+    }
+    const snapshot = {
+      kind: 'experiment',
+      sourceHash: 'output-box',
+      variables: {},
+      varsSchema: {},
+      scene: { roots: experimentScene.parts },
+      taskScenes: { solve: { roots: [probe] } },
+      renderScene: experimentScene,
+      taskRenderScenes: { solve: taskScene },
+      simulationProgram: {
+        tasks: {
+          solve: {
+            kernel: { name: solver.name, version: solver.version },
+            config: {
+              initializations: physicalInput ? [{ methodId: 'ray.domain', target: ['task.geometry.outputGrid'] }] : [],
+            },
+          },
+        },
+      },
+    } as unknown as EvaluatedExperimentSnapshot
+    const materialInput = { ...snapshot, scene: experimentScene, taskScenes: { solve: taskScene } }
+    if (physicalInput) {
+      expect(() => resolveSceneMaterials(materialInput, null, catalog)).toThrow(/requires a Material/u)
+    } else {
+      const resolution = resolveSceneMaterials(materialInput, null, catalog)
+      const measurement = buildMeasurement(snapshot, resolution)
+      expect(measurement.experiment.sourceHash).toBe('output-box')
+      expect(measurement.taskMaterialSnapshots.solve.materials).toEqual({})
+      expect(resolution.warnings).toEqual([])
+    }
+  },
+)

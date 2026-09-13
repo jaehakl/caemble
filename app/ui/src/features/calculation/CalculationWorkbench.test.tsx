@@ -2,11 +2,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { useState } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { CalculationWorkbench, type CalculationWorkbenchProps } from './CalculationWorkbench'
+import { calculationAccessPolicy } from './calculationAccessPolicy'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import * as measurementQueries from '@/features/measurement/queryOptions'
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn(() => true),
   measurement: vi.fn(),
+  measurementRows: [] as { id: number; experiment_id: number; recorded_at: string }[],
   invalidate: vi.fn(),
   refresh: vi.fn(),
   rows: [
@@ -33,7 +36,13 @@ vi.mock('@tanstack/react-query', async (original) => ({
   ...(await original<typeof import('@tanstack/react-query')>()),
   useQueryClient: () => ({}),
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => ({
-    data: { items: queryKey.includes('calculations') ? mocks.rows : [] },
+    data: {
+      items: queryKey.includes('calculations')
+        ? mocks.rows
+        : queryKey.includes('measurements')
+          ? mocks.measurementRows
+          : [],
+    },
     isSuccess: true,
     isPending: false,
     isFetching: false,
@@ -74,8 +83,16 @@ vi.mock('@/features/measurement', () => ({
   ),
 }))
 
-function Harness({ readOnly = false }: { readOnly?: boolean }) {
-  const [selectedId, setSelectedId] = useState<number | null>(3)
+function Harness({
+  readOnly = false,
+  initialSelection = 3,
+  overrides = {},
+}: {
+  readOnly?: boolean
+  initialSelection?: number | null
+  overrides?: Partial<CalculationWorkbenchProps>
+}) {
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelection)
   const props: CalculationWorkbenchProps = {
     authenticated: !readOnly,
     dataReadable: true,
@@ -117,13 +134,14 @@ function Harness({ readOnly = false }: { readOnly?: boolean }) {
   }
   return (
     <TooltipProvider>
-      <CalculationWorkbench {...props} />
+      <CalculationWorkbench {...props} {...overrides} />
     </TooltipProvider>
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.measurementRows = []
   mocks.select.mockReturnValue(true)
 })
 
@@ -183,4 +201,89 @@ it('keeps read-only selection available while disabling editing and deletion', a
   expect(screen.getByRole('button', { name: '새 Calculation' })).toHaveAttribute('aria-disabled', 'true')
   fireEvent.click(screen.getByRole('button', { name: 'First' }))
   expect(screen.getByRole('button', { name: '선택한 Calculation 삭제' })).toBeDisabled()
+})
+
+it.each([
+  ['Demo viewer', true, true, false, true, false],
+  ['Demo admin', true, true, true, true, true],
+  ['owner', true, false, true, true, true],
+  ['unreadable private', false, false, false, false, false],
+] as const)(
+  'applies %s Calculation editing and persistence',
+  async (_label, dataReadable, experimentIsDemo, experimentManageable, editable, persistable) => {
+    const policy = calculationAccessPolicy({ dataReadable, experimentIsDemo, experimentManageable })
+    expect(policy.persistable).toBe(persistable)
+    render(<Harness overrides={{ ...policy, dataReadable }} />)
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(mocks.rows[0].source_code),
+    )
+    const editor = screen.getByRole('textbox', { name: 'Calculation code' })
+    if (editable) {
+      expect(editor).toBeEnabled()
+      fireEvent.change(editor, { target: { value: 'export default function calculate(record) { return 9 }' } })
+    } else {
+      expect(editor).toBeDisabled()
+    }
+    const save = screen.getByRole('button', { name: /^저장/ })
+    if (persistable) expect(save).not.toHaveAttribute('aria-disabled', 'true')
+    else expect(save).toHaveAttribute('aria-disabled', 'true')
+  },
+)
+
+it('waits for restoration, preserves restored selections, and does not default again after clearing', async () => {
+  mocks.measurementRows = [{ id: 9, experiment_id: 2, recorded_at: '2026-01-01' }]
+  const { rerender } = render(
+    <Harness
+      initialSelection={null}
+      overrides={{
+        contextPending: true,
+        measurementSelectionPending: true,
+        measurementId: null,
+      }}
+    />,
+  )
+  expect(mocks.measurement).not.toHaveBeenCalled()
+  expect(mocks.select).not.toHaveBeenCalled()
+  rerender(<Harness overrides={{ selectedCalculationId: 4, measurementId: 8 }} />)
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(mocks.rows[1].source_code),
+  )
+  expect(mocks.measurement).not.toHaveBeenCalled()
+  expect(mocks.select).not.toHaveBeenCalled()
+  rerender(<Harness overrides={{ selectedCalculationId: null, measurementId: null }} />)
+  expect(mocks.measurement).not.toHaveBeenCalled()
+  expect(mocks.select).not.toHaveBeenCalled()
+})
+
+it('selects available defaults only once after pending restoration finishes', async () => {
+  const request = vi.spyOn(measurementQueries, 'measurementsQueryOptions')
+  mocks.measurementRows = [{ id: 9, experiment_id: 2, recorded_at: '2026-01-01' }]
+  const { rerender } = render(
+    <Harness
+      initialSelection={null}
+      overrides={{
+        contextPending: true,
+        measurementSelectionPending: true,
+        measurementId: null,
+      }}
+    />,
+  )
+  expect(mocks.measurement).not.toHaveBeenCalled()
+  rerender(<Harness initialSelection={null} overrides={{ measurementId: null }} />)
+  expect(request).toHaveBeenCalledWith(
+    'public',
+    2,
+    expect.objectContaining({
+      limit: 1,
+      filter: { experiment_id: [2, 2] },
+      null_filter: { recorded_at: 'is_not_null' },
+      sort: ['updated_at', 'desc'],
+    }),
+  )
+  await waitFor(() => expect(mocks.measurement).toHaveBeenCalledExactlyOnceWith(mocks.measurementRows[0]))
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(mocks.rows[0].source_code),
+  )
+  rerender(<Harness initialSelection={null} overrides={{ measurementId: null }} />)
+  expect(mocks.measurement).toHaveBeenCalledOnce()
 })

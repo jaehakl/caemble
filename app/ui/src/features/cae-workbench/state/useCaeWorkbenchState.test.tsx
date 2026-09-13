@@ -392,3 +392,18 @@ describe('Experiment automatic Measurement selection', () => {
     expect(result.current.candidateVars).toEqual({ width: 9 })
   })
 })
+
+it.each([
+  ['Demo owner', firstUser, true, false],
+  ['Demo admin', { ...secondUser, roles: ['admin'] }, true, true],
+  ['ordinary owner', firstUser, false, true],
+  ['other user', secondUser, false, false],
+] as const)('derives persistent Experiment permission for %s', (_label, user, isDemo, manageable) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const wrapper = ({ children }: PropsWithChildren) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+  const { result } = renderHook(() => useCaeWorkbenchState(user, true), { wrapper })
+  act(() => result.current.applyExperiment({ ...savedExperiment(7), isDemo }))
+  expect(result.current.experimentManageable).toBe(manageable)
+})

@@ -70,4 +70,17 @@ describe('Help workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Documentation 홈으로' }))
     expect(screen.getByRole('heading', { name: '하고 싶은 작업에서 시작하세요' })).toBeInTheDocument()
   })
+
+  it('opens a manual Catalog link through the Documentation route', () => {
+    const onNavigate = vi.fn()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HelpWorkspace kind="manual" item="program-task" anchor={null} onNavigate={onNavigate} />
+      </QueryClientProvider>,
+    )
+    const link = screen.getByRole('link', { name: 'Physics Catalog' })
+    expect(link).toHaveAttribute('href', '/doc?help=solvers')
+    fireEvent.click(link)
+    expect(onNavigate).toHaveBeenCalledWith('/doc?help=solvers')
+  })
 })

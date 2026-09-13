@@ -126,7 +126,7 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
   expect(screen.getByLabelText('@visualizations.ray.paths Overlay')).not.toBeDisabled()
 })
 
-it('shows the selected result error instead of an empty structured-field renderer', () => {
+it('shows the selected result error instead of an empty Box Grid renderer', () => {
   render(
     <WorkbenchViewer
       resultContracts={{
@@ -138,9 +138,8 @@ it('shows the selected result error instead of an empty structured-field rendere
           catalogRevision: 'frozen',
           schema: {},
           visualization: {
-            kind: 'structured-field',
+            kind: 'box-grid',
             coordinateSpace: 'experiment',
-            grid: { xyzAxes: [3, 2, 1], sampleAxis: 0, sampleKind: 'frequency', componentAxis: 4 },
           },
         },
       }}

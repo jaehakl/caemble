@@ -95,6 +95,7 @@ def doctor() -> dict[str, Any]:
     for package, module in (
         ("pytest", "pytest"), ("pytest-asyncio", "pytest_asyncio"),
         ("numpy", "numpy"), ("manifold3d", "manifold3d"),
+        ("scipy", "scipy"), ("netgen-mesher", "netgen"),
         ("torch", "torch"), ("ucumvert", "ucumvert"), ("websockets", "websockets"),
         ("caemble-catalog", "caemble_catalog"), ("caemble-runtime-sdk", "sdk"),
     ):

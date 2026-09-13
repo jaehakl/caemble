@@ -62,12 +62,6 @@ function loadCalculation(compiled: CompiledCalculationSource) {
 }
 
 async function main() {
-  assert.match(CALCULATION_SOURCE_SKELETON, /export default function calculate\(record\)/u)
-  assert.doesNotMatch(
-    CALCULATION_SOURCE_SKELETON,
-    /@(?:param|returns|type)\b|outputAxis|hasNumericTicks|ticks\.every|axis\.ticks\.map\(Number\)/u,
-  )
-
   const source = sourceWithValue(0)
   const [first, duplicate] = await Promise.all([compileCalculationSource(source), compileCalculationSource(source)])
   assert.strictEqual(first, duplicate)

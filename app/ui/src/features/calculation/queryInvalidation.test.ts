@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
+import { experimentQueryKeys } from '@/features/experiment/queryKeys'
 import { measurementQueryKeys } from '@/features/measurement/queryKeys'
 import { invalidateCalculationMutation } from './queryInvalidation'
 import { calculationDataQueryKeys, calculationQueryKeys } from './queryKeys'
@@ -8,11 +9,13 @@ describe('Calculation Query invalidation', () => {
   it('invalidates one Experiment dependency family without crossing scope', async () => {
     const client = new QueryClient()
     const targetKeys = [
+      experimentQueryKeys.available('user:first'),
       calculationQueryKeys.lists('user:first', 7),
       calculationDataQueryKeys.scalars('user:first', 7, 21, null),
       measurementQueryKeys.lists('user:first', 7),
     ]
     const untouchedKeys = [
+      experimentQueryKeys.available('user:second'),
       calculationQueryKeys.lists('user:first', 8),
       calculationDataQueryKeys.scalars('user:first', 8, 21, null),
       measurementQueryKeys.lists('user:first', 8),

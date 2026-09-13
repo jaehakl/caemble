@@ -421,8 +421,6 @@ async def build_geometry_model(invocation):
         "sourceNodeIds": [alias[2] for group in aliases for alias in group],
         "surfaceIndices": np.asarray([alias[3] for group in aliases for alias in group], dtype=np.int32),
     }
-    for output in config["outputs"]:
-        model.result_requests[output["key"]] = {"regions": list(output["target"]), **{key: parameter(value) for key, value in output.get("parameters", {}).items()}}
     fingerprint = hashlib.sha256(b"structural-mechanics-model-v2")
     update_fingerprint(fingerprint, (model.points, cells, config, model.provenance, [(e.material, e.root_id) for e in model.elements]))
     model.identity = fingerprint.hexdigest()

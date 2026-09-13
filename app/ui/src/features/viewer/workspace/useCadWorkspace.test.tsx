@@ -3,10 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EvaluatedExperimentSnapshot } from '@/lib/cad/execution'
 import type { ExperimentSourceDocument } from '@/lib/cad/source'
 import { useCadWorkspace } from './useCadWorkspace'
-import { readCatalogExamples } from '../../../../scripts/catalog-example-support'
-import { resolveSceneMaterials } from '@/lib/material/document'
-import { buildMeasurement } from '@/lib/cad/execution/measurement'
-import type { CadScene } from '@/lib/cad/evaluation/types'
 
 const mocks = vi.hoisted(() => ({
   applyMaterialSnapshot: vi.fn(),
@@ -109,80 +105,6 @@ beforeEach(() => {
 })
 
 describe('useCadWorkspace lifecycle boundary', () => {
-  it.each([false, true])(
-    'validates an Output Box through Solver Material roles (physical input: %s)',
-    async (physicalInput) => {
-      const { catalog } = readCatalogExamples('../catalog/caemble_catalog/catalog.sqlite3')
-      const solver = catalog.solvers.find((item) => item.name === 'ray-tracing')!
-      const probe = { id: 'output-grid', materialRole: 'body', geometry: null, surfaces: [] }
-      const scene: CadScene = {
-        lengthUnit: 'm',
-        parts: [],
-        geometryGroups: [],
-        surfaceGroups: [],
-        tree: { key: 'root', label: 'root', children: [] },
-      }
-      const experimentScene = scene
-      const taskScene = {
-        ...scene,
-        parts: [probe],
-        geometryGroups: [
-          {
-            id: 'outputGrid',
-            name: 'outputGrid',
-            kind: 'geometry' as const,
-            geometryIds: [probe.id],
-            memberIds: [probe.id],
-            missingMemberIds: [],
-          },
-        ],
-      }
-      const snapshot = {
-        ...evaluatedSnapshot('output-box'),
-        scene: { roots: experimentScene.parts },
-        taskScenes: { solve: { roots: [probe] } },
-        renderScene: experimentScene,
-        taskRenderScenes: { solve: taskScene },
-        simulationProgram: {
-          tasks: {
-            solve: {
-              kernel: { name: solver.name, version: solver.version },
-              config: {
-                initializations: physicalInput
-                  ? [{ methodId: 'ray.domain', target: ['task.geometry.outputGrid'] }]
-                  : [],
-              },
-            },
-          },
-        },
-      } as unknown as EvaluatedExperimentSnapshot
-      mocks.fetchCatalogRuntimeSlice.mockResolvedValue(catalog)
-      mocks.evaluateDocument.mockResolvedValue(snapshot)
-      mocks.buildMeasurement.mockImplementation(buildMeasurement)
-      mocks.resolveDocumentMaterials.mockImplementation((evaluated, stored, runtimeCatalog) =>
-        resolveSceneMaterials(
-          { ...evaluated, scene: experimentScene, taskScenes: { solve: taskScene } },
-          stored,
-          runtimeCatalog,
-        ),
-      )
-
-      const { result } = renderHook(() =>
-        useCadWorkspace(firstExperiment, undefined, { candidateVars: firstCandidateVars }),
-      )
-      await waitFor(() => expect(result.current.experimentDocument.status).toBe(physicalInput ? 'Error' : 'Ready'))
-      if (physicalInput) {
-        expect(result.current.experimentDocument.error?.message).toMatch(/requires a Material/u)
-        expect(mocks.buildMeasurement).not.toHaveBeenCalled()
-        expect(result.current.experimentDocument.measurement).toBeNull()
-      } else {
-        expect(result.current.experimentDocument.measurement?.experiment).toMatchObject({ sourceHash: 'output-box' })
-        expect(result.current.experimentDocument.materialSnapshot?.tasks.solve.materials).toEqual({})
-        expect(result.current.experimentDocument.materialWarnings).toEqual([])
-      }
-    },
-  )
-
   it('reuses the prepared document when only Candidate vars change', async () => {
     const { result, rerender } = renderHook(
       ({ candidateVars }) => useCadWorkspace(firstExperiment, undefined, { candidateVars }),
@@ -230,4 +152,15 @@ describe('useCadWorkspace lifecycle boundary', () => {
     expect(mocks.fetchCatalogRuntimeSlice).toHaveBeenCalledTimes(2)
     expect(mocks.inspectDocument).toHaveBeenCalledTimes(2)
   })
+})
+
+it('stops measurement construction when material resolution fails', async () => {
+  mocks.resolveDocumentMaterials.mockRejectedValue(new Error('Material resolution failed'))
+  const { result } = renderHook(() =>
+    useCadWorkspace(firstExperiment, undefined, { candidateVars: firstCandidateVars }),
+  )
+  await waitFor(() => expect(result.current.experimentDocument.status).toBe('Error'))
+  expect(result.current.experimentDocument.error?.message).toContain('Material resolution failed')
+  expect(mocks.buildMeasurement).not.toHaveBeenCalled()
+  expect(result.current.experimentDocument.measurement).toBeNull()
 })

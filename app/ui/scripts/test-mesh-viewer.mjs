@@ -113,6 +113,7 @@ try {
   assert.ok(!initial.equals(section), 'A section must change the rendered volume, not just the controls.')
   await page.getByLabel('Displacement field component').selectOption('material')
   assert.equal(await page.getByText('Steel', { exact: true }).count(), 1)
+  await page.getByLabel(/변형 배율/u).selectOption('manual')
   await page.getByLabel('Displacement displacement scale').fill('2')
   const outputDirectory = path.resolve('node_modules/.tmp')
   await mkdir(outputDirectory, { recursive: true })
@@ -175,64 +176,66 @@ try {
     assert.equal(manifest.kind, 'local-cae-result')
     assert.equal(manifest.state, 'succeeded')
     const input = JSON.parse(await readFile(path.resolve(directory, manifest.input), 'utf8'))
-    const schemas = {},
-      records = {}
-    for (const record of manifest.records) {
-      const stored = JSON.parse(await readFile(path.join(directory, record.path), 'utf8'))
-      assert.deepEqual(stored.schema, record.schema)
-      assert.equal(stored.name, record.name)
-      schemas[record.name] = record.schema
-      records[record.name] = stored.value
+    const visualizations = {}
+    for (const entry of manifest.visualizations ?? []) {
+      const stored = JSON.parse(await readFile(path.join(directory, entry.path), 'utf8'))
+      assert.equal(stored.task, entry.task)
+      assert.equal(stored.sequence, entry.sequence)
+      assert.deepEqual(stored.attachments, entry.attachments)
+      const frozen = input.measurement.experiment.simulationProgram.visualizationContracts[entry.task]
       const attachments = new Map(
         await Promise.all(
-          record.attachments.map(async (attachment) => {
-            const bytes = await readFile(path.join(directory, attachment.path))
-            assert.equal(bytes.byteLength, attachment.byteLength)
-            return [attachment.id, bytes]
+          entry.attachments.map(async (attachment) => {
+            const binary = await readFile(path.join(directory, attachment.path))
+            assert.equal(binary.byteLength, attachment.byteLength)
+            return [attachment.id, binary]
           }),
         ),
       )
-      const pending = [stored.value]
-      while (pending.length) {
-        const item = pending.pop()
-        if (item.storage?.kind === 'attachments') {
-          const bytes = Buffer.concat(item.storage.ids.map((id) => attachments.get(id)))
-          assert.equal(bytes.byteLength, item.storage.byteLength)
-          item.storage = { kind: 'base64', data: bytes.toString('base64'), byteLength: bytes.byteLength }
-        } else if (!item.storage) pending.push(...Object.values(item))
+      for (const [name, visual] of Object.entries(stored.visualizations)) {
+        assert.deepEqual(visual.schema, frozen[name].schema)
+        assert.deepEqual(visual.contract, {
+          artifactType: frozen[name].artifactType,
+          visualization: frozen[name].visualization,
+        })
+        const pending = [visual.data]
+        while (pending.length) {
+          const item = pending.pop()
+          if (!item || typeof item !== 'object') continue
+          if (item.storage?.kind === 'attachments') {
+            const bytes = Buffer.concat(item.storage.ids.map((id) => attachments.get(id)))
+            assert.equal(bytes.byteLength, item.storage.byteLength)
+            item.storage = { kind: 'base64', data: bytes.toString('base64'), byteLength: bytes.byteLength }
+          } else if (!item.storage) pending.push(...Object.values(item))
+        }
       }
+      visualizations[entry.task] = stored.visualizations
     }
+    assert.ok(Object.keys(visualizations).length, 'A saved execution must contain automatic visualizations.')
     localResults.push({
-      schemas,
-      records,
-      contracts: input.measurement.experiment.simulationProgram.resultContracts,
+      visualizations,
       variables: input.measurement.experiment.variables,
       sourceHash: manifest.sourceHash,
     })
     await page.reload()
     await page.getByRole('article', { name: 'Displacement mesh field' }).waitFor()
-    const reopened = await page.evaluate(
-      async ({ schemas, records, contracts }) => {
-        const { recordedDataRules, flattenRecordedData } = await import('/src/lib/cad/simulation/recordedData.ts')
-        const { parseRecordedMeshFields } = await import('/src/features/viewer/viewer/meshFields.ts')
-        const parsed = parseRecordedMeshFields(
-          recordedDataRules(schemas, 'local.recorded-data'),
-          flattenRecordedData(schemas, records),
-          contracts,
-        )
-        if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors))
-        window.reopenedMeshFields = parsed.fields
-        return parsed.fields.map(({ label, identity, points, cells, componentCount, quantity }) => ({
-          label,
-          identity,
-          nodes: points.length / 3,
-          cells: cells.length / 4,
-          componentCount,
-          quantity,
-        }))
-      },
-      { schemas, records, contracts: input.measurement.experiment.simulationProgram.resultContracts },
-    )
+    const reopened = await page.evaluate(async (visualizations) => {
+      const { visualizationData } = await import('/src/features/viewer/viewer/visualizationData.ts')
+      const { parseRecordedMeshFields } = await import('/src/features/viewer/viewer/meshFields.ts')
+      const visual = visualizationData(visualizations)
+      if (Object.keys(visual.errors).length) throw new Error(JSON.stringify(visual.errors))
+      const parsed = parseRecordedMeshFields(visual.rules, visual.data, visual.contracts)
+      if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors))
+      window.reopenedMeshFields = parsed.fields
+      return parsed.fields.map(({ label, identity, points, cells, componentCount, quantity }) => ({
+        label,
+        identity,
+        nodes: points.length / 3,
+        cells: cells.length / 4,
+        componentCount,
+        quantity,
+      }))
+    }, visualizations)
     for (const componentCount of [3, 6]) {
       const selected = reopened.find(
         (item) =>
@@ -260,14 +263,12 @@ try {
       'Only Vars may change between the two actual executions.',
     )
     const updates = await page.evaluate(async (results) => {
-      const { recordedDataRules, flattenRecordedData } = await import('/src/lib/cad/simulation/recordedData.ts')
+      const { visualizationData } = await import('/src/features/viewer/viewer/visualizationData.ts')
       const { parseRecordedMeshFields } = await import('/src/features/viewer/viewer/meshFields.ts')
-      window.meshUpdateFields = results.map(({ schemas, records, contracts }) => {
-        const parsed = parseRecordedMeshFields(
-          recordedDataRules(schemas, 'local.recorded-data'),
-          flattenRecordedData(schemas, records),
-          contracts,
-        )
+      window.meshUpdateFields = results.map(({ visualizations }) => {
+        const visual = visualizationData(visualizations)
+        if (Object.keys(visual.errors).length) throw new Error(JSON.stringify(visual.errors))
+        const parsed = parseRecordedMeshFields(visual.rules, visual.data, visual.contracts)
         if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors))
         const field = parsed.fields.find((item) => /displacement/i.test(item.quantity))
         if (!field) throw new Error('A saved displacement Field is required for update verification.')

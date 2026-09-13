@@ -49,8 +49,7 @@ def clock_invocation(duration, time, dt=.005, window=.05):
         "weights": np.array([1.]), "area": 1., "rootId": "clock",
         "referencePoint": np.zeros(3),
     }
-    model.result_requests["history"] = {"regions": ["experiment.surface.clock"]}
-    configure_history(model, config["outputs"])
+    configure_history(model)
     solution = initial_solution(model)
     append_history(model, solution)
     solution.time = time

@@ -102,12 +102,22 @@ it('uses the sole New action to open Templates and removes the old Examples and 
   expect(setDialog).toHaveBeenCalledExactlyOnceWith('experiment-info')
 })
 
-it('disables Experiment Info only when no Experiment is open', () => {
-  const workbench = { ...workbenchStub(), experiment: null } as CaeWorkbenchState
+it.each([
+  ['no Experiment', false, false, false],
+  ['Demo viewer', true, true, false],
+  ['Demo admin', true, true, true],
+] as const)('configures Info and write actions for %s', (_label, hasExperiment, isDemo, manageable) => {
+  const workbench = {
+    ...workbenchStub(),
+    experiment: hasExperiment ? {} : null,
+    experimentClean: true,
+    experimentIsDemo: isDemo,
+    experimentManageable: manageable,
+  } as CaeWorkbenchState
   const { result } = renderHook(() =>
     useCaePageChrome({
       analysisTab: 'explore',
-      authenticated: false,
+      authenticated: true,
       calculationDirty: false,
       calculationSaveState: {} as CalculationSaveState,
       dataReadable: false,
@@ -134,8 +144,9 @@ it('disables Experiment Info only when no Experiment is open', () => {
     }),
   )
 
-  expect(result.current.actions.experimentInfo).toMatchObject({
-    disabled: true,
-    disabledReason: 'Experiment source가 없습니다.',
-  })
+  expect(result.current.actions.experimentInfo.disabled).toBe(!hasExperiment)
+  if (isDemo) {
+    expect(result.current.actions.saveCurrentMeasurement.disabled).toBe(!manageable)
+    expect(result.current.actions.saveAndRunCurrent.disabled).toBe(!manageable)
+  }
 })

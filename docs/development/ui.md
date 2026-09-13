@@ -87,14 +87,43 @@ validate unknown HTTP, storage, WebSocket, and Worker payloads at the boundary.
 
 ## Validation
 
-Run the complete maintainability check with:
+Use the fast checks during normal editing and the full UI/CLI checks before merging:
+
+| Command | Checks |
+| --- | --- |
+| `npm test`, `npm run test:unit` | Unit, component, and documentation tests |
+| `npm run check` | Formatting, lint, dependencies, TypeScript, and fast tests |
+| `npm run test:integration` | Actual compilers, Catalog, Python, and build artifact contracts |
+| `npm run test:browser` | Headless mesh and Box Grid viewers |
+| `npm run check:full` | Fast checks, integration, remaining standalone tests, CLI/client build checks, and browser checks |
+
+Tests needing real compilation or Catalog/Python integration use
+`*.integration.test.ts` (or `.tsx`). Vitest's `integration` mode selects those files;
+the default and watch modes exclude them. Keep mocked component lifecycle tests in
+the fast group. `check:docs` remains available for focused documentation checks;
+`check` already runs that suite once.
+
+Install UI/SDK dependencies as described above. Integration and CLI checks require
+the local Python environments and Catalog. To include the API artifact validator,
+set `CAEMBLE_TEST_API_PYTHON` to the API environment's Python executable:
 
 ```powershell
-npm run check
+$env:CAEMBLE_TEST_API_PYTHON = (Resolve-Path ../api/.venv/Scripts/python.exe).Path
+npm run check:full
 ```
 
-`npm run build` additionally type-checks the application, builds the local SDK,
-and verifies the Calculation bundle.
+Without this variable, the API validator case is explicitly skipped; the remaining
+integration tests still run. Browser checks require Chromium
+(`npm run install:chromium`) and use local fixtures without an API server.
+
+The full check builds the CLI once and shares it between the client-build and CLI
+checks. The individual `test:client-build` and `test:cli` commands build it themselves;
+their `:run` variants assume it has already been built.
+
+`npm run build` additionally builds the local SDK and web/CLI distributions and
+verifies the Calculation bundle. Catalog example and Spectrometer checks remain
+explicit (`test:catalog-examples`, `test:spectrometer`); full Solver/CUDA regression
+is outside the UI/CLI check commands.
 
 The [architecture guide](architecture.md) describes Experiment
 bundle flow. Keep user-facing authoring examples

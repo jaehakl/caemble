@@ -31,9 +31,7 @@ export async function submitArtifact(
   const batch = await batches.create({
     request_id: options.requestId,
     experiment_id: options.experimentId,
-    ...(options.preflight
-      ? { preflight: true, source_bundle: artifact.source_bundle }
-      : {}),
+    ...(options.preflight ? { preflight: true, source_bundle: artifact.source_bundle } : {}),
     experiment_source_hash: artifact.source_hash,
     mode: artifact.mode,
     catalog_revision: artifact.catalog_revision,

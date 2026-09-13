@@ -1,7 +1,5 @@
 """수치 배열을 기존 ABI 값으로 포장한다. 물리량마다 단위를 분리한다."""
 
-import hashlib
-
 import numpy as np
 
 from app.kernel.api import BundleValue, FieldValue, UnstructuredMeshValue
@@ -10,68 +8,20 @@ from .continuum import element_response, integration_points, physical_rotation_v
 from .domain import distribute_resultant, parameter
 
 
-def configure_history(model, outputs):
+def configure_history(model):
     """Accepted physical-node history also supplies the automatic deformation viewer."""
     count = len(model.points) if model.physical_node_count is None else model.physical_node_count
     model.history_nodes = np.arange(count, dtype=int)
 
 
-def _region_history_members(model, solution, regions, scope, complete):
-    """Area-average kinematics and sum reaction resultants for surface regions."""
-    members = {"regionIds": np.asarray(regions, dtype=str)}
-    nodal = {"displacement", "rotation", "velocity", "reaction", "reactionMoment"}
-    stored_nodes = np.arange(len(model.points)) if model.history_nodes is None else model.history_nodes
-    lookup = {int(node): index for index, node in enumerate(stored_nodes)}
-    selections = []
-    for name in regions:
-        region = model.boundary_regions[name]
-        nodes = np.asarray(region["nodes"], dtype=int)
-        columns = np.asarray([lookup[int(node)] for node in nodes], dtype=int)
-        weights = np.asarray(region["weights"], dtype=float)
-        selections.append((region, nodes, columns, weights))
-    chunk_indices = range(len(next(iter(solution.history.values()), ())))
-    if scope == "latest-window" and solution.history:
-        chunk_indices = range(len(next(iter(solution.history.values()))) - 1, len(next(iter(solution.history.values()))))
-    for name, chunks in solution.history.items():
-        if scope == "final" and not complete:
-            shape = (0, len(regions), 3) if name in nodal else (0,)
-            members[name] = np.empty(shape, dtype=float)
-            continue
-        if name not in nodal:
-            chosen = [np.asarray(chunks[index]) for index in chunk_indices]
-            members[name] = np.concatenate(chosen, axis=0)
-            continue
-        values = []
-        for index in chunk_indices:
-            chunk = np.asarray(chunks[index])
-            region_values = []
-            for region, nodes, columns, weights in selections:
-                if name in ("displacement", "rotation", "velocity"):
-                    region_values.append(np.einsum("n,sni->si", weights, chunk[:, columns]))
-                elif name == "reaction":
-                    region_values.append(chunk[:, columns].sum(axis=1))
-                else:
-                    reactions = np.asarray(solution.history["reaction"][index])[:, columns]
-                    translations = np.asarray(solution.history["displacement"][index])[:, columns]
-                    positions = model.points[nodes][None] + translations
-                    reference = np.asarray(region["referencePoint"], dtype=float)
-                    moment = chunk[:, columns].sum(axis=1) + np.cross(positions - reference, reactions).sum(axis=1)
-                    region_values.append(moment)
-            values.append(np.stack(region_values, axis=1))
-        members[name] = np.concatenate(values, axis=0)
-    return members
+def history_members(model, solution, node_ids=None, scope="cumulative"):
+    """Flatten accepted samples; final selects the last sample of this invocation.
 
-
-def history_members(model, solution, node_ids=None, scope="cumulative", complete=True, regions=None):
-    """요청한 범위에서만 이력 조각을 펼쳐 공개 tensor를 만듭니다.
-
-    final은 마지막 연성 구간이 수렴하기 전까지 sample 축 길이가 0입니다.
-    따라서 중간 trial마다 과거 전체 배열을 다시 만드는 비용이 없습니다.
-    latest-window는 최근 구간에서 기록한 표본만, cumulative는 t=0부터의
-    모든 표본을 반환합니다. nodeIds는 배열 열과 실제 모델 절점을 연결합니다.
+    latest-window selects the last accepted chunk. Automatic mesh visualization
+    uses cumulative history independently of the requested Box Grid scope.
     """
-    if regions is not None:
-        return _region_history_members(model, solution, regions, scope, complete)
+    if scope not in ("cumulative", "latest-window", "final"):
+        raise ValueError("history scope must be cumulative, latest-window or final")
     stored_nodes = np.arange(len(model.points)) if model.history_nodes is None else model.history_nodes
     stored_ids = model.node_ids[stored_nodes]
     requested = stored_ids if node_ids is None else np.asarray(node_ids)
@@ -84,13 +34,9 @@ def history_members(model, solution, node_ids=None, scope="cumulative", complete
     members = {"nodeIds": np.asarray(requested, dtype=np.int32)}
     nodal = {"displacement", "rotation", "velocity", "reaction", "reactionMoment"}
     for name, chunks in solution.history.items():
-        if scope == "final" and not complete:
-            shape = (0, len(selection), 3) if name in nodal else (0,)
-            members[name] = np.empty(shape, dtype=float)
-            continue
-        chunks = chunks[-1:] if scope == "latest-window" else chunks
+        chunks = chunks[-1:] if scope in ("latest-window", "final") else chunks
         selected = [np.asarray(chunk)[:, selection] if name in nodal else np.asarray(chunk) for chunk in chunks]
-        members[name] = np.concatenate(selected, axis=0)
+        members[name] = selected[-1][-1:] if scope == "final" else np.concatenate(selected, axis=0)
     return members
 
 
@@ -144,29 +90,18 @@ def physical_support_reactions(model, reaction, displacement):
     return result
 
 
-def _physical_domain(model, selected_elements=None):
-    """Build a physical result mesh, optionally restricted to element rows."""
+def _physical_domain(model):
+    """Build the complete physical mesh for automatic visualization."""
     physical_count = len(model.points) if model.physical_node_count is None else int(model.physical_node_count)
-    selected = None if selected_elements is None else set(map(int, np.asarray(selected_elements).ravel()))
     grouped = {}
     for index, element in enumerate(model.elements):
-        if np.any(element.nodes >= physical_count) or (selected is not None and index not in selected):
+        if np.any(element.nodes >= physical_count):
             continue
         grouped.setdefault(element.kind, []).append((index, element.nodes))
-    if selected is not None and len(selected) != sum(len(entries) for entries in grouped.values()):
-        raise ValueError("result geometry target contains a nonphysical or absent element")
     order = [index for entries in grouped.values() for index, _ in entries]
-    if selected is not None and not order:
-        raise ValueError("result geometry target contains no physical cells")
-    used_nodes = np.arange(physical_count, dtype=int) if selected is None else (
-        np.unique(np.concatenate([nodes for entries in grouped.values() for _, nodes in entries]))
-        if grouped else np.arange(physical_count, dtype=int)
-    )
-    node_map = np.full(physical_count, -1, dtype=int)
-    node_map[used_nodes] = np.arange(len(used_nodes))
     blocks = {}
     for kind, entries in grouped.items():
-        blocks[kind] = node_map[np.asarray([nodes for _, nodes in entries])].astype(np.int32)
+        blocks[kind] = np.asarray([nodes for _, nodes in entries], dtype=np.int32)
     if model.physical_node_count is None:
         for contact in model.contacts:
             if "faces" in contact:
@@ -174,41 +109,21 @@ def _physical_domain(model, selected_elements=None):
         if "contact-tri3" in blocks and not isinstance(blocks["contact-tri3"], np.ndarray):
             blocks["contact-tri3"] = np.asarray(blocks["contact-tri3"], dtype=np.int32)
     if not blocks:
-        blocks["vertex"] = np.arange(len(used_nodes), dtype=np.int32).reshape(-1, 1)
+        blocks["vertex"] = np.arange(physical_count, dtype=np.int32).reshape(-1, 1)
 
     provenance = dict(model.provenance)
-    provenance["physicalNodeCount"] = len(used_nodes)
-    original_faces = np.asarray(model.provenance.get("boundaryFaces", np.empty((0, 3))), dtype=int).reshape(-1, 3)
-    if selected is None:
-        face_indices = np.arange(len(original_faces))
-    else:
-        cell_faces = set()
-        for index in order:
-            nodes = model.elements[index].nodes
-            if len(nodes) == 4:
-                cell_faces.update(tuple(sorted(nodes[choice])) for choice in (
-                    [0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2],
-                ))
-        face_indices = np.asarray([
-            index for index, face in enumerate(original_faces)
-            if tuple(sorted(map(int, face))) in cell_faces
-        ], dtype=int)
-    boundary_faces = original_faces[face_indices]
-    provenance["boundaryFaces"] = (
-        node_map[boundary_faces].astype(np.int32)
-        if len(boundary_faces) else np.empty((0, 3), dtype=np.int32)
-    )
+    provenance["physicalNodeCount"] = physical_count
+    provenance["boundaryFaces"] = np.asarray(
+        model.provenance.get("boundaryFaces", np.empty((0, 3))), dtype=np.int32,
+    ).reshape(-1, 3)
     if "boundaryProvenance" in model.provenance:
         original = model.provenance["boundaryProvenance"]
-        offsets = np.asarray(original["offsets"], dtype=int)
-        groups = [np.arange(offsets[index], offsets[index + 1]) for index in face_indices]
-        aliases = np.concatenate(groups) if groups else np.empty(0, dtype=int)
         provenance["boundaryProvenance"] = {
-            "offsets": np.r_[0, np.cumsum([len(group) for group in groups])].astype(np.int32),
-            "sources": np.asarray(original["sources"])[aliases],
-            "rootIds": np.asarray(original["rootIds"])[aliases],
-            "sourceNodeIds": np.asarray(original["sourceNodeIds"])[aliases],
-            "surfaceIndices": np.asarray(original["surfaceIndices"], dtype=np.int32)[aliases],
+            "offsets": np.asarray(original["offsets"], dtype=np.int32),
+            "sources": np.asarray(original["sources"]),
+            "rootIds": np.asarray(original["rootIds"]),
+            "sourceNodeIds": np.asarray(original["sourceNodeIds"]),
+            "surfaceIndices": np.asarray(original["surfaceIndices"], dtype=np.int32),
         }
     if "cellRegions" in model.provenance:
         original_regions = np.asarray(model.provenance["cellRegions"], dtype=int)[order]
@@ -224,7 +139,7 @@ def _physical_domain(model, selected_elements=None):
     if "supportNodes" in model.provenance:
         supports = np.asarray(model.provenance["supportNodes"], dtype=int)
         supports = supports[(supports >= 0) & (supports < physical_count)]
-        provenance["supportNodes"] = node_map[supports[node_map[supports] >= 0]].astype(np.int32)
+        provenance["supportNodes"] = supports.astype(np.int32)
     if "elementBlocks" in model.provenance:
         element_lookup = {element: index for index, element in enumerate(order)}
         provenance["elementBlocks"] = [
@@ -234,14 +149,9 @@ def _physical_domain(model, selected_elements=None):
             for block in model.provenance["elementBlocks"]
             if any(int(index) in element_lookup for index in block["elementIds"])
         ]
-    identity = model.identity
-    if selected is not None and order != list(range(len(model.elements))):
-        digest = hashlib.sha256(model.identity.encode("utf-8"))
-        digest.update(np.asarray(order, dtype="<i8").tobytes())
-        identity = digest.hexdigest()
     metadata = {
         "provenance": provenance,
-        "nodeIds": model.node_ids[used_nodes],
+        "nodeIds": model.node_ids[:physical_count],
         "nodeSets": model.node_sets,
         "faceSets": model.face_sets,
     }
@@ -254,39 +164,12 @@ def _physical_domain(model, selected_elements=None):
     if model.boundary_regions:
         metadata["boundaryRegions"] = {
             name: np.intersect1d(
-                model.node_ids[np.asarray(region["nodes"], dtype=int)], model.node_ids[used_nodes],
+                model.node_ids[np.asarray(region["nodes"], dtype=int)], model.node_ids[:physical_count],
             )
             for name, region in model.boundary_regions.items()
         }
-    domain = UnstructuredMeshValue(model.points[used_nodes], blocks, "m", identity, metadata)
+    domain = UnstructuredMeshValue(model.points[:physical_count], blocks, "m", model.identity, metadata)
     return domain, order
-
-
-def _region_resultants(model, solution, request):
-    regions = request.get("regions", ())
-    identifiers, references, forces, moments = [], [], [], []
-    current = model.points + solution.displacement[:, :3]
-    reaction = physical_support_reactions(model, solution.reaction, solution.displacement)
-    for name in regions:
-        if name not in model.boundary_regions:
-            raise ValueError(f"result target {name!r} is not a structural surface region")
-        region = model.boundary_regions[name]
-        nodes = np.asarray(region["nodes"], dtype=int)
-        reference = np.asarray(request.get("referencePoint", region["referencePoint"]), dtype=float)
-        nodal_force = reaction[nodes, :3]
-        force = nodal_force.sum(axis=0)
-        moment = reaction[nodes, 3:].sum(axis=0)
-        moment += np.cross(current[nodes] - reference, nodal_force).sum(axis=0)
-        identifiers.append(name)
-        references.append(reference)
-        forces.append(force)
-        moments.append(moment)
-    return {
-        "regionIds": np.asarray(identifiers, dtype=str),
-        "referencePoints": np.asarray(references, dtype=float).reshape(-1, 3),
-        "force": np.asarray(forces, dtype=float).reshape(-1, 3),
-        "moment": np.asarray(moments, dtype=float).reshape(-1, 3),
-    }
 
 
 def _stress_tensor(values):
@@ -360,45 +243,6 @@ def _tet_plane_triangles(reference, displacement, origin, normal):
     return triangles
 
 
-def _section_resultants(model, solution, request):
-    origin = np.asarray(request["origin"], dtype=float)
-    normal = np.asarray(request["normal"], dtype=float)
-    magnitude = np.linalg.norm(normal)
-    if magnitude == 0:
-        raise ValueError("section normal must be nonzero")
-    normal = normal / magnitude
-    reference_point = np.asarray(request.get("referencePoint", origin), dtype=float)
-    regions = request.get("regions", ())
-    identifiers, forces, moments = [], [], []
-    for name in regions:
-        if name not in model.cell_regions:
-            raise ValueError(f"section target {name!r} is not a structural volume region")
-        force, moment = np.zeros(3), np.zeros(3)
-        for element_index in np.asarray(model.cell_regions[name], dtype=int):
-            element = model.elements[int(element_index)]
-            if element.kind != "tet4":
-                continue
-            stress = _tet_stress(model, solution, int(element_index))
-            triangles = _tet_plane_triangles(
-                model.points[element.nodes], solution.displacement[element.nodes, :3], origin, normal,
-            )
-            for triangle in triangles:
-                area_vector = np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0]) / 2
-                traction = stress @ area_vector
-                force += traction
-                moment += np.cross(triangle.mean(axis=0) - reference_point, traction)
-        identifiers.append(name)
-        forces.append(force)
-        moments.append(moment)
-    return {
-        "regionIds": np.asarray(identifiers, dtype=str),
-        "referencePoints": np.tile(reference_point, (len(identifiers), 1)),
-        "normals": np.tile(normal, (len(identifiers), 1)),
-        "force": np.asarray(forces).reshape(-1, 3),
-        "moment": np.asarray(moments).reshape(-1, 3),
-    }
-
-
 def build_outputs(config, descriptor, model, solution, motion=None):
     from app.methods.fields.box_grid import BoxGrid, TetrahedralSampler, pack_box_grid
 
@@ -419,13 +263,7 @@ def build_outputs(config, descriptor, model, solution, motion=None):
         parameters = {key: parameter(value) for key, value in output.get("parameters", {}).items()}
         times, frequencies = [0.0], [0.0]
         scope = parameters.get("scope", "cumulative")
-        if scope not in ("cumulative", "latest-window", "final"):
-            raise ValueError("history scope must be cumulative, latest-window or final")
-        history = history_members(model, solution, model.node_ids[:count],
-                                  "cumulative" if scope == "final" else scope)
-        if scope == "final":
-            history = {name: value if name == "nodeIds" else value[-1:]
-                       for name, value in history.items()}
+        history = history_members(model, solution, model.node_ids[:count], scope)
         aggregate = data["boxGrid"]["sampling"] == "aggregate"
         if aggregate:
             if grid.shape != (1, 1, 1):

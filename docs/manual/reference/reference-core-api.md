@@ -11,4 +11,4 @@
 | `Box` 등          | Geometry TSX       | PascalCase primitive literal alias                                        |
 | `radians`         | Geometry transform | degree number 또는 Vec3를 radian으로 변환                                 |
 
-Geometry element의 실제 tag와 prop syntax는 [Geometry Catalog](/?help=geometry), solver method와 parameter는 [Physics Catalog](/?help=solvers)를 사용하세요. catalog가 declaration과 manifest의 최신 단일 원본입니다.
+Geometry element의 실제 tag와 prop syntax는 [Geometry Catalog](/doc?help=geometry), solver method와 parameter는 [Physics Catalog](/doc?help=solvers)를 사용하세요. catalog가 declaration과 manifest의 최신 단일 원본입니다.
