@@ -96,6 +96,6 @@ export default function calculate(record) {
 }
 ```
 
-Animation 복사는 현재 `frame.phase`(rad) 또는 `frame: { axis: 'time', index: 0 }`를 고정합니다. 진동은 `A*cos(φ+θ)`이며 0 Hz에서는 θ를 0으로 취급합니다. 화살표 보기는 X·Y·Z·벡터 크기 변환식 네 줄을 복사합니다. 원하는 식 하나를 return하거나 중간 변수에 할당하세요.
+Animation 복사는 현재 `frame.timeSeconds`(s) 또는 `frame: { axis: 'time', index: 0 }`를 고정합니다. 공통 시간 진동은 주파수를 Hz로 변환하여 `A_f,c*cos(φ_f,c+2πf t)`로 계산하며 0 Hz는 일정합니다. Frequency sum/mean은 성분별 순간값을 먼저 합성하고, 벡터 크기를 구한 뒤 나머지 축을 집계합니다. mean은 주파수 표본 수로 나눕니다. 다른 집계와 정적 표시는 기존 축소 순서를 유지합니다. 기존 `frame.phase`(rad)도 지원하지만 `timeSeconds`와 함께 지정할 수 없습니다. 화살표 보기는 X·Y·Z·벡터 크기 변환식 네 줄을 복사합니다. 원하는 식 하나를 return하거나 중간 변수에 할당하세요.
 
 Histogram 복사는 채널·성분 축을 제거한 `[x,y,z,time,frequency]` **5차원 중간값**입니다. 순회 축은 길이 1로 보존합니다. 5차원은 그대로 return할 수 없으며 추가 계산으로 0~3차원까지 줄여야 합니다. 모든 변환의 결과는 float64이며 `{ dtype, data, axes }` 형태를 유지합니다. 실행 가능한 예제는 CLI `reference show calculation.example.projection`에서도 확인할 수 있습니다.

@@ -34,7 +34,7 @@ interface BoxGridProjectionOptions {
   readonly representation?: 'amplitude' | 'phase'
   readonly component?: number | 'magnitude'
   readonly reduce?: Partial<Record<BoxGridProjectionAxis, { method: 'sum' | 'mean' | 'min' | 'max' | 'median' | 'std' | 'index'; index?: number }>>
-  readonly frame?: { phase?: number; axis?: 'time' | 'frequency'; index?: number }
+  readonly frame?: { phase?: number; timeSeconds?: number; axis?: 'time' | 'frequency'; index?: number }
 }
 declare const boxGrid: Readonly<{
   project(leaf: CalculationInputLeaf, options: BoxGridProjectionOptions): { readonly dtype: 'float64'; readonly data: BoxGridProjectionData; readonly axes: readonly CalculationAxis[] }

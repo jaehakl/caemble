@@ -101,3 +101,27 @@ export function useComparisonBusy(busy: boolean) {
   )
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }
+
+/** Both panes use the same physical clock, even when their frequency samples differ. */
+export function useComparisonFrequencies(minimum: number, maximum: number) {
+  const comparison = useViewerComparison()
+  const settings = comparison?.settings
+  const prefix = `${comparison?.item ?? ''}:frequencies:`
+  const key = `${prefix}${comparison?.side}`
+  const local = JSON.stringify([minimum, maximum])
+  useLayoutEffect(() => {
+    settings?.set(key, local)
+    return () => settings?.set(key, undefined)
+  }, [settings, key, local])
+  const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
+  const snapshot = useCallback(() => {
+    if (!settings) return local
+    const ranges = ['preview', 'actual'].map((side) => {
+      const value = settings.values.get(`${prefix}${side}`)
+      return typeof value === 'string' ? (JSON.parse(value) as [number, number]) : [0, 0]
+    })
+    const positive = ranges.map(([min]) => min).filter((min) => min > 0)
+    return JSON.stringify([positive.length ? Math.min(...positive) : 0, Math.max(...ranges.map(([, max]) => max))])
+  }, [settings, prefix, local])
+  return JSON.parse(useSyncExternalStore(subscribe, snapshot, snapshot)) as [number, number]
+}

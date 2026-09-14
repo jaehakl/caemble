@@ -196,7 +196,7 @@ function ViewerContent({
             : undefined
   const frameMatches = !frameBlockedReason
   useEffect(() => {
-    if (selectedResult !== undefined || !autoSelectResult || !recordedData || selectionMade.current) return
+    if (selectedResult !== undefined || !autoSelectResult || loading || !recordedData || selectionMade.current) return
     const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
       if (resultErrors[name]) return false
       if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
@@ -212,12 +212,44 @@ function ViewerContent({
           result.visualization.kind === 'box-grid' ||
           (result.visualization.kind === 'structured-field' && result.visualization.grid)),
     )
+    let largestBoxGrid: string | undefined
+    let largestGridCount = 0
+    for (const [name, result] of candidates) {
+      if (result.visualization.kind !== 'box-grid') continue
+      const tensor = recordedData[name]
+      if (!isDataTensor(tensor) || !Array.isArray(tensor.shape)) continue
+      const gridShape = tensor.boxGrid?.gridShape
+      if (
+        !Array.isArray(gridShape) ||
+        gridShape.length !== 3 ||
+        gridShape.some((length, axis) => !Number.isSafeInteger(length) || length <= 0 || length !== tensor.shape[axis])
+      )
+        continue
+      const count = gridShape.reduce((total, length) => total * length, 1)
+      if (Number.isSafeInteger(count) && count > largestGridCount) {
+        largestBoxGrid = name
+        largestGridCount = count
+      }
+    }
     setSelectedView(
-      (spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ??
+      largestBoxGrid ??
+        (spatial.length
+          ? spatial[Math.floor(Math.random() * spatial.length)]
+          : candidates[candidates.length - 1])?.[0] ??
         '',
     )
     selectionMade.current = candidates.length > 0
-  }, [selectedResult, autoSelectResult, recordedData, resultContracts, resultErrors, mesh, polylines, frameMatches])
+  }, [
+    selectedResult,
+    autoSelectResult,
+    loading,
+    recordedData,
+    resultContracts,
+    resultErrors,
+    mesh,
+    polylines,
+    frameMatches,
+  ])
   const geometryBlockedReason =
     frameBlockedReason ??
     (selectedContract && !usesExperimentCoordinates(selectedContract.visualization)

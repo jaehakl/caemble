@@ -1,4 +1,5 @@
 import { assertBoxGridData } from '@/contracts/boxGrid'
+import { convertUcumValue } from '@/lib/cad/model/units'
 import type { CalculationAxis, CalculationInputLeaf } from './types'
 
 export const projectionAxes = ['x', 'y', 'z', 'time', 'frequency'] as const
@@ -12,12 +13,23 @@ export type BoxGridProjectionOptions = Readonly<{
   representation?: 'amplitude' | 'phase'
   component?: number | 'magnitude'
   reduce?: Partial<Record<ProjectionAxis, ProjectionReduction>>
-  frame?: { phase?: number; axis?: 'time' | 'frequency'; index?: number }
+  frame?: { phase?: number; timeSeconds?: number; axis?: 'time' | 'frequency'; index?: number }
 }>
 export type ProjectionData = number | readonly ProjectionData[]
 export type BoxGridProjection = Readonly<{ dtype: 'float64'; data: ProjectionData; axes: readonly CalculationAxis[] }>
 
-/** Channel/component projection precedes reductions, in canonical x/y/z/time/frequency order. */
+export function boxGridFrequenciesHz(leaf: CalculationInputLeaf): number[] {
+  const axis = leaf.axes[4]
+  if (!axis?.unit) throw new Error('공통 시간 진동에는 주파수 단위가 필요합니다.')
+  const scale = convertUcumValue(1, axis.unit, 'Hz', 'Box Grid frequency')
+  return axis.ticks.map((tick) => {
+    const frequency = typeof tick === 'number' ? tick * scale : NaN
+    if (!Number.isFinite(frequency)) throw new Error('주파수는 유한한 Hz 값이어야 합니다.')
+    return frequency
+  })
+}
+
+/** Time synthesis reduces frequency components before magnitude; other reductions retain canonical order. */
 export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProjectionOptions): BoxGridProjection {
   assertBoxGridData(leaf.boxGrid, leaf.shape)
   const kept = options.axes.map((axis) => projectionAxes.indexOf(axis))
@@ -31,6 +43,11 @@ export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProje
   if (representation === 'phase' && (leaf.shape[5] !== 2 || component === 'magnitude'))
     throw new Error('Phase는 진폭·위상 입력의 성분 하나를 선택해야 합니다.')
   const frame = options.frame
+  if (frame?.timeSeconds !== undefined) {
+    if (!Number.isFinite(frame.timeSeconds) || leaf.shape[5] !== 2)
+      throw new Error('공통 시간 진동에는 유한한 시간과 진폭·위상 채널이 필요합니다.')
+    if (frame.phase !== undefined) throw new Error('frame.phase와 timeSeconds는 함께 지정할 수 없습니다.')
+  }
   if (frame?.phase !== undefined && (!Number.isFinite(frame.phase) || leaf.shape[5] !== 2))
     throw new Error('진동 재생에는 유한한 위상과 진폭·위상 채널이 필요합니다.')
   if (frame?.axis !== undefined && !['time', 'frequency'].includes(frame.axis))
@@ -67,6 +84,21 @@ export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProje
   }
   if (leaf.data.length !== leaf.shape.reduce((a, b) => a * b, 1))
     throw new Error('Box Grid 데이터 크기가 shape와 다릅니다.')
+  const evolution =
+    frame?.timeSeconds === undefined
+      ? undefined
+      : boxGridFrequenciesHz(leaf).map((frequency) => {
+          const cycles = frequency * frame.timeSeconds!
+          if (!Number.isFinite(cycles)) throw new Error('주파수와 시간의 곱이 유한한 숫자 범위를 벗어났습니다.')
+          return 2 * Math.PI * (cycles % 1)
+        })
+  const frequencyMethod = options.reduce?.frequency?.method ?? 'mean'
+  const synthesize =
+    evolution !== undefined &&
+    !kept.includes(4) &&
+    !selected.has(4) &&
+    (frequencyMethod === 'sum' || frequencyMethod === 'mean')
+  if (synthesize) lengths[4] = 1
   let values = new Float64Array(lengths.reduce((a, b) => a * b, 1))
   for (let flat = 0; flat < values.length; flat++) {
     let position = flat
@@ -79,14 +111,22 @@ export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProje
     let squared = 0
     for (let c = 0; c < leaf.shape[6]; c++) {
       if (component !== 'magnitude' && c !== component) continue
-      const amplitude = leaf.data[offset + c]
-      const phase = leaf.shape[5] === 2 ? leaf.data[offset + leaf.shape[6] + c] : 0
-      const value =
-        frame?.phase !== undefined
-          ? amplitude * Math.cos(phase + (leaf.axes[4].ticks[indices[4]] === 0 ? 0 : frame.phase))
-          : representation === 'phase'
-            ? phase
-            : amplitude
+      let value = 0
+      const count = synthesize ? leaf.shape[4] : 1
+      for (let f = 0; f < count; f++) {
+        const sampleOffset = offset + f * leaf.shape[5] * leaf.shape[6]
+        const amplitude = leaf.data[sampleOffset + c]
+        const phase = leaf.shape[5] === 2 ? leaf.data[sampleOffset + leaf.shape[6] + c] : 0
+        value +=
+          evolution !== undefined
+            ? amplitude * Math.cos(phase + evolution[synthesize ? f : indices[4]])
+            : frame?.phase !== undefined
+              ? amplitude * Math.cos(phase + (leaf.axes[4].ticks[indices[4]] === 0 ? 0 : frame.phase))
+              : representation === 'phase'
+                ? phase
+                : amplitude
+      }
+      if (synthesize && frequencyMethod === 'mean') value /= count
       if (!Number.isFinite(value)) throw new Error('Box Grid에 유한하지 않은 값이 있습니다.')
       if (component === 'magnitude') squared += value * value
       else values[flat] = value

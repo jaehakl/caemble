@@ -118,6 +118,27 @@ try {
         throw error
       })
   await ready()
+  assert.equal(
+    await page.getByRole('button', { name: '3D Point cloud', exact: true }).getAttribute('aria-pressed'),
+    'true',
+  )
+  assert.equal(await page.getByLabel('표시 축 3', { exact: true }).inputValue(), 'z')
+  assert.equal(await page.getByLabel('성분', { exact: true }).inputValue(), 'magnitude')
+  assert.equal(await page.getByLabel('frequency 집계').inputValue(), 'sum')
+  assert.equal(await page.getByLabel('time 집계').inputValue(), 'mean')
+  assert.equal(await page.getByLabel('Animation 모드').inputValue(), 'oscillation')
+  assert.equal(await page.getByLabel('Animation 프레임').inputValue(), '0')
+  assert.equal(await page.getByRole('button', { name: '재생', exact: true }).getAttribute('aria-pressed'), 'false')
+  assert.equal(await page.getByLabel('Geometry 투명도').inputValue(), '0.5')
+  const playbackButton = page.getByRole('button', { name: '재생', exact: true })
+  const initialButtonStyle = await playbackButton.evaluate((button) => ({
+    background: getComputedStyle(button).backgroundColor,
+    color: getComputedStyle(button).color,
+  }))
+  assert.notEqual(initialButtonStyle.background, 'rgba(0, 0, 0, 0)')
+  assert.notEqual(initialButtonStyle.background, initialButtonStyle.color)
+  await mkdir('node_modules/.tmp/viewer-qa', { recursive: true })
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/default-cloud.png' })
   assert.equal(await page.getByLabel('표시 축 1', { exact: true }).inputValue(), 'x')
   assert.equal(await page.getByLabel('표시 축 2', { exact: true }).inputValue(), 'y')
   assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)
@@ -169,13 +190,96 @@ try {
     [4, 3, 2],
   )
   await page.getByLabel('Animation 모드').selectOption('oscillation')
+  // Exercise mean as an explicit override of the new frequency-sum default.
+  await page.getByLabel('frequency 집계').selectOption('mean')
   await ready()
-  await page.getByLabel('Animation 프레임').fill('90')
-  await ready()
+  assert.equal(await page.getByLabel('재생 구간 (s)').inputValue(), '0.1')
+  const timeLayout = () =>
+    page.evaluate(() => {
+      const time = document.querySelector('[aria-label="Animation 시간"]')
+      return [
+        time,
+        time.lastElementChild,
+        document.querySelector('[aria-label="재생 구간 (s)"]'),
+        document.querySelector('[aria-label="재생 속도"]'),
+      ].map((node) => {
+        const { x, y, width, height } = node.getBoundingClientRect()
+        return { x, y, width, height }
+      })
+    })
+  const stableTimeLayout = await timeLayout()
+  for (const time of [0, 1e-10, 0.00999, 0.01, 0.1]) {
+    await page.getByLabel('Animation 프레임').fill(String(time))
+    await ready()
+    assert.equal(await page.getByLabel('Animation 시간').textContent(), `${time.toExponential(5)}s`)
+    assert.deepEqual(await timeLayout(), stableTimeLayout)
+    assert.equal(await page.getByText('계산 중…', { exact: true }).isVisible(), false)
+  }
+  await page.evaluate(() => {
+    window.loadingFlashes = 0
+    const status = [...document.querySelectorAll('[role="status"] span')].find(
+      (node) => node.textContent.trim() === '계산 중…',
+    )
+    window.loadingObserver = new MutationObserver(() => {
+      if (getComputedStyle(status).visibility === 'visible') window.loadingFlashes++
+    })
+    window.loadingObserver.observe(status, { attributes: true })
+  })
+  const playBounds = await page.getByRole('button', { name: '재생', exact: true }).boundingBox()
   await page.getByRole('button', { name: '재생', exact: true }).click()
-  await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) !== 90)
+  assert.deepEqual(await page.getByRole('button', { name: '일시정지', exact: true }).boundingBox(), playBounds)
+  await page.waitForFunction(() => document.querySelector('[aria-label="Animation 프레임"]').value === '0')
   await page.getByRole('button', { name: '일시정지', exact: true }).click()
   await ready()
+  assert.deepEqual(await timeLayout(), stableTimeLayout)
+  await page.getByRole('button', { name: '공통 시간 진동 수식' }).focus()
+  await page.getByRole('tooltip').waitFor()
+  assert.ok((await page.getByRole('tooltip').textContent()).includes('2πf t'))
+  await page.keyboard.press('Escape')
+  await page.getByLabel('Animation 프레임').fill('0.025')
+  await ready()
+  await page.getByRole('button', { name: '변환 코드 4줄 복사', exact: true }).click()
+  const synthesized = await page.evaluate(async () => {
+    const code = await navigator.clipboard.readText()
+    return { code, outputs: code.split('\n').map(window.executeCopy) }
+  })
+  assert.ok(synthesized.code.includes('"timeSeconds":0.025'))
+  assert.ok(!synthesized.code.includes('"phase":'))
+  const components = synthesized.outputs.slice(0, 3).map((output) => output.data[0][0][0])
+  // The time axis is averaged after per-frequency synthesis; vector magnitude is computed before that average.
+  const expected = await page.evaluate(() => {
+    const components = [0, 0, 0],
+      magnitudes = []
+    for (let t = 0; t < 2; t++) {
+      const vector = [0, 1, 2].map((c) => {
+        let total = 0
+        for (let f = 0; f < 2; f++) {
+          const offset = (t * 2 + f) * 6
+          total +=
+            window.leaf.data[offset + c] * Math.cos(window.leaf.data[offset + 3 + c] + 2 * Math.PI * [0, 10][f] * 0.025)
+        }
+        return total / 2
+      })
+      vector.forEach((value, c) => {
+        components[c] += value / 2
+      })
+      magnitudes.push(Math.hypot(...vector))
+    }
+    return { components, magnitude: (magnitudes[0] + magnitudes[1]) / 2 }
+  })
+  components.forEach((value, c) => assert.ok(Math.abs(value - expected.components[c]) < 1e-10))
+  assert.ok(Math.abs(synthesized.outputs[3].data[0][0][0] - expected.magnitude) < 1e-10)
+  await page.getByRole('button', { name: '재생', exact: true }).click()
+  await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) !== 0.025)
+  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await ready()
+  assert.equal(
+    await page.evaluate(() => {
+      window.loadingObserver.disconnect()
+      return window.loadingFlashes
+    }),
+    0,
+  )
   assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), false)
   await page.getByLabel('Geometry 겹치기').check()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/arrows-overlay.png' })
@@ -225,7 +329,7 @@ try {
   await page.getByLabel('표시 축 2', { exact: true }).selectOption('frequency')
   await ready()
   assert.equal(await page.getByLabel('Geometry 겹치기').isDisabled(), true)
-  await page.getByRole('button', { name: '3D Point cloud', exact: true }).click()
+  await page.getByLabel('표시 축 2', { exact: true }).selectOption('y')
   await ready()
   assert.equal(await page.getByLabel('Geometry 겹치기').isEnabled(), true)
   assert.equal(await page.getByLabel('Geometry 겹치기').isChecked(), true)

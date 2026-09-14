@@ -1,7 +1,14 @@
 import { materialVarsHash } from '@/lib/material/resolution'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import { WorkbenchViewer } from './WorkbenchViewer'
+import { WorkbenchViewer, type WorkbenchViewerProps } from './WorkbenchViewer'
+import type { DataTensor } from '@/lib/cad/model'
+import { calculationExampleInput } from '@/authoring/examples'
+import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
+
+vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
+  BoxGridResult: ({ name }: { name: string }) => <div>Box Grid {name}</div>,
+}))
 
 vi.mock('@/features/viewer/viewer/CadViewer', () => ({ default: () => <div>Geometry preview</div> }))
 vi.mock('@/features/viewer/viewer/MeshFieldResult', () => ({
@@ -32,6 +39,97 @@ vi.mock('@/features/viewer/viewer/meshFields', () => ({
     labels: ['displacement'],
   }),
 }))
+
+function gridSelectionProps(grids: Record<string, readonly [number, number, number]>) {
+  const recordedData: Record<string, DataTensor> = {}
+  const resultContracts: Record<string, NonNullable<WorkbenchViewerProps['resultContracts']>[string]> = {}
+  for (const [name, gridShape] of Object.entries(grids)) {
+    const shape = [...gridShape, 1, 1, 1, 1]
+    recordedData[name] = {
+      shape,
+      boxGrid: { ...calculationExampleInput.signal.boxGrid, gridShape },
+      storage: { kind: 'inline', value: varsTensorFromFlat(Array(shape.reduce((a, b) => a * b, 1)).fill(0), shape) },
+    }
+    resultContracts[name] = {
+      task: 'wave',
+      output: name,
+      solver: { name: 'fixture', version: '1' },
+      artifactType: 'fixture@1',
+      catalogRevision: 'frozen',
+      schema: {},
+      visualization: { kind: 'box-grid' },
+    }
+  }
+  return {
+    experiment: null,
+    experimentDocument: {} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument'],
+    onFindSelectionSource: vi.fn(),
+    onSelectionQueryChange: vi.fn(),
+    onSelectionSourcePathsChange: vi.fn(),
+    selectionQuery: null,
+    selectionSourceStatus: {},
+    viewerExpanded: false,
+    autoSelectResult: true,
+    recordedData,
+    resultContracts,
+  }
+}
+
+it('prefers spatial grid count over tensor size, physical volume and non-grid outputs without Geometry', () => {
+  const props = gridSelectionProps({ small: [2, 2, 1], largest: [3, 3, 1] })
+  const small = props.recordedData.small
+  const shape = [2, 2, 1, 10, 10, 1, 1]
+  props.recordedData.small = {
+    ...small,
+    shape,
+    boxGrid: { ...small.boxGrid!, size: [100, 100, 100] },
+    storage: { kind: 'inline', value: varsTensorFromFlat(Array(400).fill(0), shape) },
+  }
+  props.resultContracts.mesh = { ...props.resultContracts.small, visualization: { kind: 'mesh-field' } }
+  render(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('largest')
+})
+
+it('breaks equal grid counts by existing output order', () => {
+  render(<WorkbenchViewer {...gridSelectionProps({ first: [2, 3, 1], second: [3, 1, 2] })} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('first')
+})
+
+it('excludes errors, missing data and invalid grid dimensions from the preference', () => {
+  const props = gridSelectionProps({ valid: [2, 2, 1], failed: [4, 4, 4], missing: [5, 5, 5], invalid: [3, 3, 3] })
+  delete props.recordedData.missing
+  const invalid = props.recordedData.invalid
+  props.recordedData.invalid = { ...invalid, boxGrid: { ...invalid.boxGrid!, gridShape: [3, 0, 3] } }
+  render(<WorkbenchViewer {...props} resultErrors={{ failed: 'Failed' }} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('valid')
+})
+
+it('waits for loading to finish and keeps the chosen result through later updates and manual selection', () => {
+  const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
+  const view = render(<WorkbenchViewer {...props} recordedData={{ small: props.recordedData.small }} loading />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  view.rerender(<WorkbenchViewer {...props} loading />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  view.rerender(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+  const newer = gridSelectionProps({ small: [5, 5, 5], large: [3, 3, 3] })
+  view.rerender(<WorkbenchViewer {...newer} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'small' } })
+  view.rerender(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+})
+
+it('preserves external selection and manual choices made during loading', () => {
+  const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
+  const view = render(<WorkbenchViewer {...props} selectedResult="small" />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+  view.unmount()
+  const manual = render(<WorkbenchViewer {...props} loading />)
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'small' } })
+  manual.rerender(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+})
 
 it('shows stored mesh results centrally, permits Geometry review, and displays download progress', () => {
   render(

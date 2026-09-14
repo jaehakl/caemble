@@ -20,15 +20,24 @@ vi.mock('./ScalarPlot', () => ({
 vi.mock('./PointCloudPlot', () => ({ PlotProbe: () => null }))
 vi.mock('./JscadViewer', () => ({ default: () => <div>3D scene</div> }))
 
-function fixture(name: string, scale: number, times = 3) {
-  const shape = [2, 2, 1, times, 2, 1, 2]
+function restoredSettings() {
+  const settings = createComparisonSettings()
+  settings.set('signal:box.kind', 'heatmap')
+  settings.set('signal:box.axes', ['time', 'x'])
+  settings.set('signal:box.reduce', { frequency: { method: 'mean' } })
+  settings.set('signal:box.animation', 'off')
+  return settings
+}
+
+function fixture(name: string, scale: number, times = 3, frequencies?: readonly number[], componentCount = 2) {
+  const shape = [2, 2, 1, times, frequencies?.length ?? 2, frequencies ? 2 : 1, componentCount]
   const axisNames = ['x', 'y', 'z', 'time', 'frequency', 'amplitudePhase', 'component']
   const grid: BoxGridData = {
     version: 1,
     sampling: 'point',
-    components: ['a', 'b'],
-    channels: ['value'],
-    channelUnits: ['m'],
+    components: componentCount === 3 ? ['x', 'y', 'z'] : componentCount === 1 ? ['value'] : ['a', 'b'],
+    channels: frequencies ? ['amplitude', 'phase'] : ['value'],
+    channelUnits: frequencies ? ['m', 'rad'] : ['m'],
     origin: [0, 0, 0],
     size: [1, 1, 1],
     rotation: [
@@ -41,32 +50,31 @@ function fixture(name: string, scale: number, times = 3) {
     source: 'task',
     rootId: 'probe',
   }
-  const rules: RecordedDataRule[] = [
-    {
-      label: name,
-      methodId: 'stored',
-      parameters: {},
-      target: [],
-      result: {
-        dtype: 'float64',
-        quantityKind: 'Length',
-        unit: 'm',
-        boxGrid: grid,
-        axes: axisNames.map((name) => ({ name })),
-      },
-    },
-  ]
+  const result: RecordedDataRule['result'] & { tensorOrder: number } = {
+    dtype: 'float64',
+    quantityKind: 'Length',
+    tensorOrder: componentCount === 3 ? 1 : 0,
+    unit: 'm',
+    boxGrid: grid,
+    axes: axisNames.map((name) => (name === 'frequency' ? { name, unit: 'Hz', quantityKind: 'Frequency' } : { name })),
+  }
+  const rules: RecordedDataRule[] = [{ label: name, methodId: 'stored', parameters: {}, target: [], result }]
   const data: RecordedData = {
     [name]: {
       shape,
       axes: shape.map((length, axis) => ({
-        ticks: Array.from({ length }, (_, index) => (axis < 3 ? (index + 0.5) / length : index)),
+        ticks:
+          axis === 4 && frequencies
+            ? [...frequencies]
+            : Array.from({ length }, (_, index) => (axis < 3 ? (index + 0.5) / length : index)),
       })),
       boxGrid: grid,
       storage: {
         kind: 'inline',
         value: varsTensorFromFlat(
-          Array.from({ length: shape.reduce((a, b) => a * b, 1) }, (_, index) => scale * (index + 1)),
+          Array.from({ length: shape.reduce((a, b) => a * b, 1) }, (_, index) =>
+            frequencies ? (Math.floor(index / componentCount) % 2 ? 0 : scale) : scale * (index + 1),
+          ),
           shape,
         ),
       },
@@ -82,6 +90,8 @@ function Pair({
   times = 3,
   visible = true,
   suspended = false,
+  frequencies,
+  componentCount = 2,
 }: {
   settings: ComparisonSettings
   name?: string
@@ -89,9 +99,17 @@ function Pair({
   times?: number
   visible?: boolean
   suspended?: boolean
+  componentCount?: number
+  frequencies?: readonly [readonly number[], readonly number[]]
 }) {
   const [host, setHost] = useState<HTMLDivElement | null>(null)
-  const input = useMemo(() => [fixture(name, scale, times), fixture(name, scale * 10, times)], [name, scale, times])
+  const input = useMemo(
+    () => [
+      fixture(name, scale, times, frequencies?.[0], componentCount),
+      fixture(name, scale * 10, times, frequencies?.[1], componentCount),
+    ],
+    [name, scale, times, frequencies, componentCount],
+  )
   const contexts = useMemo(
     () =>
       ['preview', 'actual'].map((side): ViewerComparison => ({
@@ -145,8 +163,166 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+it.each([
+  { label: 'complex vector', frequencies: [1, 2], componentCount: 3, animation: 'oscillation', component: 'magnitude' },
+  { label: 'complex scalar', frequencies: [1, 2], componentCount: 1, animation: 'oscillation', component: 0 },
+  { label: 'real scalar', frequencies: undefined, componentCount: 1, animation: 'off', component: 0 },
+  { label: 'DC vector', frequencies: [0], componentCount: 3, animation: 'off', component: 'magnitude' },
+])(
+  'opens $label with XYZ points, frequency sum and no autoplay',
+  async ({ frequencies, componentCount, animation, component }) => {
+    const settings = createComparisonSettings()
+    render(
+      <Pair
+        settings={settings}
+        times={1}
+        frequencies={frequencies ? [frequencies, frequencies] : undefined}
+        componentCount={componentCount}
+      />,
+    )
+    await waitFor(() => expect(settings.values.get('busy:actual')).toBe(false))
+    expect(settings.values.get('signal:box.kind')).toBe('cloud')
+    expect(settings.values.get('signal:box.axes')).toEqual(['x', 'y', 'z'])
+    expect(settings.values.get('signal:box.reduce')).toEqual({ frequency: { method: 'sum' } })
+    expect(settings.values.get('signal:box.component')).toBe(component)
+    expect(settings.values.get('signal:box.animation')).toBe(animation)
+    expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
+    expect(settings.values.get('signal:box.playing')).toBe(false)
+    expect(settings.values.get('signal:box.overlay')).toBe(true)
+    expect(settings.values.get('signal:box.geometryOpacity')).toBe(0.5)
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
+  },
+)
+
+it('shows loading for initial and changed views but keeps frame calculations visually quiet', async () => {
+  const pending: (() => void)[] = []
+  vi.stubGlobal(
+    'Worker',
+    class {
+      onmessage: ((event: { data: unknown }) => void) | null = null
+      postMessage(request: BoxGridViewRequest) {
+        pending.push(() => this.onmessage?.({ data: { result: calculateBoxGridView(request) } }))
+      }
+      terminate() {
+        this.onmessage = null
+      }
+    },
+  )
+  const settings = restoredSettings()
+  const frequencies = [
+    [1, 2],
+    [4, 8],
+  ] as const
+  const view = render(<Pair settings={settings} times={1} frequencies={frequencies} />)
+  const complete = async () => {
+    await act(async () => {
+      pending.splice(0).forEach((finish) => finish())
+    })
+  }
+  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  await complete()
+  fireEvent.change(screen.getByLabelText('Animation 모드'), { target: { value: 'oscillation' } })
+  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  await complete()
+  fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
+  expect(settings.values.get('busy:actual')).toBe(true)
+  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'true'))
+  expect(screen.getByLabelText('Animation 시간')).toHaveTextContent('1.25000e-1s')
+  await complete()
+  fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
+  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  await complete()
+  view.rerender(<Pair settings={settings} times={1} frequencies={frequencies} scale={2} />)
+  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  await complete()
+})
+
+it('synthesizes different frequency grids at one shared time and uses their combined playback range', async () => {
+  const settings = restoredSettings()
+  const frequencies = [
+    [1, 2],
+    [4, 8],
+  ] as const
+  const view = render(<Pair settings={settings} times={1} frequencies={frequencies} />)
+  await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
+  fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
+  fireEvent.change(screen.getByLabelText('Animation 모드'), { target: { value: 'oscillation' } })
+  await waitFor(() => expect(settings.values.get('busy:actual')).toBe(false))
+  expect(screen.getByLabelText('재생 구간 (s)')).toHaveValue(1)
+  fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
+  await waitFor(() => {
+    const plots = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).plot)
+    expect(plots[0].values[0]).toBeCloseTo(Math.SQRT1_2 / 2)
+    expect(plots[1].values[0]).toBeCloseTo(0)
+  })
+  vi.useFakeTimers()
+  fireEvent.click(screen.getByText('재생', { selector: 'button' }))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(100)
+  })
+  expect(settings.values.get('signal:box.timeSeconds')).toBeCloseTo(0.125 + 1 / (20 * 8))
+  view.rerender(<Pair settings={settings} times={1} frequencies={frequencies} suspended />)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(500)
+  })
+  expect(settings.values.get('signal:box.timeSeconds')).toBeCloseTo(0.13125)
+  view.rerender(<Pair settings={settings} times={1} frequencies={frequencies} />)
+  fireEvent.change(screen.getByLabelText('재생 구간 (s)'), { target: { value: '0.01' } })
+  expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
+  expect(settings.values.get('signal:box.playing')).toBe(false)
+  fireEvent.change(screen.getByLabelText('재생 속도'), { target: { value: '4' } })
+  await act(async () => {})
+  fireEvent.click(screen.getByText('재생', { selector: 'button' }))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25)
+  })
+  expect(settings.values.get('signal:box.timeSeconds')).toBeCloseTo(0.00625)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25)
+  })
+  expect(settings.values.get('signal:box.timeSeconds')).toBe(0.01)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25)
+  })
+  expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
+  fireEvent.click(screen.getByLabelText('반복'))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25)
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(25)
+  })
+  expect(settings.values.get('signal:box.timeSeconds')).toBe(0.01)
+  expect(settings.values.get('signal:box.playing')).toBe(false)
+  fireEvent.change(screen.getByLabelText('frequency 집계'), { target: { value: 'index' } })
+  expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
+  expect(screen.getByLabelText('재생 구간 (s)')).toHaveValue(1)
+  fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.1' } })
+  fireEvent.change(screen.getByLabelText('frequency index'), { target: { value: '1' } })
+  expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
+  expect(screen.getByLabelText('재생 구간 (s)')).toHaveValue(0.5)
+})
+
+it('disables common-time playback when the selected frequency is DC in both panes', async () => {
+  const settings = restoredSettings()
+  render(
+    <Pair
+      settings={settings}
+      times={1}
+      frequencies={[
+        [0, 1],
+        [0, 2],
+      ]}
+    />,
+  )
+  await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
+  expect(screen.getByRole('option', { name: '진동 · 공통 시간' })).not.toBeDisabled()
+  fireEvent.change(screen.getByLabelText('frequency 집계'), { target: { value: 'index' } })
+  await waitFor(() => expect(screen.getByRole('option', { name: '진동 · 공통 시간' })).toBeDisabled())
+})
+
 it('shares one toolbar, retains settings through replacement and remount, and computes independent automatic ranges', async () => {
-  const settings = createComparisonSettings()
+  const settings = restoredSettings()
   const view = render(<Pair settings={settings} />)
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
   expect(screen.getAllByLabelText('시각화 도구모음')).toHaveLength(1)
@@ -174,7 +350,7 @@ it('shares one toolbar, retains settings through replacement and remount, and co
 })
 
 it('keeps an out-of-range frame unchanged and resumes the same settings when compatible data returns', async () => {
-  const settings = createComparisonSettings()
+  const settings = restoredSettings()
   const view = render(<Pair settings={settings} />)
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
   fireEvent.change(screen.getByLabelText('표시 축 1'), { target: { value: 'y' } })
@@ -190,7 +366,7 @@ it('keeps an out-of-range frame unchanged and resumes the same settings when com
 })
 
 it('advances shared playback only once and pauses without resetting during refresh', async () => {
-  const settings = createComparisonSettings()
+  const settings = restoredSettings()
   const view = render(<Pair settings={settings} />)
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
   fireEvent.change(screen.getByLabelText('표시 축 1'), { target: { value: 'y' } })
@@ -243,7 +419,7 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
       },
     },
     comparison: {
-      settings: createComparisonSettings(),
+      settings: restoredSettings(),
       item: 'signal',
       side: 'actual',
       controlsHost: screen.getByTestId('toolbar-host'),

@@ -1,10 +1,19 @@
-import { useComparisonBusy, useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
+import {
+  useComparisonBusy,
+  useComparisonFrequencies,
+  useViewerComparison,
+  useViewerSetting,
+  ViewerControls,
+} from './comparisonSettings'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { Pause, Play } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
 import {
+  boxGridFrequenciesHz,
   projectionAxes,
   projectionCode,
   type BoxGridProjectionOptions,
@@ -108,23 +117,34 @@ function BoxGridControls({
       [...projectionAxes].sort((a, b) => leaf.shape[projectionAxes.indexOf(b)] - leaf.shape[projectionAxes.indexOf(a)]),
     [leaf],
   )
-  const [kind, setKind] = useViewerSetting<PlotKind>('box.kind', 'heatmap')
-  const [axes, setAxes] = useViewerSetting<ProjectionAxis[]>('box.axes', longest.slice(0, 2))
+  const [kind, setKind] = useViewerSetting<PlotKind>('box.kind', 'cloud')
+  const [axes, setAxes] = useViewerSetting<ProjectionAxis[]>('box.axes', ['x', 'y', 'z'])
   const [representation, setRepresentation] = useViewerSetting<'amplitude' | 'phase'>('box.representation', 'amplitude')
   const [component, setComponent] = useViewerSetting<number | 'magnitude' | 'arrows'>(
     'box.component',
     leaf.shape[6] === 1 ? 0 : 'magnitude',
   )
-  const [reduce, setReduce] = useViewerSetting<Partial<Record<ProjectionAxis, ProjectionReduction>>>('box.reduce', {})
+  const [reduce, setReduce] = useViewerSetting<Partial<Record<ProjectionAxis, ProjectionReduction>>>('box.reduce', {
+    frequency: { method: 'sum' },
+  })
   const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
-  const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.8)
+  const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
   const [bins, setBins] = useViewerSetting<number | undefined>('box.bins', undefined)
   const [animation, setAnimation] = useViewerSetting<'off' | 'oscillation' | 'time' | 'frequency'>(
     'box.animation',
-    'off',
+    () => {
+      if (leaf.shape[5] !== 2) return 'off'
+      try {
+        const frequencies = boxGridFrequenciesHz(leaf)
+        return frequencies.some((frequency) => frequency > 0) ? 'oscillation' : 'off'
+      } catch {
+        return 'off'
+      }
+    },
   )
-  const [phase, setPhase] = useViewerSetting('box.phase', 0),
+  const [timeSeconds, setTimeSeconds] = useViewerSetting('box.timeSeconds', 0),
     [frameIndex, setFrameIndex] = useViewerSetting('box.frameIndex', 0)
+  const [durationOverride, setDurationOverride] = useViewerSetting<number | null>('box.durationSeconds', null)
   const [playing, setPlaying] = useViewerSetting('box.playing', false),
     [repeat, setRepeat] = useViewerSetting('box.repeat', true),
     [speed, setSpeed] = useViewerSetting('box.speed', 1)
@@ -140,9 +160,50 @@ function BoxGridControls({
   const actualComponent =
     component === 'arrows' ? 'magnitude' : representation === 'phase' && component === 'magnitude' ? 0 : component
   const effectiveAxes = kind === 'histogram' ? [...projectionAxes] : axes
+  const frequencyIndex =
+    !effectiveAxes.includes('frequency') && reduce.frequency?.method === 'index' ? reduce.frequency.index : undefined
+  const frequencyInfo = useMemo(() => {
+    try {
+      if (leaf.shape[5] !== 2) throw new Error('진동 재생에는 진폭·위상 채널이 필요합니다.')
+      const frequencies = boxGridFrequenciesHz(leaf)
+      if (
+        frequencyIndex !== undefined &&
+        (!Number.isInteger(frequencyIndex) || frequencyIndex < 0 || frequencyIndex >= frequencies.length)
+      )
+        throw new Error('frequency index가 범위를 벗어났습니다.')
+      let minimum = Infinity,
+        maximum = 0
+      for (const frequency of frequencyIndex === undefined ? frequencies : [frequencies[frequencyIndex]]) {
+        if (frequency > 0) minimum = Math.min(minimum, frequency)
+        maximum = Math.max(maximum, Math.abs(frequency))
+      }
+      return { minimum: minimum === Infinity ? 0 : minimum, maximum, error: '' }
+    } catch (error) {
+      return { minimum: 0, maximum: 0, error: error instanceof Error ? error.message : String(error) }
+    }
+  }, [leaf, frequencyIndex])
+  const [minimumFrequency, maximumFrequency] = useComparisonFrequencies(frequencyInfo.minimum, frequencyInfo.maximum)
+  const durationSeconds = durationOverride ?? (minimumFrequency > 0 ? 1 / minimumFrequency : 1)
+  const timeStep = maximumFrequency > 0 ? 1 / maximumFrequency / 20 : 0
+  const oscillationError =
+    frequencyInfo.error ||
+    (minimumFrequency <= 0 ? '선택된 양의 주파수가 없어 진동을 재생할 수 없습니다.' : '') ||
+    (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || timeStep <= 0
+      ? '재생 시간 범위를 표현할 수 없습니다.'
+      : '')
+  const frequencySelection = JSON.stringify([effectiveAxes.includes('frequency'), reduce.frequency])
+  const previousFrequencySelection = useRef(frequencySelection)
+  useEffect(() => {
+    if (previousFrequencySelection.current === frequencySelection) return
+    previousFrequencySelection.current = frequencySelection
+    if (comparison && !comparison.controlsOwner) return
+    setPlaying(false)
+    setTimeSeconds(0)
+    setDurationOverride(null)
+  }, [frequencySelection, comparison, setPlaying, setTimeSeconds, setDurationOverride])
   const frame =
     animation === 'oscillation'
-      ? { phase: (phase * Math.PI) / 180 }
+      ? { timeSeconds }
       : animation === 'time' || animation === 'frequency'
         ? {
             axis: animation,
@@ -168,29 +229,39 @@ function BoxGridControls({
   })
   const requestKey = `${optionKey}:${component === 'arrows' && arrowsAllowed}`
   const [completedKey, setCompletedKey] = useState('')
+  const viewKey = `${rangeKey}:${component === 'arrows' && arrowsAllowed}`
+  const [completedView, setCompletedView] = useState<{ leaf: CalculationInputLeaf; key: string }>()
+  const frameUpdate = animation !== 'off' && result && completedView?.leaf === leaf && completedView.key === viewKey
+  const showCalculationStatus = busy && !frameUpdate
   const invalidSetting =
-    comparison &&
-    ((typeof component === 'number' && (!Number.isInteger(component) || component < 0 || component >= leaf.shape[6])) ||
-      (representation === 'phase' && leaf.shape[5] !== 2) ||
-      (component === 'arrows' && !arrowsAllowed) ||
-      ((animation === 'time' || animation === 'frequency') &&
-        (!Number.isInteger(frameIndex) || frameIndex < 0 || frameIndex >= leaf.shape[animation === 'time' ? 3 : 4])) ||
-      Object.entries(reduce).some(
-        ([axis, reduction]) =>
-          reduction.method === 'index' &&
-          (!Number.isInteger(reduction.index ?? 0) ||
-            (reduction.index ?? 0) < 0 ||
-            (reduction.index ?? 0) >= leaf.shape[projectionAxes.indexOf(axis as ProjectionAxis)]),
-      ))
-      ? '저장된 성분·프레임·집계 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
-      : ''
+    animation === 'oscillation' && oscillationError
+      ? oscillationError
+      : comparison &&
+          ((typeof component === 'number' &&
+            (!Number.isInteger(component) || component < 0 || component >= leaf.shape[6])) ||
+            (representation === 'phase' && leaf.shape[5] !== 2) ||
+            (component === 'arrows' && !arrowsAllowed) ||
+            ((animation === 'time' || animation === 'frequency') &&
+              (!Number.isInteger(frameIndex) ||
+                frameIndex < 0 ||
+                frameIndex >= leaf.shape[animation === 'time' ? 3 : 4])) ||
+            Object.entries(reduce).some(
+              ([axis, reduction]) =>
+                reduction.method === 'index' &&
+                (!Number.isInteger(reduction.index ?? 0) ||
+                  (reduction.index ?? 0) < 0 ||
+                  (reduction.index ?? 0) >= leaf.shape[projectionAxes.indexOf(axis as ProjectionAxis)]),
+            ))
+        ? '저장된 성분·프레임·집계 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
+        : ''
   const comparisonBusy = useComparisonBusy(busy || Boolean(invalidSetting) || completedKey !== requestKey)
   useEffect(() => {
     rangeCache.current = null
     if (comparing) return
     setPlaying(false)
     setFrameIndex(0)
-    setPhase(0)
+    setTimeSeconds(0)
+    setDurationOverride(null)
     setResult(undefined)
     setReduce((current) =>
       Object.fromEntries(
@@ -211,7 +282,7 @@ function BoxGridControls({
       leaf.shape[6] === 1 ? 0 : typeof current === 'number' && current >= leaf.shape[6] ? 0 : current,
     )
     rangeCache.current = null
-  }, [leaf, comparing, setPlaying, setFrameIndex, setPhase, setReduce, setComponent])
+  }, [leaf, comparing, setPlaying, setFrameIndex, setTimeSeconds, setDurationOverride, setReduce, setComponent])
   useEffect(() => {
     if (invalidSetting) {
       setBusy(false)
@@ -231,6 +302,7 @@ function BoxGridControls({
         if (animation !== 'off') data.result.scalar.range = rangeCache.current.value
         setResult(data.result)
         setCompletedKey(requestKey)
+        setCompletedView({ leaf, key: viewKey })
       }
       setError(data.error ?? '')
       setBusy(false)
@@ -257,6 +329,7 @@ function BoxGridControls({
     optionKey,
     rangeKey,
     requestKey,
+    viewKey,
     component,
     arrowsAllowed,
     animation,
@@ -275,13 +348,16 @@ function BoxGridControls({
     )
       return
     const timer = window.setTimeout(() => {
-      const max = animation === 'oscillation' ? 360 : leaf.shape[animation === 'time' ? 3 : 4]
+      const max = leaf.shape[animation === 'time' ? 3 : 4]
       if (animation === 'oscillation') {
-        const next = phase + 18
-        if (next >= max && !repeat) {
-          setPlaying(false)
-          setPhase(360)
-        } else setPhase(next % 360)
+        if (timeSeconds >= durationSeconds) {
+          if (repeat) setTimeSeconds(0)
+          else setPlaying(false)
+        } else {
+          const next = Math.min(durationSeconds, timeSeconds + timeStep)
+          setTimeSeconds(next)
+          if (next >= durationSeconds && !repeat) setPlaying(false)
+        }
       } else {
         const next = frameIndex + 1
         if (next >= max && !repeat) setPlaying(false)
@@ -297,7 +373,9 @@ function BoxGridControls({
     requestKey,
     animation,
     leaf,
-    phase,
+    timeSeconds,
+    durationSeconds,
+    timeStep,
     frameIndex,
     repeat,
     speed,
@@ -305,7 +383,7 @@ function BoxGridControls({
     comparisonBusy,
     invalidSetting,
     setPlaying,
-    setPhase,
+    setTimeSeconds,
     setFrameIndex,
   ])
   const range = useMemo(() => fixed ?? result?.scalar.range ?? [0, 0], [fixed, result])
@@ -644,23 +722,34 @@ function BoxGridControls({
         </details>
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-sm" aria-label="재생 설정">
           <span className="font-semibold">재생</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" aria-label="공통 시간 진동 수식">
+                  ⓘ
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                각 성분은 A_f,c × cos(φ_f,c + 2πf t). Frequency sum/mean은 성분별 합성 후 벡터 크기를 계산합니다. mean은
+                주파수 표본 수로 나눕니다. 최고 주파수 한 주기를 약 2초에 재생하며, 반복은 지정 구간에서 시간을 0으로
+                되돌립니다.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <select
             aria-label="Animation 모드"
             value={animation}
             onChange={(event) => {
               setPlaying(false)
               setAnimation(event.target.value as typeof animation)
-              setPhase(0)
+              setTimeSeconds(0)
               setFrameIndex(0)
               setFixed(null)
             }}
           >
             <option value="off">정적</option>
-            <option
-              value="oscillation"
-              disabled={leaf.shape[5] !== 2 || !leaf.axes[4].ticks.some((tick) => Number(tick) > 0)}
-            >
-              진동 · 공통 위상
+            <option value="oscillation" disabled={Boolean(oscillationError)} title={oscillationError}>
+              진동 · 공통 시간
             </option>
             {(['time', 'frequency'] as const).map((axis) => (
               <option
@@ -676,22 +765,29 @@ function BoxGridControls({
             <>
               <button
                 aria-pressed={playing}
+                className="inline-flex w-28 shrink-0 items-center justify-center gap-2 border-sky-700 bg-sky-600 font-semibold text-white hover:bg-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 disabled:cursor-not-allowed disabled:bg-slate-400"
                 disabled={!!error || Boolean(invalidSetting)}
                 onClick={() => setPlaying(!playing)}
               >
+                {playing ? (
+                  <Pause aria-hidden="true" className="size-4 shrink-0" />
+                ) : (
+                  <Play aria-hidden="true" className="size-4 shrink-0" />
+                )}
                 {playing ? '일시정지' : '재생'}
               </button>
               <input
                 aria-label="Animation 프레임"
                 type="range"
                 min={0}
-                max={animation === 'oscillation' ? 360 : leaf.shape[animation === 'time' ? 3 : 4] - 1}
-                value={animation === 'oscillation' ? phase : frameIndex}
-                aria-valuetext={String(animation === 'oscillation' ? phase : frameIndex)}
+                step={animation === 'oscillation' ? 'any' : 1}
+                max={animation === 'oscillation' ? durationSeconds : leaf.shape[animation === 'time' ? 3 : 4] - 1}
+                value={animation === 'oscillation' ? timeSeconds : frameIndex}
+                aria-valuetext={animation === 'oscillation' ? `${timeSeconds} s` : String(frameIndex)}
                 disabled={Boolean(invalidSetting)}
                 onChange={(event) => {
                   setPlaying(false)
-                  if (animation === 'oscillation') setPhase(Number(event.target.value))
+                  if (animation === 'oscillation') setTimeSeconds(Number(event.target.value))
                   else setFrameIndex(Number(event.target.value))
                 }}
               />
@@ -708,11 +804,36 @@ function BoxGridControls({
                   }}
                 />
               ) : null}
-              <span>
-                {animation === 'oscillation'
-                  ? `${phase.toFixed(0)}°`
-                  : `${frameIndex} · ${leaf.axes[animation === 'time' ? 3 : 4].ticks[frameIndex] ?? '현재 데이터 범위 밖'} ${leaf.axes[animation === 'time' ? 3 : 4].unit ?? ''}`}
-              </span>
+              {animation === 'oscillation' ? (
+                <span
+                  aria-label="Animation 시간"
+                  className="inline-flex shrink-0 gap-1 font-mono whitespace-nowrap tabular-nums"
+                >
+                  <span className="inline-block w-[13ch] text-right">{timeSeconds.toExponential(5)}</span>
+                  <span>s</span>
+                </span>
+              ) : (
+                <span>{`${frameIndex} · ${leaf.axes[animation === 'time' ? 3 : 4].ticks[frameIndex] ?? '현재 데이터 범위 밖'} ${leaf.axes[animation === 'time' ? 3 : 4].unit ?? ''}`}</span>
+              )}
+              {animation === 'oscillation' ? (
+                <label>
+                  재생 구간 (s){' '}
+                  <input
+                    aria-label="재생 구간 (s)"
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={durationSeconds}
+                    onChange={(event) => {
+                      const value = Number(event.target.value)
+                      if (!Number.isFinite(value) || value <= 0) return
+                      setPlaying(false)
+                      setTimeSeconds(0)
+                      setDurationOverride(value)
+                    }}
+                  />
+                </label>
+              ) : null}
               <label>
                 속도{' '}
                 <select aria-label="재생 속도" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
@@ -734,7 +855,7 @@ function BoxGridControls({
         <strong>{name}</strong>
         <span>
           {animation === 'oscillation'
-            ? '순간값 · 공통 위상 (실제 시간 신호 합성 아님)'
+            ? '순간값 · 공통 시간'
             : representation === 'phase'
               ? 'Phase'
               : 'Amplitude / Value'}{' '}
@@ -743,7 +864,12 @@ function BoxGridControls({
         <span>{range[0].toPrecision(4)}</span>
         <span className="h-3 w-24" style={{ background: 'linear-gradient(to right, blue, lime, red)' }} />
         <span>{range[1].toPrecision(4)}</span>
-        {busy ? <span>계산 중…</span> : null}
+        <span
+          aria-hidden={!showCalculationStatus}
+          className={`shrink-0 whitespace-nowrap ${showCalculationStatus ? '' : 'invisible'}`}
+        >
+          계산 중…
+        </span>
         {kind === 'histogram' ? <span>5차원 중간값—return 전 추가 축소 필요</span> : null}
       </div>
       {invalidSetting || error || renderError || range[0] > range[1] ? (

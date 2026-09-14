@@ -47,7 +47,7 @@ export function calculateBoxGridView({ leaf, options, arrows, animationRange }: 
       scalar.range[0] = Math.min(scalar.range[0], frame.range[0])
       scalar.range[1] = Math.max(scalar.range[1], frame.range[1])
     }
-  } else if (animationRange && options.frame?.phase !== undefined) {
+  } else if (animationRange && (options.frame?.phase !== undefined || options.frame?.timeSeconds !== undefined)) {
     // An amplitude envelope is conservative for every phase, including mixed reductions.
     const amplitude = scalarPlotData(
       projectBoxGrid(leaf, { ...options, representation: 'amplitude', frame: undefined }),
