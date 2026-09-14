@@ -16,10 +16,10 @@ def test_published_outputs_are_seven_axis_tensors_with_separate_native_exports_a
             assert descriptor["minimumOutputs"] == 0
             assert all(method["artifactType"].startswith("caemble.box-grid/") for method in descriptor["methods"]["outputs"])
             assert all("boxGrid" not in method["data"] for method in descriptor["methods"]["exports"])
-        structural = catalog.get_solver_manifest("structural-mechanics", "6.0.0")["descriptor"]
+        structural = catalog.get_solver_manifest("structural-mechanics", "6.1.0")["descriptor"]
         assert set(structural["visualizations"]) == {"displacement", "stress", "displacementHistory", "harmonicDisplacement", "harmonicStress"}
-        assert {item["methodId"] for item in structural["methods"]["exports"]} == {"fea.interface", "fea.motion", "fea.harmonic-surface-motion"}
-        acoustic = catalog.get_solver_manifest("pressure-acoustics", "1.0.0")["descriptor"]
+        assert {item["methodId"] for item in structural["methods"]["exports"]} == {"fea.interface", "fea.motion", "fea.harmonic-surface-motion", "fea.transient-surface-motion"}
+        acoustic = catalog.get_solver_manifest("pressure-acoustics", "1.1.0")["descriptor"]
         surface = next(item for item in structural["methods"]["exports"] if item["methodId"] == "fea.harmonic-surface-motion")
         assert acoustic["inputPorts"]["surfaceMotion"]["artifactTypes"] == [surface["artifactType"]]
         assert acoustic["inputPorts"]["surfaceMotion"]["data"] == surface["data"]
@@ -57,6 +57,6 @@ def test_publishing_rejects_invalid_shape_channels_components_and_target_contrac
 
 def test_scoped_runtime_includes_automatic_mesh_coordinate_dependencies():
     with open_catalog() as catalog:
-        runtime = catalog.runtime_slice(solvers=[("structural-mechanics", "6.0.0")], quantity_kinds=[], material_models=[])
+        runtime = catalog.runtime_slice(solvers=[("structural-mechanics", "6.1.0")], quantity_kinds=[], material_models=[])
     quantities = {item["name"] for item in runtime["quantityKinds"]}
     assert {"Length", "Volume", "Dimensionless", "mechanics.ForceMagnitude"} <= quantities

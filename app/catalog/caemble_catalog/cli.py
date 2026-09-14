@@ -422,7 +422,8 @@ def _edit_parameter(args: argparse.Namespace) -> None:
         if args.row_action == "remove":
             _named_remove(values, args.parameter, "Solver parameter")
         else:
-            _named_upsert(values, args.parameter, {"description": args.description, "data": args.data_json})
+            _named_upsert(values, args.parameter, {"description": args.description, "data": args.data_json,
+                                                  **({"required": False} if not args.required else {})})
 
     _mutate(args.database, args.name, args.version, operation)
 
@@ -532,7 +533,8 @@ def _edit_method_parameter(args: argparse.Namespace) -> None:
         if args.row_action == "remove":
             _named_remove(values, args.parameter, "Solver method parameter")
         else:
-            _named_upsert(values, args.parameter, {"description": args.description, "data": args.data_json})
+            _named_upsert(values, args.parameter, {"description": args.description, "data": args.data_json,
+                                                  **({"required": False} if not args.required else {})})
 
     _mutate(args.database, args.name, args.version, operation)
 
@@ -664,6 +666,7 @@ def build_parser() -> argparse.ArgumentParser:
         _identity(item)
         item.add_argument("parameter")
     _descriptor(upsert)
+    upsert.add_argument("--required", action=argparse.BooleanOptionalAction, default=True)
 
     role = solver_actions.add_parser("material-role")
     upsert, remove = _row_actions(role)
@@ -718,6 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("method_id")
         item.add_argument("parameter")
     _descriptor(upsert)
+    upsert.add_argument("--required", action=argparse.BooleanOptionalAction, default=True)
 
     visualization = solver_actions.add_parser("visualization")
     upsert, remove = _row_actions(visualization)

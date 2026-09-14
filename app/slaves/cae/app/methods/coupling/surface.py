@@ -38,17 +38,16 @@ def _intersection(first, second, tolerance):
     return polygon
 
 
-def planar_surface_operator(source_points, source_faces, target_points, target_faces):
-    """Return S mapping source Cartesian nodal velocity to target nodal integrals.
+def _planar_intersections(source_points, source_faces, target_points, target_faces):
+    """Yield physical overlap triangles and coordinates, then check full coverage.
 
-    S[a, 3*s+j] = integral Na * Ns * target_outward_normal[j] dA.
-    The complete physical patch must coincide. No projection across gaps or
-    interpolation/extrapolation to unrepresented parts is performed.
+    Sources are P1 triangles; targets may be triangles or convex quadrilaterals.
+    Both public operators consume the complete iterator before returning a result.
     """
     source_points, target_points = np.asarray(source_points, float), np.asarray(target_points, float)
     source_faces, target_faces = np.asarray(source_faces, int), np.asarray(target_faces, int)
     if not len(source_faces) or not len(target_faces):
-        raise ValueError("surface coupling requires nonempty triangular patches")
+        raise ValueError("surface coupling requires nonempty planar patches")
     source_triangles, target_triangles = source_points[source_faces], target_points[target_faces]
     target_cross = np.cross(target_triangles[:, 1] - target_triangles[:, 0], target_triangles[:, 2] - target_triangles[:, 0])
     source_cross = np.cross(source_triangles[:, 1] - source_triangles[:, 0], source_triangles[:, 2] - source_triangles[:, 0])
@@ -69,23 +68,21 @@ def planar_surface_operator(source_points, source_faces, target_points, target_f
     source = (source_triangles - origin) @ basis / span
     target = (target_triangles - origin) @ basis / span
     source_areas = np.abs(_cross2(source[:, 1] - source[:, 0], source[:, 2] - source[:, 0])) / 2
-    target_areas = np.abs(_cross2(target[:, 1] - target[:, 0], target[:, 2] - target[:, 0])) / 2
+    target_areas = np.abs(np.sum(_cross2(target, np.roll(target, -1, axis=1)), axis=1)) / 2
     source_covered, target_covered = np.zeros(len(source)), np.zeros(len(target))
     centers = source.mean(axis=1)
     radii = np.linalg.norm(source - centers[:, None], axis=2).max(axis=1)
     tree = cKDTree(centers)
     lower, upper = source.min(axis=1), source.max(axis=1)
-    rows, columns, values = [], [], []
-    for target_index, triangle in enumerate(target):
-        center = triangle.mean(axis=0)
-        radius = np.linalg.norm(triangle - center, axis=1).max()
+    for target_index, target_polygon in enumerate(target):
+        center = target_polygon.mean(axis=0)
+        radius = np.linalg.norm(target_polygon - center, axis=1).max()
         candidates = tree.query_ball_point(center, radius + radii.max() + tolerance)
         for source_index in candidates:
-            if np.any(np.minimum(upper[source_index], triangle.max(axis=0))
-                      < np.maximum(lower[source_index], triangle.min(axis=0)) - tolerance):
+            if np.any(np.minimum(upper[source_index], target_polygon.max(axis=0))
+                      < np.maximum(lower[source_index], target_polygon.min(axis=0)) - tolerance):
                 continue
-            polygon = _intersection(source[source_index], triangle, tolerance)
-            local = np.zeros((3, 3))
+            polygon = _intersection(source[source_index], target_polygon, tolerance)
             for index in range(1, len(polygon) - 1):
                 subtriangle = np.asarray([polygon[0], polygon[index], polygon[index + 1]])
                 area = abs(_cross2(subtriangle[1] - subtriangle[0], subtriangle[2] - subtriangle[0])) / 2
@@ -93,18 +90,54 @@ def planar_surface_operator(source_points, source_faces, target_points, target_f
                     continue
                 source_covered[source_index] += area
                 target_covered[target_index] += area
-                local_target = np.linalg.solve((triangle[1:] - triangle[0]).T, (subtriangle - triangle[0]).T).T
-                Na = np.column_stack((1 - local_target.sum(axis=1), local_target))
-                source_triangle = source[source_index]
-                local_source = np.linalg.solve((source_triangle[1:] - source_triangle[0]).T, (subtriangle - source_triangle[0]).T).T
-                Ns = np.column_stack((1 - local_source.sum(axis=1), local_source))
-                local += Na.T @ (area / 12 * (np.ones((3, 3)) + np.eye(3))) @ Ns
-            if np.any(local):
-                block = (local[:, :, None] * normal * span**2).reshape(3, 9)
-                rows.extend(np.repeat(target_faces[target_index], 9))
-                columns.extend(np.tile((source_faces[source_index, :, None] * 3 + np.arange(3)).ravel(), 3))
-                values.extend(block.ravel())
+                yield source_index, target_index, source[source_index], target_polygon, subtriangle, area * span**2, normal
     if (not np.allclose(source_covered, source_areas, rtol=1e-7, atol=tolerance**2)
             or not np.allclose(target_covered, target_areas, rtol=1e-7, atol=tolerance**2)):
         raise ValueError("surface coupling requires complete coincident patches without gaps or duplicate coverage")
+
+
+def planar_surface_operator(source_points, source_faces, target_points, target_faces):
+    """Return S[a,3*s+j] = integral Na * Ns * target_outward_normal[j] dA.
+
+    This P1-to-P1 operator produces target FEM nodal integrals. The complete
+    physical patches must coincide; no projection across gaps is performed.
+    """
+    source_faces, target_faces = np.asarray(source_faces, int), np.asarray(target_faces, int)
+    rows, columns, values = [], [], []
+    for si, ti, source, target, triangle, area, normal in _planar_intersections(
+        source_points, source_faces, target_points, target_faces,
+    ):
+        local_target = np.linalg.solve((target[1:] - target[0]).T, (triangle - target[0]).T).T
+        Na = np.column_stack((1 - local_target.sum(axis=1), local_target))
+        local_source = np.linalg.solve((source[1:] - source[0]).T, (triangle - source[0]).T).T
+        Ns = np.column_stack((1 - local_source.sum(axis=1), local_source))
+        local = Na.T @ (area / 12 * (np.ones((3, 3)) + np.eye(3))) @ Ns
+        block = (local[:, :, None] * normal).reshape(3, 9)
+        rows.extend(np.repeat(target_faces[ti], 9))
+        columns.extend(np.tile((source_faces[si, :, None] * 3 + np.arange(3)).ravel(), 3))
+        values.extend(block.ravel())
     return sparse.coo_matrix((values, (rows, columns)), shape=(len(target_points), 3 * len(source_points))).tocsr()
+
+
+def planar_face_flux_operator(source_points, source_faces, target_points, target_faces):
+    """Map P1 Cartesian nodal velocity to one outward volume flux per quad face.
+
+    G[a,3*s+j] = integral_face_a Ns * n[j] dA. Shared target vertices do not
+    share flux rows. Dividing G @ velocity by each face area gives its mean
+    normal velocity. Source winding may oppose the target outward winding.
+    """
+    source_faces, target_faces = np.asarray(source_faces, int), np.asarray(target_faces, int)
+    if source_faces.ndim != 2 or source_faces.shape[1] != 3 or target_faces.ndim != 2 or target_faces.shape[1] != 4:
+        raise ValueError("face flux coupling requires source tri3 and target quad4 faces")
+    rows, columns, values = [], [], []
+    for si, ti, source, _, triangle, area, normal in _planar_intersections(
+        source_points, source_faces, target_points, target_faces,
+    ):
+        # A linear shape function integrates exactly at the overlap centroid.
+        coordinates = np.linalg.solve((source[1:] - source[0]).T, triangle.mean(axis=0) - source[0])
+        weights = np.array([1 - coordinates.sum(), *coordinates]) * area
+        block = weights[:, None] * normal
+        rows.extend([ti] * 9)
+        columns.extend((source_faces[si, :, None] * 3 + np.arange(3)).ravel())
+        values.extend(block.ravel())
+    return sparse.coo_matrix((values, (rows, columns)), shape=(len(target_faces), 3 * len(source_points))).tocsr()

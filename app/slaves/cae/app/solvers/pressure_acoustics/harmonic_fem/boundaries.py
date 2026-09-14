@@ -9,7 +9,7 @@ from app.kernel.api import BundleValue, FieldValue, UnstructuredMeshValue
 from app.kernel.api.units import convert_ucum_value
 from app.methods.coupling.surface import planar_surface_operator
 
-from .domain import parameter
+from ..parameters import parameter
 from .model import AcousticBoundaries
 
 

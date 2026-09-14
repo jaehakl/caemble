@@ -19,7 +19,7 @@ from ..state import append_history, history_sample
 from .transient import initialize_acceleration, transient_step
 
 
-def advance_window(invocation, model, solution, settings, matrices):
+def advance_window(invocation, model, solution, settings, matrices, *, surface_samples=None):
     prepared = matrices
     K = prepared.stiffness
     base_mass = prepared.mass
@@ -104,6 +104,10 @@ def advance_window(invocation, model, solution, settings, matrices):
         solution.history = {}
         append_history(model, solution, float(pitches[0]), float(torques[0]))
     samples = [solution]
+    if surface_samples is not None:
+        surface_samples.frame_kind = "solved-window"
+        surface_samples.times.append(solution.time)
+        surface_samples.velocities.append(solution.velocity[surface_samples.nodes, :3].copy())
     window_history = []
     reuse_guess = previous_artifact is not None and int(old["couplingIteration"]) > 0
     reference_frames = interface_members(model)["referenceOrientations"] if reuse_guess else None
@@ -112,7 +116,7 @@ def advance_window(invocation, model, solution, settings, matrices):
     next_output = (np.floor((solution.time + clock_allowance) / settings["outputInterval"]) + 1) * settings["outputInterval"]
     for target in times[1:]:
         internal_dt = min(settings["dt"], target - solution.time)
-        while solution.time < target - 1e-12:
+        while solution.time < target - clock_allowance:
             dt = min(internal_dt, target - solution.time)
             end = solution.time + dt
             external = constant_force.copy().reshape(-1, 6)
@@ -138,6 +142,9 @@ def advance_window(invocation, model, solution, settings, matrices):
                     raise ValueError("structural time step failed after 7 subdivisions") from error
                 continue
             solution = candidate
+            if surface_samples is not None:
+                surface_samples.times.append(solution.time)
+                surface_samples.velocities.append(solution.velocity[surface_samples.nodes, :3].copy())
             if end >= next_output - clock_allowance or np.isclose(end, times[-1], rtol=0, atol=clock_allowance):
                 window_history.append(history_sample(model, solution, pitch, torque))
                 next_output += settings["outputInterval"]
@@ -164,6 +171,9 @@ def advance_window(invocation, model, solution, settings, matrices):
         errors.append(1.0 if loads or control is not None else 0.0)
     residual = max(errors, default=0.0) if previous_artifact is not None else 0.0
     converged = residual <= settings["couplingTolerance"]
+    if surface_samples is not None:
+        surface_samples.coupling_converged = converged
+        surface_samples.coupling_iteration = iteration
     if not converged and iteration >= settings["maxCouplingIterations"]:
         raise ValueError(f"mechanical waveform coupling failed: residual {residual:g}, iterations {iteration}")
     if converged:

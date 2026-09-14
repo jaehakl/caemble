@@ -234,10 +234,11 @@ class Catalog:
 
     def _named_data(self, table: str, name: str, version: str) -> dict[str, Any]:
         rows = self._all(
-            f"SELECT name, description, data_json FROM {table} WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
+            f"SELECT name, description, data_json, required FROM {table} WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
             (name, version),
         )
-        return {row["name"]: {"description": row["description"], "data": _json(row["data_json"])} for row in rows}
+        return {row["name"]: {"description": row["description"], "data": _json(row["data_json"]),
+                              **({"required": False} if not row["required"] else {})} for row in rows}
 
     def artifact_type(self, name: str) -> dict[str, Any]:
         row = self._one(
@@ -323,7 +324,7 @@ class Catalog:
         ):
             parameters = self._all(
                 """
-                SELECT name, description, data_json FROM solver_method_parameters
+                SELECT name, description, data_json, required FROM solver_method_parameters
                 WHERE solver_name = ? AND solver_version = ? AND category = ? AND method_id = ? ORDER BY ordinal
                 """,
                 (name, version, method["category"], method["method_id"]),
@@ -345,6 +346,7 @@ class Catalog:
                     parameter["name"]: {
                         "description": parameter["description"],
                         "data": _json(parameter["data_json"]),
+                        **({"required": False} if not parameter["required"] else {}),
                     }
                     for parameter in parameters
                 },

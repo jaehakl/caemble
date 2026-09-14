@@ -88,7 +88,7 @@ def test_each_element_block_retains_cad_target_and_ids_in_public_mesh_metadata()
     invocation = generalized_beam_invocation()
     invocation.config["initializations"].append(deepcopy(invocation.config["initializations"][1]))
     model = build_model(invocation)
-    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.1.0")
     domain, _ = _physical_domain(model)
     resources = ResourceStore()
     try:

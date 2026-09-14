@@ -1,0 +1,66 @@
+{
+  "state": "succeeded",
+  "durationMs": 4795,
+  "sourceHash": "4a77d75ae81293c93ec53f9376983af3f274ce03aad82783c114a67d9c8e346f",
+  "catalogRevision": "10313d0b5c647e1432faa23ca4413e44202cf1d24b1d6d9f6d83acc44586f202",
+  "recordSequences": [
+    1,
+    2
+  ],
+  "visualizationSequences": [
+    3
+  ],
+  "recordedBytes": 161448,
+  "traceCount": 4,
+  "lastObservations": {
+    "acoustics": {
+      "time": 0.02,
+      "stepCount": 2000,
+      "totalSteps": 2000,
+      "cellCount": 625,
+      "timeStep": 1e-05,
+      "discreteEnergy": 7.819662426522483e-22
+    }
+  },
+  "recordSummary": {
+    "pressure": {
+      "shape": [
+        20,
+        3,
+        3,
+        101,
+        1,
+        1,
+        1
+      ],
+      "unit": "Pa",
+      "timeCount": 101,
+      "firstTime": 0.0,
+      "lastTime": 0.02,
+      "minimum": -0.3575371438423253,
+      "maximum": 0.3578826508235689,
+      "finite": true,
+      "uniqueTimes": true
+    },
+    "pressureProbe": {
+      "shape": [
+        1,
+        1,
+        1,
+        2001,
+        1,
+        1,
+        1
+      ],
+      "unit": "Pa",
+      "timeCount": 2001,
+      "firstTime": 0.0,
+      "lastTime": 0.02,
+      "minimum": -0.3574829182846654,
+      "maximum": 0.35780016616653787,
+      "finite": true,
+      "uniqueTimes": true,
+      "analyticRelativeL2": 0.001738728573011538
+    }
+  }
+}

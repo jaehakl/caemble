@@ -8,10 +8,10 @@ from scipy import sparse
 
 from app.kernel.api import BundleValue, FieldValue, UnstructuredMeshValue
 from app.methods.fields.box_grid import TetrahedralSampler
-from app.solvers.pressure_acoustics.boundaries import boundary_mass, prepare_boundaries, surface_motion_load
-from app.solvers.pressure_acoustics.formulation import prepare_operators
-from app.solvers.pressure_acoustics.harmonic import solve_harmonic
-from app.solvers.pressure_acoustics.model import AcousticBoundaries, AcousticModel, AcousticOperators
+from app.solvers.pressure_acoustics.harmonic_fem.boundaries import boundary_mass, prepare_boundaries, surface_motion_load
+from app.solvers.pressure_acoustics.harmonic_fem.formulation import prepare_operators
+from app.solvers.pressure_acoustics.harmonic_fem.harmonic import solve_harmonic
+from app.solvers.pressure_acoustics.harmonic_fem.model import AcousticBoundaries, AcousticModel, AcousticOperators
 
 
 def tube(divisions):

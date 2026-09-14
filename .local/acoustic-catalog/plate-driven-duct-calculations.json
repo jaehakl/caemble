@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Pressure / force response [Pa/N]",
+    "description": "Complex P/F at the observation point, Pa/N. Columns 0 and 1 preserve real and imaginary components; 1 N peak force.",
+    "source_code": "/** @param {CalculationInput} record */\nexport default function calculate(record) {\n  const pressure = record.pressureProbe\n  const values = Array.isArray(pressure.data) ? pressure.data : [pressure.data]\n  const frequencies = pressure.axes[4].ticks\n  const forcePeak = 1 // The structure Task applies this same 1 N peak resultant.\n  return {\n    dtype: 'float64',\n    data: frequencies.map((_, index) => {\n      const amplitude = Number(values[index * 2]) / forcePeak\n      const phase = Number(values[index * 2 + 1])\n      return [amplitude * Math.cos(phase), amplitude * Math.sin(phase)]\n    }),\n    axes: [\n      { name: 'frequency', ticks: frequencies, unit: 'Hz' },\n      { name: 'Cartesian component (0 real, 1 imaginary)', ticks: [0, 1] },\n    ],\n  }\n}\n"
+  },
+  {
+    "name": "RMS pressure [Pa]",
+    "description": "Observation-point RMS pressure. Recorded amplitudes are peak phasors, so RMS is amplitude / sqrt(2).",
+    "source_code": "/** @param {CalculationInput} record */\nexport default function calculate(record) {\n  const pressure = record.pressureProbe\n  const values = Array.isArray(pressure.data) ? pressure.data : [pressure.data]\n  const frequencies = pressure.axes[4].ticks\n  return {\n    dtype: 'float64',\n    data: frequencies.map((_, index) => Number(values[index * 2]) / Math.sqrt(2)),\n    axes: [{ name: 'frequency', ticks: frequencies, unit: 'Hz' }],\n  }\n}\n"
+  },
+  {
+    "name": "Sound pressure level [dB]",
+    "description": "SPL in dB relative to 20 microPa RMS, computed explicitly from the peak pressure phasor; zero pressure is undefined.",
+    "source_code": "/** @param {CalculationInput} record */\nexport default function calculate(record) {\n  const pressure = record.pressureProbe\n  const values = Array.isArray(pressure.data) ? pressure.data : [pressure.data]\n  const frequencies = pressure.axes[4].ticks\n  const amplitudes = frequencies.map((_, index) => Number(values[index * 2]))\n  if (amplitudes.some((amplitude) => amplitude <= 0)) throw new Error('SPL requires positive pressure amplitude at the observation point.')\n  return {\n    dtype: 'float64',\n    data: amplitudes.map((amplitude) => 20 * Math.log10(amplitude / (Math.sqrt(2) * 20e-6))),\n    axes: [{ name: 'frequency', ticks: frequencies, unit: 'Hz' }],\n  }\n}\n"
+  }
+]

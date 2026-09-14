@@ -1,7 +1,6 @@
 """Build an independent fluid mesh from canonical Geometry and Material inputs."""
 
 import hashlib
-from collections.abc import Mapping
 
 import numpy as np
 
@@ -9,11 +8,8 @@ from app.kernel.api.world import geometry_parts, material_model
 from app.methods.geometry.surfaces import select_boundary_region
 from app.methods.mesh.models import VolumeMeshingProfile
 
+from ..parameters import parameter
 from .model import AcousticModel
-
-
-def parameter(value):
-    return value["value"] if isinstance(value, Mapping) else value
 
 
 async def build_geometry_model(invocation):

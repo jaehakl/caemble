@@ -1,0 +1,33 @@
+{
+  "source_hash": "bc804d124be7870333135d84b11822c954e032f8f61868f4ea70bd06d1c7d7f7",
+  "input_hash": "e4f5d957fb15acd14ca631d4575a1cca26342d71aaa5e65cd11bc213991a872b",
+  "types": "passed",
+  "build": "passed",
+  "python": {
+    "valid": true,
+    "tasks": [
+      "axial",
+      "bending",
+      "torsion"
+    ],
+    "recordedData": [
+      "axial_displacement",
+      "axial_reaction",
+      "axial_stress",
+      "axial_stressField",
+      "bending_displacement",
+      "bending_reaction",
+      "bending_stress",
+      "bending_stressField",
+      "torsion_displacement",
+      "torsion_reaction",
+      "torsion_stress",
+      "torsion_stressField"
+    ]
+  },
+  "solver": "not-run",
+  "numerical": "not-run",
+  "details": {
+    "warnings": []
+  }
+}

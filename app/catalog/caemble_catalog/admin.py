@@ -75,8 +75,8 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
     for ordinal, (name, parameter) in enumerate(descriptor.get("parameters", {}).items()):
         data = parameter["data"]
         connection.execute(
-            "INSERT INTO solver_parameters VALUES (?, ?, ?, ?, ?, ?)",
-            (*solver, ordinal, name, parameter["description"], canonical_json(data)),
+            "INSERT INTO solver_parameters VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (*solver, ordinal, name, parameter["description"], canonical_json(data), int(parameter.get("required", True))),
         )
         usage_ordinal = _insert_data_usages(
             connection, solver, data, "parameter", f"parameters.{name}", usage_ordinal
@@ -154,7 +154,7 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
             for parameter_ordinal, (name, parameter) in enumerate(method.get("parameters", {}).items()):
                 parameter_data = parameter["data"]
                 connection.execute(
-                    "INSERT INTO solver_method_parameters VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO solver_method_parameters VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         *solver,
                         category,
@@ -163,6 +163,7 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
                         name,
                         parameter["description"],
                         canonical_json(parameter_data),
+                        int(parameter.get("required", True)),
                     ),
                 )
                 usage_ordinal = _insert_data_usages(

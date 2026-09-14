@@ -1,0 +1,15 @@
+﻿{
+    "CurrentCpuTests":  740,
+    "PassedCurrentTests":  740,
+    "Missing":  [
+
+                ],
+    "Reports":  [
+                    ".local/acoustic-cpu-regression.xml",
+                    ".local/acoustic-final-focused.xml",
+                    ".local/acoustic-final-domain.xml",
+                    ".local/acoustic-geometry-variants.xml",
+                    ".local/acoustic-transient-lifecycle.xml",
+                    ".local/acoustic-e2-official.xml"
+                ]
+}

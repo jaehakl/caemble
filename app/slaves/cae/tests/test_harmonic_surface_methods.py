@@ -49,7 +49,7 @@ def test_nonmatching_surface_exact_constant_linear_tangent_and_complex_work(rota
     normal = rotation[:, 2]
     S = planar_surface_operator(source_world, sf[:, ::-1], target_world, tf)
     # The consistent target mass independently integrates the same affine field.
-    from app.solvers.pressure_acoustics.boundaries import boundary_mass
+    from app.solvers.pressure_acoustics.harmonic_fem.boundaries import boundary_mass
     target_mass = boundary_mass(target_world, tf)
     for scalar in (np.ones(len(source)), 2 + 3 * source[:, 0] - source[:, 1]):
         velocity = scalar[:, None] * normal

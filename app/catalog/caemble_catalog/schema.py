@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x43414531  # "CAE1"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
 
@@ -123,6 +123,7 @@ CREATE TABLE solver_parameters (
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     data_json TEXT NOT NULL,
+    required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0, 1)),
     PRIMARY KEY (solver_name, solver_version, name),
     UNIQUE (solver_name, solver_version, ordinal),
     FOREIGN KEY (solver_name, solver_version) REFERENCES solvers(name, version) ON DELETE CASCADE
@@ -236,6 +237,7 @@ CREATE TABLE solver_method_parameters (
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     data_json TEXT NOT NULL,
+    required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0, 1)),
     PRIMARY KEY (solver_name, solver_version, category, method_id, name),
     UNIQUE (solver_name, solver_version, category, method_id, ordinal),
     FOREIGN KEY (solver_name, solver_version, category, method_id)

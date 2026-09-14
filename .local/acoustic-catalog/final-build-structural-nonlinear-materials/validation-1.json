@@ -1,0 +1,33 @@
+{
+  "source_hash": "4172bec01029eaded12bf9c0689385735dc4b0ad4eacb4be5d7d6b345ebe78da",
+  "input_hash": "fac3a216cd0ff697304a87df67cfd62efc2b79cfb4c3d31384b63cebb4f59e8d",
+  "types": "passed",
+  "build": "passed",
+  "python": {
+    "valid": true,
+    "tasks": [
+      "contact",
+      "laminate",
+      "plastic"
+    ],
+    "recordedData": [
+      "plastic_displacement",
+      "plastic_reaction",
+      "plastic_stress",
+      "plastic_stressField",
+      "contact_displacement",
+      "contact_reaction",
+      "contact_stress",
+      "contact_stressField",
+      "laminate_displacement",
+      "laminate_reaction",
+      "laminate_stress",
+      "laminate_stressField"
+    ]
+  },
+  "solver": "not-run",
+  "numerical": "not-run",
+  "details": {
+    "warnings": []
+  }
+}

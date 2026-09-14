@@ -98,18 +98,22 @@ def cylinder_segments(measurement):
     "curved-tower-shell", "boolean-connection-solid",
     "structural-nonlinear-materials", "structural-optical-results",
     "matched-impedance-duct", "plate-driven-duct",
+    "transient-matched-impedance-duct", "transient-plate-driven-duct",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
     measurement = catalog_measurements[key]
     program = measurement["experiment"]["simulationProgram"]
-    run = CaeRun(measurement=measurement, max_run_seconds=240, job_id=f"catalog-{key}")
+    # The complete structural transient intentionally keeps all 32 windows;
+    # its CPU reference takes about 33 seconds per window on the development host.
+    run_timeout = 1800 if key == "transient-plate-driven-duct" else 240
+    run = CaeRun(measurement=measurement, max_run_seconds=run_timeout, job_id=f"catalog-{key}")
     run.start()
     recorded, metadata, visualizations, native = {}, {}, {}, {}
     sequences = []
     try:
         while True:
-            packet = await asyncio.wait_for(run.queue.get(), timeout=250)
+            packet = await asyncio.wait_for(run.queue.get(), timeout=run_timeout + 10)
             if isinstance(packet, RecordPacket):
                 assert not packet.ack.done() and packet.resource_hold is not None
                 sequences.append(packet.sequence)
@@ -161,9 +165,10 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
         for task, items in visualizations.items():
             solver = program["tasks"][task]["kernel"]["name"]
             analysis = program["tasks"][task]["config"]["parameters"].get("analysis")
-            expected = ({"paths"} if solver == "ray-tracing" else {"pressure"} if solver == "pressure-acoustics"
+            expected = ({"paths"} if solver == "ray-tracing" else
+                        (set() if analysis == "transient" else {"pressure"}) if solver == "pressure-acoustics"
                         else {"harmonicDisplacement", "harmonicStress"} if analysis == "harmonic" else {"displacement", "stress"})
-            if analysis == "transient":
+            if solver == "structural-mechanics" and analysis == "transient":
                 expected.add("displacementHistory")
             assert set(items) == expected
             for name, item in items.items():
@@ -172,11 +177,35 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                     offsets, vertices = native[prefix + contract["offsets"]], native[prefix + contract["vertices"]]
                     assert offsets[-1] == len(vertices) and np.all(np.diff(offsets) >= 2)
         task_count = len(program["tasks"])
-        assert len(run.trace) > task_count if key == "structural-analysis-modes" else len(run.trace) == task_count
+        multiwindow = key in {"structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct"}
+        assert len(run.trace) > task_count if multiwindow else len(run.trace) == task_count
         if "totalCurrent" in recorded:
             assert recorded["totalCurrent"].item() > 0
         if "maximumTemperature" in recorded:
             assert recorded["maximumTemperature"].item() > measurement["experiment"]["variables"]["fixedTemperature"]
+        if key in {"transient-matched-impedance-duct", "transient-plate-driven-duct"}:
+            settings = next(rule["parameters"] for rule in program["tasks"]["acoustics"]["config"]["initializations"]
+                            if rule["methodId"] == "acoustics.time")
+            step = settings["dt"]["value"]
+            total = settings["totalSteps"]
+            samples = recorded["pressureProbe"].reshape(-1)
+            times = np.asarray(metadata["pressureProbe"]["axes"][3]["ticks"])
+            np.testing.assert_allclose(times, np.arange(total + 1) * step, rtol=0, atol=1e-14)
+            assert samples[0] == 0 and np.min(samples) < 0 < np.max(samples)
+            assert len(np.unique(times)) == len(times)
+            assert recorded["pressureProbe"].shape == (1, 1, 1, total + 1, 1, 1, 1)
+            field_times = np.asarray(metadata["pressure"]["axes"][3]["ticks"])
+            np.testing.assert_allclose(field_times, np.arange(0, total + 1, 20) * step, rtol=0, atol=1e-14)
+            assert visualizations.get("acoustics", {}) == {}
+            if key == "transient-matched-impedance-duct":
+                position = .8 * measurement["experiment"]["variables"]["length"]
+                local = times - position / 343
+                expected = np.where((local >= 0) & (local <= .008),
+                                    1.2 * 343 * .001 * np.sin(2 * np.pi * 250 * local) * np.sin(np.pi * local / .008) ** 2, 0)
+                assert np.linalg.norm(samples - expected) / np.linalg.norm(expected) < .02
+            else:
+                assert np.max(np.abs(recorded["velocity"])) > 0
+                assert np.max(np.abs(recorded["displacement"])) < 1e-5
         for name, values in recorded.items():
             if name.endswith("FluenceRate") or name == "timeElectricField":
                 assert np.max(np.abs(values)) > 0

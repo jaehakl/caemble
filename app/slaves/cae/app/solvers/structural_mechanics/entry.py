@@ -17,6 +17,8 @@ from .constraints import constraint_transform
 from .domain import build_geometry_model, parameter
 from .interfaces.motion import initialize_motion, predict_motion
 from .interfaces.resultants import apply_resultant_loads
+from .interfaces.surface import physical_surface
+from .interfaces.transient_surface import TransientSurfaceSamples
 from .model import HarmonicSolution
 from .operators.linear import prepare_matrices
 from .outputs.build import build_outputs
@@ -26,6 +28,9 @@ from .state import append_history, configure_history, encode_state, initial_solu
 async def run(invocation: SolverInvocation) -> SolverResult:
     parameters = {key: parameter(value) for key, value in invocation.config["parameters"].items()}
     analysis = parameters["analysis"]
+    transient_surfaces = [output for output in invocation.config.get("exports", ()) if output["methodId"] == "fea.transient-surface-motion"]
+    if transient_surfaces and (analysis != "transient" or parameters["geometricNonlinear"]):
+        raise ValueError("fea.transient-surface-motion requires small-displacement transient analysis")
     transfer_rules = [
         rule for rule in invocation.config["boundaryConditions"]
         if rule["methodId"] == "fea.resultant-transfer"
@@ -47,6 +52,11 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         raise ValueError("control input requires a fea.rotor initialization")
     model = await build_geometry_model(invocation)
     configure_history(model)
+    surface_samples = None
+    if transient_surfaces:
+        surfaces = {output["key"]: physical_surface(model, output["target"]) for output in transient_surfaces}
+        nodes = np.unique(np.concatenate([nodes for _, nodes in surfaces.values()]))
+        surface_samples = TransientSurfaceSamples(surfaces, nodes)
     if invocation.cancellation is not None:
         invocation.cancellation.raise_if_cancelled()
     prepared = prepare_matrices(model)
@@ -81,12 +91,15 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             solution = initialize_acceleration(model, solution, prepared, stiffness, mass, initial_damping, model.force.ravel() + mass @ gravity, bool(parameters["geometricNonlinear"]), initial_pitch, damping_stiffness=settings["dampingStiffness"])
             solution.history = {}
             append_history(model, solution, initial_pitch)
+            if surface_samples is not None:
+                surface_samples.times.append(solution.time)
+                surface_samples.velocities.append(solution.velocity[surface_samples.nodes, :3].copy())
             motion = predict_motion(model, solution, settings)
         else:
             solution = read_state(model, saved)
             if solution.time >= settings["duration"] - clock_tolerance(settings):
                 raise ValueError("structural task has already reached its configured duration")
-            solution, motion, coupling_residual, converged = advance_window(invocation, model, solution, settings, prepared)
+            solution, motion, coupling_residual, converged = advance_window(invocation, model, solution, settings, prepared, surface_samples=surface_samples)
         if "structural_mechanics" not in invocation.state:
             patch = patch.put(("structural_mechanics",), {})
         patch = patch.put(("structural_mechanics", invocation.task_name), encode_state(model, solution))
@@ -116,7 +129,7 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         append_history(model, solution)
     if invocation.progress is not None:
         await invocation.progress({"stage": "structural-response", "completed": 1, "total": 1})
-    artifacts, exports, visuals = build_outputs(invocation.config, invocation.descriptor, model, solution, motion)
+    artifacts, exports, visuals = build_outputs(invocation.config, invocation.descriptor, model, solution, motion, surface_samples)
     if isinstance(solution, HarmonicSolution):
         observations = {"iterations": len(solution.frequencies), "relativeResidual": float(solution.relative_residuals.max())}
     else:

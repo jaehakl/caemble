@@ -1,0 +1,21 @@
+{
+  "source_hash": "4a77d75ae81293c93ec53f9376983af3f274ce03aad82783c114a67d9c8e346f",
+  "input_hash": "5751023482cbbc322dd62617846248fcf8df464a2622fdd40a4771d7994da925",
+  "types": "passed",
+  "build": "passed",
+  "python": {
+    "valid": true,
+    "tasks": [
+      "acoustics"
+    ],
+    "recordedData": [
+      "pressure",
+      "pressureProbe"
+    ]
+  },
+  "solver": "not-run",
+  "numerical": "not-run",
+  "details": {
+    "warnings": []
+  }
+}

@@ -2,6 +2,7 @@ import page0 from '../../../../docs/development/architecture.md?raw'
 import page1 from '../../../../docs/development/solver-development.md?raw'
 import structuralMechanicsPage from '../../../../docs/development/structural-mechanics.md?raw'
 import pressureAcousticsPage from '../../../../docs/development/pressure-acoustics.md?raw'
+import pressureAcousticsValidationPage from '../../../../docs/development/pressure-acoustics-validation.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
 import page3 from '../../../../docs/development/api.md?raw'
 import page4 from '../../../../docs/development/cae.md?raw'
@@ -46,11 +47,19 @@ export const developmentDocuments: readonly DocumentPage[] = [
   },
   {
     id: 'development.pressure-acoustics',
-    title: '주파수영역 압력음향과 표면 운동 전달',
-    summary: '선형 압력음향, 비일치 표면 적분과 harmonic 결과 검증',
+    title: '압력음향의 주파수응답, 시간응답과 표면 운동 전달',
+    summary: '선형 압력음향, 실제 표면 전달과 FEM·FDTD 수치 규약',
     sourcePath: 'docs/development/pressure-acoustics.md',
-    keywords: ['acoustics', 'harmonic', 'FEM', 'coupling', '음향'],
+    keywords: ['acoustics', 'harmonic', 'FEM', 'FDTD', 'coupling', '음향'],
     content: documentBody(pressureAcousticsPage),
+  },
+  {
+    id: 'development.pressure-acoustics-validation',
+    title: '구조 표면 시간응답과 음향 FDTD 검증 기록',
+    summary: '공간·시간 수렴, FEM 비교와 실제 child 실행 결과',
+    sourcePath: 'docs/development/pressure-acoustics-validation.md',
+    keywords: ['acoustics', 'FDTD', 'convergence', 'validation', '검증'],
+    content: documentBody(pressureAcousticsValidationPage),
   },
   {
     ...{

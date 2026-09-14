@@ -145,6 +145,14 @@ poetry run catalogctl --database $draft draft create --source $catalog
 poetry run catalogctl --database $draft query solver
 ```
 
+Catalog 저장 schema가 갱신된 checkout에서 이전 SQLite로 Draft를 만들었다면
+`catalogctl --database $draft rebase`를 먼저 실행합니다. Schema 5는 Solver와
+method parameter의 필수 여부를 보존합니다. `solver parameter upsert`와
+`solver method-parameter upsert`의 기본은 `--required`이며, 생략 가능한 값은
+`--no-required`로 선언합니다. 기본값의 물리적 의미와 적용은 Solver가 소유하고
+Catalog 설명에 명시합니다. 기존 필수 parameter는 `required`를 생략한 공개
+descriptor 모양을 유지하므로 rebase만으로 그 계약을 바꾸지 않습니다.
+
 신규 Solver는 ABI 3 locator와 함께 생성합니다.
 
 ```powershell

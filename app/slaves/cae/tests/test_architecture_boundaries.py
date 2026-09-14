@@ -131,6 +131,9 @@ def test_app_exposes_only_entry_files_and_current_packages() -> None:
     for path in (APP / "solvers").rglob("*.py"):
         assert not any(re.fullmatch(r"v\d+_\d+_\d+", part) for part in path.parts)
         assert not path.stem.endswith("_impl")
+    assert {path.name for path in (APP / "solvers/pressure_acoustics").glob("*.py")} == {
+        "__init__.py", "entry.py", "parameters.py",
+    }
 
 
 def test_removed_import_paths_are_unavailable() -> None:
@@ -221,10 +224,17 @@ def assert_solver_role_dependencies(app_directory: Path) -> None:
                             if relative_module == "analyses.harmonic":
                                 assert imported not in {prefix + ".state", prefix + ".analyses.transient", prefix + ".analyses.window"}, f"{path} imports time-state execution"
                         if package.name == "pressure_acoustics":
-                            if path.stem in {"harmonic", "formulation", "boundaries"}:
-                                assert not imported.startswith(prefix + ".outputs"), f"{path} imports result packaging"
-                            if path.stem == "harmonic":
-                                assert imported not in {prefix + ".entry", prefix + ".domain"}, f"{path} imports task preparation"
+                            relative_module = module.removeprefix(prefix + ".")
+                            analysis = relative_module.split(".")[0]
+                            dependency = imported.removeprefix(prefix + ".").split(".")
+                            if analysis in {"harmonic_fem", "transient_fdtd"}:
+                                assert dependency[0] not in {"harmonic_fem", "transient_fdtd"} - {analysis}, f"{path} imports another acoustic analysis"
+                                if path.stem not in {"__init__", "run", "outputs"}:
+                                    assert not {"run", "outputs"}.intersection(dependency), f"{path} imports execution or result packaging"
+                            if relative_module == "parameters":
+                                assert dependency[0] not in {"harmonic_fem", "transient_fdtd"}, f"{path} imports acoustic analysis from shared parameters"
+                            if relative_module in {"harmonic_fem.harmonic", "transient_fdtd.stepping"}:
+                                assert "domain" not in dependency, f"{path} imports task preparation"
                         # A package importing one of its children does not depend on itself.
                         if not (path.stem == "__init__" and isinstance(node, ast.ImportFrom) and imported == module):
                             dependencies.add(imported)
@@ -305,4 +315,42 @@ def test_interface_modules_cannot_import_output_packaging(solver_import_fixture,
     path = solver_import_fixture / "solvers/structural_mechanics/interfaces" / filename
     path.write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError, match="imports result packaging"):
+        assert_solver_role_dependencies(solver_import_fixture)
+
+
+@pytest.mark.parametrize(("analysis", "module", "dependency"), [
+    ("harmonic_fem", "formulation", "outputs"),
+    ("harmonic_fem", "harmonic", "run"),
+    ("transient_fdtd", "stepping", "outputs"),
+    ("transient_fdtd", "sources", "run"),
+])
+def test_acoustic_numerics_cannot_import_execution_or_outputs(solver_import_fixture, analysis, module, dependency):
+    package = solver_import_fixture / "solvers/pressure_acoustics" / analysis
+    package.mkdir()
+    (package / f"{module}.py").write_text(f"from . import {dependency}\n", encoding="utf-8")
+    (package / f"{dependency}.py").write_text("", encoding="utf-8")
+    with pytest.raises(AssertionError, match="imports execution or result packaging"):
+        assert_solver_role_dependencies(solver_import_fixture)
+
+
+@pytest.mark.parametrize(("analysis", "other"), [
+    ("harmonic_fem", "transient_fdtd"), ("transient_fdtd", "harmonic_fem"),
+])
+def test_acoustic_analyses_cannot_import_each_other(solver_import_fixture, analysis, other):
+    package = solver_import_fixture / "solvers/pressure_acoustics"
+    (package / analysis).mkdir()
+    (package / other).mkdir()
+    (package / other / "domain.py").write_text("", encoding="utf-8")
+    (package / analysis / "run.py").write_text(f"from ..{other} import domain\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="imports another acoustic analysis"):
+        assert_solver_role_dependencies(solver_import_fixture)
+
+
+@pytest.mark.parametrize("analysis", ["harmonic_fem", "transient_fdtd"])
+def test_shared_acoustic_parameters_cannot_depend_on_an_analysis(solver_import_fixture, analysis):
+    package = solver_import_fixture / "solvers/pressure_acoustics"
+    (package / analysis).mkdir()
+    (package / analysis / "domain.py").write_text("", encoding="utf-8")
+    (package / "parameters.py").write_text(f"from .{analysis} import domain\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="imports acoustic analysis from shared parameters"):
         assert_solver_role_dependencies(solver_import_fixture)
