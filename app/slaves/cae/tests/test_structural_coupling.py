@@ -7,21 +7,17 @@ import numpy as np
 import pytest
 
 from app.kernel.api import BundleValue
-from app.solvers.structural_mechanics.analysis import initial_solution
+from app.solvers.structural_mechanics.state import initial_solution
 from app.solvers.structural_mechanics.constraints import constraint_transform
-from app.solvers.structural_mechanics.coupling import (
-    advance_window,
-    apply_resultant_loads,
-    predict_motion,
-)
-from app.solvers.structural_mechanics.formulation import prepare_matrices
+from app.solvers.structural_mechanics.analyses.window import advance_window
+from app.solvers.structural_mechanics.interfaces.resultants import apply_resultant_loads
+from app.solvers.structural_mechanics.interfaces.motion import predict_motion
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp
-from app.solvers.structural_mechanics.state import (
-    append_history,
-    encode_state,
-    read_state,
-)
+from app.solvers.structural_mechanics.state import append_history
+from app.solvers.structural_mechanics.state import encode_state
+from app.solvers.structural_mechanics.state import read_state
 
 
 def translation_case():

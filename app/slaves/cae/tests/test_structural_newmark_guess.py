@@ -6,18 +6,16 @@ import numpy as np
 import pytest
 
 from app.kernel.api import BundleValue
-from app.solvers.structural_mechanics import analysis, coupling
-from app.solvers.structural_mechanics.analysis import (
-    initialize_acceleration,
-    static_analysis,
-    transient_step,
-)
-from app.solvers.structural_mechanics.coupling import (
-    advance_window,
-    interpolate_orientations,
-    predict_motion,
-)
-from app.solvers.structural_mechanics.formulation import prepare_matrices
+from app.solvers.structural_mechanics.analyses import transient as analysis, window as coupling
+from app.solvers.structural_mechanics.kinematics import _rotation_coordinate_jacobians
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.analyses.static import static_analysis
+from app.solvers.structural_mechanics.analyses.transient import transient_step
+from app.solvers.structural_mechanics.analyses.window import advance_window
+from app.solvers.structural_mechanics.interfaces.motion import interpolate_orientations
+from app.solvers.structural_mechanics.interfaces.motion import predict_motion
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.rotations import (
@@ -32,7 +30,8 @@ from tests.test_structural_rotation_dynamics import loaded_rotating_beam
 
 @pytest.mark.parametrize("dt", [.1, .02, .005])
 def test_warm_exact_multiaxis_pose_is_the_same_newmark_solution(dt):
-    model, initial, (K, M, C, prepared), force, beta = loaded_rotating_beam(True)
+    model, initial, prepared, force, beta = loaded_rotating_beam(True)
+    K, M, C = prepared.stiffness, prepared.mass, prepared.damping
     saved = deepcopy(initial)
     cold = transient_step(model, initial, prepared, K, M, C, force.ravel(), dt, 0., 1e-10, 20, True, damping_stiffness=beta)
     warm = transient_step(model, initial, prepared, K, M, C, force.ravel(), dt, 0., 1e-10, 20, True, damping_stiffness=beta, initial_guess=(cold.displacement[:, :3], cold.orientations))
@@ -45,7 +44,8 @@ def test_warm_exact_multiaxis_pose_is_the_same_newmark_solution(dt):
 
 
 def test_different_rotation_iteration_paths_converge_to_the_same_physical_state():
-    model, initial, (K, M, C, prepared), force, _ = loaded_rotating_beam(False)
+    model, initial, prepared, force, _ = loaded_rotating_beam(False)
+    K, M, C = prepared.stiffness, prepared.mass, prepared.damping
     cold = transient_step(model, initial, prepared, K, M, C, force.ravel(), .02, 0., 1e-10, 20, True)
     rng = np.random.default_rng(26)
     for scale in (.001, -.003):
@@ -57,7 +57,8 @@ def test_different_rotation_iteration_paths_converge_to_the_same_physical_state(
 
 
 def test_bad_guess_falls_back_to_predictor_without_mutating_state(monkeypatch):
-    model, initial, (K, M, C, prepared), force, _ = loaded_rotating_beam(False)
+    model, initial, prepared, force, _ = loaded_rotating_beam(False)
+    K, M, C = prepared.stiffness, prepared.mass, prepared.damping
     cold = transient_step(model, initial, prepared, K, M, C, force.ravel(), .02, 0., 1e-10, 20, True)
     saved = deepcopy(initial)
     calls = []
@@ -79,8 +80,11 @@ def test_warm_revolute_guess_preserves_unwrapped_angle_on_a_tilted_axis():
     model = joint_model()
     model.fixed = np.arange(6)
     model.masses = [(1, 1., np.eye(3) * .1), (2, 2., np.zeros((3, 3)))]
-    K, M, C, prepared = prepare_matrices(model)
-    initial = analysis.initial_solution(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
+    initial = initial_solution(model)
     initial.orientations[0] = rotation_exp([.2, .8, -.4])
     initial.displacement[1, 3] = 8.
     initial.velocity[1, 3:] = 3. * initial.orientations[0][:, 0]
@@ -100,7 +104,10 @@ def test_warm_plastic_step_uses_only_committed_material_history():
     fixed = np.array([6 * i + axis for i, xyz in enumerate(points) for axis in range(3) if xyz[axis] == 0])
     model = StructuralModel(np.arange(8), points, [Element("hex8", np.arange(8), material)], active, fixed, np.zeros((8, 6)))
     model.force[points[:, 0] == 1, 0] = 3 / 4
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial = static_analysis(model, prepared, K, M, tolerance=1e-10)
     initial = initialize_acceleration(model, initial, prepared, K, M, C, model.force.ravel())
     saved = deepcopy(initial.element_history)
@@ -158,5 +165,5 @@ def test_predictor_rotation_coordinate_jacobian_matches_spatial_finite_differenc
     plus = rotation_exp(phi + h * direction) @ predictor
     minus = rotation_exp(phi - h * direction) @ predictor
     physical = rotation_log(plus @ minus.T) / (2 * h)
-    jacobian = analysis._rotation_coordinate_jacobians(phi[None])[0]
+    jacobian = _rotation_coordinate_jacobians(phi[None])[0]
     np.testing.assert_allclose(jacobian @ physical, direction, rtol=1e-9, atol=1e-10)

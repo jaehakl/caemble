@@ -4,7 +4,13 @@ import { expect, it, vi } from 'vitest'
 import { WorkbenchViewer } from './WorkbenchViewer'
 
 vi.mock('@/features/viewer/viewer/CadViewer', () => ({ default: () => <div>Geometry preview</div> }))
-vi.mock('@/features/viewer/viewer/MeshFieldResult', () => ({ MeshFieldResult: () => <div>Stored volume field</div> }))
+vi.mock('@/features/viewer/viewer/MeshFieldResult', () => ({
+  MeshFieldResult: ({ displacementFields }: { displacementFields: { label: string }[] }) => (
+    <div data-testid="stored-volume" data-displacements={displacementFields.map((field) => field.label).join(',')}>
+      Stored volume field
+    </div>
+  ),
+}))
 vi.mock('@/features/viewer/viewer/resultPolylines', () => ({
   parseResultPolylines: (contracts: Record<string, { visualization: { kind: string } }>) => ({
     bundles: Object.entries(contracts)
@@ -61,6 +67,50 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
   fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
   expect(screen.getByText('Geometry preview')).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
+})
+
+it('offers deformation fields only from the selected native result invocation', () => {
+  const provenance = {
+    task: 'solid',
+    solver: { name: 'fixture', version: '1' },
+    stateRevision: 2,
+    invocation: 3,
+    catalogRevision: 'frozen',
+  }
+  const schema = { dtype: 'float64', axes: [{ name: 'entity' }] }
+  const visual = {
+    contract: {
+      artifactType: 'fixture/field@1',
+      visualization: { kind: 'mesh-field' as const, coordinateSpace: 'experiment' as const },
+    },
+    schema,
+    data: { shape: [1], axes: [{ implicitOrdinal: true as const }], storage: { kind: 'inline' as const, value: [1] } },
+    provenance,
+  }
+  render(
+    <WorkbenchViewer
+      experiment={null}
+      experimentDocument={{} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument']}
+      onFindSelectionSource={vi.fn()}
+      onSelectionQueryChange={vi.fn()}
+      onSelectionSourcePathsChange={vi.fn()}
+      selectionQuery={null}
+      selectionSourceStatus={{}}
+      viewerExpanded={false}
+      selectedResult="@visualizations.solid.stress"
+      visualizations={{
+        solid: {
+          stress: visual,
+          displacement: visual,
+          old: { ...visual, provenance: { ...provenance, invocation: 2 } },
+        },
+      }}
+    />,
+  )
+  expect(screen.getByTestId('stored-volume')).toHaveAttribute(
+    'data-displacements',
+    '@visualizations.solid.stress,@visualizations.solid.displacement',
+  )
 })
 
 it('keeps automatic visuals selectable and prevents overlays from a different invocation', () => {

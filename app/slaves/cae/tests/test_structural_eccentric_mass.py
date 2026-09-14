@@ -1,3 +1,4 @@
+from dataclasses import replace
 """편심 보의 질량·중력·운동량은 같은 무게중심 운동을 나타내야 한다.
 
 강체 연결 없이 두 절점의 자세와 병진을 각각 바꾼다. 검증 기준은 행렬을
@@ -9,16 +10,12 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
-from app.solvers.structural_mechanics.analysis import (
-    initial_solution,
-    initialize_acceleration,
-    transient_step,
-)
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.analyses.transient import transient_step
 from app.solvers.structural_mechanics.beam import beam_cg_mass, physical_beam_mass
-from app.solvers.structural_mechanics.formulation import (
-    inertial_response,
-    prepare_matrices,
-)
+from app.solvers.structural_mechanics.operators.inertia import inertial_response
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp, skew
 
@@ -72,7 +69,8 @@ def test_finite_rotation_rejects_nonphysical_section_mass(defect):
 
 def test_deformed_eccentric_beam_has_physical_linear_momentum_and_galilean_energy():
     model, state, length, density, center, _, reference = eccentric_model()
-    _, mass, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    mass = prepared.mass
     _, moving, _, _, kinetic = inertial_response(model, state.displacement, state.orientations, state.velocity, state.acceleration, prepared, mass, True)
     arms = state.orientations @ (reference @ center)
     cg_velocity = state.velocity[:, :3] + np.cross(state.velocity[:, 3:], arms)
@@ -88,7 +86,8 @@ def test_deformed_eccentric_beam_has_physical_linear_momentum_and_galilean_energ
 
 def test_deformed_eccentric_beam_gravity_uses_each_nodal_center_of_mass():
     model, state, length, density, center, _, reference = eccentric_model()
-    _, mass, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    mass = prepared.mass
     gravity = np.array([1., -2., -9.])
     acceleration = np.tile(np.r_[gravity, np.zeros(3)], (2, 1))
     weight = inertial_response(model, state.displacement, state.orientations, np.zeros((2, 6)), acceleration, prepared, mass, True)[0].reshape(2, 6)
@@ -101,7 +100,8 @@ def test_deformed_eccentric_beam_gravity_uses_each_nodal_center_of_mass():
 def test_nonphysical_mass_is_rejected_by_rotating_runtime_but_linear_mass_is_retained():
     model, state, *_ = eccentric_model()
     model.elements[0].section["mass"][0, 0] *= 1.1
-    _, mass, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    mass = prepared.mass
     state.acceleration[:] = .2
     force, retained, *_ = inertial_response(model, state.displacement, state.orientations, state.velocity, state.acceleration, prepared, mass, False)
     np.testing.assert_array_equal(force, mass @ state.acceleration.ravel())
@@ -132,9 +132,9 @@ def test_mixed_centered_batch_and_eccentric_scalar_match_all_scalar_inertia():
     centered = deepcopy(model.elements[0])
     centered.section["mass"] = np.block([[density * np.eye(3), np.zeros((3, 3))], [np.zeros((3, 3)), central]])
     model.elements.append(centered)
-    _, mass, _, prepared = prepare_matrices(model)
-    scalar = [dict(item) for item in prepared]
-    scalar[0].pop("beamBatch")
+    prepared = prepare_matrices(model)
+    mass = prepared.mass
+    scalar = replace(prepared, beam_batch=None)
     state.acceleration[:] = [[.1, -.2, .3, -.1, .2, .1], [-.2, .4, -.1, .3, -.1, .2]]
     batched = inertial_response(model, state.displacement, state.orientations, state.velocity, state.acceleration, prepared, mass, True, True)
     individual = inertial_response(model, state.displacement, state.orientations, state.velocity, state.acceleration, scalar, mass, True, True)
@@ -147,7 +147,10 @@ def test_mixed_centered_batch_and_eccentric_scalar_match_all_scalar_inertia():
 def test_eccentric_elastic_motion_under_gravity_converges_in_energy_and_momentum():
     model, initial, length, density, center, _, reference = eccentric_model()
     model.gravity = np.array([.4, -.7, -9.])
-    stiffness, mass, damping, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    stiffness = prepared.stiffness
+    mass = prepared.mass
+    damping = prepared.damping
     external = mass @ np.tile(np.r_[model.gravity, np.zeros(3)], 2)
     initial = initialize_acceleration(model, initial, prepared, stiffness, mass, damping, external, True)
     errors = []

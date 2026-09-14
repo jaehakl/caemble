@@ -12,12 +12,16 @@ import pytest
 from app.kernel.api import BundleValue, SolverInvocation
 from app.kernel.resources import FileResourceCache
 from app.methods.geometry import GeometryService
-from app.solvers.structural_mechanics.analysis import initial_solution, static_analysis
-from app.solvers.structural_mechanics.coupling import apply_resultant_loads, initialize_motion
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.static import static_analysis
+from app.solvers.structural_mechanics.interfaces.resultants import apply_resultant_loads
+from app.solvers.structural_mechanics.interfaces.motion import initialize_motion
 from app.solvers.structural_mechanics.domain import build_geometry_model, distribute_resultant
 from app.solvers.structural_mechanics.entry import run
-from app.solvers.structural_mechanics.formulation import prepare_matrices, structural_response
-from app.solvers.structural_mechanics.state import encode_state, read_state
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
+from app.solvers.structural_mechanics.operators.internal import structural_response
+from app.solvers.structural_mechanics.state import encode_state
+from app.solvers.structural_mechanics.state import read_state
 
 
 class UnexpectedGeometry:
@@ -65,7 +69,9 @@ async def test_generated_mesh_exact_affine_patch_and_resolution_invariant_surfac
         ])
         invocation = replace(invocation, geometry=GeometryService(cache=FileResourceCache(tmp_path)))
         model = await build_geometry_model(invocation)
-        K, M, _, prepared = prepare_matrices(model)
+        prepared = prepare_matrices(model)
+        K = prepared.stiffness
+        M = prepared.mass
         solution = static_analysis(model, prepared, K, M, tolerance=1e-10)
         strain = 10000 / (.16 * 210e9)
         expected = model.points * np.array([strain, -.3 * strain, -.3 * strain])
@@ -88,7 +94,9 @@ async def test_csg_mesh_refinement_converges_clamped_volume_compliance():
     for resolution in (.3, .2, .13):
         invocation = solid_invocation(resolution)
         model = await build_geometry_model(invocation)
-        K, M, _, prepared = prepare_matrices(model)
+        prepared = prepare_matrices(model)
+        K = prepared.stiffness
+        M = prepared.mass
         solution = static_analysis(model, prepared, K, M, tolerance=1e-10)
         energies.append(solution.strain_energy)
         counts.append(len(model.elements))
@@ -155,7 +163,9 @@ async def test_offset_csg_bodies_bond_only_their_overlapping_planar_patch(angle)
     assert metadata["quality"]["cellVolumes"].sum() == pytest.approx(.32, rel=1e-10)
     root_nodes = [set(np.concatenate([element.nodes for element in model.elements if element.root_id == root])) for root in ("body", "extension")]
     assert root_nodes[0] & root_nodes[1] == set(interface.ravel())
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     solution = static_analysis(model, prepared, K, M, tolerance=1e-10)
     np.testing.assert_allclose(solution.reaction[:, :3].sum(axis=0), -np.asarray(load["force"]), atol=1e-5)
     np.testing.assert_allclose(np.cross(model.points - load["referencePoint"], solution.reaction[:, :3]).sum(axis=0), 0, atol=1e-5)
@@ -186,7 +196,9 @@ async def test_surface_connections_generate_internal_reference_dofs(connection):
     model = await build_geometry_model(invocation)
     assert len(model.points) == model.physical_node_count + 2
     assert len(model.provenance["auxiliaryNodes"]) == 2
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     solution = static_analysis(model, prepared, K, M, tolerance=1e-9)
     np.testing.assert_allclose(solution.reaction[:, :3].sum(axis=0), [-10000, 0, 0], atol=1e-4)
     assert np.all(np.isfinite(solution.displacement))
@@ -197,12 +209,16 @@ async def test_surface_connections_generate_internal_reference_dofs(connection):
 async def test_surface_spring_and_body_initial_velocity_are_mesh_independent():
     invocation = solid_invocation()
     baseline = await build_geometry_model(invocation)
-    K, M, _, prepared = prepare_matrices(baseline)
+    prepared = prepare_matrices(baseline)
+    K = prepared.stiffness
+    M = prepared.mass
     free = static_analysis(baseline, prepared, K, M)
     stiffness = .16 * 210e9
     invocation.config["initializations"].append({"methodId": "fea.translation-spring", "target": ["experiment.surface.body-right"], "parameters": {"axisA": "x", "axisB": "x", "ratio": 1., "stiffness": stiffness, "damping": 1.}})
     model = await build_geometry_model(invocation)
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     supported = static_analysis(model, prepared, K, M)
     nodes = model.boundary_regions["experiment.surface.body-right"]["nodes"]
     assert supported.displacement[nodes, 0].mean() / free.displacement[baseline.boundary_regions["experiment.surface.body-right"]["nodes"], 0].mean() == pytest.approx(.5, rel=.04)
@@ -395,7 +411,7 @@ async def test_csg_rotor_initial_azimuth_and_pitch_preserve_volume_without_fake_
             assert np.linalg.norm(current[right] - current[left]) == pytest.approx(np.linalg.norm(original[right] - original[left]), rel=1e-10)
     assert len(model.points) == model.physical_node_count + 4
     assert np.max(np.linalg.norm(solution.velocity[:model.physical_node_count, :3], axis=1)) > 0
-    _, _, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
     internal, _, _, _, energy = structural_response(
         model, solution.displacement, solution.orientations, prepared, None,
         geometric=True, approximate_tangent=True,

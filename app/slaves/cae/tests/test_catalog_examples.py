@@ -59,7 +59,11 @@ def decode_tensor_tree(schema, value, attachments):
             continue
         storage = tensor["storage"]
         if storage["kind"] == "inline":
-            values = np.asarray(storage["value"]).reshape(tensor["shape"])
+            if node["dtype"] == "complex64":
+                encoded = np.asarray(storage["value"], dtype=object).reshape(tensor["shape"])
+                values = np.asarray([complex(item["re"], item["im"]) for item in encoded.flat], dtype=np.complex64).reshape(encoded.shape)
+            else:
+                values = np.asarray(storage["value"]).reshape(tensor["shape"])
         else:
             raw = b"".join(attachments[identifier] for identifier in storage["ids"])
             values = (np.asarray(json.loads(raw.decode("utf-8"))) if node["dtype"] == "string"
@@ -93,6 +97,7 @@ def cylinder_segments(measurement):
     "structural-element-basics", "structural-analysis-modes",
     "curved-tower-shell", "boolean-connection-solid",
     "structural-nonlinear-materials", "structural-optical-results",
+    "matched-impedance-duct", "plate-driven-duct",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
@@ -152,10 +157,13 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
         assert len(run.completed_sequences) == len(run.schemas)
         assert len(run.visualization_sequences) == len(visualizations)
         assert set(visualizations) == {name for name, task in program["tasks"].items()
-                                       if task["kernel"]["name"] in {"structural-mechanics", "ray-tracing"}}
+                                       if task["kernel"]["name"] in {"structural-mechanics", "ray-tracing", "pressure-acoustics"}}
         for task, items in visualizations.items():
-            expected = {"paths"} if program["tasks"][task]["kernel"]["name"] == "ray-tracing" else {"displacement", "stress"}
-            if program["tasks"][task]["config"]["parameters"].get("analysis") == "transient":
+            solver = program["tasks"][task]["kernel"]["name"]
+            analysis = program["tasks"][task]["config"]["parameters"].get("analysis")
+            expected = ({"paths"} if solver == "ray-tracing" else {"pressure"} if solver == "pressure-acoustics"
+                        else {"harmonicDisplacement", "harmonicStress"} if analysis == "harmonic" else {"displacement", "stress"})
+            if analysis == "transient":
                 expected.add("displacementHistory")
             assert set(items) == expected
             for name, item in items.items():
@@ -209,7 +217,15 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert len(native[prefix + ".domain.identity"].item()) == 64
             assert native[prefix + ".domain.lengthUnit"].item() == "m"
             values = native[prefix + ".values"]
-            assert values.shape == ((len(points), 3) if native[prefix + ".location"].item() == "node" else (len(cells), 6))
+            count = len(points) if native[prefix + ".location"].item() == "node" else len(cells)
+            if values.dtype.kind == "c":
+                frequencies = native[prefix.removesuffix("field") + "frequencies"]
+                components = 1 if native[prefix + ".quantity"].item() == "acoustics.SoundPressure" else 3 if native[prefix + ".location"].item() == "node" else 6
+                assert values.shape == (count, len(frequencies), components)
+                assert np.all(frequencies > 0) and np.all(np.diff(frequencies) > 0)
+                assert np.max(np.abs(values)) > 0
+            else:
+                assert values.shape == (count, 3 if native[prefix + ".location"].item() == "node" else 6)
             supports = native[prefix + ".domain.metadata.supportNodes"]
             assert np.all((supports >= 0) & (supports < len(points)))
             assert native[prefix + ".domain.metadata.loadPoints"].shape == native[prefix + ".domain.metadata.loadVectors"].shape
@@ -249,6 +265,23 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert animation.shape[1:] == native[prefix + ".field.domain.points"].shape
             np.testing.assert_allclose(animation[-1], native["transient.displacement.values"])
             assert visualizations["transient"]["displacementHistory"]["provenance"]["invocation"] == 3
+        if key in {"matched-impedance-duct", "plate-driven-duct"}:
+            frequencies = np.asarray(metadata["pressureProbe"]["axes"][4]["ticks"])
+            probe = recorded["pressureProbe"].reshape(len(frequencies), 2)
+            complex_pressure = probe[:, 0] * np.exp(1j * probe[:, 1])
+            assert np.all(probe[:, 0] > 0)
+            assert visualizations["acoustics"]["pressure"]["contract"]["visualization"]["phasor"]["amplitude"] == "peak"
+            if key == "matched-impedance-duct":
+                position = .8 * measurement["experiment"]["variables"]["length"]
+                exact = 1.2 * 343 * np.exp(-2j * np.pi * frequencies * position / 343)
+                assert np.max(np.abs(complex_pressure - exact) / np.abs(exact)) < .01
+            else:
+                source = native["structure.harmonicDisplacement.field.domain.points"]
+                target = native["acoustics.pressure.field.domain.points"]
+                assert len(source) != len(target)
+                assert native["structure.harmonicDisplacement.field.domain.identity"].item() != native["acoustics.pressure.field.domain.identity"].item()
+                np.testing.assert_array_equal(native["structure.harmonicDisplacement.frequencies"], frequencies)
+                assert np.max(recorded["displacement"][..., 0, :]) > 0
         if key == "structural-nonlinear-materials":
             assert np.max(np.abs(recorded["plastic_stress"])) > 0
             for task, force in {"plastic": [35e6, 0, 0], "contact": [0, 0, -200], "laminate": [10000, 0, 0]}.items():
@@ -482,6 +515,61 @@ async def test_structural_child_cancellation_preserves_checkpoint_and_releases_b
         if pending is not None and not pending.done():
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+        await run.close()
+    assert not buffer_root.exists()
+    assert sim._resources.stats().resource_count == 0
+
+
+@pytest.mark.parametrize("key", ["plate-driven-duct"])
+@pytest.mark.asyncio
+async def test_harmonic_surface_crosses_children_and_failed_frequency_call_rolls_back(key, catalog_measurements):
+    """Keep native complex motion alive across a rejected and then successful acoustic child."""
+    measurement = deepcopy(catalog_measurements[key])
+    program = measurement["experiment"]["simulationProgram"]
+    program["tasks"]["wrongFrequency"] = deepcopy(program["tasks"]["acoustics"])
+    program["visualizationContracts"]["wrongFrequency"] = deepcopy(program["visualizationContracts"]["acoustics"])
+    spectrum = next(rule for rule in program["tasks"]["wrongFrequency"]["config"]["initializations"]
+                    if rule["methodId"] == "acoustics.spectrum")
+    spectrum["parameters"]["frequencies"]["value"][-1] += 1
+    measurement["experiment"]["taskScenes"]["wrongFrequency"] = deepcopy(measurement["experiment"]["taskScenes"]["acoustics"])
+    for member in ("taskMaterialSnapshots", "materialSelections"):
+        measurement[member]["wrongFrequency"] = deepcopy(measurement[member]["acoustics"])
+    run = CaeRun(measurement=measurement, max_run_seconds=120, job_id="harmonic-native-lifecycle")
+    sim = SimulationApi(run)
+    run.simulation_api = sim
+    sim._executor = SpawnSolverExecutor(codec=MmapPayloadCodec(sim._buffers, array_threshold=1))
+    buffer_root = sim._buffers.root
+    try:
+        structure = await sim.run(run.tasks["structure"])
+        motion_handle = structure["artifacts"]["surfaceMotion"]
+        motion = sim._artifacts.resolve(motion_handle)
+        velocity = motion.members["velocity"]
+        frequencies = np.asarray(motion.members["frequencies"]["value"])
+        displacement = sim._artifacts.resolve(sim._visualizations["structure"]["harmonicDisplacement"]).members["field"]
+        assert velocity.domain.identity != displacement.domain.identity
+        assert set(velocity.domain.cells) == {"tri3"}
+        assert velocity.values.dtype == np.complex64
+        assert velocity.values.shape == (len(velocity.domain.points), len(frequencies), 3)
+        point_indices = {tuple(point): index for index, point in enumerate(displacement.domain.points)}
+        selected = [point_indices[tuple(point)] for point in velocity.domain.points]
+        np.testing.assert_allclose(velocity.values, 2j * np.pi * frequencies[None, :, None] * displacement.values[selected], rtol=3e-7, atol=1e-12)
+        assert "structural_mechanics" not in structure["state"]
+        sim.release(structure["artifacts"], keep=motion_handle)
+        before = sim._resources.stats(), sim._states.revisions(), set(sim._buffers.files())
+        with pytest.raises(RemoteSolverError, match="frequency coordinates must exactly match"):
+            await sim.run(run.tasks["wrongFrequency"], state=structure["state"], inputs={"surfaceMotion": motion_handle})
+        assert (sim._resources.stats(), sim._states.revisions(), set(sim._buffers.files())) == before
+        assert sim._artifacts.is_live(motion_handle)
+        sound = await sim.run(run.tasks["acoustics"], state=structure["state"], inputs={"surfaceMotion": motion_handle})
+        pressure = sim._artifacts.resolve(sound["artifacts"]["pressure"])
+        assert np.max(pressure["value"][..., 0, :]) > 0
+        assert sound["state"] is structure["state"]
+        sim.release(motion_handle)
+        with pytest.raises(Exception, match="released|live"):
+            await sim.run(run.tasks["acoustics"], state=sound["state"], inputs={"surfaceMotion": motion_handle})
+        sim.release(sound["artifacts"])
+        sim.release(sound["state"])
+    finally:
         await run.close()
     assert not buffer_root.exists()
     assert sim._resources.stats().resource_count == 0

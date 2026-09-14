@@ -1,3 +1,4 @@
+from app.solvers.structural_mechanics.constraints import constraint_transform
 """조립부터 정적·고유치·시간 적분까지 이어지는 수치 검증입니다."""
 
 from copy import deepcopy
@@ -6,28 +7,24 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app.solvers.structural_mechanics.analysis import (
-    apply_increment,
-    buckling_analysis,
-    harmonic_analysis,
-    initial_solution,
-    initialize_acceleration,
-    kinematic_rates,
-    modal_analysis,
-    solve_linear,
-    static_analysis,
-    transient_step,
-)
+from app.solvers.structural_mechanics.kinematics import apply_increment
+from app.solvers.structural_mechanics.analyses.buckling import buckling_analysis
+from app.solvers.structural_mechanics.analyses.harmonic import solve_harmonic
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.kinematics import kinematic_rates
+from app.solvers.structural_mechanics.analyses.modal import modal_analysis
+from app.solvers.structural_mechanics.numerics import solve_linear
+from app.solvers.structural_mechanics.analyses.static import static_analysis
+from app.solvers.structural_mechanics.analyses.transient import transient_step
 from app.solvers.structural_mechanics.beam import isotropic_beam_section
 from app.solvers.structural_mechanics.constraints import (
     constraint_transform,
     enforce_links,
 )
-from app.solvers.structural_mechanics.formulation import (
-    inertial_response,
-    prepare_matrices,
-    strain_rate_damping,
-)
+from app.solvers.structural_mechanics.operators.inertia import inertial_response
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
+from app.solvers.structural_mechanics.operators.damping import strain_rate_damping
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp
@@ -65,7 +62,9 @@ def test_static_truss_displacement_and_support_reaction():
     points = np.array([[0., 0., 0.], [L, 0., 0.]])
     model = StructuralModel(np.array([0, 1]), points, [Element("truss2", np.array([0, 1]), material, {"area": A})], np.array([0, 1, 2, 6, 7, 8]), np.array([0, 1, 2, 7, 8]), np.zeros((2, 6)))
     model.force[1, 0] = F
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     result = static_analysis(model, prepared, K, M)
     np.testing.assert_allclose(result.displacement[1, 0], F * L / (E * A))
     np.testing.assert_allclose(result.reaction[0, 0], -F)
@@ -77,7 +76,9 @@ def test_cantilever_beam_mesh_convergence_and_reaction_balance():
     exact = 2**3 / (3 * 2e7 * 1e-6) + 2 / (2e7 / 2.6 * .008)
     for segments in (4, 16):
         model = beam_model(segments)
-        K, M, _, prepared = prepare_matrices(model)
+        prepared = prepare_matrices(model)
+        K = prepared.stiffness
+        M = prepared.mass
         result = static_analysis(model, prepared, K, M)
         errors.append(abs(result.displacement[-1, 2] / exact - 1))
         np.testing.assert_allclose(result.reaction[0, 2], -1., atol=2e-10)
@@ -87,7 +88,9 @@ def test_cantilever_beam_mesh_convergence_and_reaction_balance():
 
 def test_beam_first_mode_mass_normalization_and_euler_buckling():
     model = beam_model(20, 0.)
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     result = modal_analysis(model, K, M, 2)
     expected = 1.875104068711961**2 / (2 * np.pi) * np.sqrt(2e7 * 1e-6 / (1000 * .01 * 2**4))
     np.testing.assert_allclose(result["frequencies"], expected, rtol=.01)
@@ -106,7 +109,9 @@ def test_tilted_shell_massless_drilling_is_condensed_without_fake_inertia():
     frequencies = []
     for Q in (np.eye(3), rotation_exp(np.array([.8, -.4, .3]))):
         model = StructuralModel(np.arange(4), points @ Q.T, [Element("shell4", np.arange(4), {"model": "mechanics.isotropic-elastic@1"}, section)], np.arange(24), np.r_[np.arange(6), np.arange(18, 24)], np.zeros((4, 6)))
-        K, M, _, _ = prepare_matrices(model)
+        operators = prepare_matrices(model)
+        K = operators.stiffness
+        M = operators.mass
         modes = modal_analysis(model, K, M, 3)
         flat = modes["modes"].reshape(3, -1)
         np.testing.assert_allclose(flat @ M @ flat.T, np.eye(3), atol=4e-12)
@@ -114,20 +119,27 @@ def test_tilted_shell_massless_drilling_is_condensed_without_fake_inertia():
     np.testing.assert_allclose(*frequencies, rtol=1e-8)
 
 
-def test_harmonic_response_matches_complex_sdof_transfer_function():
+@pytest.mark.asyncio
+async def test_harmonic_response_matches_complex_sdof_transfer_function():
     model = spring_model(mass=2., stiffness=50., damping=3., force=1.)
-    K, M, C, _ = prepare_matrices(model)
+    operators = prepare_matrices(model)
+    K = operators.stiffness
+    M = operators.mass
+    C = operators.damping
     frequencies = np.array([.1, .5, 1.2])
-    result = harmonic_analysis(model, K, M, C, frequencies)
+    result = await solve_harmonic(operators, constraint_transform(model, np.tile(np.eye(3), (len(model.points), 1, 1))), frequencies, model.force)
     omega = 2 * np.pi * frequencies
     expected = 1 / (50 - 2 * omega**2 + 3j * omega)
-    np.testing.assert_allclose(result["response"][:, 0, 0], expected)
-    assert np.all(result["response"][:, 0, 0].imag < 0)
+    np.testing.assert_allclose(result.complex_displacement[:, 0, 0], expected)
+    assert np.all(result.complex_displacement[:, 0, 0].imag < 0)
 
 
 def test_newmark_sdof_energy_and_split_restart():
     model = spring_model()
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     current = initial_solution(model)
     current.displacement[0, 0] = .1
     current.acceleration[0, 0] = -2.5
@@ -159,7 +171,8 @@ def test_damping_does_not_brake_a_rigidly_spinning_beam():
         if use_section_damping:
             for element in model.elements:
                 element.section["damping"] = .003 * element.section["stiffness"]
-        _, _, reference_damping, prepared = prepare_matrices(model)
+        prepared = prepare_matrices(model)
+        reference_damping = prepared.damping
         current = reference_damping + strain_rate_damping(model, u, orientations, prepared, 0. if use_section_damping else .003, True)
         # 큰 회전 중이어도 상대 변형률 속도가 0이면 점성 소산과 감쇠력이 0이다.
         np.testing.assert_allclose(current @ velocity.ravel(), 0., atol=2e-12)
@@ -168,7 +181,10 @@ def test_damping_does_not_brake_a_rigidly_spinning_beam():
 
 def test_stiffness_damping_matches_underdamped_oscillator():
     model = spring_model(mass=2., stiffness=50.)
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     solution = initial_solution(model)
     solution.displacement[0, 0] = .1
     solution.acceleration[0, 0] = -2.5
@@ -181,7 +197,9 @@ def test_stiffness_damping_matches_underdamped_oscillator():
 
 def test_nonlinear_beam_static_converges_with_force_and_moment_balance():
     model = beam_model(1, force=3.)
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     result = static_analysis(model, prepared, K, M, geometric=True, tolerance=1e-8)
     assert result.displacement[-1, 2] > .2
     assert result.residual < 1e-8
@@ -196,7 +214,9 @@ def test_small_sliding_contact_closes_gap_without_tensile_reaction():
     model.springs = [(2, -1, 1., 10., 0.)]
     model.contacts = [{"slaves": np.array([0]), "faces": np.array([[1, 2, 3]]), "penalty": 1000.}]
     model.force[0, 2] = -2.
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     result = static_analysis(model, prepared, K, M)
     expected = (-2 - 1000 * .1) / 1010
     np.testing.assert_allclose(result.displacement[0, 2], expected, atol=1e-12)
@@ -215,7 +235,9 @@ def test_solid_j2_static_matches_uniform_uniaxial_hardening_solution():
     fixed = np.array([6 * i + axis for i, xyz in enumerate(points) for axis in range(3) if xyz[axis] == 0])
     model = StructuralModel(np.arange(8), points, [Element("hex8", np.arange(8), material)], active, fixed, np.zeros((8, 6)))
     model.force[points[:, 0] == 1, 0] = 3 / 4
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     result = static_analysis(model, prepared, K, M, tolerance=1e-9)
     np.testing.assert_allclose(result.displacement[points[:, 0] == 1, 0], 3 / 1000 + (3 - 2) / 50, rtol=1e-9)
     np.testing.assert_allclose(result.element_history[0]["equivalentPlasticStrain"], .02, rtol=1e-9)
@@ -233,7 +255,10 @@ def test_solid_j2_static_matches_uniform_uniaxial_hardening_solution():
 
 def test_initial_acceleration_solves_sdof_equilibrium_instead_of_assuming_zero():
     model = spring_model(force=6.)
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial = initial_solution(model)
     result = initialize_acceleration(model, initial, prepared, K, M, C, model.force.ravel())
     np.testing.assert_allclose(result.acceleration[0, 0], 3.)
@@ -244,7 +269,10 @@ def test_rotating_lump_inertia_euler_gyroscopic_term_and_tangents():
     model = StructuralModel(np.array([0]), np.zeros((1, 3)), [], np.array([3, 4, 5]), np.empty(0, dtype=int), np.zeros((1, 6)))
     body = np.diag([2., 3., 4.])
     model.masses = [(0, 1., body)]
-    _K, M, _C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    _K = prepared.stiffness
+    M = prepared.mass
+    _C = prepared.damping
     R = np.array([rotation_exp(np.array([.8, -.3, .4]))])
     v, a, u = np.zeros((1, 6)), np.zeros((1, 6)), np.zeros((1, 6))
     v[0, 3:], a[0, 3:] = [1., 2., -.5], [.2, -.3, .4]
@@ -266,7 +294,10 @@ def test_rotating_lump_inertia_euler_gyroscopic_term_and_tangents():
 def test_consistent_beam_rotation_has_whole_body_gyroscopic_moment():
     model = beam_model(1, 0.)
     model.points -= model.points.mean(axis=0)
-    _K, M, _C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    _K = prepared.stiffness
+    M = prepared.mass
+    _C = prepared.damping
     u, v, a = np.zeros((2, 6)), np.zeros((2, 6)), np.zeros((2, 6))
     R = np.tile(np.eye(3), (2, 1, 1))
     omega = np.array([1., 2., 3.])
@@ -309,7 +340,10 @@ def test_fixed_axis_rigid_rotor_preserves_continuous_spin_and_energy():
     model = StructuralModel(np.arange(3), points, [], np.arange(18), np.array([0, 1, 2, 4, 5]), np.zeros((3, 6)))
     model.links = [(0, 1, np.arange(6)), (0, 2, np.arange(6))]
     model.masses = [(0, 1., np.eye(3) * .1), (1, 2., np.zeros((3, 3))), (2, 2., np.zeros((3, 3)))]
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     current = initial_solution(model)
     current.velocity[0, 3] = omega
     current = initialize_acceleration(model, current, prepared, K, M, C, np.zeros(18), geometric=True)
@@ -326,7 +360,10 @@ def test_fixed_axis_rigid_rotor_preserves_continuous_spin_and_energy():
 def test_free_asymmetric_rotor_euler_acceleration_and_conservation_refine_with_dt():
     model = StructuralModel(np.array([0]), np.zeros((1, 3)), [], np.array([3, 4, 5]), np.empty(0, dtype=int), np.zeros((1, 6)))
     body = np.diag([2., 3., 4.]); model.masses = [(0, 1., body)]
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial = initial_solution(model); initial.velocity[0, 3:] = [1., .7, .2]
     initial = initialize_acceleration(model, initial, prepared, K, M, C, np.zeros(6), geometric=True)
     omega = initial.velocity[0, 3:]
@@ -346,7 +383,10 @@ def test_eccentric_rigid_link_static_includes_constraint_geometric_stiffness():
     model.links = [(0, 1, np.arange(6))]
     model.springs = [(5, -1, 1., 10., 0.)]
     model.force[1, 1] = 2.
-    K, M, _C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    _C = prepared.damping
     result = static_analysis(model, prepared, K, M, geometric=True)
     angle = result.displacement[0, 5]
     np.testing.assert_allclose(10 * angle, 2 * np.cos(angle), rtol=1e-8)
@@ -355,7 +395,9 @@ def test_eccentric_rigid_link_static_includes_constraint_geometric_stiffness():
 def test_free_free_beam_modal_analysis_skips_six_rigid_body_modes():
     model = beam_model(20, 0.)
     model.fixed = np.empty(0, dtype=int)
-    K, M, _, _ = prepare_matrices(model)
+    operators = prepare_matrices(model)
+    K = operators.stiffness
+    M = operators.mass
     result = modal_analysis(model, K, M, 2)
     exact = 4.730040744862704**2 / (2 * np.pi * 2**2) * np.sqrt(2e7 * 1e-6 / (1000 * .01))
     np.testing.assert_allclose(result["frequencies"], exact, rtol=.01)

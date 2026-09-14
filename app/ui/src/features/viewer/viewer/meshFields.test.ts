@@ -14,6 +14,8 @@ import {
   type MeshFieldView,
   type RecordedMeshField,
 } from './meshFields'
+import { meshHarmonicAtPhase } from './meshDeformation'
+import { resultVisualizationSchema } from '@/contracts/resultValidators'
 
 const view: MeshFieldView = {
   component: 'magnitude',
@@ -95,6 +97,118 @@ function fixture(stress = false) {
 }
 
 describe('recorded mesh fields', () => {
+  it.each([
+    ['displacement', 3, 4, 2],
+    ['stress', 6, 1, 2],
+    ['pressure', 1, 4, 2],
+    ['displacement', 3, 4, 3000],
+    ['stress', 6, 1, 3000],
+    ['pressure', 1, 4, 3000],
+  ] as const)(
+    'restores a complete %s phasor sweep with %i components (%i entities, %i frequencies)',
+    (kind, components, count, samples) => {
+      const input = fixture(kind === 'stress')
+      const rules = input.rules
+        .filter((rule) => rule.label !== 'field.values')
+        .map((rule) => ({ ...rule, label: rule.label.replace('field.', 'field.field.') }))
+      const data = Object.fromEntries(
+        Object.entries(input.data).map(([key, value]) => [key.replace('field.', 'field.field.'), value]),
+      ) as Record<string, unknown>
+      const frequencies = Array.from({ length: samples }, (_, i) => (i === 0 ? 91 : i === 1 ? 37 : 100 + i))
+      const unit = kind === 'displacement' ? 'm' : 'Pa'
+      const schema = {
+        dtype: 'complex64',
+        quantityKind: kind === 'displacement' ? 'kinematics.Displacement' : 'Pressure',
+        unit,
+        tensorOrder: 0,
+        axes: [
+          { length: count },
+          { length: samples, name: 'frequency', quantityKind: 'Frequency', unit: 'Hz' },
+          { length: components },
+        ],
+      } as DataSchema
+      const values = Array.from({ length: count }, (_, entity) =>
+        frequencies.map((_, sample) =>
+          Array.from({ length: components }, (_, component) => ({
+            re: entity * 100 + sample * 10 + component + 1,
+            im: 2 * (entity * 100 + sample * 10 + component + 1),
+          })),
+        ),
+      )
+      const attached = createAttachmentDataTensor(
+        schema,
+        { value: values, axes: [{ implicitOrdinal: true }, { ticks: frequencies }, { implicitOrdinal: true }] },
+        'harmonic-mesh-test',
+      )
+      attached.attachments.forEach(({ id, bytes }) => registerDataTensorAttachment(id, bytes))
+      const frequencySchema = {
+        dtype: 'float64',
+        unit: 'Hz',
+        quantityKind: 'Frequency',
+        tensorOrder: 0,
+        axes: [{ length: samples }],
+      } as DataSchema
+      rules.push(
+        { label: 'field.field.values', methodId: 'test', target: [], parameters: {}, result: schema },
+        { label: 'field.frequencies', methodId: 'test', target: [], parameters: {}, result: frequencySchema },
+      )
+      data['field.field.values'] = attached.tensor
+      data['field.field.valueUnit'] = createDataTensor({ dtype: 'string' }, { value: unit })
+      data['field.frequencies'] = createDataTensor(frequencySchema, { value: frequencies })
+      const contracts: RecordedResultContracts = {
+        field: {
+          ...input.contracts.field,
+          visualization: {
+            kind: 'mesh-field',
+            coordinateSpace: 'experiment',
+            fieldPath: 'field',
+            ...(kind === 'pressure' ? {} : { valueKind: kind }),
+            frequency: { path: 'frequencies', axis: 1, entityAxis: 0, componentAxis: 2 },
+            phasor: { timeConvention: 'exp(+i*omega*t)', amplitude: 'peak' },
+          },
+        },
+      }
+      try {
+        expect(attached.attachments.length > 0).toBe(samples === 3000)
+        const parsed = parseRecordedMeshFields(rules, data as RecordedData, contracts)
+        expect(parsed.errors).toEqual([])
+        const field = parsed.fields[0]
+        expect(field.componentCount).toBe(components)
+        expect(field.spectrum?.frequencies.slice(0, 2)).toEqual(new Float64Array([91, 37]))
+        expect(field.values[count * components]).toBe(11)
+        if (count > 1) expect(field.values[components]).toBe(101)
+        expect(meshHarmonicAtPhase(field, 37, 90).values[0]).toBeCloseTo(-22)
+        expect(() => createMeshFieldRenderData(field, view)).toThrow('Select a frequency and phase')
+        const mismatch = {
+          ...data,
+          'field.frequencies': createDataTensor(frequencySchema, {
+            value: frequencies.map((frequency) => frequency + 1),
+          }),
+        }
+        expect(parseRecordedMeshFields(rules, mismatch as RecordedData, contracts).errors[0].message).toContain(
+          'coordinates differ',
+        )
+      } finally {
+        releaseDataTensorAttachments(attached.attachments.map(({ id }) => id))
+      }
+    },
+  )
+  it('rejects unsupported and ambiguous harmonic display semantics', () => {
+    const value = {
+      kind: 'mesh-field',
+      frequency: { path: 'frequencies', axis: 1, entityAxis: 0, componentAxis: 2 },
+      phasor: { timeConvention: 'exp(+i*omega*t)', amplitude: 'peak' },
+    }
+    expect(resultVisualizationSchema.safeParse(value).success).toBe(true)
+    expect(resultVisualizationSchema.safeParse({ ...value, phasor: undefined }).success).toBe(false)
+    expect(
+      resultVisualizationSchema.safeParse({ ...value, phasor: { ...value.phasor, amplitude: 'rms' } }).success,
+    ).toBe(false)
+    expect(
+      resultVisualizationSchema.safeParse({ ...value, time: { path: 'times', axis: 0, nodeAxis: 1, componentAxis: 2 } })
+        .success,
+    ).toBe(false)
+  })
   it('restores a domain-bound time history from frozen member and axis semantics', () => {
     const input = fixture()
     const rules = input.rules.map((rule) => ({ ...rule, label: rule.label.replace('field.', 'field.field.') }))

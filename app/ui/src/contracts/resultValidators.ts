@@ -17,6 +17,19 @@ export const resultVisualizationSchema = z
       })
       .strict()
       .optional(),
+    frequency: z
+      .object({
+        path: z.string(),
+        axis: z.number().int().nonnegative(),
+        entityAxis: z.number().int().nonnegative(),
+        componentAxis: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    phasor: z
+      .object({ timeConvention: z.literal('exp(+i*omega*t)'), amplitude: z.literal('peak') })
+      .strict()
+      .optional(),
     grid: z
       .object({
         xyzAxes: z.tuple([
@@ -40,6 +53,22 @@ export const resultVisualizationSchema = z
       .optional(),
   })
   .strict()
+  .superRefine((value, context) => {
+    if (Boolean(value.frequency) !== Boolean(value.phasor) || (value.frequency && value.time))
+      context.addIssue({
+        code: 'custom',
+        message: 'Harmonic visualization requires frequency and phasor semantics without a time history.',
+      })
+    if (
+      value.frequency &&
+      (value.kind !== 'mesh-field' ||
+        new Set([value.frequency.axis, value.frequency.entityAxis, value.frequency.componentAxis]).size !== 3)
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'Harmonic mesh axes must identify distinct frequency, entity and component dimensions.',
+      })
+  })
 
 export const recordedResultContractsSchema: z.ZodType<RecordedResultContracts> = z.record(
   z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/u),

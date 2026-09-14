@@ -9,12 +9,13 @@ import pytest
 
 from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ResourceStore
-from app.solvers.structural_mechanics.analysis import initial_solution
+from app.solvers.structural_mechanics.state import initial_solution
 from app.solvers.structural_mechanics.constraints import constraint_transform
 from app.solvers.structural_mechanics.domain import update_fingerprint
 from tests.structural_fixture import build_model
-from app.solvers.structural_mechanics.outputs import _physical_domain
-from app.solvers.structural_mechanics.state import encode_state, read_state
+from app.solvers.structural_mechanics.outputs.fields import _physical_domain
+from app.solvers.structural_mechanics.state import encode_state
+from app.solvers.structural_mechanics.state import read_state
 
 
 def generalized_beam_invocation():
@@ -87,7 +88,7 @@ def test_each_element_block_retains_cad_target_and_ids_in_public_mesh_metadata()
     invocation = generalized_beam_invocation()
     invocation.config["initializations"].append(deepcopy(invocation.config["initializations"][1]))
     model = build_model(invocation)
-    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
     domain, _ = _physical_domain(model)
     resources = ResourceStore()
     try:

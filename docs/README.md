@@ -24,6 +24,7 @@ other manual pages by title, keywords, or body. `docs show experiment`,
 - [CAE kernel](development/cae.md)
 - [Solver development contract](development/solver-development.md)
 - [CSG structural mechanics](development/structural-mechanics.md)
+- [Pressure acoustics and surface motion transfer](development/pressure-acoustics.md)
 - [CAD elements](development/cad-elements.md)
 - [Documentation maintenance](development/documentation.md)
 - [SDKs](../app/sdk/README.md): independently distributed SDK documentation stays with the packages.

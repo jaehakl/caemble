@@ -2,17 +2,18 @@
 
 import hashlib
 import marshal
-import struct
-from collections.abc import Mapping
-
 import numpy as np
-
+import struct
 from app.kernel.api.world import geometry_part, geometry_parts, material_model
+from app.methods.geometry.surfaces import select_boundary_region
 from app.methods.mesh.models import VolumeMeshingProfile
-
+from collections.abc import Mapping
 from .constraints import revolute_joints
 from .materials import isotropic_elasticity, orient_elasticity, orthotropic_elasticity
 from .model import Element, StructuralModel
+
+
+
 
 
 def parameter(value):
@@ -297,25 +298,9 @@ async def build_geometry_model(invocation):
                 model.cell_regions[target] = indices
         for group in scene["surfaceGroups"]:
             selectors = {(source, p["rootId"], p["sourceNodeId"], p["surfaceIndex"]) for p in group["selectors"]}
-            face_indices = np.asarray([i for i, provenance in enumerate(aliases) if selectors.intersection(provenance)], dtype=int)
-            # A bonded facet has one mesh face but two semantic material sides.
-            # Geometry stores outward winding for its first provenance alias;
-            # the other side must reverse it for pressure/contact normals.
-            selected_faces = np.asarray([
-                faces[index] if side == 0 else faces[index, [0, 2, 1]]
-                for index in face_indices for side, alias in enumerate(aliases[index])
-                if alias in selectors
-            ], dtype=int).reshape(-1, 3)
-            if not len(selected_faces):
-                continue
-            triangles = points[selected_faces]
-            area = np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]), axis=1) / 2
-            target = f"{source}.surface.{group['name']}"
-            nodes, inverse = np.unique(selected_faces.ravel(), return_inverse=True)
-            weights = np.zeros(len(nodes))
-            np.add.at(weights, inverse, np.repeat(area / 3, 3))
-            region_roots = sorted({alias[1] for index in face_indices for alias in selectors.intersection(aliases[index])})
-            model.boundary_regions[target] = {"faces": selected_faces, "nodes": nodes, "weights": weights / area.sum(), "area": float(area.sum()), "rootId": region_roots[0], "rootIds": region_roots, "referencePoint": np.average(triangles.mean(axis=1), weights=area, axis=0)}
+            region = select_boundary_region(points, faces, aliases, selectors)
+            if region is not None:
+                model.boundary_regions[f"{source}.surface.{group['name']}"] = region
     active = set((6 * np.arange(len(points))[:, None] + np.arange(3)).ravel())
     references = {}
     for rule in config["initializations"]:

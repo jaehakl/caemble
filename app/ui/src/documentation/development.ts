@@ -1,6 +1,7 @@
 import page0 from '../../../../docs/development/architecture.md?raw'
 import page1 from '../../../../docs/development/solver-development.md?raw'
 import structuralMechanicsPage from '../../../../docs/development/structural-mechanics.md?raw'
+import pressureAcousticsPage from '../../../../docs/development/pressure-acoustics.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
 import page3 from '../../../../docs/development/api.md?raw'
 import page4 from '../../../../docs/development/cae.md?raw'
@@ -42,6 +43,14 @@ export const developmentDocuments: readonly DocumentPage[] = [
     sourcePath: 'docs/development/structural-mechanics.md',
     keywords: ['structural', 'CSG', 'mesh', 'Netgen', '구조해석'],
     content: documentBody(structuralMechanicsPage),
+  },
+  {
+    id: 'development.pressure-acoustics',
+    title: '주파수영역 압력음향과 표면 운동 전달',
+    summary: '선형 압력음향, 비일치 표면 적분과 harmonic 결과 검증',
+    sourcePath: 'docs/development/pressure-acoustics.md',
+    keywords: ['acoustics', 'harmonic', 'FEM', 'coupling', '음향'],
+    content: documentBody(pressureAcousticsPage),
   },
   {
     ...{

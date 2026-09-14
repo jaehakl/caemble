@@ -5,24 +5,20 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
-from app.solvers.structural_mechanics.analysis import (
-    _link_geometric_matrix,
-    apply_increment,
-    initial_solution,
-    initialize_acceleration,
-    kinematic_rates,
-    transient_step,
-)
+from app.solvers.structural_mechanics.kinematics import _link_geometric_matrix
+from app.solvers.structural_mechanics.kinematics import apply_increment
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.kinematics import kinematic_rates
+from app.solvers.structural_mechanics.analyses.transient import transient_step
 from app.solvers.structural_mechanics.constraints import (
     constraint_transform,
     enforce_links,
     spring_gradient,
 )
-from app.solvers.structural_mechanics.formulation import (
-    inertial_response,
-    prepare_matrices,
-    structural_response,
-)
+from app.solvers.structural_mechanics.operators.inertia import inertial_response
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
+from app.solvers.structural_mechanics.operators.internal import structural_response
 from app.solvers.structural_mechanics.model import StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp, rotation_log
 
@@ -83,7 +79,7 @@ def test_geared_shaft_spring_conserves_casing_torque_and_virtual_work():
     model = joint_model()
     model.links[1] = (0, 2, np.array([0, 1, 2, 4, 5]))
     model.springs = [(9, 15, 1 / 3, 120., 0.)]
-    _, _, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
     u = np.zeros((3, 6)); u[1, 3], u[2, 3] = .7, 2.
     R = np.tile(np.eye(3), (3, 1, 1)); R[0] = rotation_exp(np.array([.5, -.8, .4]))
     enforce_links(model, u, R)
@@ -108,7 +104,10 @@ def test_tilted_revolute_rotor_keeps_unwrapped_spin_and_energy():
     model = joint_model()
     model.fixed = np.arange(6)
     model.masses = [(1, 1., np.eye(3) * .1), (2, 2., np.zeros((3, 3)))]
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     solution = initial_solution(model)
     solution.orientations[0] = rotation_exp(np.array([.2, .8, -.4]))
     solution.displacement[1, 3] = 8.
@@ -128,7 +127,10 @@ def test_tilted_revolute_rotor_keeps_unwrapped_spin_and_energy():
 def test_free_tilting_base_and_spinning_rotor_conserve_energy_and_angular_momentum(torque):
     model = joint_model()
     model.masses = [(0, 2., np.diag([.5, .7, .8])), (1, .5, np.diag([.02, .04, .04])), (2, .3, np.zeros((3, 3)))]
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial = initial_solution(model)
     initial.orientations[0] = rotation_exp([.3, .8, -.4])
     initial.displacement[1, 3] = 1.2
@@ -160,7 +162,10 @@ def test_joint_actuator_work_equals_mechanical_energy_and_keeps_casing_reaction(
     model = joint_model()
     model.fixed = np.arange(6)
     model.masses = [(1, 1., np.eye(3) * .1), (2, 2., np.zeros((3, 3)))]
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     solution = initial_solution(model)
     solution.orientations[0] = rotation_exp([.3, .8, -.4])
     torque = .2

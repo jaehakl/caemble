@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 from app.kernel.api import BundleValue
-from app.solvers.structural_mechanics.coupling import apply_resultant_loads
+from app.solvers.structural_mechanics.interfaces.resultants import apply_resultant_loads
 from app.solvers.structural_mechanics.model import StructuralModel
 
 

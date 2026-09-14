@@ -5,6 +5,9 @@ import {
   matchMeshDisplacement,
   meshHistoryBounds,
   meshHistoryRange,
+  meshHarmonicAtPhase,
+  meshHarmonicBounds,
+  meshHarmonicRange,
 } from './meshDeformation'
 import { MeshPlayback } from './MeshPlayback'
 import JscadViewer from './JscadViewer'
@@ -61,6 +64,8 @@ export function MeshFieldResult({
   const [deformed, setDeformed] = useViewerSetting('mesh.deformed', true)
   const [scaleMode, setScaleMode] = useViewerSetting('mesh.scaleMode', 'auto')
   const [manualScale, setManualScale] = useViewerSetting('mesh.manualScale', 1)
+  const [frequencyHz, setFrequencyHz] = useViewerSetting('mesh.frequencyHz', field.spectrum?.frequencies[0] ?? 0)
+  const [phaseDegrees, setPhaseDegrees] = useViewerSetting('mesh.phaseDegrees', 0)
   const [frameIndex, setFrame] = useViewerSetting('mesh.frameIndex', 0)
   const frame = comparison ? frameIndex : Math.min(frameIndex, Math.max(0, (field.times?.length ?? 1) - 1))
   useEffect(() => {
@@ -73,37 +78,68 @@ export function MeshFieldResult({
     )
   }, [field, frame, comparison, setFrame, setView])
   const canDeform = Boolean(displacement?.location === 'node' && displacement.componentCount === 3)
-  const autoScale = useMemo(() => (displacement ? automaticDeformationScale(displacement) : 1), [displacement])
+  const invalidSetting =
+    field.spectrum &&
+    (!field.spectrum.frequencies.includes(frequencyHz) ||
+      (displacement?.spectrum && !displacement.spectrum.frequencies.includes(frequencyHz)))
+      ? `선택한 주파수 ${frequencyHz} Hz가 결과 또는 변위 결과에 없습니다. 보간 없이 공통 주파수를 선택하세요.`
+      : field.spectrum && (!Number.isFinite(phaseDegrees) || phaseDegrees < 0 || phaseDegrees > 360)
+        ? '표시 위상은 0°부터 360°까지여야 합니다.'
+        : comparison &&
+            (!Number.isInteger(frame) ||
+              frame < 0 ||
+              frame >= (field.times?.length ?? 1) ||
+              (typeof view.component === 'number' && (view.component < 0 || view.component >= field.componentCount)) ||
+              (view.component === 'vonMises' && field.valueKind !== 'stress') ||
+              (selectedDisplacement && !displacement))
+          ? '저장된 성분·프레임·변위 설정을 현재 데이터에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
+          : ''
+  const autoScale = useMemo(
+    () => (displacement && !invalidSetting ? automaticDeformationScale(displacement, frequencyHz) : 1),
+    [displacement, frequencyHz, invalidSetting],
+  )
   const deformationScale =
     canDeform && deformed ? (scaleMode === 'auto' ? autoScale : scaleMode === 'actual' ? 1 : manualScale) : 0
   const currentField = useMemo(
     () =>
-      field.historyValues
-        ? {
-            ...field,
-            values: field.historyValues.subarray(frame * field.points.length, (frame + 1) * field.points.length),
-          }
-        : field,
-    [field, frame],
+      field.spectrum && !invalidSetting
+        ? meshHarmonicAtPhase(field, frequencyHz, phaseDegrees)
+        : field.historyValues
+          ? {
+              ...field,
+              values: field.historyValues.subarray(frame * field.points.length, (frame + 1) * field.points.length),
+            }
+          : field,
+    [field, frame, frequencyHz, phaseDegrees, invalidSetting],
   )
-  const frameDisplacement = displacement === field ? currentField : displacement
-  const invalidSetting =
-    comparison &&
-    (!Number.isInteger(frame) ||
-      frame < 0 ||
-      frame >= (field.times?.length ?? 1) ||
-      (typeof view.component === 'number' && (view.component < 0 || view.component >= field.componentCount)) ||
-      (view.component === 'vonMises' && field.valueKind !== 'stress') ||
-      (selectedDisplacement && !displacement))
-      ? '저장된 성분·프레임·변위 설정을 현재 데이터에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
-      : ''
+  const frameDisplacement = useMemo(
+    () =>
+      displacement === field
+        ? currentField
+        : displacement?.spectrum && !invalidSetting
+          ? meshHarmonicAtPhase(displacement, frequencyHz, phaseDegrees)
+          : displacement,
+    [displacement, field, currentField, frequencyHz, phaseDegrees, invalidSetting],
+  )
   const range = useMemo(
-    () => (field.times && !invalidSetting ? meshHistoryRange(field, view.component) : undefined),
-    [field, view.component, invalidSetting],
+    () =>
+      !invalidSetting
+        ? field.spectrum
+          ? meshHarmonicRange(field, frequencyHz, view.component)
+          : field.times
+            ? meshHistoryRange(field, view.component)
+            : undefined
+        : undefined,
+    [field, view.component, frequencyHz, invalidSetting],
   )
   const animationBounds = useMemo(
-    () => (field.times ? meshHistoryBounds(field, deformationScale, displayUnit) : undefined),
-    [field, deformationScale, displayUnit],
+    () =>
+      field.spectrum && !invalidSetting
+        ? meshHarmonicBounds(displacement ?? field, frequencyHz, deformationScale, displayUnit)
+        : field.times
+          ? meshHistoryBounds(field, deformationScale, displayUnit)
+          : undefined,
+    [field, displacement, frequencyHz, deformationScale, displayUnit, invalidSetting],
   )
   const animationTopology = useMemo(
     () =>
@@ -112,14 +148,14 @@ export function MeshFieldResult({
         : undefined,
     [field, view, deformationScale, displayUnit, invalidSetting],
   )
-  const effectiveView = { ...view, deformationScale }
+  const effectiveView = { ...view, deformationScale, referenceClip: Boolean(field.spectrum) }
   const [error, setError] = useState<string | null>(null)
   const rendered = useMemo(() => {
     try {
       if (invalidSetting) throw new Error(invalidSetting)
       const data = createMeshFieldRenderData(
         currentField,
-        { ...view, deformationScale },
+        { ...view, deformationScale, referenceClip: Boolean(field.spectrum) },
         displayUnit,
         frameDisplacement,
         range,
@@ -140,9 +176,15 @@ export function MeshFieldResult({
     animationBounds,
     animationTopology,
     invalidSetting,
+    field.spectrum,
   ])
   const onRender = useCallback(() => {}, [])
-  const component = typeof view.component === 'number' ? field.components[view.component] : view.component
+  const component =
+    typeof view.component === 'number'
+      ? field.components[view.component]
+      : view.component === 'magnitude' && field.componentCount === 1
+        ? 'Value'
+        : view.component
   return (
     <article
       className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
@@ -161,6 +203,52 @@ export function MeshFieldResult({
         >
           <summary className="cursor-pointer px-2 py-1 text-sm font-semibold">시각화 · 성분 / 단면 / 변형 설정</summary>
           <div className="flex flex-wrap items-center gap-3 p-2 text-sm text-slate-700">
+            {field.spectrum ? (
+              <>
+                <label>
+                  주파수{' '}
+                  <select
+                    aria-label={`${field.label} frequency`}
+                    value={frequencyHz}
+                    onChange={(event) => setFrequencyHz(Number(event.target.value))}
+                  >
+                    {!field.spectrum.frequencies.includes(frequencyHz) ? (
+                      <option value={frequencyHz}>{frequencyHz} Hz · 결과 없음</option>
+                    ) : null}
+                    {Array.from(field.spectrum.frequencies, (frequency) => (
+                      <option key={frequency} value={frequency}>
+                        {frequency} Hz
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  위상{' '}
+                  <input
+                    aria-label={`${field.label} phase`}
+                    type="range"
+                    min={0}
+                    max={360}
+                    step={1}
+                    value={phaseDegrees}
+                    onChange={(event) => setPhaseDegrees(Number(event.target.value))}
+                  />
+                </label>
+                <input
+                  aria-label={`${field.label} phase degrees`}
+                  className="w-20 rounded border p-1"
+                  type="number"
+                  min={0}
+                  max={360}
+                  step="any"
+                  value={phaseDegrees}
+                  onChange={(event) => setPhaseDegrees(Number(event.target.value))}
+                />
+                <span>
+                  {frequencyHz} Hz · {phaseDegrees}° · 순간값 Re(Q exp(iφ)) · peak phasor
+                </span>
+              </>
+            ) : null}
             <label>
               성분{' '}
               <select
@@ -241,7 +329,7 @@ export function MeshFieldResult({
                   value={displacement?.label ?? ''}
                   onChange={(event) => setSelectedDisplacement(event.target.value)}
                 >
-                  <option value="">{candidates.length ? '선택 안 함' : '호환되는 정적 변위 없음'}</option>
+                  <option value="">{candidates.length ? '선택 안 함' : '호환되는 변위 없음'}</option>
                   {candidates.map((candidate) => (
                     <option key={candidate.label} value={candidate.label}>
                       {candidate.label}
@@ -301,7 +389,7 @@ export function MeshFieldResult({
           <MeshPlayback times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
         ) : null}
       </ViewerControls>
-      {field.valueKind === 'displacement' && !field.times ? (
+      {field.valueKind === 'displacement' && !field.times && !field.spectrum ? (
         <p className="my-2 text-xs text-slate-500">
           단일 상태의 변위입니다. 애니메이션에는 mesh와 전체 절점의 시간 이력이 필요합니다.
         </p>

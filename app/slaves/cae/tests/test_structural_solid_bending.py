@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from app.solvers.structural_mechanics.analysis import static_analysis
-from app.solvers.structural_mechanics.formulation import prepare_matrices
+from app.solvers.structural_mechanics.analyses.static import static_analysis
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.meshing import brick_mesh
 from app.solvers.structural_mechanics.model import Element, StructuralModel
@@ -62,7 +62,9 @@ def test_solid_pure_moment_cantilever_converges_to_exact_three_dimensional_elast
     errors = []
     for refinement in (4, 10, 20):
         model, exact_tip, moment = pure_bending_solid(kind, refinement)
-        stiffness, mass, _, prepared = prepare_matrices(model)
+        prepared = prepare_matrices(model)
+        stiffness = prepared.stiffness
+        mass = prepared.mass
         result = static_analysis(model, prepared, stiffness, mass)
         tip = np.flatnonzero(np.isclose(model.points[:, 0], 2.) &
                              np.isclose(model.points[:, 1], 0.) &

@@ -5,17 +5,15 @@ import pytest
 
 from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ResourceStore
-from app.solvers.structural_mechanics.analysis import (
-    initial_solution,
-    initialize_acceleration,
-    static_analysis,
-    transient_step,
-)
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.analyses.static import static_analysis
+from app.solvers.structural_mechanics.analyses.transient import transient_step
 from app.solvers.structural_mechanics.continuum import element_response
-from app.solvers.structural_mechanics.formulation import prepare_matrices
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.solvers.structural_mechanics.outputs import build_outputs
+from app.solvers.structural_mechanics.outputs.build import build_outputs
 from app.solvers.structural_mechanics.rotations import rotation_exp
 from app.solvers.structural_mechanics.shells import laminate_section, shell4_response
 
@@ -71,7 +69,9 @@ def test_static_link_chain_transfers_force_and_eccentric_moment_to_fixed_support
     # 선언 순서가 뒤집혀도 말단부터 지지점까지 전달해야 한다.
     model.links = [(1, 2, np.arange(6)), (0, 1, np.arange(6))]
     model.force[2] = [1., 3., -2., .4, -.7, 1.1]
-    K, M, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
     result = static_analysis(model, prepared, K, M)
     force, moment = model.force[2, :3], model.force[2, 3:]
     expected = -np.r_[force, moment + np.cross(points[2] - points[0], force)]
@@ -89,7 +89,10 @@ def test_gravity_of_eccentric_linked_mass_is_visible_at_the_prescribed_support()
     model.links = [(0, 1, np.arange(6))]
     model.masses = [(1, 3., np.eye(3))]
     model.gravity = np.array([0., 0., -10.])
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     result = initialize_acceleration(model, initial_solution(model), prepared, K, M, C, np.asarray(M @ np.tile(np.r_[model.gravity, np.zeros(3)], 2)), True)
     expected = np.array([0., 0., 30., 15., -60., 0.])
     np.testing.assert_allclose(result.reaction[0], expected, atol=1e-13)
@@ -101,7 +104,10 @@ def test_revolute_rotor_support_balances_exact_centripetal_force_and_moment():
     model = StructuralModel(np.arange(3), points, [], np.arange(18), np.arange(6), np.zeros((3, 6)))
     model.links = [(0, 1, np.array([0, 1, 2, 4, 5])), (1, 2, np.arange(6))]
     model.masses = [(1, 1., .1 * np.eye(3)), (2, 2., np.zeros((3, 3)))]
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial = initial_solution(model)
     initial.orientations[0] = rotation_exp([.3, -.6, .2])
     axis = initial.orientations[0][:, 0]

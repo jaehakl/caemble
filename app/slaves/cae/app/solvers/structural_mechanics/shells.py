@@ -18,7 +18,9 @@ from itertools import product
 
 import numpy as np
 
-from .continuum import plane_elasticity, shape_functions
+from app.methods.finite_element.integration import shape_functions
+
+from .continuum import plane_elasticity
 from .materials import isotropic_elasticity
 from .rotations import skew
 

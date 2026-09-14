@@ -1,3 +1,4 @@
+from dataclasses import replace
 """다축 회전과 탄성 변형이 동시에 있는 보의 에너지·운동량·시간 수렴."""
 
 from copy import deepcopy
@@ -6,18 +7,14 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
-from app.solvers.structural_mechanics.analysis import (
-    initial_solution,
-    initialize_acceleration,
-    transient_step,
-)
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.analyses.transient import transient_step
 from app.solvers.structural_mechanics.beam import isotropic_beam_section
-from app.solvers.structural_mechanics.formulation import (
-    inertial_response,
-    prepare_matrices,
-    strain_rate_damping,
-    structural_response,
-)
+from app.solvers.structural_mechanics.operators.inertia import inertial_response
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
+from app.solvers.structural_mechanics.operators.damping import strain_rate_damping
+from app.solvers.structural_mechanics.operators.internal import structural_response
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp
 
@@ -44,14 +41,20 @@ def loaded_rotating_beam(damped):
     force[0, :3] = -force[2, :3]
     force[2, 3:] = rotation @ [.01, -.02, .03]
     matrices = prepare_matrices(model)
-    K, M, C, prepared = matrices
+    prepared = matrices
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     beta = .004 if damped else 0.
     solution = initialize_acceleration(model, solution, prepared, K, M, C, force.ravel(), True, damping_stiffness=beta)
     return model, solution, matrices, force, beta
 
 
 def mechanical_totals(model, solution, matrices, beta):
-    _K, M, C, prepared = matrices
+    prepared = matrices
+    _K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     moving = inertial_response(model, solution.displacement, solution.orientations, solution.velocity, solution.acceleration, prepared, M, True)[1]
     momentum = (moving @ solution.velocity.ravel()).reshape(-1, 6)
     angular_momentum = np.sum(np.cross(model.points + solution.displacement[:, :3], momentum[:, :3]) + momentum[:, 3:], axis=0)
@@ -61,9 +64,9 @@ def mechanical_totals(model, solution, matrices, beta):
 
 
 def test_batched_beams_match_scalar_force_tangent_mass_gyro_and_damping():
-    model, initial, (_K, M, _C, prepared), _, beta = loaded_rotating_beam(True)
-    scalar = [dict(data) for data in prepared]
-    scalar[0].pop("beamBatch")
+    model, initial, prepared, _, beta = loaded_rotating_beam(True)
+    M = prepared.mass
+    scalar = replace(prepared, beam_batch=None)
     rng = np.random.default_rng(23)
     velocity = initial.velocity + .1 * rng.normal(size=initial.velocity.shape)
     acceleration = .2 * rng.normal(size=initial.acceleration.shape)
@@ -86,7 +89,10 @@ def test_batched_beams_match_scalar_force_tangent_mass_gyro_and_damping():
 @pytest.mark.parametrize("damped", [False, True])
 def test_loaded_multiaxis_beam_time_refinement_and_energy_work_balance(damped):
     model, initial, matrices, force, beta = loaded_rotating_beam(damped)
-    K, M, C, prepared = matrices
+    prepared = matrices
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial_energy, initial_momentum, initial_dissipation = mechanical_totals(model, initial, matrices, beta)
     results, defects = [], []
     for dt in (.01, .005, .0025):

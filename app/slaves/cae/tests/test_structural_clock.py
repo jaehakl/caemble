@@ -8,12 +8,14 @@ import pytest
 
 from app.kernel.api import SolverInvocation
 from app.kernel.catalog import solver_catalog
-from app.solvers.structural_mechanics.analysis import initial_solution
-from app.solvers.structural_mechanics.coupling import clock_tolerance, predict_motion
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.clock import clock_tolerance
+from app.solvers.structural_mechanics.interfaces.motion import predict_motion
 from tests.structural_fixture import build_model
 from app.solvers.structural_mechanics.entry import run
-from app.solvers.structural_mechanics.outputs import configure_history
-from app.solvers.structural_mechanics.state import append_history, encode_state
+from app.solvers.structural_mechanics.state import configure_history
+from app.solvers.structural_mechanics.state import append_history
+from app.solvers.structural_mechanics.state import encode_state
 
 
 def accumulated_time(duration, dt=.005, window=.05):
@@ -42,7 +44,7 @@ def clock_invocation(duration, time, dt=.005, window=.05):
         "outputs": [{"methodId": "fea.pitch-history", "key": "history", "boxGrid": grid(shape=(1,1,1), origin=(-.5,-.5,-.5)).geometry, "parameters": {"scope": "cumulative"}}],
         "exports": [{"methodId": "fea.motion", "key": "motion", "parameters": {}}],
     }
-    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "5.0.0"), task_name="structure")
+    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "6.0.0"), task_name="structure")
     model = build_model(invocation)
     model.boundary_regions["experiment.surface.clock"] = {
         "faces": np.empty((0, 3), dtype=int), "nodes": np.array([0]),

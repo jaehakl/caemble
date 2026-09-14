@@ -42,6 +42,8 @@ export type ResultVisualization = Readonly<{
   fieldPath?: string
   nodeIdsPath?: string
   time?: Readonly<{ path: string; axis: number; nodeAxis: number; componentAxis: number }>
+  frequency?: Readonly<{ path: string; axis: number; entityAxis: number; componentAxis: number }>
+  phasor?: Readonly<{ timeConvention: 'exp(+i*omega*t)'; amplitude: 'peak' }>
   grid?: Readonly<{
     xyzAxes: readonly [number, number, number]
     sampleAxis: number

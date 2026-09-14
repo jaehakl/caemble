@@ -5,7 +5,7 @@ import pytest
 from scipy import linalg
 
 from app.solvers.structural_mechanics.beam import isotropic_beam_section
-from app.solvers.structural_mechanics.formulation import prepare_matrices
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 
 
@@ -23,7 +23,10 @@ def test_isolated_member_damping_does_not_retarget_loaded_frequency(attached_mas
     element = Element("beam2", np.array([0, 1]), {}, {"stiffness": stiffness, "mass": inertia, "frame": np.eye(3), "damping": beta * stiffness})
     model = StructuralModel(np.arange(2), np.array([[0., 0., 0.], [length, 0., 0.]]), [element], np.arange(12), np.setdiff1d(np.arange(12), [6]), np.zeros((2, 6)))
     model.masses.append((1, attached_mass_factor * bare_mass, np.zeros((3, 3))))
-    K, M, C, _ = prepare_matrices(model)
+    operators = prepare_matrices(model)
+    K = operators.stiffness
+    M = operators.mass
+    C = operators.damping
     k, m, c = K[6, 6], M[6, 6], C[6, 6]
     np.testing.assert_allclose([k, m, c], [axial_stiffness, bare_mass * (1 + attached_mass_factor), 2 * isolated_ratio * np.sqrt(axial_stiffness * bare_mass)], rtol=2e-14)
 

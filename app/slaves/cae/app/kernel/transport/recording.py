@@ -51,6 +51,8 @@ def materialize_record_value(
         if "dtype" in schema:
             if isinstance(value.domain, StructuredGridValue):
                 return {"value": value.values, "axes": _structured_field_axes(value, schema)}
+            if isinstance(value.domain, UnstructuredMeshValue) and value.metadata.get("sampleAxes") is not None:
+                return {"value": value.values, "axes": _unstructured_field_axes(value, schema)}
             axes = schema.get("axes", [])
             if any("ticks" not in axis and (axis.get("unit") or axis.get("quantityKind") or
                    axis.get("name") in ("time", "frequency", "sample")) for axis in axes):
@@ -61,6 +63,8 @@ def materialize_record_value(
         field_values = value.values
         if isinstance(value.domain, StructuredGridValue):
             field_values = {"value": value.values, "axes": _structured_field_axes(value, schema.get("values", {}))}
+        elif isinstance(value.domain, UnstructuredMeshValue) and value.metadata.get("sampleAxes") is not None:
+            field_values = {"value": value.values, "axes": _unstructured_field_axes(value, schema.get("values", {}))}
         value = {
             "domain": value.domain,
             "location": str(value.location),
@@ -140,6 +144,34 @@ def materialize_record_value(
             for item in value
         )
     return value
+
+
+def _unstructured_field_axes(value: FieldValue, schema: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Keep explicit sample coordinates separate from mesh entities and components."""
+    samples = value.metadata["sampleAxes"]
+    schema_axes = schema.get("axes", ())
+    if not isinstance(samples, (list, tuple)) or not samples or len(schema_axes) != value.values.ndim:
+        raise CaeError("invalid_record", "Unstructured field sample axes must match its value dimensions")
+    axes = [{"ticks": axis["ticks"]} if "ticks" in axis else {"implicitOrdinal": True} for axis in schema_axes]
+    selected = set()
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            raise CaeError("invalid_record", "Unstructured field sample axis must contain coordinates")
+        index = sample.get("axis")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(axes) or index in selected:
+            raise CaeError("invalid_record", "Unstructured field sample axis position is invalid or repeated")
+        ticks = np.asarray(sample.get("ticks"))
+        if (ticks.ndim != 1 or not np.issubdtype(ticks.dtype, np.number) or np.iscomplexobj(ticks)
+                or not np.all(np.isfinite(ticks)) or len(ticks) != value.values.shape[index]):
+            raise CaeError("invalid_record", "Unstructured field sample coordinates must match its value dimension")
+        if any(sample.get(key) != schema_axes[index].get(key) for key in ("name", "unit")):
+            raise CaeError("invalid_record", "Unstructured field sample axis meaning differs from the recording schema")
+        axes[index] = {key: item for key, item in sample.items() if key != "axis"}
+        selected.add(index)
+    for index, axis in enumerate(schema_axes):
+        if index not in selected and "ticks" not in axis and (axis.get("unit") or axis.get("quantityKind") or axis.get("name") in ("time", "frequency", "sample")):
+            raise CaeError("invalid_record", "Unstructured field cannot supply physical axis coordinates")
+    return axes
 
 
 def _structured_field_axes(value: FieldValue, schema: Mapping[str, Any]) -> list[dict[str, Any]]:

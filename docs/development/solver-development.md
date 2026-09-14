@@ -256,13 +256,16 @@ implementation = SolverImplementation(abi_version=3, run=run)
 return SolverResult(
     state_patch=patch,
     artifacts={"outputName": output_value},
+    exports={"exportName": native_value},
     visualizations={"visualizationName": visualization_value},
     observations={"iterationCount": iteration_count},
 )
 ```
 
 - `state_patch`: 이후 계산이 이어받을 재현 가능한 상태 변경
-- `artifacts`: 요청된 `outputs`와 `exports` method에 정확히 일치하는 결과
+- `artifacts`: 요청된 수치 `outputs` method에 정확히 일치하는 결과
+- `exports`: 요청된 native `exports` method에 정확히 일치하는 결과.
+  Coordinator는 두 채널을 구분하여 검사한 뒤 `sim.run()`의 `artifacts`에 함께 반환
 - `visualizations`: Catalog에 선언된 native mesh/ray 표시 자료. Output 요청 없이 자동 포함
 - `observations`: Catalog에 선언된 작은 scalar/string/boolean 값
 

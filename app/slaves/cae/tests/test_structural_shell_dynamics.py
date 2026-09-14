@@ -4,16 +4,12 @@ from copy import deepcopy
 from itertools import product
 
 import numpy as np
-from app.solvers.structural_mechanics.analysis import (
-    initial_solution,
-    initialize_acceleration,
-    transient_step,
-)
-from app.solvers.structural_mechanics.continuum import shape_functions
-from app.solvers.structural_mechanics.formulation import (
-    inertial_response,
-    prepare_matrices,
-)
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.analyses.transient import transient_step
+from app.methods.finite_element.integration import shape_functions
+from app.solvers.structural_mechanics.operators.inertia import inertial_response
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp
 from app.solvers.structural_mechanics.shells import (
@@ -91,7 +87,10 @@ def test_loaded_three_axis_rotating_shell_refines_work_and_angular_impulse_balan
     points = np.array([[-.5, -.4, 0.], [.5, -.4, 0.], [.5, .4, 0.], [-.5, .4, 0.]])
     element = Element("shell4", np.arange(4), {"model": "mechanics.linear-isotropic@1"}, isotropic_section(100., .25, .2, 2.))
     model = StructuralModel(np.arange(4), points, [element], np.arange(24), np.empty(0, dtype=int), np.zeros(24))
-    K, M, C, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
     initial = initial_solution(model)
     Q = rotation_exp(np.array([1.1, -.6, .3]))
     initial.displacement[:, :3] = points @ Q.T - points

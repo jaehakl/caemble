@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 APP = Path(__file__).parents[1] / "app"
 
@@ -152,14 +154,46 @@ def test_catalog_locators_point_to_one_current_entry_per_solver() -> None:
         assert item["abiVersion"] == 3
 
 
-def test_solver_role_modules_have_no_cycles_or_other_solver_dependencies() -> None:
-    for package in (APP / "solvers").iterdir():
+def local_python_modules(directory: Path) -> set[str]:
+    """Include real modules, regular packages and their namespace-package parents."""
+    modules = set()
+    for path in directory.rglob("*.py"):
+        parts = (directory.name, *path.relative_to(directory).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        modules.update(".".join(parts[:length]) for length in range(1, len(parts) + 1))
+    return modules
+
+
+def resolve_import_modules(node, import_package: str, available: set[str]) -> set[str]:
+    """A from-import loads its base and any imported names that are actual modules."""
+    if isinstance(node, ast.Import):
+        return {alias.name for alias in node.names}
+    if node.level:
+        imported = importlib.util.resolve_name("." * node.level + (node.module or ""), import_package)
+    else:
+        imported = node.module or ""
+    modules = {imported}
+    for alias in node.names:
+        candidate = f"{imported}.{alias.name}"
+        if candidate in available:
+            modules.add(candidate)
+    return modules
+
+
+def assert_solver_role_dependencies(app_directory: Path) -> None:
+    available = local_python_modules(app_directory)
+    for package in (app_directory / "solvers").iterdir():
         if not package.is_dir() or package.name == "__pycache__":
             continue
         prefix = f"app.solvers.{package.name}"
         graph = {}
-        for path in package.glob("*.py"):
-            module = f"{prefix}.{path.stem}"
+        for path in package.rglob("*.py"):
+            relative = path.relative_to(package).with_suffix("").parts
+            if relative[-1] == "__init__":
+                relative = relative[:-1]
+            module = ".".join((prefix, *relative))
+            import_package = module if path.stem == "__init__" else module.rsplit(".", 1)[0]
             tree = ast.parse(path.read_text(encoding="utf-8"))
             imports = []
             pending = list(tree.body)
@@ -174,20 +208,26 @@ def test_solver_role_modules_have_no_cycles_or_other_solver_dependencies() -> No
                 pending.extend(ast.iter_child_nodes(node))
             dependencies = set()
             for node in imports:
-                if isinstance(node, ast.Import):
-                    modules = [alias.name for alias in node.names]
-                else:
+                if isinstance(node, ast.ImportFrom):
                     assert all(alias.name != "*" for alias in node.names), str(path)
-                    if node.level:
-                        assert node.level == 1, f"{path} imports another Solver"
-                        modules = [f"{prefix}.{node.module}"] if node.module else [f"{prefix}.{alias.name}" for alias in node.names]
-                    else:
-                        modules = [node.module or ""]
-                for imported in modules:
+                for imported in resolve_import_modules(node, import_package, available):
                     if imported.startswith("app.solvers."):
-                        assert imported.startswith(prefix + "."), f"{path} imports {imported}"
+                        assert imported == prefix or imported.startswith(prefix + "."), f"{path} imports {imported}"
                         assert path.stem == "entry" or imported != prefix + ".entry", f"{path} imports its entry"
-                        dependencies.add(imported)
+                        if package.name == "structural_mechanics":
+                            relative_module = module.removeprefix(prefix + ".")
+                            if relative_module.startswith(("analyses.", "operators.", "interfaces.")) or relative_module in {"analyses", "operators", "interfaces", "state", "kinematics"}:
+                                assert not imported.startswith(prefix + ".outputs"), f"{path} imports result packaging"
+                            if relative_module == "analyses.harmonic":
+                                assert imported not in {prefix + ".state", prefix + ".analyses.transient", prefix + ".analyses.window"}, f"{path} imports time-state execution"
+                        if package.name == "pressure_acoustics":
+                            if path.stem in {"harmonic", "formulation", "boundaries"}:
+                                assert not imported.startswith(prefix + ".outputs"), f"{path} imports result packaging"
+                            if path.stem == "harmonic":
+                                assert imported not in {prefix + ".entry", prefix + ".domain"}, f"{path} imports task preparation"
+                        # A package importing one of its children does not depend on itself.
+                        if not (path.stem == "__init__" and isinstance(node, ast.ImportFrom) and imported == module):
+                            dependencies.add(imported)
             graph[module] = dependencies
 
         def visit(module: str, ancestors: tuple[str, ...]) -> None:
@@ -197,3 +237,72 @@ def test_solver_role_modules_have_no_cycles_or_other_solver_dependencies() -> No
 
         for module in graph:
             visit(module, ())
+
+
+def test_solver_role_modules_have_no_cycles_or_other_solver_dependencies() -> None:
+    assert_solver_role_dependencies(APP)
+
+
+@pytest.fixture
+def solver_import_fixture(tmp_path):
+    app = tmp_path / "app"
+    files = {
+        "solvers/structural_mechanics/__init__.py": "",
+        "solvers/structural_mechanics/entry.py": "",
+        "solvers/structural_mechanics/model.py": "class Motion: pass\n",
+        "solvers/structural_mechanics/interfaces/__init__.py": "",
+        "solvers/structural_mechanics/interfaces/motion.py": "from ..model import Motion\n",
+        "solvers/structural_mechanics/outputs/__init__.py": "",
+        "solvers/structural_mechanics/outputs/display.py": "",
+        "solvers/pressure_acoustics/__init__.py": "",
+        "solvers/pressure_acoustics/entry.py": "",
+    }
+    for name, source in files.items():
+        path = app / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    return app
+
+
+@pytest.mark.parametrize(("source", "package", "expected"), [
+    ("from .interfaces import motion as movement", "app.solvers.structural_mechanics",
+     {"app.solvers.structural_mechanics.interfaces", "app.solvers.structural_mechanics.interfaces.motion"}),
+    ("from .. import model", "app.solvers.structural_mechanics.interfaces",
+     {"app.solvers.structural_mechanics", "app.solvers.structural_mechanics.model"}),
+    ("from ..model import Motion as State", "app.solvers.structural_mechanics.interfaces",
+     {"app.solvers.structural_mechanics.model"}),
+    ("from app.solvers import pressure_acoustics as sound", "app.solvers.structural_mechanics",
+     {"app.solvers", "app.solvers.pressure_acoustics"}),
+])
+def test_import_resolution_uses_actual_modules_and_relative_package_depth(solver_import_fixture, source, package, expected):
+    node = ast.parse(source).body[0]
+    assert resolve_import_modules(node, package, local_python_modules(solver_import_fixture)) == expected
+
+
+def test_package_alias_edges_reveal_a_nested_cycle(solver_import_fixture):
+    package = solver_import_fixture / "solvers/structural_mechanics"
+    (package / "model.py").write_text("from .interfaces import motion\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"interfaces\.motion.*model|model.*interfaces\.motion"):
+        assert_solver_role_dependencies(solver_import_fixture)
+
+
+def test_package_initializer_can_import_its_child_without_a_false_self_cycle(solver_import_fixture):
+    path = solver_import_fixture / "solvers/structural_mechanics/interfaces/__init__.py"
+    path.write_text("from . import motion\n", encoding="utf-8")
+    assert_solver_role_dependencies(solver_import_fixture)
+
+
+def test_import_from_solver_namespace_rejects_another_solver(solver_import_fixture):
+    path = solver_import_fixture / "solvers/structural_mechanics/interfaces/motion.py"
+    path.write_text("from app.solvers import pressure_acoustics as sound\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="imports app.solvers.pressure_acoustics"):
+        assert_solver_role_dependencies(solver_import_fixture)
+
+
+@pytest.mark.parametrize("source", ["from .. import outputs", "from ..outputs import display as view"])
+@pytest.mark.parametrize("filename", ["motion.py", "__init__.py"])
+def test_interface_modules_cannot_import_output_packaging(solver_import_fixture, source, filename):
+    path = solver_import_fixture / "solvers/structural_mechanics/interfaces" / filename
+    path.write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError, match="imports result packaging"):
+        assert_solver_role_dependencies(solver_import_fixture)

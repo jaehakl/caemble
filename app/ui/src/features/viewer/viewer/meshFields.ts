@@ -19,6 +19,8 @@ export type RecordedMeshField = Readonly<{
   points: Float64Array
   cells: Uint32Array
   values: Float64Array
+  /** Spectra store real values above and imaginary values below, ordered [frequency, entity, component]. */
+  spectrum?: Readonly<{ frequencies: Float64Array; imaginaryValues: Float64Array }>
   componentCount: number
   components: readonly string[]
   boundaryFaces: Uint32Array
@@ -46,6 +48,7 @@ export type MeshFieldView = Readonly<{
   clipFraction: number
   deformationScale: number
   compareOriginal?: boolean
+  referenceClip?: boolean
 }>
 
 const tetFaces = [
@@ -99,12 +102,79 @@ export function parseRecordedMeshFields(
       if (!points.shape[0] || !cells.shape[0]) throw new Error('A recorded volume mesh must contain nodes and cells.')
       if (location !== 'node' && location !== 'cell') throw new Error(`Unsupported field location: ${String(location)}`)
       const count = location === 'node' ? points.shape[0] : cells.shape[0]
-      if (values.shape[0] !== count) throw new Error('Field values do not match the recorded mesh location.')
-      const componentCount = values.shape.slice(1).reduce((product, dimension) => product * dimension, 1)
+      const frequency = semantic.frequency
+      if (Boolean(frequency) !== Boolean(semantic.phasor) || (frequency && semantic.time))
+        throw new Error('Harmonic mesh fields require frequency and phasor semantics without a time history.')
+      if (values.shape[frequency?.entityAxis ?? 0] !== count)
+        throw new Error('Field values do not match the recorded mesh location.')
+      const componentCount = frequency
+        ? values.shape[frequency.componentAxis]
+        : values.shape.slice(1).reduce((product, dimension) => product * dimension, 1)
       if (![1, 3, 6, 9].includes(componentCount))
         throw new Error('Mesh fields support scalar, vector and stress tensor values.')
       const pointValues = Float64Array.from({ length: points.size }, (_, index) => Number(points.at(index)))
-      const valueValues = Float64Array.from({ length: values.size }, (_, index) => Number(values.at(index)))
+      let valueValues: Float64Array
+      let spectrum: RecordedMeshField['spectrum']
+      if (frequency) {
+        const { axis, entityAxis, componentAxis } = frequency
+        const coordinate = read(frequency.path)
+        const coordinateRule = byLabel.get(`${label}.${frequency.path}`)
+        const valueRule = byLabel.get(`${label}.${semantic.fieldPath ? `${semantic.fieldPath}.` : ''}values`)
+        if (
+          !coordinate ||
+          coordinate.shape.length !== 1 ||
+          !coordinate.size ||
+          values.shape.length !== 3 ||
+          new Set([axis, entityAxis, componentAxis]).size !== 3 ||
+          [axis, entityAxis, componentAxis].some((index) => !Number.isInteger(index) || index < 0 || index > 2) ||
+          values.shape[axis] !== coordinate.size ||
+          valueRule?.result.dtype !== 'complex64' ||
+          semantic.phasor?.timeConvention !== 'exp(+i*omega*t)' ||
+          semantic.phasor.amplitude !== 'peak'
+        )
+          throw new Error(
+            'Harmonic fields require complete complex64 entity × frequency × component values and peak phasor semantics.',
+          )
+        const frequencyScale = convertUcumValue(1, coordinateRule?.result.unit as UcumUnit, 'Hz', 'Harmonic frequency')
+        const frequencies = Float64Array.from(
+          { length: coordinate.size },
+          (_, index) => Number(coordinate.at(index)) * frequencyScale,
+        )
+        if (
+          !frequencies.every((value) => Number.isFinite(value) && value > 0) ||
+          new Set(frequencies).size !== frequencies.length
+        )
+          throw new Error('Harmonic frequencies must be finite, positive and unique.')
+        const ticks = values.tensor.axes?.[axis]?.ticks
+        const tickScale = convertUcumValue(
+          1,
+          valueRule.result.axes?.[axis].unit as UcumUnit,
+          'Hz',
+          'Harmonic value frequency',
+        )
+        if (
+          !ticks ||
+          ticks.length !== frequencies.length ||
+          ticks.some((tick, index) => Number(tick) * tickScale !== frequencies[index])
+        )
+          throw new Error('Harmonic field frequency coordinates differ from its declared sweep.')
+        valueValues = new Float64Array(values.size)
+        const imaginaryValues = new Float64Array(values.size)
+        for (let index = 0; index < values.size; index++) {
+          const indices = [0, 0, 0]
+          indices[axis] = Math.floor(index / (count * componentCount))
+          indices[entityAxis] = Math.floor(index / componentCount) % count
+          indices[componentAxis] = index % componentCount
+          const value = values.get(indices)
+          if (typeof value !== 'object' || value === null || !Number.isFinite(value.re) || !Number.isFinite(value.im))
+            throw new Error('Harmonic mesh values must contain finite complex components.')
+          valueValues[index] = value.re
+          imaginaryValues[index] = value.im
+        }
+        spectrum = { frequencies, imaginaryValues }
+      } else {
+        valueValues = Float64Array.from({ length: values.size }, (_, index) => Number(values.at(index)))
+      }
       if (!pointValues.every(Number.isFinite) || !valueValues.every(Number.isFinite))
         throw new Error('Mesh field contains non-finite coordinates or values.')
       const connectivity = Uint32Array.from({ length: cells.size }, (_, index) => {
@@ -259,6 +329,7 @@ export function parseRecordedMeshFields(
           points: pointValues,
           cells: connectivity,
           values: valueValues,
+          spectrum,
           componentCount,
           components:
             contracts[label].visualization.components ??
@@ -285,7 +356,20 @@ export function parseRecordedMeshFields(
   return { fields, errors, labels }
 }
 
-type MeshVertex = { point: number[]; value: number }
+type MeshVertex = { point: number[]; value: number; components?: number[] }
+
+function scalarValue(values: readonly number[], component: MeshFieldView['component']) {
+  if (typeof component === 'number') return values[component]
+  if (component === 'vonMises' && (values.length === 6 || values.length === 9)) {
+    const [xx, yy, zz, xy, yz, xz] = (values.length === 6 ? [0, 1, 2, 3, 4, 5] : [0, 4, 8, 1, 5, 2]).map(
+      (index) => values[index],
+    )
+    return Math.sqrt(((xx - yy) ** 2 + (yy - zz) ** 2 + (zz - xx) ** 2) / 2 + 3 * (xy ** 2 + yz ** 2 + xz ** 2))
+  }
+  return values.length === 1
+    ? values[0]
+    : Math.sqrt(values.reduce((sum, value, index) => sum + value ** 2 * (values.length === 6 && index >= 3 ? 2 : 1), 0))
+}
 
 /** Builds cut surfaces directly from recorded tetrahedra; chunks never require 32-bit WebGL indices. */
 export function createMeshFieldRenderData(
@@ -296,6 +380,8 @@ export function createMeshFieldRenderData(
   range?: readonly [number, number],
   topology?: readonly MeshRenderGeometry[],
 ) {
+  if (field.spectrum || displacement?.spectrum)
+    throw new Error('Select a frequency and phase before rendering a harmonic mesh field.')
   const lengthScale = convertUcumValue(1, field.lengthUnit, displayUnit, 'Mesh display length')
   const displacementScale =
     displacement?.componentCount === 3 && displacement.location === 'node' && displacement.valueKind === 'displacement'
@@ -311,20 +397,12 @@ export function createMeshFieldRenderData(
     bounds.min[index % 3] = Math.min(bounds.min[index % 3], points[index])
     bounds.max[index % 3] = Math.max(bounds.max[index % 3], points[index])
   }
-  const scalars = Float64Array.from({ length: field.values.length / field.componentCount }, (_, row) => {
-    const start = row * field.componentCount
-    if (typeof view.component === 'number') return field.values[start + view.component]
-    if (view.component === 'vonMises' && (field.componentCount === 6 || field.componentCount === 9)) {
-      const [xx, yy, zz, xy, yz, xz] = (field.componentCount === 6 ? [0, 1, 2, 3, 4, 5] : [0, 4, 8, 1, 5, 2]).map(
-        (index) => field.values[start + index],
-      )
-      return Math.sqrt(((xx - yy) ** 2 + (yy - zz) ** 2 + (zz - xx) ** 2) / 2 + 3 * (xy ** 2 + yz ** 2 + xz ** 2))
-    }
-    let squared = 0
-    for (let component = 0; component < field.componentCount; component += 1)
-      squared += field.values[start + component] ** 2 * (field.componentCount === 6 && component >= 3 ? 2 : 1)
-    return field.componentCount === 1 ? field.values[start] : Math.sqrt(squared)
-  })
+  const scalars = Float64Array.from({ length: field.values.length / field.componentCount }, (_, row) =>
+    scalarValue(
+      Array.from(field.values.subarray(row * field.componentCount, (row + 1) * field.componentCount)),
+      view.component,
+    ),
+  )
   let minimum = Infinity
   let maximum = -Infinity
   scalars.forEach((value) => {
@@ -333,7 +411,17 @@ export function createMeshFieldRenderData(
   })
   if (range) [minimum, maximum] = range
   const axis = view.clipAxis
-  const cut = axis < 0 ? Infinity : bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * view.clipFraction
+  let clipMinimum = axis < 0 ? 0 : bounds.min[axis]
+  let clipMaximum = axis < 0 ? 0 : bounds.max[axis]
+  if (view.referenceClip && axis >= 0) {
+    clipMinimum = Infinity
+    clipMaximum = -Infinity
+    for (let index = axis; index < field.points.length; index += 3) {
+      clipMinimum = Math.min(clipMinimum, field.points[index] * lengthScale)
+      clipMaximum = Math.max(clipMaximum, field.points[index] * lengthScale)
+    }
+  }
+  const cut = axis < 0 ? Infinity : clipMinimum + (clipMaximum - clipMinimum) * view.clipFraction
   const geometries: MeshRenderGeometry[] = []
   const buffers = {
     triangles: { positions: [] as number[], colors: [] as number[], indices: [] as number[] },
@@ -379,12 +467,20 @@ export function createMeshFieldRenderData(
   const vertex = (node: number, cell: number): MeshVertex => ({
     point: [points[node * 3], points[node * 3 + 1], points[node * 3 + 2]],
     value: scalars[field.location === 'node' ? node : cell],
+    components: Array.from(
+      field.values.subarray(
+        (field.location === 'node' ? node : cell) * field.componentCount,
+        ((field.location === 'node' ? node : cell) + 1) * field.componentCount,
+      ),
+    ),
   })
   const interpolate = (a: MeshVertex, b: MeshVertex): MeshVertex => {
     const t = (cut - a.point[axis]) / (b.point[axis] - a.point[axis])
+    const components = a.components?.map((value, index) => value + t * (b.components![index] - value))
     return {
       point: a.point.map((coordinate, index) => coordinate + t * (b.point[index] - coordinate)),
-      value: a.value + t * (b.value - a.value),
+      components,
+      value: components ? scalarValue(components, view.component) : a.value + t * (b.value - a.value),
     }
   }
   const emitPolygon = (polygon: readonly MeshVertex[], cell: number) => {

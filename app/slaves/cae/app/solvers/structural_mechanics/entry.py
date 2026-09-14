@@ -1,33 +1,26 @@
 """ABI 3 조합: 모델 준비 → 계산 → 상태/공개 결과 구성."""
 
+from dataclasses import replace
+
 import numpy as np
 
-from app.kernel.api import (
-    SolverImplementation,
-    SolverInvocation,
-    SolverResult,
-    StatePatch,
-)
+from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult, StatePatch
 
-from .analysis import (
-    buckling_analysis,
-    harmonic_analysis,
-    initial_solution,
-    initialize_acceleration,
-    modal_analysis,
-    static_analysis,
-)
-from .coupling import (
-    advance_window,
-    apply_resultant_loads,
-    clock_tolerance,
-    initialize_motion,
-    predict_motion,
-)
+from .analyses.buckling import buckling_analysis
+from .analyses.harmonic import solve_harmonic
+from .analyses.modal import modal_analysis
+from .analyses.static import static_analysis
+from .analyses.transient import initialize_acceleration
+from .analyses.window import advance_window
+from .clock import clock_tolerance
+from .constraints import constraint_transform
 from .domain import build_geometry_model, parameter
-from .formulation import prepare_matrices
-from .outputs import build_outputs, configure_history
-from .state import append_history, encode_state, read_state
+from .interfaces.motion import initialize_motion, predict_motion
+from .interfaces.resultants import apply_resultant_loads
+from .model import HarmonicSolution
+from .operators.linear import prepare_matrices
+from .outputs.build import build_outputs
+from .state import append_history, configure_history, encode_state, initial_solution, read_state
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
@@ -56,8 +49,10 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     configure_history(model)
     if invocation.cancellation is not None:
         invocation.cancellation.raise_if_cancelled()
-    matrices = prepare_matrices(model)
-    stiffness, mass, damping, prepared = matrices
+    prepared = prepare_matrices(model)
+    stiffness = prepared.stiffness
+    mass = prepared.mass
+    damping = prepared.damping
     for rule in invocation.config["initializations"]:
         if rule["methodId"] == "fea.damping":
             alpha = float(parameter(rule["parameters"]["dampingMass"]))
@@ -65,7 +60,7 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             if min(alpha, beta) < 0:
                 raise ValueError("Rayleigh damping coefficients must be nonnegative")
             damping = damping + alpha * mass + beta * stiffness
-    matrices = stiffness, mass, damping, prepared
+    prepared = replace(prepared, damping=damping)
     motion = None
     coupling_residual, converged = 0.0, True
     patch = StatePatch()
@@ -91,7 +86,7 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             solution = read_state(model, saved)
             if solution.time >= settings["duration"] - clock_tolerance(settings):
                 raise ValueError("structural task has already reached its configured duration")
-            solution, motion, coupling_residual, converged = advance_window(invocation, model, solution, settings, matrices)
+            solution, motion, coupling_residual, converged = advance_window(invocation, model, solution, settings, prepared)
         if "structural_mechanics" not in invocation.state:
             patch = patch.put(("structural_mechanics",), {})
         patch = patch.put(("structural_mechanics", invocation.task_name), encode_state(model, solution))
@@ -106,18 +101,27 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     elif analysis in ("modal", "harmonic"):
         if model.contacts or any(e.material["model"] == "mechanics.j2-plasticity@1" for e in model.elements):
             raise ValueError("modal/harmonic analysis currently requires elastic elements without contact")
-        solution = initial_solution(model)
         spectrum_rule = next(item for item in invocation.config["initializations"] if item["methodId"] == "fea.spectrum")
         spectrum = {key: parameter(value) for key, value in spectrum_rule["parameters"].items()}
-        solution.spectrum = modal_analysis(model, stiffness, mass, int(spectrum["modeCount"])) if analysis == "modal" else harmonic_analysis(model, stiffness, mass, damping, spectrum["frequencies"])
+        if analysis == "modal":
+            solution = initial_solution(model)
+            solution.spectrum = modal_analysis(model, stiffness, mass, int(spectrum["modeCount"]))
+        else:
+            # Modal and harmonic analyses both solve the reference linear problem.
+            transform = constraint_transform(model, np.tile(np.eye(3), (len(model.points), 1, 1)))
+            solution = await solve_harmonic(prepared, transform, spectrum["frequencies"], model.force, invocation.cancellation, invocation.progress)
     else:
         raise ValueError(f"unsupported structural analysis {analysis}")
-    if not solution.history:
+    if not isinstance(solution, HarmonicSolution) and not solution.history:
         append_history(model, solution)
     if invocation.progress is not None:
         await invocation.progress({"stage": "structural-response", "completed": 1, "total": 1})
     artifacts, exports, visuals = build_outputs(invocation.config, invocation.descriptor, model, solution, motion)
-    return SolverResult(state_patch=patch, artifacts=artifacts, exports=exports, visualizations=visuals, observations={"time": float(solution.time), "iterations": int(solution.iterations), "relativeResidual": float(solution.residual), "couplingResidual": float(coupling_residual), "couplingConverged": bool(converged), "strainEnergy": float(solution.strain_energy), "kineticEnergy": float(solution.kinetic_energy)})
+    if isinstance(solution, HarmonicSolution):
+        observations = {"iterations": len(solution.frequencies), "relativeResidual": float(solution.relative_residuals.max())}
+    else:
+        observations = {"time": float(solution.time), "iterations": int(solution.iterations), "relativeResidual": float(solution.residual), "couplingResidual": float(coupling_residual), "couplingConverged": bool(converged), "strainEnergy": float(solution.strain_energy), "kineticEnergy": float(solution.kinetic_energy)}
+    return SolverResult(state_patch=patch, artifacts=artifacts, exports=exports, visualizations=visuals, observations=observations)
 
 
 implementation = SolverImplementation(abi_version=3, run=run)

@@ -1,0 +1,29 @@
+"""Select accepted history samples and map physical node IDs."""
+
+import numpy as np
+
+
+def history_members(model, solution, node_ids=None, scope="cumulative"):
+    """Flatten accepted samples; final selects the last sample of this invocation.
+
+    latest-window selects the last accepted chunk. Automatic mesh visualization
+    uses cumulative history independently of the requested Box Grid scope.
+    """
+    if scope not in ("cumulative", "latest-window", "final"):
+        raise ValueError("history scope must be cumulative, latest-window or final")
+    stored_nodes = np.arange(len(model.points)) if model.history_nodes is None else model.history_nodes
+    stored_ids = model.node_ids[stored_nodes]
+    requested = stored_ids if node_ids is None else np.asarray(node_ids)
+    lookup = {int(node): index for index, node in enumerate(stored_ids)}
+    if len(np.unique(requested)) != len(requested):
+        raise ValueError("History node IDs must be unique")
+    if any(int(node) not in lookup for node in requested):
+        raise ValueError("History must contain every physical mesh node; requested IDs are absent")
+    selection = np.asarray([lookup[int(node)] for node in requested], dtype=int)
+    members = {"nodeIds": np.asarray(requested, dtype=np.int32)}
+    nodal = {"displacement", "rotation", "velocity", "reaction", "reactionMoment"}
+    for name, chunks in solution.history.items():
+        chunks = chunks[-1:] if scope in ("latest-window", "final") else chunks
+        selected = [np.asarray(chunk)[:, selection] if name in nodal else np.asarray(chunk) for chunk in chunks]
+        members[name] = selected[-1][-1:] if scope == "final" else np.concatenate(selected, axis=0)
+    return members

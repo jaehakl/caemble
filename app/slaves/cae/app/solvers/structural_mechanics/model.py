@@ -5,10 +5,10 @@
 사용하지 않는 회전 자유도 때문에 0인 행/열이 생기지 않는다.
 """
 
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
 
 
 @dataclass
@@ -74,3 +74,12 @@ class StructuralSolution:
     kinetic_energy: float = 0.0
     spectrum: dict[str, Any] = field(default_factory=dict)
     contact_history: list[Any] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class HarmonicSolution:
+    """Peak phasors on the reference geometry, with no artificial time state."""
+
+    frequencies: np.ndarray
+    complex_displacement: np.ndarray
+    relative_residuals: np.ndarray

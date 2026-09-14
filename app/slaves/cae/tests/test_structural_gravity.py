@@ -3,19 +3,15 @@
 import numpy as np
 from scipy import optimize, sparse
 
-from app.solvers.structural_mechanics.analysis import (
-    initial_solution,
-    initialize_acceleration,
-    static_analysis,
-)
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.analyses.static import static_analysis
 from app.solvers.structural_mechanics.constraints import (
     constraint_transform,
     enforce_links,
 )
-from app.solvers.structural_mechanics.formulation import (
-    inertial_response,
-    prepare_matrices,
-)
+from app.solvers.structural_mechanics.operators.inertia import inertial_response
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.rotations import rotation_exp, skew
 
@@ -39,7 +35,8 @@ def eccentric_beam():
 
 def test_rotated_section_gravity_matches_center_of_mass_potential_and_exact_tangent():
     model = eccentric_beam()
-    _, mass, _, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    mass = prepared.mass
     state = initial_solution(model)
     theta = -.8
     state.displacement[0, 3] = theta
@@ -59,7 +56,10 @@ def test_rotated_section_gravity_matches_center_of_mass_potential_and_exact_tang
 
 def test_static_rotating_gravity_equilibrium_and_added_mass_have_no_fictitious_weight():
     model = eccentric_beam()
-    stiffness, mass, damping, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    stiffness = prepared.stiffness
+    mass = prepared.mass
+    damping = prepared.damping
     result = static_analysis(model, prepared, stiffness, mass, tolerance=1e-11, geometric=True)
     # k*theta+mg*e*cos(theta)=0의 독립된 1변수 해: 기준 자세 중력만 쓰면 -1 rad가 된다.
     expected = optimize.brentq(lambda angle: angle + np.cos(angle), -1., 0.)

@@ -8,9 +8,9 @@ import pytest
 
 from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ResourceStore
-from app.solvers.structural_mechanics.analysis import initial_solution
+from app.solvers.structural_mechanics.state import initial_solution
 from tests.structural_fixture import build_model
-from app.solvers.structural_mechanics.outputs import _physical_domain
+from app.solvers.structural_mechanics.outputs.fields import _physical_domain
 
 
 def mesh_invocation():

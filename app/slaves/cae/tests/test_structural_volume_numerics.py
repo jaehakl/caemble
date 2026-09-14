@@ -7,16 +7,15 @@ from tests.test_box_grid_outputs import grid
 from app.kernel.catalog import solver_catalog
 
 from app.kernel.resources import ResourceStore
-import app.solvers.structural_mechanics.analysis as analysis_module
-from app.solvers.structural_mechanics.analysis import (
-    initial_solution,
-    initialize_acceleration,
-    kinematic_rates,
-    modal_analysis,
-    transient_step,
-)
+import app.solvers.structural_mechanics.analyses.buckling as buckling_module
+from app.solvers.structural_mechanics.analyses.buckling import buckling_analysis
+from app.solvers.structural_mechanics.state import initial_solution
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
+from app.solvers.structural_mechanics.kinematics import kinematic_rates
+from app.solvers.structural_mechanics.analyses.modal import modal_analysis
+from app.solvers.structural_mechanics.analyses.transient import transient_step
 from app.solvers.structural_mechanics.constraints import constraint_transform, contact_response
-from app.solvers.structural_mechanics.coupling import predict_motion
+from app.solvers.structural_mechanics.interfaces.motion import predict_motion
 from app.solvers.structural_mechanics.continuum import (
     physical_angular_velocities,
     physical_orientation_matrices,
@@ -26,15 +25,13 @@ from app.solvers.structural_mechanics.continuum import (
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.meshing import brick_mesh
 from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.solvers.structural_mechanics.outputs import (
-    build_outputs,
-    configure_history,
-    history_members,
-    physical_support_reactions,
-)
+from app.solvers.structural_mechanics.outputs.build import build_outputs
+from app.solvers.structural_mechanics.state import configure_history
+from app.solvers.structural_mechanics.outputs.history import history_members
+from app.solvers.structural_mechanics.interfaces.resultants import physical_support_reactions
 from app.solvers.structural_mechanics.state import append_history
 from app.solvers.structural_mechanics.rotations import rotation_exp
-from app.solvers.structural_mechanics.formulation import prepare_matrices
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 
 
 TETRAHEDRON = np.array([
@@ -153,8 +150,8 @@ def test_large_modal_and_buckling_systems_use_positive_sparse_spectra(monkeypatc
     np.testing.assert_allclose(flattened @ mass @ flattened.T, np.eye(3), atol=2e-13)
 
     geometric = -sparse.diags(1 / np.arange(1, size + 1, dtype=float))
-    monkeypatch.setattr(analysis_module, "geometric_matrix", lambda *_: geometric)
-    buckling = analysis_module.buckling_analysis(
+    monkeypatch.setattr(buckling_module, "geometric_matrix", lambda *_: geometric)
+    buckling = buckling_analysis(
         model, sparse.eye(size), np.zeros((count, 6)), [], 3,
     )
     np.testing.assert_allclose(buckling["factors"], [1., 2., 3.], rtol=2e-11)
@@ -173,7 +170,9 @@ def test_sparse_free_volume_modes_skip_six_rigid_body_modes():
         (6 * np.arange(len(points))[:, None] + np.arange(3)).ravel(),
         np.empty(0, dtype=int), np.zeros((len(points), 6)),
     )
-    stiffness, mass, _, _ = prepare_matrices(model)
+    operators = prepare_matrices(model)
+    stiffness = operators.stiffness
+    mass = operators.mass
     result = modal_analysis(model, stiffness, mass, 2)
     assert np.all(np.isfinite(result["frequencies"])) and np.all(result["frequencies"] > 0)
     modes = result["modes"].reshape(2, -1)
@@ -229,7 +228,10 @@ def test_fixed_tet_attachment_advances_one_real_transient_step():
         24 + np.arange(6), np.zeros((5, 6)), physical_node_count=4,
     )
     model.links = [(4, node, np.arange(3)) for node in range(3)]
-    stiffness, mass, damping, prepared = prepare_matrices(model)
+    prepared = prepare_matrices(model)
+    stiffness = prepared.stiffness
+    mass = prepared.mass
+    damping = prepared.damping
     solution = initial_solution(model)
     solution = initialize_acceleration(
         model, solution, prepared, stiffness, mass, damping, np.zeros(model.size), True,
@@ -297,7 +299,7 @@ def test_physical_field_excludes_reference_nodes_and_section_integrates_tet_trac
     solution = initial_solution(model)
     solution.stresses[0] = np.tile([10., 0., 0., 0., 0., 0.], (4, 1))
 
-    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
     artifacts, _, visuals = build_outputs(
         {"parameters": {"analysis": "static"}, "outputs": [
             {"methodId": "fea.stress-field", "key": "stress", "boxGrid": grid(shape=(1,1,1), size=(.1,.1,.1)).geometry},
@@ -350,7 +352,7 @@ def test_box_stress_samples_one_volume_and_visualization_preserves_both_volumes(
     }
     solution = initial_solution(model)
     solution.stresses = [np.tile([1., 0., 0., 0., 0., 0.], (4, 1)), np.tile([2., 0., 0., 0., 0., 0.], (4, 1))]
-    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
     artifacts, _, visuals = build_outputs({"parameters": {"analysis": "static"}, "outputs": [{
         "methodId": "fea.stress-field", "key": "stress",
         "boxGrid": grid(shape=(1, 1, 1), origin=(2., 0., 0.), size=(.1, .1, .1)).geometry,
@@ -410,7 +412,7 @@ def test_attachment_support_wrench_is_conserved_on_physical_field_and_history():
         solution.reaction[4, 3:],
     )
 
-    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
     artifacts, _, _ = build_outputs({"parameters": {"analysis": "static"}, "outputs": [
         {"methodId": "fea.reaction", "key": "force", "boxGrid": grid(shape=(1, 1, 1)).geometry},
         {"methodId": "fea.reaction-moment", "key": "moment", "boxGrid": grid(shape=(1, 1, 1)).geometry,
@@ -445,7 +447,7 @@ def test_box_plastic_strain_uses_tensor_shear_without_mutating_native_history():
     solution = initial_solution(model)
     engineering = np.array([[.1,.2,.3,.4,.6,.8]])
     solution.element_history[0] = {"plasticStrain": engineering, "equivalentPlasticStrain": np.array([.5])}
-    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
     config = {"parameters": {"analysis": "static"}, "outputs": [{"methodId": "fea.plastic-strain", "key": "strain",
               "boxGrid": grid(shape=(1,1,1),size=(.1,.1,.1)).geometry}]}
     result = build_outputs(config,descriptor,model,solution)[0]["strain"]

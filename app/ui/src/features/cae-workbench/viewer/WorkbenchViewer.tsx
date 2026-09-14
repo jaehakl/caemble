@@ -400,7 +400,7 @@ function ViewerContent({
           <MeshFieldResult
             key={selectedView}
             field={selectedField}
-            displacementFields={mesh.fields}
+            displacementFields={mesh.fields.filter((candidate) => sameResultInvocation(candidate.label))}
             displayUnit={displayUnit}
             renderViewer={(data, view) => renderScene(data, view.deformationScale)}
           />

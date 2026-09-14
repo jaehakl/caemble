@@ -9,14 +9,16 @@ Hex8은 2×2×2 완전적분이므로 hourglass 자유도는 없습니다. 대�
 """
 
 from __future__ import annotations
-
-from collections.abc import Mapping
-from itertools import product
-
 import numpy as np
-
+from app.methods.finite_element.integration import (
+    integration_points as geometric_integration_points,
+)
+from collections.abc import Mapping
 from .materials import j2_return
 from .rotations import rotation_log_many
+
+
+
 
 
 def plane_elasticity(elasticity: np.ndarray, plane: str = "stress") -> np.ndarray:
@@ -41,33 +43,7 @@ def plane_elasticity(elasticity: np.ndarray, plane: str = "stress") -> np.ndarra
     return matrix
 
 
-def shape_functions(kind: str, natural: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """N과 자연좌표에 대한 dN을 반환합니다. 행은 절점, 열은 자연좌표입니다."""
-    natural = np.asarray(natural, dtype=float)
-    if kind == "tri3":
-        r, s = natural
-        return np.array([1 - r - s, r, s]), np.array([[-1., -1.], [1., 0.], [0., 1.]])
-    if kind == "tet4":
-        r, s, t = natural
-        return np.array([1 - r - s - t, r, s, t]), np.array([
-            [-1., -1., -1.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.],
-        ])
-    if kind == "quad4":
-        corners = np.array([[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]])
-    elif kind == "hex8":
-        corners = np.array([
-            [-1., -1., -1.], [1., -1., -1.], [1., 1., -1.], [-1., 1., -1.],
-            [-1., -1., 1.], [1., -1., 1.], [1., 1., 1.], [-1., 1., 1.],
-        ])
-    else:
-        raise ValueError(f"unsupported continuum element {kind!r}")
-    factors = (1 + corners * natural) / 2
-    values = np.prod(factors, axis=1)
-    derivatives = np.empty_like(corners)
-    for axis in range(corners.shape[1]):
-        other_axes = [index for index in range(corners.shape[1]) if index != axis]
-        derivatives[:, axis] = corners[:, axis] / 2 * np.prod(factors[:, other_axes], axis=1)
-    return values, derivatives
+
 
 
 def integration_points(
@@ -80,31 +56,11 @@ def integration_points(
     deficient해져 고유진동 문제를 망칩니다.
     """
     coordinates = np.asarray(coordinates, dtype=float)
-    if kind == "tri3":
-        samples = [(np.array(point), 1 / 6) for point in [(1 / 6, 1 / 6), (2 / 3, 1 / 6), (1 / 6, 2 / 3)]]
-        dimension, nodes = 2, 3
-    elif kind == "tet4":
-        a, b = (5 + 3 * np.sqrt(5)) / 20, (5 - np.sqrt(5)) / 20
-        samples = [(np.array(point), 1 / 24) for point in [(b, b, b), (a, b, b), (b, a, b), (b, b, a)]]
-        dimension, nodes = 3, 4
-    elif kind in {"quad4", "hex8"}:
-        dimension, nodes = (2, 4) if kind == "quad4" else (3, 8)
-        samples = [(np.array(point), 1.) for point in product((-1 / np.sqrt(3), 1 / np.sqrt(3)), repeat=dimension)]
-    else:
-        raise ValueError(f"unsupported continuum element {kind!r}")
-    if coordinates.shape != (nodes, dimension):
-        raise ValueError(f"{kind} coordinates must have shape {(nodes, dimension)}")
+    dimension, nodes = coordinates.shape[1], len(coordinates)
     if dimension == 2 and (thickness <= 0 or plane not in {"stress", "strain"}):
         raise ValueError("plane elements require positive thickness and stress/strain mode")
-
     result = []
-    for natural, quadrature_weight in samples:
-        values, derivatives = shape_functions(kind, natural)
-        jacobian = coordinates.T @ derivatives
-        determinant = float(np.linalg.det(jacobian))
-        if determinant <= 0:
-            raise ValueError(f"{kind} has an inverted or degenerate Jacobian")
-        gradients = derivatives @ np.linalg.inv(jacobian)
+    for values, physical_weight, gradients in geometric_integration_points(kind, coordinates):
         B = np.zeros((3 if dimension == 2 else 6, nodes * dimension))
         for node, gradient in enumerate(gradients):
             offset = node * dimension
@@ -118,7 +74,7 @@ def integration_points(
                 B[4, offset + 1:offset + 3] = gradient[2], gradient[1]
                 B[5, offset] = gradient[2]
                 B[5, offset + 2] = gradient[0]
-        weight = quadrature_weight * determinant * (thickness if dimension == 2 else 1)
+        weight = physical_weight * (thickness if dimension == 2 else 1)
         result.append((values, B, weight, gradients))
     return result
 

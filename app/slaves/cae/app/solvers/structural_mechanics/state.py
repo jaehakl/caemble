@@ -1,10 +1,10 @@
-"""재시작에 필요한 수치 이력만 보관한다. 상태는 Task별로 분리한다."""
+"""Structural state responsibilities."""
 
 import numpy as np
 
 from .continuum import physical_rotation_vectors
+from .interfaces.resultants import physical_support_reactions
 from .model import StructuralSolution
-from .outputs import physical_support_reactions
 
 
 def encode_state(model, solution):
@@ -51,3 +51,14 @@ def append_history(model, solution, pitch=0.0, torque=0.0, *, samples=None):
         chunk.flags.writeable = False
         result[key] = (*solution.history.get(key, ()), chunk)
     solution.history = result
+
+
+def initial_solution(model):
+    n = len(model.points)
+    return StructuralSolution(np.zeros((n, 6)), np.zeros((n, 6)), np.zeros((n, 6)), np.tile(np.eye(3), (n, 1, 1)), np.zeros((n, 6)), {}, [None] * len(model.elements), [None] * len(model.elements))
+
+
+def configure_history(model):
+    """Accepted physical-node history also supplies the automatic deformation viewer."""
+    count = len(model.points) if model.physical_node_count is None else model.physical_node_count
+    model.history_nodes = np.arange(count, dtype=int)

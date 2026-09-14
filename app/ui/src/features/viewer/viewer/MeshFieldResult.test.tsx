@@ -34,6 +34,95 @@ const field: RecordedMeshField = {
 }
 
 describe('mesh field inspection controls', () => {
+  it('shows explicit Hz and phase and deforms stress at matching frequency values instead of matching indices', () => {
+    const ids = new Int32Array([10, 20, 30, 40])
+    const stress: RecordedMeshField = {
+      ...field,
+      task: 'solid',
+      coordinateSpace: 'experiment',
+      nodeIds: ids,
+      values: new Float64Array([10, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 0]),
+      spectrum: {
+        frequencies: new Float64Array([91, 37]),
+        imaginaryValues: new Float64Array([5, 0, 0, 0, 0, 0, 30, 0, 0, 0, 0]),
+      },
+    }
+    const displacement: RecordedMeshField = {
+      ...stress,
+      label: 'motion',
+      location: 'node',
+      valueKind: 'displacement',
+      componentCount: 3,
+      components: ['x', 'y', 'z'],
+      valueUnit: 'm',
+      values: Float64Array.from({ length: 24 }, (_, index) => (index % 3 === 0 ? (index < 12 ? 0.02 : 0.01) : 0)),
+      spectrum: {
+        frequencies: new Float64Array([37, 91]),
+        imaginaryValues: Float64Array.from({ length: 24 }, (_, index) =>
+          index % 3 === 0 ? (index < 12 ? 0.04 : 0.03) : 0,
+        ),
+      },
+    }
+    const show = (data: ReturnType<typeof createMeshFieldRenderData>) => (
+      <output
+        data-testid="harmonic-frame"
+        data-first-x={data.geometries[0].positions[0]}
+        data-upper-bound={data.bounds.max[0]}
+      />
+    )
+    const { rerender } = render(
+      <MeshFieldResult field={stress} displacementFields={[displacement]} renderViewer={show} />,
+    )
+    expect(screen.getByLabelText('stress frequency')).toHaveValue('91')
+    expect(screen.getByLabelText('stress phase degrees')).toHaveValue(0)
+    expect(screen.getByText(/91 Hz · 0° · 순간값/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('변형 배율'), { target: { value: 'actual' } })
+    expect(Number(screen.getByTestId('harmonic-frame').getAttribute('data-first-x'))).toBeCloseTo(0.01)
+    fireEvent.change(screen.getByLabelText('stress frequency'), { target: { value: '37' } })
+    expect(Number(screen.getByTestId('harmonic-frame').getAttribute('data-first-x'))).toBeCloseTo(0.02)
+    const envelope = screen.getByTestId('harmonic-frame').getAttribute('data-upper-bound')
+    fireEvent.change(screen.getByLabelText('stress phase'), { target: { value: '90' } })
+    expect(Number(screen.getByTestId('harmonic-frame').getAttribute('data-first-x'))).toBeCloseTo(-0.04)
+    expect(screen.getByTestId('harmonic-frame').getAttribute('data-upper-bound')).toBe(envelope)
+    rerender(
+      <MeshFieldResult
+        field={{
+          ...stress,
+          values: stress.values.slice(0, 6),
+          spectrum: {
+            frequencies: new Float64Array([91]),
+            imaginaryValues: stress.spectrum!.imaginaryValues.slice(0, 6),
+          },
+        }}
+        displacementFields={[displacement]}
+        renderViewer={show}
+      />,
+    )
+    expect(screen.getByLabelText('stress frequency')).toHaveValue('37')
+    expect(screen.getByRole('alert')).toHaveTextContent('선택한 주파수 37 Hz')
+    expect(screen.queryByTestId('harmonic-frame')).not.toBeInTheDocument()
+  })
+  it('keeps harmonic pressure on its reference mesh and validates the explicitly selected phase', () => {
+    const pressure: RecordedMeshField = {
+      ...field,
+      label: 'pressure',
+      valueKind: undefined,
+      location: 'node',
+      componentCount: 1,
+      components: ['pressure'],
+      values: new Float64Array([1, 1, 1, 1]),
+      spectrum: { frequencies: new Float64Array([50]), imaginaryValues: new Float64Array([2, 2, 2, 2]) },
+    }
+    render(<MeshFieldResult field={pressure} />)
+    expect(screen.getByLabelText('pressure frequency')).toHaveValue('50')
+    expect(screen.getByText('Value (Pa)')).toBeInTheDocument()
+    expect(screen.queryByText('magnitude (Pa)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('변형 배율')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Deformation result')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Transient playback')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('pressure phase degrees'), { target: { value: '361' } })
+    expect(screen.getByRole('alert')).toHaveTextContent('0°부터 360°')
+  })
   it('switches physical stress components, materials, overlays and interpolated cuts', () => {
     render(<MeshFieldResult field={field} />)
     expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '10')

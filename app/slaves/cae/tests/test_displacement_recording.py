@@ -10,7 +10,8 @@ from app.kernel.coordinator.contracts import validate_artifact_payload
 from app.kernel.resources import ArtifactStore, ResourceStore
 from app.kernel.transport.recording import materialize_record_value
 from app.kernel.transport.tensor import encode_recorded_data
-from app.solvers.structural_mechanics import outputs
+from app.solvers.structural_mechanics.outputs import visualizations
+from app.solvers.structural_mechanics.state import configure_history
 
 
 @pytest.mark.parametrize("samples", [2, 1000])
@@ -19,20 +20,18 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
     domain = UnstructuredMeshValue(np.zeros((4, 3)), {"tet4": np.array([[0, 1, 2, 3]], dtype=np.int32)}, "m", "domain", {"nodeIds": ids})
     model = SimpleNamespace(points=domain.points, physical_node_count=4, node_ids=ids, history_nodes=None, elements=[SimpleNamespace(nodes=np.arange(4))])
     config = {"parameters": {"analysis": "transient"}, "outputs": []}
-    outputs.configure_history(model)
+    configure_history(model)
     np.testing.assert_array_equal(model.history_nodes, [0, 1, 2, 3])
     # Store history in a different order to exercise ID mapping at the output boundary.
     model.history_nodes = np.array([2, 0, 3, 1])
     times = np.arange(samples, dtype=float) * .001
     displacement = np.broadcast_to(ids[model.history_nodes][None, :, None], (samples, 4, 3)).astype(float).copy()
     solution = SimpleNamespace(history={"times": [times], "displacement": [displacement]}, displacement=np.zeros((4,6)), orientations=np.tile(np.eye(3),(4,1,1)))
-    monkeypatch.setattr(outputs, "_tet_stress", lambda *args: np.zeros((3,3)))
-    monkeypatch.setattr(outputs, "physical_rotation_vectors", lambda *args: np.zeros((4,3)))
-    monkeypatch.setattr(outputs, "_physical_domain", lambda model: (domain, [0]))
-    monkeypatch.setattr(outputs, "interface_members", lambda model: {})
-    descriptor = solver_catalog.descriptor("structural-mechanics", "5.0.0")
+    monkeypatch.setattr(visualizations, "_tet_stress", lambda *args: np.zeros((3,3)))
+    monkeypatch.setattr(visualizations, "_physical_domain", lambda model: (domain, [0]))
+    descriptor = solver_catalog.descriptor("structural-mechanics", "6.0.0")
     definition = descriptor["visualizations"]["displacementHistory"]
-    value = outputs.build_outputs(config, descriptor, model, solution)[2]["displacementHistory"]
+    value = visualizations.build_visualizations(config, descriptor, model, solution)["displacementHistory"]
     validate_artifact_payload(value, definition["data"], "anything")
     np.testing.assert_array_equal(value.members["values"]["value"][0, :, 0], ids)
     schema = {**definition["data"]["members"], "field": {
@@ -43,7 +42,7 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="solid", solver_name="structural-mechanics", solver_version="5.0.0", output_name="anything", artifact_type=definition["artifactType"], state_revision=1)
+        handle = artifacts.publish(value, producer_task="solid", solver_name="structural-mechanics", solver_version="6.0.0", output_name="anything", artifact_type=definition["artifactType"], state_revision=1)
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("motion", schema, recorded, 1)
         assert encoded["values"]["shape"] == [samples, 4, 3]
@@ -56,4 +55,4 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
         resources.close()
     model.history_nodes = np.array([0, 1])
     with pytest.raises(ValueError, match="every physical mesh node"):
-        outputs.build_outputs(config, descriptor, model, solution)
+        visualizations.build_visualizations(config, descriptor, model, solution)
