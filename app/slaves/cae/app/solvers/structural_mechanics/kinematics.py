@@ -4,7 +4,7 @@ import numpy as np
 from scipy import sparse
 
 from .constraints import constraint_transform, enforce_links, revolute_joints
-from .rotations import cross, rotation_exp_many, skew, skew_many
+from app.methods.rigid.rotations import cross, rotation_exp_many, skew, skew_many
 
 
 def apply_increment(model, displacement, orientations, increment, pitch=0.0):

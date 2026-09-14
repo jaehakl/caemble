@@ -5,7 +5,7 @@ from scipy import sparse
 
 from ..beam import beam_cg_mass, beam_kinematics, physical_beam_mass
 from ..corotation import _perturbed_configuration
-from ..rotations import cross, skew, skew_many
+from app.methods.rigid.rotations import cross, skew, skew_many
 from ..shells import shell4_director_mass
 from .prepared import _beam_batch
 

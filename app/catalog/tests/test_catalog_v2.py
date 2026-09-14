@@ -62,7 +62,7 @@ class CatalogV3Tests(unittest.TestCase):
                 version="5.0.0",
             )
 
-        self.assertEqual(total, 20)
+        self.assertEqual(total, 21)
         self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
@@ -115,6 +115,7 @@ class CatalogV3Tests(unittest.TestCase):
             "dc-current-density": "2.0.0", "steady-state-heat": "2.0.0",
             "ray-tracing": "2.0.0", "fdtd": "5.0.0",
             "structural-mechanics": "6.1.0", "pressure-acoustics": "1.1.0",
+            "rigid_body": "1.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -134,6 +135,7 @@ class CatalogV3Tests(unittest.TestCase):
                     "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.0",
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.0",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.0",
+                    "asymmetric-rigid-bodies": "1.0.0",
                 }.get(example["key"], "5.0.0")
                 self.assertEqual(example["version"], expected_version)
                 previous = "3.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")

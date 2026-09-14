@@ -1,5 +1,5 @@
 import type { HeatmapRenderData } from './structuredField'
-import type { createMeshFieldRenderData } from './meshFields'
+import type { MeshRenderData } from './meshFields'
 import { useCallback, useMemo, useState } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
@@ -21,7 +21,7 @@ export type CadViewerProps = {
   onSelectionSourcePathsChange?: (values: readonly string[]) => void
   onToggleViewerExpanded?: () => void
   polylines?: readonly PolylineBundle[]
-  meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
+  meshRenderData?: MeshRenderData
   preserveCameraOnUpdate?: boolean
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData

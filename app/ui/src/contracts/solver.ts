@@ -36,8 +36,20 @@ export type KernelStructuredBundleSpec = Readonly<{
   members: Readonly<Record<string, KernelDataSpec>>
 }>
 export type ResultVisualization = Readonly<{
-  kind: 'tensor' | 'bundle' | 'mesh-field' | 'structured-field' | 'polyline' | 'box-grid'
+  kind: 'tensor' | 'bundle' | 'mesh-field' | 'mesh-transform' | 'structured-field' | 'polyline' | 'box-grid'
   coordinateSpace?: 'experiment'
+  meshTransform?: Readonly<{
+    bodyIds: string
+    vertices: string
+    triangles: string
+    vertexOffsets: string
+    triangleOffsets: string
+    localCenters: string
+    times: string
+    positions: string
+    orientations: string
+    quaternionOrder: 'wxyz'
+  }>
   valuePath?: string
   fieldPath?: string
   nodeIdsPath?: string

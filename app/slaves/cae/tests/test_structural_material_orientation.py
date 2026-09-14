@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app.solvers.structural_mechanics.materials import isotropic_elasticity, orient_elasticity, orthotropic_elasticity
-from app.solvers.structural_mechanics.rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 
 
 def test_isotropic_elasticity_is_independent_of_material_orientation():

@@ -459,6 +459,12 @@ projection을 별도로 선언합니다. 빌드는 Task별 `visualizationContrac
 artifactType, schema, visualization을 고정합니다. 축 이름이나 Solver 이름으로
 renderer를 추론하지 않습니다. 수치 artifact의 입출력 호환성 비교에서는 표시용
 visualization/recording metadata를 제외합니다.
+
+강체의 `mesh-transform` 표시도 기존 BundleValue를 사용합니다. Catalog는
+기준 vertices/triangles, body별 offsets, body ID, local COM, 시간과 pose
+member 경로 및 quaternion 순서를 선언합니다. Kernel은 이를 일반 tensor
+bundle로 처리하고 Viewer가 강체 변환을 적용합니다. Cell-average 출력은
+Box 내부 체적 quadrature로 계산하며, point sampling과 구분합니다.
 Catalog 데이터 변경은 Draft SQLite와 catalogctl로 수행하며 계약의 breaking
 변경은 Solver major 버전과 공식 예제를 함께 전환합니다.
 

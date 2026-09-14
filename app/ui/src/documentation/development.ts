@@ -1,6 +1,7 @@
 import page0 from '../../../../docs/development/architecture.md?raw'
 import page1 from '../../../../docs/development/solver-development.md?raw'
 import structuralMechanicsPage from '../../../../docs/development/structural-mechanics.md?raw'
+import rigidBodyPage from '../../../../docs/development/rigid-body.md?raw'
 import pressureAcousticsPage from '../../../../docs/development/pressure-acoustics.md?raw'
 import pressureAcousticsValidationPage from '../../../../docs/development/pressure-acoustics-validation.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
@@ -44,6 +45,14 @@ export const developmentDocuments: readonly DocumentPage[] = [
     sourcePath: 'docs/development/structural-mechanics.md',
     keywords: ['structural', 'CSG', 'mesh', 'Netgen', '구조해석'],
     content: documentBody(structuralMechanicsPage),
+  },
+  {
+    id: 'development.rigid-body',
+    title: 'CSG 강체 운동과 관측 Grid',
+    summary: '자동 질량특성, 배치 강체 적분과 셀 평균 관측',
+    sourcePath: 'docs/development/rigid-body.md',
+    keywords: ['rigid', 'multibody', 'CSG', 'mass', '강체', '관성'],
+    content: documentBody(rigidBodyPage),
   },
   {
     id: 'development.pressure-acoustics',

@@ -14,7 +14,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from .rotations import (
+from app.methods.rigid.rotations import (
     cross,
     rotation_exp,
     rotation_log,

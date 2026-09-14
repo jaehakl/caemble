@@ -20,7 +20,7 @@ from app.solvers.structural_mechanics.operators.inertia import inertial_response
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.operators.internal import structural_response
 from app.solvers.structural_mechanics.model import StructuralModel
-from app.solvers.structural_mechanics.rotations import rotation_exp, rotation_log
+from app.methods.rigid.rotations import rotation_exp, rotation_log
 
 
 def joint_model():

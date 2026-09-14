@@ -13,7 +13,7 @@ from app.solvers.structural_mechanics.constraints import (
 from app.solvers.structural_mechanics.operators.inertia import inertial_response
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.solvers.structural_mechanics.rotations import rotation_exp, skew
+from app.methods.rigid.rotations import rotation_exp, skew
 
 
 def eccentric_beam():

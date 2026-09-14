@@ -86,7 +86,7 @@ try {
     assert.equal('renderScene' in actual.measurement.experiment, false)
     console.log(`${example.key}: isolated artifact matches canonical browser input`)
   }
-  assert.equal(examples.length, 16)
+  assert.equal(examples.length, 21)
 
   const fdtd = examples.find((example) => example.key === 'fdtd-drude-slab')!
   const trcBundle = fdtd.sourceBundle

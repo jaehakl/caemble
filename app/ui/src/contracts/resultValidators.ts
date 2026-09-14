@@ -3,8 +3,23 @@ import type { MeasurementVisualization, RecordedResultContracts, ResultProvenanc
 
 export const resultVisualizationSchema = z
   .object({
-    kind: z.enum(['tensor', 'bundle', 'mesh-field', 'structured-field', 'polyline', 'box-grid']),
+    kind: z.enum(['tensor', 'bundle', 'mesh-field', 'mesh-transform', 'structured-field', 'polyline', 'box-grid']),
     coordinateSpace: z.literal('experiment').optional(),
+    meshTransform: z
+      .object({
+        bodyIds: z.string().min(1),
+        vertices: z.string().min(1),
+        triangles: z.string().min(1),
+        vertexOffsets: z.string().min(1),
+        triangleOffsets: z.string().min(1),
+        localCenters: z.string().min(1),
+        times: z.string().min(1),
+        positions: z.string().min(1),
+        orientations: z.string().min(1),
+        quaternionOrder: z.literal('wxyz'),
+      })
+      .strict()
+      .optional(),
     valuePath: z.string().optional(),
     fieldPath: z.string().optional(),
     nodeIdsPath: z.string().optional(),
@@ -54,6 +69,8 @@ export const resultVisualizationSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if ((value.kind === 'mesh-transform') !== Boolean(value.meshTransform))
+      context.addIssue({ code: 'custom', message: 'Mesh transforms require their explicit mesh and pose paths.' })
     if (Boolean(value.frequency) !== Boolean(value.phasor) || (value.frequency && value.time))
       context.addIssue({
         code: 'custom',

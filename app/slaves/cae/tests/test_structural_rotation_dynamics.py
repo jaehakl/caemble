@@ -16,7 +16,7 @@ from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.operators.damping import strain_rate_damping
 from app.solvers.structural_mechanics.operators.internal import structural_response
 from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.solvers.structural_mechanics.rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 
 
 def loaded_rotating_beam(damped):

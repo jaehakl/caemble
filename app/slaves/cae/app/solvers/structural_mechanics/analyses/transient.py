@@ -20,7 +20,7 @@ from ..numerics import _positive_sparse_mass, solve_linear
 from ..operators.damping import strain_rate_damping
 from ..operators.inertia import inertial_response
 from ..operators.internal import structural_response
-from ..rotations import rotation_exp_many, rotation_log_many
+from app.methods.rigid.rotations import rotation_exp_many, rotation_log_many
 
 
 def initialize_acceleration(model, solution, prepared, stiffness, mass, damping, external, geometric=False, pitch=0., pitch_rate=0., pitch_acceleration=0., damping_stiffness=0.):

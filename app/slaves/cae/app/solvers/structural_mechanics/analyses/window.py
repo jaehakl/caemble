@@ -14,7 +14,7 @@ from ..interfaces.motion import (
     motion_from_samples,
     predict_motion,
 )
-from ..rotations import rotation_exp, rotation_log
+from app.methods.rigid.rotations import rotation_exp, rotation_log
 from ..state import append_history, history_sample
 from .transient import initialize_acceleration, transient_step
 

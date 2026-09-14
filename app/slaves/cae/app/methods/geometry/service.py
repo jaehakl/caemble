@@ -13,10 +13,13 @@ import numpy as np
 
 from app.methods.geometry.models import (
     ShellLayerGeometry,
+    SolidComponent,
+    TriangleMeshingProfile,
     TriangleProvenance,
     TriangularMesh,
     VolumeMesh,
 )
+from app.methods.geometry.solids import components_from_shells
 from app.methods.mesh.models import VolumeMeshingProfile
 from app.methods.mesh.tetrahedral import (
     SurfaceDescriptor,
@@ -71,11 +74,12 @@ class GeometryService:
         self._meshes: dict[tuple[str, str, str, str, str], TriangularMesh] = {}
         self._shell_layers: dict[tuple[str, str, str, str], ShellLayerGeometry] = {}
         self._volume_meshes: dict[tuple[Any, ...], VolumeMesh] = {}
+        self._solid_components: dict[tuple[Any, ...], tuple[SolidComponent, ...]] = {}
         self._cache = cache
 
     @property
     def cached_mesh_count(self) -> int:
-        return len(self._meshes) + len(self._volume_meshes)
+        return len(self._meshes) + len(self._volume_meshes) + len(self._solid_components)
 
     def scene(self, scene: dict[str, Any]) -> MappingProxyType[str, Any]:
         return _immutable(scene)
@@ -143,6 +147,65 @@ class GeometryService:
         self._meshes[key] = result
         if progress is not None:
             await progress({"stage": "geometry", "completed": 1, "total": 1})
+        return result
+
+    async def solid_components(
+        self,
+        scene: dict[str, Any],
+        root_id: str,
+        reference_length_unit: str,
+        profile: TriangleMeshingProfile = TriangleMeshingProfile(),
+        progress: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> tuple[SolidComponent, ...]:
+        """Closed material components with independent pre-Boolean mesh precision."""
+        key = (scene["geometryHash"], root_id, reference_length_unit, _BACKEND_VERSION,
+               "solid-components-v2", profile)
+        cached = self._solid_components.get(key)
+        if cached is not None:
+            return cached
+        cache_key = ContentKey.from_parts("geometry.solid-components", *key)
+        if self._cache is not None:
+            cached = self._cache.lookup(cache_key)
+            if isinstance(cached, tuple) and cached and all(isinstance(item, SolidComponent) for item in cached):
+                for item in cached:
+                    item.mesh.vertices.setflags(write=False)
+                    item.mesh.triangles.setflags(write=False)
+                self._solid_components[key] = cached
+                return cached
+
+        root = next(root for root in scene["roots"] if root["id"] == root_id)
+        if progress is not None:
+            await progress({"stage": "solid-geometry", "completed": 0, "total": 1})
+        await asyncio.sleep(0)
+        context = manifold.ExecutionContext()
+        try:
+            compiled = _compile_node(root["node"], context, profile)
+        except (IndexError, RuntimeError) as error:
+            raise ValueError(f"canonical root {root_id!r} does not define a valid closed solid") from error
+        if compiled.solid.status() != manifold.Error.NoError or compiled.solid.is_empty():
+            raise ValueError(f"canonical root {root_id!r} must define a nonempty valid closed solid")
+        scale = _length_scale(scene["lengthUnit"], reference_length_unit)
+        shells = []
+        for shell in compiled.solid.decompose():
+            output = shell.to_mesh64()
+            shells.append(TriangularMesh(
+                np.asarray(output.vert_properties, dtype=np.float64)[:, :3].copy() * scale,
+                np.asarray(output.tri_verts, dtype=np.int64).copy(),
+                _output_provenance(output, compiled.provenance, root_id),
+            ))
+            await asyncio.sleep(0)
+        try:
+            result = components_from_shells(shells)
+        except ValueError as error:
+            raise ValueError(f"canonical root {root_id!r} has invalid solid components: {error}") from error
+        if self._cache is not None:
+            result = self._cache.publish(cache_key, result)
+            for item in result:
+                item.mesh.vertices.setflags(write=False)
+                item.mesh.triangles.setflags(write=False)
+        self._solid_components[key] = result
+        if progress is not None:
+            await progress({"stage": "solid-geometry", "completed": 1, "total": 1})
         return result
 
     async def volume_mesh(
@@ -1177,10 +1240,21 @@ def _freeze_volume_mesh(mesh: VolumeMesh) -> None:
         array.setflags(write=False)
 
 
-def _compile_node(node: dict[str, Any], context: manifold.ExecutionContext) -> _CompiledGeometry:
+def _compile_node(
+    node: dict[str, Any],
+    context: manifold.ExecutionContext,
+    profile: TriangleMeshingProfile | None = None,
+) -> _CompiledGeometry:
     kind = node["kind"]
     if kind == "primitive":
         parameters = node["parameters"]
+        if profile is not None:
+            parameters = {
+                name: profile.angular_segments
+                if name in {"segments", "azimuthalSegments", "polarSegments", "verticalSegments"}
+                else value
+                for name, value in parameters.items()
+            }
         primitive = node["primitive"]
         if primitive == "box":
             solid = manifold.Manifold.cube(parameters["size"], center=True)
@@ -1208,10 +1282,13 @@ def _compile_node(node: dict[str, Any], context: manifold.ExecutionContext) -> _
             )
         return _primitive(solid, node["nodeId"], primitive, parameters)
     if kind == "fiber":
-        vertices, triangles, surface_indices = _fiber(node)
+        fiber = node if profile is None else {
+            **node, "radialSegments": profile.angular_segments,
+        }
+        vertices, triangles, surface_indices = _fiber(fiber)
         return _from_indexed(vertices, triangles, surface_indices, node["nodeId"], context)
     if kind in {"transform", "instance"}:
-        child = _compile_node(node["child"], context)
+        child = _compile_node(node["child"], context, profile)
         matrix = node["matrix"]
         transformed = child.solid.transform(
             [
@@ -1222,7 +1299,7 @@ def _compile_node(node: dict[str, Any], context: manifold.ExecutionContext) -> _
         )
         return _CompiledGeometry(transformed, child.provenance)
     if kind == "boolean":
-        children = [_compile_node(child, context) for child in node["children"]]
+        children = [_compile_node(child, context, profile) for child in node["children"]]
         operation = {
             "union": manifold.OpType.Add,
             "subtract": manifold.OpType.Subtract,
@@ -1235,7 +1312,7 @@ def _compile_node(node: dict[str, Any], context: manifold.ExecutionContext) -> _
             for item, provenance in child.provenance.items()
         }
         return _CompiledGeometry(solid, provenance)
-    child = _compile_node(node["child"], context)
+    child = _compile_node(node["child"], context, profile)
     return _shell(child, node["nodeId"], node["innerOffset"], node["outerOffset"], context)
 
 

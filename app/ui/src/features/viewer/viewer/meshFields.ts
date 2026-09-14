@@ -40,6 +40,14 @@ export type MeshRenderGeometry = Readonly<{
   primitive: 'triangles' | 'lines' | 'points'
 }>
 
+export type MeshRenderData = {
+  geometries: MeshRenderGeometry[]
+  bounds: { min: number[]; max: number[] }
+  minimum?: number
+  maximum?: number
+  cut?: number
+}
+
 export type MeshFieldView = Readonly<{
   component: number | 'magnitude' | 'vonMises' | 'material'
   wireframe: boolean

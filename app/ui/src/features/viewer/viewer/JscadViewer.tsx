@@ -12,7 +12,7 @@ import type { PolylineBundle, UcumUnit } from '@/lib/cad/model'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries, geometryWithSelectedPolygons, viewerSelectionColor } from './renderParts'
 import { createRayPathRenderGeometries } from './rayPathRendering'
-import type { createMeshFieldRenderData } from './meshFields'
+import type { MeshRenderData } from './meshFields'
 import { createLayerRenderParts, scaleViewerLayers, type CadViewerSource, type JscadViewerLayer } from './sourceLayers'
 import {
   createCadViewerPickParts,
@@ -92,7 +92,7 @@ type JscadViewerProps = {
   onToggleViewerExpanded?: () => void
   selectionQuery?: CadViewerSelectionQuery | null
   polylines?: readonly PolylineBundle[]
-  meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
+  meshRenderData?: MeshRenderData
   preserveCameraOnUpdate?: boolean
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData

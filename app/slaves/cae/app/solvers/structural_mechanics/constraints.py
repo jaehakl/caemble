@@ -9,7 +9,7 @@ import numpy as np
 from scipy import sparse
 from scipy.spatial import cKDTree
 
-from .rotations import cross, rotation_exp, skew
+from app.methods.rigid.rotations import cross, rotation_exp, skew
 
 
 def revolute_joints(model):

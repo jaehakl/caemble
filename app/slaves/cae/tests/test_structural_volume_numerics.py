@@ -30,7 +30,7 @@ from app.solvers.structural_mechanics.state import configure_history
 from app.solvers.structural_mechanics.outputs.history import history_members
 from app.solvers.structural_mechanics.interfaces.resultants import physical_support_reactions
 from app.solvers.structural_mechanics.state import append_history
-from app.solvers.structural_mechanics.rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 
 

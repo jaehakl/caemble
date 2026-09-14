@@ -24,6 +24,15 @@ class GeometryService(Protocol):
         progress: Callable[[Any], Awaitable[None]] | None = None,
     ) -> Any: ...
 
+    async def solid_components(
+        self,
+        scene: Mapping[str, Any],
+        root_id: str,
+        reference_length_unit: str,
+        profile: Any = ...,
+        progress: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> Any: ...
+
     async def shell_layer(
         self,
         scene: Mapping[str, Any],

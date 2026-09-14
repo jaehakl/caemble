@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from .rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 
 
 def initialize_rotor(model, solution):

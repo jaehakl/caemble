@@ -82,3 +82,55 @@ def rotation_log(matrix: np.ndarray) -> np.ndarray:
             axis = -axis
         return angle * axis
     return angle / (2 * np.sin(angle)) * axial
+
+
+def normalize_quaternion(quaternion):
+    """Normalize wxyz quaternions without choosing a different hemisphere."""
+    values = np.asarray(quaternion, dtype=np.float64)
+    lengths = np.linalg.norm(values, axis=-1, keepdims=True)
+    if np.any(~np.isfinite(lengths)) or np.any(lengths == 0):
+        raise ValueError("orientation must be a finite nonzero quaternion")
+    return values / lengths
+
+
+def quaternion_multiply(left, right):
+    """Compose body-to-world rotations: left is the world-frame increment."""
+    left, right = np.asarray(left, dtype=np.float64), np.asarray(right, dtype=np.float64)
+    scalar = left[..., :1] * right[..., :1] - np.sum(left[..., 1:] * right[..., 1:], axis=-1, keepdims=True)
+    vector = left[..., :1] * right[..., 1:] + right[..., :1] * left[..., 1:] + np.cross(left[..., 1:], right[..., 1:])
+    return np.concatenate((scalar, vector), axis=-1)
+
+
+def quaternion_exp(rotation_vectors):
+    """Map full-angle rotation vectors to wxyz quaternions, preserving turns."""
+    vectors = np.asarray(rotation_vectors, dtype=np.float64)
+    half_angles = np.linalg.norm(vectors, axis=-1, keepdims=True) / 2
+    scale = .5 * np.sinc(half_angles / np.pi)
+    return np.concatenate((np.cos(half_angles), scale * vectors), axis=-1)
+
+
+def quaternion_to_matrix(quaternion):
+    """Return body-local to world matrices for a broadcast batch of wxyz values."""
+    values = normalize_quaternion(quaternion)
+    w, x, y, z = np.moveaxis(values, -1, 0)
+    result = np.empty((*values.shape[:-1], 3, 3), dtype=np.float64)
+    result[..., 0, 0], result[..., 0, 1], result[..., 0, 2] = 1 - 2 * (y*y + z*z), 2 * (x*y - w*z), 2 * (x*z + w*y)
+    result[..., 1, 0], result[..., 1, 1], result[..., 1, 2] = 2 * (x*y + w*z), 1 - 2 * (x*x + z*z), 2 * (y*z - w*x)
+    result[..., 2, 0], result[..., 2, 1], result[..., 2, 2] = 2 * (x*z - w*y), 2 * (y*z + w*x), 1 - 2 * (x*x + y*y)
+    return result
+
+
+def quaternion_from_matrix(matrices):
+    """Convert SO(3) matrices in batches, including rotations near pi."""
+    matrices = np.asarray(matrices, dtype=np.float64)
+    trace = np.trace(matrices, axis1=-2, axis2=-1)
+    diagonal = np.diagonal(matrices, axis1=-2, axis2=-1)
+    squared = np.concatenate(((1 + trace)[..., None], 1 + 2 * diagonal - trace[..., None]), axis=-1)
+    candidates = np.empty((*matrices.shape[:-2], 4, 4), dtype=np.float64)
+    candidates[..., 0, :] = np.stack((squared[..., 0], matrices[..., 2, 1] - matrices[..., 1, 2], matrices[..., 0, 2] - matrices[..., 2, 0], matrices[..., 1, 0] - matrices[..., 0, 1]), axis=-1)
+    candidates[..., 1, :] = np.stack((candidates[..., 0, 1], squared[..., 1], matrices[..., 0, 1] + matrices[..., 1, 0], matrices[..., 0, 2] + matrices[..., 2, 0]), axis=-1)
+    candidates[..., 2, :] = np.stack((candidates[..., 0, 2], candidates[..., 1, 2], squared[..., 2], matrices[..., 1, 2] + matrices[..., 2, 1]), axis=-1)
+    candidates[..., 3, :] = np.stack((candidates[..., 0, 3], candidates[..., 1, 3], candidates[..., 2, 3], squared[..., 3]), axis=-1)
+    largest = np.argmax(squared, axis=-1)
+    selected = np.take_along_axis(candidates, largest[..., None, None], axis=-2)[..., 0, :]
+    return normalize_quaternion(selected)

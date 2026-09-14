@@ -99,6 +99,7 @@ def cylinder_segments(measurement):
     "structural-nonlinear-materials", "structural-optical-results",
     "matched-impedance-duct", "plate-driven-duct",
     "transient-matched-impedance-duct", "transient-plate-driven-duct",
+    "asymmetric-rigid-bodies",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
@@ -161,11 +162,12 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
         assert len(run.completed_sequences) == len(run.schemas)
         assert len(run.visualization_sequences) == len(visualizations)
         assert set(visualizations) == {name for name, task in program["tasks"].items()
-                                       if task["kernel"]["name"] in {"structural-mechanics", "ray-tracing", "pressure-acoustics"}}
+                                       if task["kernel"]["name"] in {"structural-mechanics", "ray-tracing", "pressure-acoustics", "rigid_body"}}
         for task, items in visualizations.items():
             solver = program["tasks"][task]["kernel"]["name"]
             analysis = program["tasks"][task]["config"]["parameters"].get("analysis")
             expected = ({"paths"} if solver == "ray-tracing" else
+                        {"motion"} if solver == "rigid_body" else
                         (set() if analysis == "transient" else {"pressure"}) if solver == "pressure-acoustics"
                         else {"harmonicDisplacement", "harmonicStress"} if analysis == "harmonic" else {"displacement", "stress"})
             if solver == "structural-mechanics" and analysis == "transient":
@@ -177,12 +179,33 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                     offsets, vertices = native[prefix + contract["offsets"]], native[prefix + contract["vertices"]]
                     assert offsets[-1] == len(vertices) and np.all(np.diff(offsets) >= 2)
         task_count = len(program["tasks"])
-        multiwindow = key in {"structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct"}
+        multiwindow = key in {"structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct", "asymmetric-rigid-bodies"}
         assert len(run.trace) > task_count if multiwindow else len(run.trace) == task_count
         if "totalCurrent" in recorded:
             assert recorded["totalCurrent"].item() > 0
         if "maximumTemperature" in recorded:
             assert recorded["maximumTemperature"].item() > measurement["experiment"]["variables"]["fixedTemperature"]
+        if key == "asymmetric-rigid-bodies":
+            masses = native["motion.motion.masses"]
+            times = native["motion.motion.times"]
+            position = native["motion.motion.positions"]
+            speed = native["motion.motion.velocities"]
+            assert len(masses) == 3 and len(set(native["motion.motion.bodyIds"])) == 3
+            assert times[0] == 0 and times[-1] == .4 and np.all(np.diff(times) > 0)
+            np.testing.assert_allclose(position, position[0] + times[:, None, None] * speed[0]
+                                       + .5 * times[:, None, None]**2 * [0, 0, -9.81], atol=1e-12)
+            geometry = metadata["massDensity"]["boxGrid"]
+            volume = np.prod(geometry["size"]) / np.prod(geometry["gridShape"])
+            grid_mass = recorded["massDensity"].sum(axis=(0, 1, 2)).ravel() * volume
+            np.testing.assert_allclose(grid_mass, masses.sum(), rtol=.01)
+            grid_momentum = recorded["momentumDensity"].sum(axis=(0, 1, 2)).reshape(-1, 3) * volume
+            expected_momentum = np.einsum("b,tbi->ti", masses, speed)
+            momentum_error = np.linalg.norm(grid_momentum - expected_momentum, axis=1)
+            assert np.all(momentum_error / np.linalg.norm(expected_momentum, axis=1) <= .01)
+            np.testing.assert_allclose(recorded["momentumDensity"],
+                                       recorded["massDensity"] * recorded["velocity"], atol=1e-10)
+            empty = np.broadcast_to(recorded["massDensity"] == 0, recorded["velocity"].shape)
+            assert np.all(recorded["velocity"][empty] == 0)
         if key in {"transient-matched-impedance-duct", "transient-plate-driven-duct"}:
             settings = next(rule["parameters"] for rule in program["tasks"]["acoustics"]["config"]["initializations"]
                             if rule["methodId"] == "acoustics.time")

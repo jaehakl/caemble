@@ -20,8 +20,10 @@ import type { CadDocumentController } from '@/features/viewer/workspace/useCadWo
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
 import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import { isDataTensor } from '@/lib/cad/model/dataTensor'
-import { parseRecordedMeshFields } from '@/features/viewer/viewer/meshFields'
+import { parseRecordedMeshFields, type MeshRenderData } from '@/features/viewer/viewer/meshFields'
 import { MeshFieldResult } from '@/features/viewer/viewer/MeshFieldResult'
+import { parseRecordedMeshTransforms } from '@/features/viewer/viewer/meshTransforms'
+import { MeshTransformResult } from '@/features/viewer/viewer/MeshTransformResult'
 
 // Box Grid carries its experiment placement in the recorded Box metadata.
 function usesExperimentCoordinates(visualization: NonNullable<RecordedResultContracts[string]>['visualization']) {
@@ -65,7 +67,9 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
     !name ||
     Boolean(
       visualName
-        ? visualizationData(props.visualizations ?? {}).data[name]
+        ? Object.keys(visualizationData(props.visualizations ?? {}).data).some(
+            (key) => key === name || key.startsWith(`${name}.`),
+          )
         : Object.keys(props.recordedData ?? {}).some((key) => key === name || key.startsWith(`${name}.`)),
     )
   if (present && !props.loading && !props.resultErrors?.[name]) previous.current = props
@@ -158,11 +162,16 @@ function ViewerContent({
     () => parseResultPolylines(resultContracts ?? {}, recordedRules, recordedData),
     [resultContracts, recordedRules, recordedData],
   )
+  const transforms = useMemo(
+    () => parseRecordedMeshTransforms(recordedRules, recordedData, resultContracts ?? {}),
+    [recordedRules, recordedData, resultContracts],
+  )
   const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [])
   const [localSelectedView, setSelectedView] = useState('')
   const selectedView = selectedResult ?? localSelectedView
   const selectionMade = useRef(false)
   const selectedField = mesh.fields.find((field) => field.label === selectedView)
+  const selectedMotion = transforms.motions.find((motion) => motion.label === selectedView)
   const selectedContract = resultContracts?.[selectedView]
   const viewerDocument = useMemo(
     () =>
@@ -200,6 +209,8 @@ function ViewerContent({
     const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
       if (resultErrors[name]) return false
       if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
+      if (result.visualization.kind === 'mesh-transform')
+        return transforms.motions.some((motion) => motion.label === name)
       if (result.visualization.kind === 'polyline') return polylines.bundles.some((bundle) => bundle.id === name)
       return Object.keys(recordedData).some((path) => path === name || path.startsWith(`${name}.`))
     })
@@ -208,6 +219,7 @@ function ViewerContent({
         frameMatches &&
         usesExperimentCoordinates(result.visualization) &&
         (result.visualization.kind === 'mesh-field' ||
+          result.visualization.kind === 'mesh-transform' ||
           result.visualization.kind === 'polyline' ||
           result.visualization.kind === 'box-grid' ||
           (result.visualization.kind === 'structured-field' && result.visualization.grid)),
@@ -247,6 +259,7 @@ function ViewerContent({
     resultContracts,
     resultErrors,
     mesh,
+    transforms,
     polylines,
     frameMatches,
   ])
@@ -271,7 +284,8 @@ function ViewerContent({
     gridAxis === undefined
       ? undefined
       : recordedRules.find((rule) => rule.label === selectedView)?.result.axes?.[gridAxis]?.unit
-  const displayUnit = sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? gridUnit ?? 'm'
+  const displayUnit =
+    sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? selectedMotion?.lengthUnit ?? gridUnit ?? 'm'
   function sameResultInvocation(name: string) {
     if (!selectedView || selectedView === name) return true
     const selected = resultProvenance[selectedView]
@@ -297,7 +311,7 @@ function ViewerContent({
         (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))),
   )
   const renderScene = (
-    meshRenderData?: Parameters<NonNullable<Parameters<typeof MeshFieldResult>[0]['renderViewer']>>[0],
+    meshRenderData?: MeshRenderData,
     deformationScale = 0,
     heatmapRenderData?: HeatmapRenderData,
     geometryOpacity = 1,
@@ -310,20 +324,20 @@ function ViewerContent({
       ) : null}
       <CadViewer
         activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
-        experiment={deformationScale > 0 ? null : sceneDocument}
+        experiment={deformationScale > 0 || selectedMotion ? null : sceneDocument}
         onFindSelectionSource={onFindSelectionSource}
         onRenderEnd={experimentDocument.handleRenderEnd}
         onRenderError={experimentDocument.handleRenderError}
         onRenderStart={experimentDocument.handleRenderStart}
         onSelectionQueryChange={onSelectionQueryChange}
         onSelectionSourcePathsChange={onSelectionSourcePathsChange}
-        polylines={deformationScale > 0 ? [] : selectedLines}
+        polylines={deformationScale > 0 || selectedMotion ? [] : selectedLines}
         meshRenderData={meshRenderData}
         heatmapRenderData={heatmapRenderData}
         geometryOpacity={geometryOpacity}
-        meshIdentity={selectedField?.identity}
+        meshIdentity={selectedField?.identity ?? selectedMotion?.identity}
         displayUnit={displayUnit}
-        preserveCameraOnUpdate={Boolean(comparison) || autoSelectResult}
+        preserveCameraOnUpdate={Boolean(comparison) || autoSelectResult || Boolean(selectedMotion)}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         onToggleViewerExpanded={onToggleViewerExpanded}
@@ -414,7 +428,7 @@ function ViewerContent({
           ) : null}
         </div>
       </ViewerControls>
-      {!canOverlayGeometry && selectedView !== '' ? (
+      {!canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
         <p role="status" className="p-2 text-xs">
           {geometryBlockedReason}
         </p>
@@ -428,6 +442,13 @@ function ViewerContent({
           <p role="alert" className="p-3 text-red-700">
             {selectedView}: {resultErrors[selectedView]}
           </p>
+        ) : selectedMotion ? (
+          <MeshTransformResult
+            key={selectedView}
+            motion={selectedMotion}
+            displayUnit={displayUnit}
+            renderViewer={(data) => renderScene(data)}
+          />
         ) : selectedField ? (
           <MeshFieldResult
             key={selectedView}
@@ -448,7 +469,8 @@ function ViewerContent({
             renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
             recordReference={recordReference}
           />
-        ) : selectedContract && !['mesh-field', 'polyline'].includes(selectedContract.visualization.kind) ? (
+        ) : selectedContract &&
+          !['mesh-field', 'mesh-transform', 'polyline'].includes(selectedContract.visualization.kind) ? (
           <ResultTensorView
             key={selectedView}
             name={selectedView}
@@ -463,6 +485,7 @@ function ViewerContent({
       {[
         ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
         ...mesh.errors.filter((error) => !resultErrors[error.label]),
+        ...transforms.errors.filter((error) => !resultErrors[error.label]),
         ...polylines.errors.filter((error) => !resultErrors[error.label]),
       ]
         .filter((error) => error.label !== selectedView || !resultErrors[selectedView])

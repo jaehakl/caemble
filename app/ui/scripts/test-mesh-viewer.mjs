@@ -127,6 +127,9 @@ const server = await createServer({
       import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { MeshFieldResult } from '/src/features/viewer/viewer/MeshFieldResult.tsx';
+      import { MeshTransformResult } from '/src/features/viewer/viewer/MeshTransformResult.tsx';
+      import { parseRecordedMeshTransforms } from '/src/features/viewer/viewer/meshTransforms.ts';
+      import JscadViewer from '/src/features/viewer/viewer/JscadViewer.tsx';
       import { WorkbenchViewer } from '/src/features/cae-workbench/viewer/WorkbenchViewer.tsx';
       import { visualizationData } from '/src/features/viewer/viewer/visualizationData.ts';
       import { parseRecordedMeshFields } from '/src/features/viewer/viewer/meshFields.ts';
@@ -151,9 +154,25 @@ const server = await createServer({
       const picker = document.getElementById('fixture-mode');
       const replace = document.getElementById('replace-pressure');
       let recordedVisualizations;
+      let recordedOutputs;
+      const rigidMotion = {
+        label:'Rigid motion',identity:'rigid-browser-fixture',bodyIds:['asymmetric-body'],lengthUnit:'m',
+        times:new Float64Array([0,1]),
+        vertices:new Float64Array([10,0,0,11,0,0,10,2,0,10,0,3]),
+        triangles:new Uint32Array([0,2,1,0,1,3,0,3,2,1,2,3]),
+        vertexOffsets:new Uint32Array([0,4]),triangleOffsets:new Uint32Array([0,4]),
+        localCenters:new Float64Array([10,0,0]),positions:new Float64Array([0,0,0,2,0,0]),
+        orientations:new Float64Array([1,0,0,0,0,0,0,1]),
+      };
       picker.addEventListener('change', () => {
         replace.disabled = picker.value !== 'pressure';
-        if (fixtures[picker.value]) {
+        if (picker.value === 'rigid') {
+          const noop = () => {};
+          window.meshRoot.render(React.createElement(MeshTransformResult, {motion:rigidMotion,
+            renderViewer:data=>React.createElement(JscadViewer,{layers:[],lengthUnit:'m',meshRenderData:data,
+              meshIdentity:rigidMotion.identity,preserveCameraOnUpdate:true,onRenderStart:noop,onRenderEnd:noop,
+              onRenderError:message=>{throw new Error(message)}})}));
+        } else if (fixtures[picker.value]) {
           window.renderMesh(fixtures[picker.value], 'fixture-' + picker.value, picker.value === 'stress' ? [fixtures.displacement] : []);
         } else {
           const noop = () => {};
@@ -164,6 +183,8 @@ const server = await createServer({
               handleRenderError: (message) => { throw new Error(message); },
             },
             visualizations: recordedVisualizations,
+            recordedRules: recordedOutputs?.rules, recordedData: recordedOutputs?.data,
+            resultContracts: recordedOutputs?.contracts,
             selectedResult: picker.value,
             onSelectedResultChange: (name) => { picker.value = name; picker.dispatchEvent(new Event('change')); },
             onFindSelectionSource: noop, onSelectionQueryChange: noop, onSelectionSourcePathsChange: noop,
@@ -185,13 +206,17 @@ const server = await createServer({
           registerDataTensorAttachment(attachment.id, await response.arrayBuffer());
         }
         recordedVisualizations = saved.visualizations;
+        recordedOutputs = saved.outputs;
         const visual = visualizationData(recordedVisualizations);
         if (Object.keys(visual.errors).length) throw new Error(JSON.stringify(visual.errors));
         const parsed = parseRecordedMeshFields(visual.rules, visual.data, visual.contracts);
+        const transforms = parseRecordedMeshTransforms(visual.rules, visual.data, visual.contracts);
         if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors));
-        if (!parsed.fields.length) throw new Error('The saved result has no native mesh fields.');
+        if (transforms.errors.length) throw new Error(JSON.stringify(transforms.errors));
+        if (!parsed.fields.length && !transforms.motions.length) throw new Error('The saved result has no native meshes.');
         window.recordedMeshFields = parsed.fields;
-        for (const field of parsed.fields) {
+        window.recordedMeshMotions = transforms.motions;
+        for (const field of [...parsed.fields, ...transforms.motions, ...Object.keys(saved.outputs.contracts).map(label=>({label}))]) {
           const option = document.createElement('option');
           option.value = field.label;
           option.textContent = 'Recorded ' + field.label.replace('@visualizations.', '');
@@ -199,7 +224,7 @@ const server = await createServer({
         }
         document.getElementById('saved-result-status').textContent = 'Saved result: ' + saved.jobId;
         if (${serverOnly}) {
-          picker.value = parsed.fields[0].label;
+          picker.value = [...parsed.fields, ...transforms.motions][0].label;
           picker.dispatchEvent(new Event('change'));
         }
       }
@@ -225,7 +250,7 @@ const server = await createServer({
           try {
             const html = await server.transformIndexHtml(
               '/mesh-fixture',
-              '<!doctype html><html><head><meta charset="utf-8"></head><body><nav style="padding:8px;background:#f1f5f9"><label>Fixture <select id="fixture-mode" aria-label="Mesh fixture"><option value="static">Static displacement</option><option value="transient">Transient displacement</option><option value="displacement">Harmonic displacement</option><option value="stress">Harmonic stress</option><option value="pressure">Harmonic pressure</option></select></label> <button id="replace-pressure" disabled>Replace pressure sweep with 61 Hz</button> <span id="saved-result-status"></span></nav><div id="fixture" style="height:calc(100vh - 52px)"></div><script type="module" src="/mesh-fixture.tsx"></script></body></html>',
+              '<!doctype html><html><head><meta charset="utf-8"></head><body><nav style="padding:8px;background:#f1f5f9"><label>Fixture <select id="fixture-mode" aria-label="Mesh fixture"><option value="static">Static displacement</option><option value="transient">Transient displacement</option><option value="displacement">Harmonic displacement</option><option value="stress">Harmonic stress</option><option value="pressure">Harmonic pressure</option><option value="rigid">Rigid motion</option></select></label> <button id="replace-pressure" disabled>Replace pressure sweep with 61 Hz</button> <span id="saved-result-status"></span></nav><div id="fixture" style="height:calc(100vh - 52px)"></div><script type="module" src="/mesh-fixture.tsx"></script></body></html>',
             )
             response.setHeader('Content-Type', 'text/html; charset=utf-8')
             response.end(html)
@@ -245,18 +270,36 @@ try {
     // bytes to the production browser decoder instead of inventing a fixture codec.
     const { inspectLocalResult } = await server.ssrLoadModule('/src/platform/node/localResult.ts')
     const { containedPath } = await server.ssrLoadModule('/src/platform/node/artifact.ts')
-    const { manifest } = await inspectLocalResult(directory)
+    const { manifest, resultContracts } = await inspectLocalResult(directory)
     assert.equal(manifest.state, 'succeeded')
-    savedResult = { jobId: manifest.jobId, visualizations: {}, attachments: [] }
-    for (const entry of manifest.visualizations ?? []) {
-      const stored = JSON.parse(await readFile(await containedPath(directory, entry.path), 'utf8'))
-      savedResult.visualizations[entry.task] = stored.visualizations
+    savedResult = {
+      jobId: manifest.jobId,
+      visualizations: {},
+      outputs: { rules: [], data: {}, contracts: resultContracts },
+      attachments: [],
+    }
+    for (const record of manifest.records) {
+      const stored = JSON.parse(await readFile(await containedPath(directory, record.path), 'utf8'))
+      savedResult.outputs.rules.push({
+        label: record.name,
+        methodId: 'local.recorded-data',
+        target: [],
+        parameters: {},
+        result: record.schema,
+      })
+      savedResult.outputs.data[record.name] = stored.value
+    }
+    for (const entry of [...manifest.records, ...(manifest.visualizations ?? [])]) {
       for (const attachment of entry.attachments) {
         const bytes = await readFile(await containedPath(directory, attachment.path))
         assert.equal(bytes.byteLength, attachment.byteLength)
         savedAttachments.set(attachment.id, bytes)
         savedResult.attachments.push({ id: attachment.id })
       }
+    }
+    for (const entry of manifest.visualizations ?? []) {
+      const stored = JSON.parse(await readFile(await containedPath(directory, entry.path), 'utf8'))
+      savedResult.visualizations[entry.task] = stored.visualizations
     }
   }
   await server.listen()
@@ -303,6 +346,23 @@ try {
     await page.getByText('0.20000 s · 2/3', { exact: true }).waitFor()
     assert.ok(!transientInitial.equals(await canvas.screenshot()), 'The accepted transient frame must change the mesh.')
     assert.equal(await page.getByLabel('Transient displacement frequency').count(), 0)
+
+    await fixturePicker.selectOption('rigid')
+    await page.getByRole('article', { name: 'Rigid motion mesh transform' }).waitFor()
+    const rigidInitial = await canvas.screenshot()
+    await page.getByLabel('Animation time').evaluate((input) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '0.5')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await page.getByText('0.50000 s · 1/2', { exact: true }).waitFor()
+    assert.ok(
+      !rigidInitial.equals(await canvas.screenshot()),
+      'An interpolated rigid pose must change the rendered mesh.',
+    )
+    assert.equal(await page.getByText(/실제 크기 1×/).count(), 1)
+    assert.equal(await page.getByLabel(/displacement scale/).count(), 0)
+    await page.screenshot({ path: path.join(outputDirectory, 'mesh-viewer-rigid-motion.png') })
 
     await fixturePicker.selectOption('displacement')
     await page.getByRole('article', { name: 'Harmonic displacement mesh field' }).waitFor()
@@ -405,7 +465,16 @@ try {
           valueKind,
         })),
       )
-      assert.ok(fields.length, 'The production decoder must reopen saved native fields.')
+      const motions = await page.evaluate(() =>
+        window.recordedMeshMotions.map(({ label, bodyIds, times, vertices, triangles }) => ({
+          label,
+          bodyIds,
+          times: Array.from(times),
+          vertices: vertices.length / 3,
+          triangles: triangles.length / 3,
+        })),
+      )
+      assert.ok(fields.length + motions.length, 'The production decoder must reopen saved native meshes.')
       for (const selected of fields) {
         assert.ok(selected.nodes > 4 && selected.cells > 1)
         await fixturePicker.selectOption(selected.label)
@@ -431,10 +500,67 @@ try {
           path: path.join(outputDirectory, `mesh-viewer-recorded-${selected.label.replace(/[^a-zA-Z0-9]/g, '-')}.png`),
         })
       }
+      for (const selected of motions) {
+        assert.ok(selected.bodyIds.length && selected.vertices > 4 && selected.triangles > 4)
+        await fixturePicker.selectOption(selected.label)
+        await page.getByRole('article', { name: `${selected.label} mesh transform` }).waitFor()
+        await canvas.waitFor()
+        const initial = await canvas.screenshot()
+        if (selected.times.length > 1) {
+          const middle = (selected.times[0] + selected.times.at(-1)) / 2
+          await page.getByLabel('Animation time').evaluate((input, time) => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(time))
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+          }, middle)
+          assert.ok(
+            !initial.equals(await canvas.screenshot()),
+            'The saved rigid history must animate its reference mesh.',
+          )
+        }
+        assert.equal(await page.getByRole('alert').count(), 0)
+        await page.screenshot({ path: path.join(outputDirectory, 'mesh-viewer-recorded-rigid.png') })
+      }
+      await page.evaluate(() => {
+        const original = CanvasRenderingContext2D.prototype.fillText
+        window.renderedAxisLabels = []
+        CanvasRenderingContext2D.prototype.fillText = function (...args) {
+          window.renderedAxisLabels.push(String(args[0]))
+          return original.apply(this, args)
+        }
+      })
+      for (const [name, contract] of Object.entries(savedResult.outputs.contracts)) {
+        if (contract.visualization.kind !== 'box-grid') continue
+        const spatialUnit = savedResult.outputs.data[name].boxGrid.lengthUnit
+        const schema = savedResult.outputs.rules.find((rule) => rule.label === name).result
+        assert.deepEqual(
+          schema.axes.slice(0, 3).map((axis) => axis.unit),
+          [spatialUnit, spatialUnit, spatialUnit],
+        )
+        await page.evaluate(() => {
+          window.renderedAxisLabels = []
+        })
+        await fixturePicker.selectOption(name)
+        await page.getByRole('button', { name: '3D Point cloud', exact: true }).waitFor()
+        await page.getByRole('button', { name: 'Heatmap', exact: true }).click()
+        const heatmap = page.locator('[data-result-visualization="heatmap"]')
+        await heatmap.waitFor()
+        await page.screenshot({ path: path.join(outputDirectory, `mesh-viewer-recorded-grid-${name}.png`) })
+        const axisLabels = await page.evaluate(() => window.renderedAxisLabels)
+        for (const index of [1, 2]) {
+          const axis = await page.getByLabel(`표시 축 ${index}`, { exact: true }).inputValue()
+          if (['x', 'y', 'z'].includes(axis))
+            assert.ok(
+              axisLabels.includes(`${axis} (${spatialUnit})`),
+              `The ${axis} display axis must show ${spatialUnit}: ${JSON.stringify(axisLabels)}.`,
+            )
+        }
+        assert.equal(await page.getByRole('alert').count(), 0)
+      }
       assert.deepEqual(errors, [])
       console.log(
-        `Production local-result decoding and WorkbenchViewer reopened ${fields.length} saved mesh fields:`,
-        fields,
+        `Production local-result decoding and WorkbenchViewer reopened ${fields.length} fields, ${motions.length} motions and ${Object.keys(savedResult.outputs.contracts).length} Outputs:`,
+        { fields, motions },
       )
     }
     await page.evaluate((field) => {

@@ -18,7 +18,7 @@ from app.solvers.structural_mechanics.interfaces.motion import predict_motion
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.solvers.structural_mechanics.rotations import (
+from app.methods.rigid.rotations import (
     rotation_exp,
     rotation_exp_many,
     rotation_log,

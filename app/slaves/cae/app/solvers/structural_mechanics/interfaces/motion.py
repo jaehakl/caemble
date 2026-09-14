@@ -9,7 +9,7 @@ from ..constraints import enforce_links, revolute_joints
 from ..continuum import physical_angular_velocities, physical_orientation_matrices
 from ..domain import parameter
 from ..kinematics import kinematic_rates
-from ..rotations import rotation_exp, rotation_exp_many, rotation_log_many
+from app.methods.rigid.rotations import rotation_exp, rotation_exp_many, rotation_log_many
 from ..rotor import initialize_rotor
 from ..state import append_history, initial_solution
 

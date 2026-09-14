@@ -15,7 +15,7 @@ from app.solvers.structural_mechanics.corotation import (
     shell_deformation,
     variational_force,
 )
-from app.solvers.structural_mechanics.rotations import rotation_exp, rotation_log
+from app.methods.rigid.rotations import rotation_exp, rotation_log
 from app.solvers.structural_mechanics.shells import isotropic_section, shell4_matrices
 
 

@@ -14,7 +14,7 @@ from app.solvers.structural_mechanics.interfaces.resultants import apply_resulta
 from app.solvers.structural_mechanics.interfaces.motion import predict_motion
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import StructuralModel
-from app.solvers.structural_mechanics.rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 from app.solvers.structural_mechanics.state import append_history
 from app.solvers.structural_mechanics.state import encode_state
 from app.solvers.structural_mechanics.state import read_state

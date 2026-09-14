@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 
 import numpy as np
 
-from .rotations import rotation_exp, rotation_log
+from app.methods.rigid.rotations import rotation_exp, rotation_log
 from .shells import shell4_matrices, shell4_response
 
 

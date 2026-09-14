@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+import threading
 import time
 
 import pytest
@@ -51,7 +52,7 @@ async def test_terminal_error_preserved_when_child_exit_is_late(monkeypatch):
     ]))
     with pytest.raises(RemoteSolverError) as caught:
         await executor._monitor("fixture:implementation", SimpleNamespace(is_alive=lambda: True), connection,
-            None, None, None, SimpleNamespace(), 12, float("inf"), time.monotonic())
+            None, None, None, SimpleNamespace(), 12, float("inf"), time.monotonic(), threading.Lock())
     assert caught.value.remote is remote
     assert "original traceback" in str(caught.value)
     assert "did not exit" in str(caught.value)

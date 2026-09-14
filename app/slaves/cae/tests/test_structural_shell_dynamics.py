@@ -11,7 +11,7 @@ from app.methods.finite_element.integration import shape_functions
 from app.solvers.structural_mechanics.operators.inertia import inertial_response
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.solvers.structural_mechanics.rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 from app.solvers.structural_mechanics.shells import (
     isotropic_section,
     laminate_section,

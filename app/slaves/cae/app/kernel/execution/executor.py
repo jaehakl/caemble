@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import multiprocessing
+import tempfile
 import threading
 import time
 from multiprocessing.connection import Connection
@@ -197,6 +198,19 @@ class SpawnSolverExecutor:
         locator: str,
         context: SolverInvocation,
         codec: PayloadCodec,
+        **options: Any,
+    ) -> Any:
+        # The parent owns this exact directory, including after a forced child
+        # exit. Never clean up a workspace path supplied by a caller.
+        with tempfile.TemporaryDirectory(prefix="caemble-cae-solver-workspace-") as workspace:
+            resources = dataclasses.replace(context.resources, workspace_path=workspace)
+            return await self._execute_child(locator, dataclasses.replace(context, resources=resources), codec, **options)
+
+    async def _execute_child(
+        self,
+        locator: str,
+        context: SolverInvocation,
+        codec: PayloadCodec,
         *,
         progress: ProgressHandler | None,
         cancellation: CancellationSignal | None,
@@ -215,6 +229,7 @@ class SpawnSolverExecutor:
 
         request_receive, request_send = self._multiprocessing.Pipe(duplex=False)
         result_receive, result_send = self._multiprocessing.Pipe(duplex=False)
+        receive_lock = threading.Lock()
         cancellation_event = self._multiprocessing.Event()
         process = self._multiprocessing.Process(
             target=self._child_target,
@@ -279,6 +294,7 @@ class SpawnSolverExecutor:
                 cancellation,
                 startup_deadline,
                 startup_started_at,
+                receive_lock,
             )
 
             request_sent_at = time.monotonic()
@@ -325,6 +341,7 @@ class SpawnSolverExecutor:
                 child_pid,
                 startup_deadline,
                 request_sent_at,
+                receive_lock,
             )
         except (
             asyncio.CancelledError,
@@ -334,7 +351,7 @@ class SpawnSolverExecutor:
             if cleanup_deferred:
                 raise
             cancellation_event.set()
-            await asyncio.shield(self._stop_process(process, self._cancellation_grace))
+            await asyncio.shield(self._stop_process(process, self._cancellation_grace, result_receive, receive_lock))
             raise
         except BaseException:
             if process_started:
@@ -380,6 +397,7 @@ class SpawnSolverExecutor:
         cancellation: CancellationSignal | None,
         startup_deadline: float,
         startup_started_at: float,
+        receive_lock: Any,
     ) -> int:
         while True:
             if cancellation is not None and cancellation.is_set():
@@ -395,7 +413,7 @@ class SpawnSolverExecutor:
                 has_message = False
             if has_message:
                 try:
-                    message = await asyncio.to_thread(connection.recv)
+                    message = await asyncio.to_thread(_receive_message, connection, receive_lock)
                 except EOFError:
                     message = None
                 if not isinstance(message, ChildMessage):
@@ -438,6 +456,7 @@ class SpawnSolverExecutor:
         child_pid: int,
         startup_deadline: float,
         request_sent_at: float,
+        receive_lock: Any,
     ) -> Any:
         started_at: float | None = None
 
@@ -460,7 +479,7 @@ class SpawnSolverExecutor:
 
             if has_message:
                 try:
-                    message = await asyncio.to_thread(connection.recv)
+                    message = await asyncio.to_thread(_receive_message, connection, receive_lock)
                 except EOFError:
                     message = None
                 if message is not None:
@@ -557,13 +576,47 @@ class SpawnSolverExecutor:
         if process.exitcode != 0:
             raise SolverProcessExitedError(locator, process.exitcode, process.pid)
 
-    async def _stop_process(self, process: BaseProcess, grace: float) -> None:
+    async def _stop_process(
+        self, process: BaseProcess, grace: float,
+        connection: Connection | None = None, receive_lock: Any = None,
+    ) -> None:
         deadline = time.monotonic() + grace
+        drain_task: asyncio.Task[Any] | None = None
         while process.is_alive() and time.monotonic() < deadline:
+            # A child can be blocked writing progress to a full pipe. Keep
+            # consuming frames without adopting results while it observes the
+            # cancellation event and leaves its numerical code cooperatively.
+            if connection is not None:
+                try:
+                    if connection.poll():
+                        drain_task = asyncio.create_task(
+                            asyncio.to_thread(_receive_message, connection, receive_lock, True)
+                        )
+                        finished, _ = await asyncio.wait(
+                            (drain_task,), timeout=max(0.0, deadline - time.monotonic())
+                        )
+                        if not finished:
+                            break
+                        await drain_task
+                        drain_task = None
+                except (EOFError, OSError):
+                    drain_task = None
+                    connection = None
             await asyncio.sleep(self._poll_interval)
         if process.is_alive():
             process.terminate()
             await _join_process(process, self._exit_grace)
+        if process.is_alive():
+            process.kill()
+            await _join_process(process, None)
+        if drain_task is not None:
+            # An incomplete frame must not extend the grace period. Once the
+            # child exits, EOF releases both this receiver and any earlier recv
+            # that still holds the receive lock; join before closing the pipe.
+            try:
+                await drain_task
+            except (EOFError, OSError):
+                pass
 
     def _defer_late_start_cleanup(
         self,
@@ -601,6 +654,15 @@ class SpawnSolverExecutor:
         task = asyncio.create_task(cleanup())
         self._late_cleanup_tasks.add(task)
         task.add_done_callback(self._late_cleanup_tasks.discard)
+
+
+def _receive_message(connection: Connection, lock: Any, discard: bool = False) -> Any:
+    # Cancellation may leave a background recv finishing its current frame.
+    # Serialize it with shutdown draining so two readers cannot split a frame.
+    with lock:
+        if not connection.poll():
+            return None
+        return connection.recv_bytes() if discard else connection.recv()
 
 
 async def _join_process(process: BaseProcess, timeout: float | None) -> None:

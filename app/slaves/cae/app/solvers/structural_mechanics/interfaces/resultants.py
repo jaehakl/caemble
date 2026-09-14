@@ -3,7 +3,7 @@
 import numpy as np
 
 from ..domain import distribute_resultant, parameter, surface_region
-from ..rotations import skew
+from app.methods.rigid.rotations import skew
 
 
 def apply_resultant_loads(invocation, model):

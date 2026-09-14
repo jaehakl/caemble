@@ -7,7 +7,7 @@ from ..kinematics import _link_geometric_matrix, apply_increment
 from ..numerics import solve_linear
 from ..operators.inertia import inertial_response
 from ..operators.internal import structural_response
-from ..rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 from ..state import initial_solution
 
 

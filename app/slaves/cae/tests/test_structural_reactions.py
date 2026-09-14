@@ -14,7 +14,7 @@ from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.outputs.build import build_outputs
-from app.solvers.structural_mechanics.rotations import rotation_exp
+from app.methods.rigid.rotations import rotation_exp
 from app.solvers.structural_mechanics.shells import laminate_section, shell4_response
 
 

@@ -38,6 +38,46 @@ class TriangularMesh:
 
 
 @dataclass(frozen=True, slots=True)
+class TriangleMeshingProfile:
+    """Independent angular subdivision, applied before Boolean evaluation."""
+
+    angular_segments: int = 256
+
+    def __post_init__(self) -> None:
+        if (isinstance(self.angular_segments, bool)
+                or not isinstance(self.angular_segments, (int, np.integer))
+                or self.angular_segments < 4):
+            raise ValueError("angular_segments must be an integer of at least four")
+        object.__setattr__(self, "angular_segments", int(self.angular_segments))
+
+
+@dataclass(frozen=True, slots=True)
+class SolidComponent:
+    """One connected material solid, including its enclosed cavity boundaries."""
+
+    identity: str
+    mesh: TriangularMesh
+
+    def __post_init__(self) -> None:
+        self.mesh.vertices.setflags(write=False)
+        self.mesh.triangles.setflags(write=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MassProperties:
+    """Uniform-density mass and central inertia in the mesh coordinate frame."""
+
+    mass: float
+    center: np.ndarray[Any, Any]
+    inertia: np.ndarray[Any, Any]
+    volume: float
+
+    def __post_init__(self) -> None:
+        self.center.setflags(write=False)
+        self.inertia.setflags(write=False)
+
+
+@dataclass(frozen=True, slots=True)
 class VolumeMesh:
     """Tet4 mesh whose boundary faces point outward from their first provenance alias.
 

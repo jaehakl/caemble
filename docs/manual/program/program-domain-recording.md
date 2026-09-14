@@ -96,6 +96,12 @@ Amplitude·Phase를 바꾸고, **진동 · 공통 시간** 및 **frequency index
 
 ### Catalog·Draft에서 임시 실행
 
+강체 결과는 고정된 기준 mesh에 body별 위치·자세를 적용해 표시합니다.
+변형 배율은 1이며, 재생 frame 사이에서 회전을 보간해 형상이 찌그러지지
+않습니다. Result 선택에서 강체 운동과 기록된 밀도·속도 Grid를 확인할 수
+있습니다. History의 final 출력은 마지막 수락된 출력 표본이며, 실제 호출
+종료 시각의 상태는 native snapshot에 있습니다.
+
 **Experiment 탭**에서 Catalog 예제나 Draft를 열고 Vars 준비가 끝나면
 리본의 **실행**을 누릅니다. **Candidate 재생성 + 실행**은 새 Candidate의
 평가·빌드가 성공한 뒤 실행합니다. 현재 설정을 그대로 사용하며 자동으로

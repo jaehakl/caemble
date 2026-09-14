@@ -15,7 +15,7 @@ from app.methods.finite_element.integration import (
 )
 from collections.abc import Mapping
 from .materials import j2_return
-from .rotations import rotation_log_many
+from app.methods.rigid.rotations import rotation_log_many
 
 
 

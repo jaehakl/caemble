@@ -18,6 +18,21 @@ vi.mock('@/features/viewer/viewer/MeshFieldResult', () => ({
     </div>
   ),
 }))
+vi.mock('@/features/viewer/viewer/MeshTransformResult', () => ({
+  MeshTransformResult: ({ motion }: { motion: { label: string } }) => <div>Rigid animation {motion.label}</div>,
+}))
+vi.mock('@/features/viewer/viewer/meshTransforms', () => ({
+  parseRecordedMeshTransforms: (
+    _rules: unknown,
+    _data: unknown,
+    contracts: Record<string, { visualization: { kind: string } }>,
+  ) => ({
+    motions: Object.entries(contracts)
+      .filter(([, value]) => value.visualization.kind === 'mesh-transform')
+      .map(([label]) => ({ label, identity: 'rigid-mesh', lengthUnit: 'm' })),
+    errors: [],
+  }),
+}))
 vi.mock('@/features/viewer/viewer/resultPolylines', () => ({
   parseResultPolylines: (contracts: Record<string, { visualization: { kind: string } }>) => ({
     bundles: Object.entries(contracts)
@@ -74,6 +89,41 @@ function gridSelectionProps(grids: Record<string, readonly [number, number, numb
     resultContracts,
   }
 }
+
+it('selects a native rigid animation beside numerical Outputs through its semantic contract', () => {
+  const props = gridSelectionProps({ density: [2, 2, 1] })
+  render(
+    <WorkbenchViewer
+      {...props}
+      visualizations={{
+        movement: {
+          pose: {
+            contract: {
+              artifactType: 'fixture/poses@1',
+              visualization: { kind: 'mesh-transform', coordinateSpace: 'experiment' },
+            },
+            schema: { times: { dtype: 'float64', axes: [{ name: 'time' }] } },
+            data: { times: { shape: [2], axes: [{ ticks: [0, 1] }], storage: { kind: 'inline', value: [0, 1] } } },
+            provenance: {
+              task: 'movement',
+              solver: { name: 'fixture', version: '1' },
+              stateRevision: 1,
+              invocation: 1,
+              catalogRevision: 'frozen',
+            },
+          },
+        },
+      }}
+    />,
+  )
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('density')
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '@visualizations.movement.pose' } })
+  expect(screen.getByText('Rigid animation @visualizations.movement.pose')).toBeTruthy()
+  expect(screen.queryByText(/Geometry가 준비되지 않았습니다/)).toBeNull()
+  expect(screen.queryByText('Box Grid density')).toBeNull()
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'density' } })
+  expect(screen.getByText('Box Grid density')).toBeTruthy()
+})
 
 it('prefers spatial grid count over tensor size, physical volume and non-grid outputs without Geometry', () => {
   const props = gridSelectionProps({ small: [2, 2, 1], largest: [3, 3, 1] })

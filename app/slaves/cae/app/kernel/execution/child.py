@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import importlib
 import os
-import tempfile
 import traceback
 from multiprocessing.connection import Connection
 from typing import Any
@@ -72,22 +71,19 @@ def child_main(
             if resources.geometry_cache_path is not None
             else None
         )
-        with tempfile.TemporaryDirectory(prefix="caemble-cae-solver-workspace-") as workspace:
-            resources = dataclasses.replace(resources, workspace_path=workspace)
-            context = dataclasses.replace(
+        context = dataclasses.replace(
+            context,
+            progress=progress,
+            cancellation=ProcessCancellationToken(cancellation_event),
+            geometry=GeometryService(cache=cache),
+        )
+        result = asyncio.run(
+            _invoke(
+                request.locator,
                 context,
-                progress=progress,
-                cancellation=ProcessCancellationToken(cancellation_event),
-                geometry=GeometryService(cache=cache),
-                resources=resources,
+                request.expected_abi_version,
             )
-            result = asyncio.run(
-                _invoke(
-                    request.locator,
-                    context,
-                    request.expected_abi_version,
-                )
-            )
+        )
         result_connection.send(
             ChildMessage(ChildMessageKind.RESULT, request.codec.encode(result))
         )
