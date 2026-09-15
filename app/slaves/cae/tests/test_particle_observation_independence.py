@@ -26,9 +26,11 @@ async def test_output_box_resolution_interval_and_display_are_passive(particle_m
                                  descriptor, task_name="particles")
         baseline = await implementation(first)
         changed = deepcopy(config)
+        output_definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
         for output in changed["outputs"]:
             output["boxGrid"]["origin"] = [100, 100, 100]
-            output["boxGrid"]["gridShape"] = [2, 3, 4]
+            if output_definitions[output["methodId"]]["data"]["boxGrid"]["sampling"] != "aggregate":
+                output["boxGrid"]["gridShape"] = [2, 3, 4]
         for rule in changed["initializations"]:
             if rule["methodId"] == f"{prefix}.time":
                 rule["parameters"]["outputInterval"]["value"] *= .731

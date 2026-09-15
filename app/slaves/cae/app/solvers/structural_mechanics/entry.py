@@ -28,6 +28,9 @@ from .state import append_history, configure_history, encode_state, initial_solu
 async def run(invocation: SolverInvocation) -> SolverResult:
     parameters = {key: parameter(value) for key, value in invocation.config["parameters"].items()}
     analysis = parameters["analysis"]
+    finite_outputs = {"fea.current-displacement", "fea.current-stress-field", "fea.volume-ratio", "fea.current-volume-ratio", "fea.strain-energy"}
+    if analysis != "static" and any(output["methodId"] in finite_outputs for output in invocation.config["outputs"]):
+        raise ValueError("finite-deformation snapshot outputs require static analysis")
     transient_surfaces = [output for output in invocation.config.get("exports", ()) if output["methodId"] == "fea.transient-surface-motion"]
     if transient_surfaces and (analysis != "transient" or parameters["geometricNonlinear"]):
         raise ValueError("fea.transient-surface-motion requires small-displacement transient analysis")
@@ -51,6 +54,14 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     ):
         raise ValueError("control input requires a fea.rotor initialization")
     model = await build_geometry_model(invocation)
+    hyperelastic = any(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements)
+    if hyperelastic:
+        if analysis != "static" or not parameters["geometricNonlinear"]:
+            raise ValueError("Neo-Hookean requires static analysis with geometricNonlinear=true")
+        if any(element.material["model"] != "mechanics.compressible-neo-hookean@1" for element in model.elements):
+            raise ValueError("Neo-Hookean solids cannot be mixed with small-strain material models")
+        if model.contacts or model.links or model.springs or model.rotor is not None:
+            raise ValueError("Neo-Hookean currently supports solid surface constraints and reference loads without contact or connections")
     configure_history(model)
     surface_samples = None
     if transient_surfaces:

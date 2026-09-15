@@ -38,7 +38,8 @@ def validate_quantity_array(value: QuantityArrayValue | FieldValue, definition: 
             labels = {"".join(component) for component in product("xyz", repeat=order)}
             if not set(value.components) <= labels:
                 raise ValueError(f"{path}.components do not match QuantityKind tensor order {order}")
-            allowed_counts = {3 ** order, 6} if order == 2 else {3 ** order}
+            symmetric = order == 2 and definition.get("tensorSymmetry") == "symmetric"
+            allowed_counts = {9, 6} if symmetric else {3 ** order}
             if len(value.components) not in allowed_counts:
                 raise ValueError(f"{path}.components have an invalid component count")
             if order == 2 and len(value.components) == 6:

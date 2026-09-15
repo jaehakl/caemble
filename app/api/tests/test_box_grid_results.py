@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import struct
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -37,6 +38,19 @@ class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
         schema["boxGrid"]["channelUnits"][1] = "deg"
         with self.assertRaisesRegex(ValueError, "radians"):
             validate_box_grid_schema(schema)
+
+    def test_attachment_backed_configuration_and_weighting_survive_persistence(self):
+        tensor, schema = box_tensor(), box_schema()
+        for metadata in (schema["boxGrid"], tensor["boxGrid"]):
+            metadata.update(configuration="reference", weighting="material-volume")
+        tensor["storage"] = {"kind": "attachments", "ids": ["values"], "byteLength": 16}
+        restored = persist_record(schema, tensor, {"values": struct.pack("<dd", 1., 2.)})
+        self.assertEqual(restored["boxGrid"], tensor["boxGrid"])
+        self.assertEqual(restored["shape"], tensor["shape"])
+        changed = copy.deepcopy(tensor)
+        changed["boxGrid"]["configuration"] = "current"
+        with self.assertRaisesRegex(ValueError, "metadata differs"):
+            validate_box_grid_tensor(schema, changed)
 
     def fixture(self):
         visual_schema = {"vertices": {"dtype": "float32", "axes": [{}, {"length": 3}]}}
@@ -144,6 +158,9 @@ class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_numerical_read_preserves_box_geometry_and_originating_call(self):
         tensor, schema = box_tensor(), box_schema()
+        for metadata in (schema["boxGrid"], tensor["boxGrid"]):
+            metadata.update(configuration="current", weighting="material-volume")
+        self.assertEqual(persist_record(schema, tensor, {}), tensor)
         record = ExperimentRecord(id=2, name="field", quantity_kind="Dimensionless", tensor_order=0, dtype="float64", data_schema=schema)
         db = SimpleNamespace(get=AsyncMock(side_effect=[SimpleNamespace(experiment_id=7), SimpleNamespace(result_contracts={})]),
             execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [(SimpleNamespace(data=tensor), record)])))

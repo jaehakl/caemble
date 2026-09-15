@@ -67,3 +67,28 @@ For deformation playback, inspect the automatically included structural mesh and
 Export a `MaterialInteraction` from `material.tsx` with Material endpoints in `between` and model instances in `models`. There is one declaration per unordered pair, including same-material pairs; distinct models share that object. No Experiment interaction list is needed. Only pairs used by the evaluated Experiment/Task Geometry are captured, while every exported declaration is validated. A `({ vars }) => ({ between, models })` definition is evaluated once per Candidate; provide the Vars type with the class type argument when needed.
 
 Use Model Catalog subjects to distinguish single-material and pair models. Task `config.interactionModels[role][interactionName][group]` selects an instance when several supported models compete in the same group. Optional-group defaults belong to the Solver contract. Frozen inputs include `interactions` and per-Task `interactionSelections`; replay verifies the captured selection. See [Material interactions](../manual/program/program-materials.md) and the canonical sliding-contact Experiment in the Catalog for a runnable example.
+
+## 큰 변형 solid의 최종 평형
+
+압축성 초탄성 FEM은 Geometry와 Material, Surface의 고정·지정 변위 조건으로
+정의합니다. 현재 지원 조합과 실행 가능한 압축·인장 예제는 Catalog에서
+`hyperelastic`을 검색해 확인합니다. 같은 Neo-Hookean Material은 MPM에서도
+사용할 수 있지만, FEM의 정적 평형과 MPM의 임의 시각 동적 상태는 서로 다릅니다.
+
+Candidate 하나는 vars로 지정한 최종 하중·변위 하나의 평형을 계산합니다.
+Solver 내부의 하중 증분은 수렴 절차이며 시간 이력으로 기록하지 않습니다.
+서로 다른 하중 조건은 기존 vars와 Batch 흐름으로 계산합니다.
+
+지정 변위는 선택한 world x/y/z 성분만 구속합니다. 예를 들어 x만 지정하면
+나머지 방향은 자유롭습니다. 0 고정과 서로 다른 지정 변위를 같은 자유도에
+겹치거나, 종속 연결 Surface에 지정하면 오류가 발생합니다. 현재 pressure는
+기준 면적·법선으로 정의한 하중이며 변형면을 따라가는 follower pressure가 아닙니다.
+
+기준 배치 출력은 원래 재료 위치에서, 현재 배치 출력은 변형 후 공간 위치에서
+관측합니다. 기본 응력은 Cauchy 응력이며, MPM의 재료 체적 가중 평균과 FEM의
+요소 내 sampling은 구분됩니다. Viewer의 배치·가중 평균 표시를 확인합니다.
+변위·응력·체적비·전체 변형에너지와 FEM 반력은 기존 RecordedData와 Calculation,
+Prediction에서 사용합니다. Native 변형구배·제1 Piola 응력은 연성용 값입니다.
+
+이 단계의 변위 기반 tet4는 거의 비압축성 재료의 체적 locking을 해결하지 않습니다.
+비압축성 mixed 요소, 초탄성 동적·고유치 해석과 새 접촉 모델은 지원 범위에 포함되지 않습니다.

@@ -37,6 +37,10 @@ def validate_box_grid_schema(schema: dict) -> None:
         raise ValueError("Box Grid phase is measured in radians.")
     if grid.get("frequencyKind") not in {None, "modal", "sampled"}:
         raise ValueError("Unsupported Box Grid frequency kind.")
+    if grid.get("configuration") not in {None, "reference", "current"}:
+        raise ValueError("Unsupported Box Grid observation configuration.")
+    if grid.get("weighting") not in {None, "material-volume"}:
+        raise ValueError("Unsupported Box Grid weighting.")
     for index, axis in enumerate(axes):
         length = axis.get("length")
         if length is not None and (type(length) is not int or length < 1):

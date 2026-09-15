@@ -7,7 +7,7 @@ from app.kernel.api import BundleValue, FieldValue
 from ..continuum import integration_points
 from ..domain import parameter
 from ..model import HarmonicSolution
-from .fields import _physical_domain, _tet_stress
+from .fields import _physical_domain, _tet_stress, finite_deformation_fields
 from .history import history_members
 
 
@@ -48,9 +48,12 @@ def build_visualizations(config, descriptor, model, solution):
     for name, definition in descriptor.get("visualizations", {}).items():
         data = definition["data"]
         if name == "displacement":
-            visuals[name] = FieldValue(domain, "node", data["quantityKind"], data["unit"], solution.displacement[:count, :3], data.get("basis"), ("x", "y", "z"))
+            visuals[name] = FieldValue(domain, "node", data["quantityKind"], data["unit"], solution.displacement[:count, :3], data.get("basis"), ("x", "y", "z"), {"configuration": "reference"})
         elif name == "stress":
-            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], compact, data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"))
+            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], compact, data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"), {"configuration": "reference", "stressMeasure": "cauchy"})
+        elif name == "volumeRatio" and all(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements):
+            values = finite_deformation_fields(model, solution)["volumeRatio"][cell_order]
+            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], values, metadata={"configuration": "reference"})
         elif name == "displacementHistory" and parameter(config["parameters"]["analysis"]) == "transient":
             histories = history_members(model, solution, model.node_ids[:count])
             data = data["members"]["field"]

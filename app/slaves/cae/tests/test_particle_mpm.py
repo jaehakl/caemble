@@ -2,9 +2,10 @@
 
 import numpy as np
 import pytest
+from app.methods.continuum.hyperelastic import neo_hookean
 
 from app.solvers.mpm.formulation import (
-    grid_to_particle, neo_hookean, particle_to_grid, stable_timestep, step,
+    grid_to_particle, particle_to_grid, stable_timestep, step,
 )
 
 
@@ -41,26 +42,29 @@ def test_apic_transfer_conserves_particle_orbital_and_affine_angular_momentum():
 
 def test_neo_hookean_stress_is_energy_derivative_and_frame_indifferent():
     deformation = np.array([[1.12, 0.13, 0.0], [0.02, 0.91, 0.03], [0.01, 0.0, 1.04]])
-    stress, piola, energy = neo_hookean(deformation, 80.0, 110.0)
+    response = neo_hookean(deformation, 80.0, 110.0)
+    stress, piola, energy = response.cauchy, response.piola, response.energy
     difference = np.zeros((3, 3))
     for row in range(3):
         for column in range(3):
             increment = np.zeros((3, 3))
             increment[row, column] = 1e-6
-            difference[row, column] = (neo_hookean(deformation + increment, 80.0, 110.0)[2] - neo_hookean(deformation - increment, 80.0, 110.0)[2]) / 2e-6
+            difference[row, column] = (neo_hookean(deformation + increment, 80.0, 110.0).energy - neo_hookean(deformation - increment, 80.0, 110.0).energy) / 2e-6
     np.testing.assert_allclose(piola, difference, atol=1e-7, rtol=1e-7)
     angle = 0.4
     rotation = np.array([[np.cos(angle), -np.sin(angle), 0], [np.sin(angle), np.cos(angle), 0], [0, 0, 1]])
-    rotated_stress, _, rotated_energy = neo_hookean(rotation @ deformation, 80.0, 110.0)
+    rotated = neo_hookean(rotation @ deformation, 80.0, 110.0)
+    rotated_stress, rotated_energy = rotated.cauchy, rotated.energy
     np.testing.assert_allclose(rotated_stress, rotation @ stress @ rotation.T, atol=1e-12)
     assert rotated_energy == pytest.approx(energy, abs=1e-12)
-    np.testing.assert_allclose(neo_hookean(rotation, 80.0, 110.0)[0], 0, atol=1e-12)
+    np.testing.assert_allclose(neo_hookean(rotation, 80.0, 110.0).cauchy, 0, atol=1e-12)
 
 
 @pytest.mark.parametrize("stretch", [0.8, 1.2])
 def test_uniaxial_stretch_has_independent_analytic_stress(stretch):
     deformation = np.diag([stretch, 1.0, 1.0])
-    stress, _, energy = neo_hookean(deformation, 50.0, 70.0)
+    response = neo_hookean(deformation, 50.0, 70.0)
+    stress, energy = response.cauchy, response.energy
     expected = np.diag([(50 * (stretch**2 - 1) + 70 * np.log(stretch)) / stretch, 70 * np.log(stretch) / stretch, 70 * np.log(stretch) / stretch])
     np.testing.assert_allclose(stress, expected, atol=1e-12)
     assert energy > 0
@@ -71,7 +75,7 @@ def test_mpm_free_fall_and_failed_trial_preserve_inputs():
     deformation = np.broadcast_to(np.eye(3), (len(points), 3, 3)).copy()
     velocity, affine = np.zeros_like(points), np.zeros_like(deformation)
     settings = {"origin": np.zeros(3), "spacing": 0.1, "shape": (11, 11, 11), "density": 1000.0, "shear": 1000.0, "lame": 1000.0, "gravity": np.array([0.0, -9.81, 0.0])}
-    dt = min(0.001, stable_timestep(velocity, settings))
+    dt = min(0.001, stable_timestep(velocity, deformation, settings))
     moved, speed, gradient, _ = step(points, velocity, deformation, affine, mass, mass / 1000, settings, dt)
     np.testing.assert_allclose(speed, np.broadcast_to([0, -9.81 * dt, 0], speed.shape), atol=1e-12)
     np.testing.assert_allclose(gradient, deformation, atol=1e-12)

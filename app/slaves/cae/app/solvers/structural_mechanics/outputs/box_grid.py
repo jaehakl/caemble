@@ -6,7 +6,7 @@ from ..continuum import integration_points, physical_rotation_vectors
 from ..domain import parameter
 from ..interfaces.resultants import physical_support_reactions
 from ..model import HarmonicSolution
-from .fields import _physical_domain, _tet_stress
+from .fields import _physical_domain, _tet_stress, finite_deformation_fields
 from .history import history_members
 
 
@@ -97,9 +97,11 @@ def build_box_outputs(config, descriptor, model, solution):
     definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
     artifacts = {}
     samplers = {}
+    deformation_fields = None
     for output in config["outputs"]:
         method = output["methodId"]
         data = definitions[method]["data"]
+        method = method.replace("fea.current-", "fea.")
         grid = BoxGrid(output["boxGrid"])
         parameters = {key: parameter(value) for key, value in output.get("parameters", {}).items()}
         times, frequencies = [0.0], [0.0]
@@ -109,7 +111,9 @@ def build_box_outputs(config, descriptor, model, solution):
         if aggregate:
             if grid.shape != (1, 1, 1):
                 raise ValueError(f"{method} requires gridShape [1, 1, 1]")
-            if method == "fea.buckling-factor":
+            if method == "fea.strain-energy":
+                sampled = solution.strain_energy
+            elif method == "fea.buckling-factor":
                 index = int(parameters["modeIndex"]) - 1
                 if index < 0 or index >= len(solution.spectrum["factors"]):
                     raise ValueError("modeIndex is one-based and must identify a solved buckling mode")
@@ -135,9 +139,14 @@ def build_box_outputs(config, descriptor, model, solution):
                 times = history["times"]
         else:
             identity = (tuple(grid.geometry["origin"]), tuple(grid.geometry["size"]),
-                        tuple(np.asarray(grid.geometry["rotation"]).ravel()), grid.shape)
+                        tuple(np.asarray(grid.geometry["rotation"]).ravel()), grid.shape, data["boxGrid"].get("configuration", "reference"))
             if identity not in samplers:
-                samplers[identity] = TetrahedralSampler.prepare(model.points, cells, grid.points("m"))
+                points = model.points
+                if data["boxGrid"].get("configuration") == "current":
+                    if harmonic:
+                        raise ValueError("current configuration requires a static solution")
+                    points = points + solution.displacement[:, :3]
+                samplers[identity] = TetrahedralSampler.prepare(points, cells, grid.points("m"))
             sampler = samplers[identity]
             location = "node"
             if method == "fea.displacement":
@@ -146,6 +155,10 @@ def build_box_outputs(config, descriptor, model, solution):
                 values = rotations
             elif method == "fea.stress-field":
                 values, location = compact, "cell"
+            elif method == "fea.volume-ratio":
+                if deformation_fields is None:
+                    deformation_fields = finite_deformation_fields(model, solution)
+                values, location = deformation_fields["volumeRatio"][cell_order], "cell"
             elif method in ("fea.plastic-strain", "fea.equivalent-plastic-strain"):
                 name = "plasticStrain" if method == "fea.plastic-strain" else "equivalentPlasticStrain"
                 shape = (6,) if name == "plasticStrain" else ()

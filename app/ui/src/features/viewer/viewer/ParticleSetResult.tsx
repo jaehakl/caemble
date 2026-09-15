@@ -59,6 +59,9 @@ export function ParticleSetResult({
           onTime={setTime}
         />
         <div className="flex flex-wrap items-center gap-2 p-2 text-xs">
+          {particles.configuration ? (
+            <span>{particles.configuration === 'reference' ? '기준 배치' : '현재 배치'}</span>
+          ) : null}
           <label>
             <input
               type="checkbox"
@@ -110,6 +113,9 @@ export function ParticleSetResult({
           {quantity ? (
             <span>
               {quantity.quantityKind} · {quantity.unit}
+              {quantity.rowConfiguration && quantity.columnConfiguration
+                ? ' · 행: 현재 Cartesian · 열: 기준 Cartesian'
+                : ''}
             </span>
           ) : null}
           {!particles.radius ? (

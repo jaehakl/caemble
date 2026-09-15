@@ -1,6 +1,7 @@
 """Authored Material/Interaction variants reach the real DEM preparation path."""
 
 import json
+import re
 import subprocess
 from copy import deepcopy
 from pathlib import Path
@@ -21,9 +22,9 @@ def dem_contract_inputs(tmp_path_factory):
         files = catalog.experiment("dem-floor-contact")["sourceBundle"]["files"]
         descriptor = catalog.get_solver_manifest("dem", "1.0.0")["descriptor"]
     task_source = files["tasks/particles.tsx"]
-    start = task_source.index("config:()=> (") + len("config:()=> (")
-    end = task_source.index("),geometry:", start)
-    config = json.loads(task_source[start:end])
+    start = re.search(r"\bconfig\s*:\s*\(\s*\)\s*=>\s*\(\s*", task_source).end()
+    config, consumed = json.JSONDecoder().raw_decode(task_source[start:])
+    end = start + consumed
     clock = next(item["parameters"] for item in config["initializations"] if item["methodId"] == "dem.time")
     for name in ("duration", "windowSize", "outputInterval"):
         clock[name]["value"] = .15
@@ -88,15 +89,15 @@ async def test_authored_dem_material_pairs_reach_prepared_models(dem_contract_in
         sources["experiment.tsx"] = sources["experiment.tsx"].replace("body: Wall()", "body: Sample()")
     elif variant == "task-geometry":
         experiment = sources["experiment.tsx"]
-        start = experiment.index("geometry: () => <>") + len("geometry: () => <>")
+        start = re.search(r"\bgeometry\s*:\s*\(\s*\)\s*=>\s*\(?\s*<>", experiment).end()
         end = experiment.index("</>", start)
         bodies = experiment[start:end]
-        sources["experiment.tsx"] = (experiment[:start] + experiment[end:]).replace(
-            "geometryGroup: {sample:['sample'],floor:['floor']}", "geometryGroup: {}")
+        sources["experiment.tsx"] = re.sub(r"\bgeometryGroup\s*:\s*\{[^}]*\}", "geometryGroup: {}", experiment[:start] + experiment[end:])
         sources["tasks/particles.tsx"] = (
             "import { Solid } from '../geometry'\nimport { Sample, Wall } from '../material'\n" + sources["tasks/particles.tsx"]
-        ).replace("experiment.geometry.", "task.geometry.").replace("geometry:()=> <>", "geometry:()=> <>" + bodies).replace(
-            "geometryGroup:{", "geometryGroup:{sample:['sample'],floor:['floor'],")
+        ).replace("experiment.geometry.", "task.geometry.")
+        sources["tasks/particles.tsx"] = re.sub(r"(\bgeometry\s*:\s*\(\s*\)\s*=>\s*\(?\s*<>)", lambda match: match[1] + bodies, sources["tasks/particles.tsx"])
+        sources["tasks/particles.tsx"] = re.sub(r"\bgeometryGroup\s*:\s*\{", "geometryGroup:{sample:['sample'],floor:['floor'],", sources["tasks/particles.tsx"])
     measurement = build(variant, sources)
     run = CaeRun(measurement=measurement, max_run_seconds=60, job_id=f"dem-contract-{variant}")
     sim = SimulationApi(run)

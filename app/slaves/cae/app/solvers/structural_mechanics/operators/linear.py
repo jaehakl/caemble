@@ -6,6 +6,7 @@ from scipy import sparse
 from ..beam import beam_matrices, truss_response
 from ..constraints import spring_gradient
 from ..continuum import element_matrices
+from ..hyperelastic import prepare_tet4
 from ..shells import shell4_mass_moments, shell4_matrices
 from .prepared import PreparedStructuralOperators
 
@@ -40,6 +41,11 @@ def prepare_matrices(model):
             K, M = shell4_matrices(points, section)
             normal, moments = shell4_mass_moments(points, section)
             data.update(normal=normal, massMoments=moments)
+        elif material["model"] == "mechanics.compressible-neo-hookean@1":
+            if element.kind != "tet4":
+                raise ValueError("Neo-Hookean solids require tet4 elements")
+            data.update(prepare_tet4(points, material))
+            K, M = data["K"], data["M"]
         else:
             coords = points[:, :2] if element.kind in ("tri3", "quad4") else points
             K, M = element_matrices(element.kind, coords, material["C"], material["density"], section.get("thickness", 1.0), section.get("plane", "stress"))

@@ -85,6 +85,8 @@ interface CalculationInputLeaf {
     readonly channels: readonly ['value'] | readonly ['amplitude', 'phase']
     readonly channelUnits: readonly string[]
     readonly frequencyKind?: 'modal' | 'sampled'
+    readonly configuration?: 'reference' | 'current'
+    readonly weighting?: 'material-volume'
     readonly origin: readonly [number, number, number]
     readonly size: readonly [number, number, number]
     readonly rotation: readonly [readonly [number, number, number], readonly [number, number, number], readonly [number, number, number]]

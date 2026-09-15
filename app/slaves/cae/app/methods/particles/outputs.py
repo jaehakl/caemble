@@ -46,6 +46,21 @@ def build_outputs(config, descriptor, model, samples):
     return artifacts
 
 
+def sample_weighted_cells(positions, values, weights, grid):
+    """Material-volume average on a passive Box; empty cells contain zero."""
+    local = grid.local_points(positions)
+    size, shape = np.asarray(grid.geometry["size"]), np.asarray(grid.shape)
+    valid = np.all((local >= 0) & (local <= size), axis=1)
+    cells = np.minimum(np.floor(local[valid] / size * shape).astype(int), shape - 1)
+    flat = np.ravel_multi_index(cells.T, grid.shape)
+    values = np.asarray(values).reshape(len(positions), -1)
+    total = np.zeros((*grid.shape, values.shape[1]))
+    volume = np.zeros(grid.shape)
+    np.add.at(volume.reshape(-1), flat, weights[valid])
+    np.add.at(total.reshape(-1, values.shape[1]), flat, weights[valid, None] * values[valid])
+    return np.divide(total, volume[..., None], out=np.zeros_like(total), where=volume[..., None] > 0)
+
+
 def native_values(config, descriptor, model, samples, attributes):
     definitions = {item["methodId"]: item for item in descriptor["methods"].get("exports", ())}
     exports = {}

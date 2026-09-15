@@ -90,7 +90,7 @@ class Catalog:
 
     def quantity_kind(self, name: str) -> dict[str, Any]:
         row = self._one(
-            "SELECT name, domain, tensor_order, description, opaque FROM quantity_kinds WHERE name = ?",
+            "SELECT name, domain, tensor_order, description, opaque, tensor_symmetry FROM quantity_kinds WHERE name = ?",
             (name,),
         )
         if row is None:
@@ -106,6 +106,7 @@ class Catalog:
             "description": row["description"],
             "opaque": bool(row["opaque"]),
             "applicableUnits": [unit["unit"] for unit in units],
+            **({"tensorSymmetry": row["tensor_symmetry"]} if row["tensor_symmetry"] is not None else {}),
         }
 
     get_quantity_kind = quantity_kind

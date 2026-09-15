@@ -360,11 +360,11 @@ def _edit_quantity_kind(args: argparse.Namespace) -> None:
         if args.quantity_kind_action == "upsert":
             connection.execute(
                 """
-                INSERT INTO quantity_kinds(name, domain, tensor_order, description, opaque) VALUES (?, ?, ?, ?, ?)
+                INSERT INTO quantity_kinds(name, domain, tensor_order, description, opaque, tensor_symmetry) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET domain=excluded.domain, tensor_order=excluded.tensor_order,
-                  description=excluded.description, opaque=excluded.opaque
+                  description=excluded.description, opaque=excluded.opaque, tensor_symmetry=excluded.tensor_symmetry
                 """,
-                (args.name, args.domain, args.tensor_order, args.description, int(args.opaque)),
+                (args.name, args.domain, args.tensor_order, args.description, int(args.opaque), args.tensor_symmetry),
             )
             _replace_sequence(
                 connection, "quantity_kind_units", "quantity_kind", args.name, "unit", args.unit
@@ -782,6 +782,7 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("name")
     upsert.add_argument("--domain", required=True)
     upsert.add_argument("--tensor-order", type=int, required=True)
+    upsert.add_argument("--tensor-symmetry", choices=("general", "symmetric"))
     upsert.add_argument("--description")
     upsert.add_argument("--opaque", action=argparse.BooleanOptionalAction, default=False)
     upsert.add_argument("--unit", action="append", default=[])

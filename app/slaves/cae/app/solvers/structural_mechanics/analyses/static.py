@@ -1,6 +1,7 @@
 """Static equilibrium with accepted material history and support reactions."""
 
 import numpy as np
+from app.methods.continuum.hyperelastic import InvalidDeformationError
 
 from ..constraints import constraint_transform, contact_response, revolute_joints, support_reactions
 from ..kinematics import _link_geometric_matrix, apply_increment
@@ -19,10 +20,14 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
     external = model.force.ravel() + mass @ gravity
     rotating_gravity = geometric and np.any(gravity)
     zero_motion = np.zeros_like(solution.displacement)
+    displacement_driven = any(model.prescribed.values())
     nonlinear = geometric or bool(model.contacts) or any(e.material["model"] == "mechanics.j2-plasticity@1" for e in model.elements)
     if not nonlinear:
         T = constraint_transform(model, solution.orientations)
-        solution.displacement = np.asarray(T @ solve_linear(T.T @ stiffness @ T, T.T @ external)).reshape(-1, 6)
+        for dof, value in model.prescribed.items():
+            solution.displacement.ravel()[dof] = value
+        rhs = T.T @ (external - stiffness @ solution.displacement.ravel())
+        solution.displacement += np.asarray(T @ solve_linear(T.T @ stiffness @ T, rhs)).reshape(-1, 6) if T.shape[1] else 0
         solution.orientations = np.asarray([rotation_exp(value[3:]) for value in solution.displacement])
         for slave, (master, axis_index) in revolute_joints(model).items():
             solution.displacement[slave, 3 + axis_index] -= solution.displacement[master, 3 + axis_index]
@@ -33,11 +38,16 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
         while factor < 1.0 - 1e-12:
             target = min(1.0, factor + increment)
             displacement, rotations = solution.displacement.copy(), solution.orientations.copy()
+            for dof, value in model.prescribed.items():
+                displacement.ravel()[dof] = target * value
             converged = False
             for iteration in range(max_iterations):
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
-                internal, tangent, history, stress, energy = structural_response(model, displacement, rotations, prepared, solution.element_history, geometric)
+                try:
+                    internal, tangent, history, stress, energy = structural_response(model, displacement, rotations, prepared, solution.element_history, geometric)
+                except InvalidDeformationError:
+                    break
                 current_external = target * external
                 if rotating_gravity:
                     # 단면 무게중심이 기준선에서 벗어나면 M의 병진-회전 연결이
@@ -49,7 +59,8 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
                     tangent = tangent - target * weight_tangent
                 T = constraint_transform(model, rotations)
                 residual = T.T @ (current_external - internal)
-                relative = np.linalg.norm(residual) / max(np.linalg.norm(T.T @ current_external), 1.0)
+                force_scale = max(np.linalg.norm(T.T @ current_external), np.linalg.norm(internal) if displacement_driven else 0., 1.0)
+                relative = np.linalg.norm(residual) / force_scale
                 if relative <= tolerance:
                     converged = True
                     break
@@ -58,7 +69,12 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
                 # 같은 확정 재료 이력에서 후보를 비교한다. 실패한 line-search는 버린다.
                 for reduction in range(12):
                     candidate_u, candidate_R = apply_increment(model, displacement, rotations, correction * 0.5**reduction)
-                    candidate_force = structural_response(model, candidate_u, candidate_R, prepared, solution.element_history, geometric, approximate_tangent=True)[0]
+                    for dof, value in model.prescribed.items():
+                        candidate_u.ravel()[dof] = target * value
+                    try:
+                        candidate_force = structural_response(model, candidate_u, candidate_R, prepared, solution.element_history, geometric, approximate_tangent=True)[0]
+                    except InvalidDeformationError:
+                        continue
                     candidate_external = target * external
                     if rotating_gravity:
                         weight = inertial_response(model, candidate_u, candidate_R, zero_motion, gravity.reshape(-1, 6), prepared, mass, geometric)[0]
@@ -87,7 +103,7 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
         external = model.force.ravel() + weight
     solution.reaction = support_reactions(model, solution.orientations, internal - external)
     T = constraint_transform(model, solution.orientations)
-    solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / max(np.linalg.norm(T.T @ external), 1.0))
+    solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / max(np.linalg.norm(T.T @ external), np.linalg.norm(internal) if displacement_driven else 0., 1.0))
     solution.element_history, solution.stresses = history, stress
     solution.strain_energy = float(energy)
     solution.contact_history = contact_response(model.points, solution.displacement, model.contacts)[2] if model.contacts else []

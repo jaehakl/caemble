@@ -195,6 +195,7 @@ export function MeshFieldResult({
       <p className="px-2 text-xs text-slate-500">
         {(field.points.length / 3).toLocaleString()} nodes · {(field.cells.length / 4).toLocaleString()} tetrahedra ·{' '}
         {field.location} values · coordinates {field.lengthUnit}
+        {field.configuration ? ` · ${field.configuration === 'reference' ? '기준 배치' : '현재 배치'}` : ''}
       </p>
       <ViewerControls>
         <details

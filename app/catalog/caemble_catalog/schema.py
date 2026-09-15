@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x43414531  # "CAE1"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
 
@@ -72,7 +72,8 @@ CREATE TABLE quantity_kinds (
     domain TEXT NOT NULL,
     tensor_order INTEGER NOT NULL,
     description TEXT,
-    opaque INTEGER NOT NULL DEFAULT 0
+    opaque INTEGER NOT NULL DEFAULT 0,
+    tensor_symmetry TEXT CHECK (tensor_symmetry IS NULL OR (tensor_order = 2 AND tensor_symmetry IN ('general', 'symmetric')))
 ) STRICT;
 
 CREATE TABLE quantity_kind_units (

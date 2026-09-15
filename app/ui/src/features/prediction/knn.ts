@@ -387,6 +387,7 @@ function predictionShapeSignature(layout: PredictionTensorLayout) {
       dtype: layout.dtype, quantityKind: layout.quantityKind, unit: layout.unit,
       version: grid.version, sampling: grid.sampling, channels: grid.channels,
       components: grid.components, channelUnits: grid.channelUnits, frequencyKind: grid.frequencyKind,
+      configuration: grid.configuration, weighting: grid.weighting,
       axes: layout.axes?.slice(3).map((axis, index) => ({ ...axis, ...(index === 1 && layout.frequencyOutput ? { ticks: undefined } : {}) })),
     } } : {}),
   }

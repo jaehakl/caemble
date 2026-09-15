@@ -8,6 +8,8 @@ export type BoxGridProfile = Readonly<{
   channels: readonly ['value'] | readonly ['amplitude', 'phase']
   channelUnits: readonly string[]
   frequencyKind?: 'modal' | 'sampled'
+  configuration?: 'reference' | 'current'
+  weighting?: 'material-volume'
 }>
 
 /** World position = origin + rotation * local position; local bounds are [0, size]. */
@@ -47,6 +49,10 @@ export function assertBoxGridProfile(value: unknown): asserts value is BoxGridPr
     throw new Error('Box Grid channel units must include phase in radians.')
   if (profile.frequencyKind !== undefined && !['modal', 'sampled'].includes(profile.frequencyKind))
     throw new Error('Unsupported Box Grid frequency meaning.')
+  if (profile.configuration !== undefined && !['reference', 'current'].includes(profile.configuration))
+    throw new Error('Unsupported Box Grid observation configuration.')
+  if (profile.weighting !== undefined && profile.weighting !== 'material-volume')
+    throw new Error('Unsupported Box Grid weighting.')
 }
 
 export function assertBoxGridData(value: unknown, shape?: readonly number[]): asserts value is BoxGridData {

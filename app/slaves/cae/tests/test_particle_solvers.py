@@ -138,7 +138,7 @@ async def test_mpm_affine_compression_initialization_and_fixed_base():
 @pytest.mark.parametrize("prefix,implementation", [("sph", sph), ("mpm", mpm)])
 async def test_catalog_native_visuals_and_immutable_resource_checkpoint(prefix, implementation):
     case = invocation(prefix)
-    descriptor = solver_catalog.descriptor(prefix, "1.0.0")
+    descriptor = solver_catalog.descriptor(prefix, "2.0.0" if prefix == "mpm" else "1.0.0")
     case.config["exports"] = [{"methodId": f"{prefix}.particles", "key": "native", "parameters": {}}]
     case = replace(case, descriptor=descriptor)
     result = await implementation(case)
@@ -160,9 +160,72 @@ async def test_catalog_native_visuals_and_immutable_resource_checkpoint(prefix, 
         np.testing.assert_array_equal(particles.positions, before)
         native = continued.exports["native"]
         np.testing.assert_array_equal(native.particle_ids, particles.particle_ids)
+        if prefix == "mpm":
+            reference = saved["model"]["referencePositions"]
+            assert not reference.flags.writeable
+            np.testing.assert_array_equal(native.particle_ids, saved["model"]["particleIds"])
+            np.testing.assert_allclose(native.attributes["displacement"].values, native.positions - reference)
+            assert native.attributes["firstPiolaStress"].values.shape == (len(reference), 3, 3)
         assert native.metadata["time"] == .004
         assert "affineVelocityGradient" not in native.attributes
         assert "referenceVolume" not in native.attributes
     finally:
         states.close()
         resources.close()
+
+
+@pytest.mark.asyncio
+async def test_mpm_invalid_trial_retries_same_accepted_state_and_input_errors_do_not_retry(monkeypatch):
+    from app.methods.continuum.hyperelastic import InvalidDeformationError
+    from app.solvers.mpm import entry
+
+    original = entry.step
+    attempts = []
+
+    def reject_first(*args):
+        before = [array.copy() for array in args[:4]]
+        candidate = original(*args)
+        for array, snapshot in zip(args[:4], before):
+            np.testing.assert_array_equal(array, snapshot)
+        attempts.append((args[-1], before))
+        if len(attempts) == 1:
+            raise InvalidDeformationError("candidate outside material domain")
+        return candidate
+
+    monkeypatch.setattr(entry, "step", reject_first)
+    result = await mpm(invocation("mpm"))
+    assert attempts[1][0] == attempts[0][0] / 2
+    for before, retry in zip(attempts[0][1], attempts[1][1]):
+        np.testing.assert_array_equal(before, retry)
+    assert result.state_patch.operations[-1].value["time"] == .002
+    attempts.clear()
+
+    def invalid_input(*args):
+        attempts.append(args[-1])
+        raise ValueError("unsupported setting")
+
+    monkeypatch.setattr(entry, "step", invalid_input)
+    case = invocation("mpm")
+    with pytest.raises(ValueError, match="unsupported setting"):
+        await mpm(case)
+    assert len(attempts) == 1 and case.state == {}
+
+
+@pytest.mark.asyncio
+async def test_mpm_new_outputs_and_visualizations_do_not_change_physical_state():
+    case = invocation("mpm", window=.004)
+    baseline = (await mpm(case)).state_patch.operations[-1].value
+    descriptor = solver_catalog.descriptor("mpm", "2.0.0")
+    geometry = {"origin": [0, 0, 0], "size": [1, 1, 1], "rotation": np.eye(3).tolist(),
+                "gridShape": [7, 8, 9], "lengthUnit": "m", "source": "task", "rootId": "probe"}
+    config = deepcopy(invocation("mpm", window=.004, output=.0007).config)
+    config["outputs"] = [{"methodId": method, "key": method, "parameters": {}, "boxGrid": geometry}
+                         for method in ("mpm.displacement", "mpm.reference-stress-field", "mpm.volume-ratio")]
+    observed = await mpm(replace(case, config=config, descriptor=descriptor))
+    actual = observed.state_patch.operations[-1].value
+    assert actual["steps"] == baseline["steps"]
+    np.testing.assert_array_equal(actual["state"].positions, baseline["state"].positions)
+    for name in baseline["state"].attributes:
+        np.testing.assert_array_equal(actual["state"].attributes[name].values, baseline["state"].attributes[name].values)
+    assert observed.visualizations
+    assert len(observed.artifacts) == 3

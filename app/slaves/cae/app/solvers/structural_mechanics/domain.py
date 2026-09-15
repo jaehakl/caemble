@@ -109,6 +109,11 @@ def selected_material(invocation, rule, role, part=None):
         result["C"] = isotropic_elasticity(result["E"], result["nu"])
     elif selected["model"] == "mechanics.orthotropic-elastic@1":
         result["C"] = orthotropic_elasticity(*(result[name] for name in ("E1", "E2", "E3", "nu12", "nu23", "nu13", "G12", "G23", "G13")))
+    elif selected["model"] == "mechanics.compressible-neo-hookean@1":
+        young, poisson = result["E"], result["nu"]
+        if young <= 0 or not -1 < poisson < .5:
+            raise ValueError("Neo-Hookean material requires E > 0 and -1 < nu < 0.5")
+        result.update(shear=young / (2 * (1 + poisson)), lame=young * poisson / ((1 + poisson) * (1 - 2 * poisson)))
     else:
         raise ValueError(f"unsupported structural material {selected['model']}")
     if result["density"] <= 0:
@@ -283,7 +288,7 @@ async def build_geometry_model(invocation):
     materials = {}
     for key, part in body_parts.items():
         material, _ = selected_material(invocation, part_rules[key], "bodyDomain", part)
-        if key in material_frames:
+        if key in material_frames and "C" in material:
             material["C"] = orient_elasticity(material["C"], material_frames[key])
         materials[key] = material
     for index, nodes in enumerate(cells):
@@ -352,14 +357,30 @@ async def build_geometry_model(invocation):
             continue
         for target in rule["target"]:
             region = surface_region(model, target)
-            if method == "fea.fixed":
+            if method in ("fea.fixed", "fea.prescribed-displacement"):
                 components = ["xyz".index(component) for component in p["components"]]
+                if method == "fea.prescribed-displacement":
+                    if parameters["analysis"] != "static":
+                        raise ValueError("fea.prescribed-displacement requires static analysis")
+                    if target in references:
+                        raise ValueError("prescribed displacement cannot target a dependent attachment")
+                    prescribed = np.asarray(p["displacement"], dtype=float)
+                    if prescribed.shape != (3,) or not np.all(np.isfinite(prescribed)):
+                        raise ValueError("prescribed displacement requires a finite world XYZ vector")
+                else:
+                    prescribed = np.zeros(3)
                 if target in references:
                     if set(components) != {0, 1, 2}:
                         raise ValueError("an attached support patch must be fully fixed; use a revolute connection for a hinge")
                     fixed.update(range(6 * references[target], 6 * references[target] + 6))
                 else:
-                    fixed.update(6 * int(node) + component for node in region["nodes"] for component in components)
+                    for node in region["nodes"]:
+                        for component in components:
+                            dof, value = 6 * int(node) + component, float(prescribed[component])
+                            if dof in model.prescribed and model.prescribed[dof] != value:
+                                raise ValueError("conflicting prescribed displacement or fixed conditions on one degree of freedom")
+                            model.prescribed[dof] = value
+                            fixed.add(dof)
                 support_nodes.update(map(int, region["nodes"]))
             elif method in ("fea.surface-load", "fea.traction", "fea.pressure"):
                 if method == "fea.surface-load":

@@ -7,6 +7,7 @@ export type RecordedMeshField = Readonly<{
   identity: string
   task?: string
   coordinateSpace?: string
+  configuration?: 'reference' | 'current'
   nodeIds?: Int32Array
   times?: Float64Array
   timeUnit?: UcumUnit
@@ -14,7 +15,7 @@ export type RecordedMeshField = Readonly<{
   lengthUnit: UcumUnit
   valueUnit: UcumUnit
   quantity: string
-  valueKind?: 'displacement' | 'stress'
+  valueKind?: 'displacement' | 'stress' | 'scalar'
   location: 'node' | 'cell'
   points: Float64Array
   cells: Uint32Array
@@ -322,6 +323,7 @@ export function parseRecordedMeshFields(
           label,
           task: contracts[label].task,
           coordinateSpace: semantic.coordinateSpace,
+          configuration: semantic.configuration,
           nodeIds,
           times,
           timeUnit,

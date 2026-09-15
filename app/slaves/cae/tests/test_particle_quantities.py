@@ -142,6 +142,24 @@ def test_compact_tensor_quantity_and_field_use_one_native_component_axis():
     validate_artifact_payload(field, contract, "field")
 
 
+@pytest.mark.parametrize("quantity,unit", [("mechanics.DeformationGradient", "1"), ("mechanics.FirstPiolaStress", "Pa")])
+def test_two_configuration_tensors_require_all_nine_components(quantity, unit):
+    resources = ResourceStore()
+    try:
+        compact = QuantityArrayValue(quantity, unit, np.zeros((2, 6)), components=("xx", "yy", "zz", "xy", "yz", "xz"))
+        with pytest.raises(ValueError, match="component count"):
+            resources.ingest(compact)
+        values = np.arange(18.).reshape(2, 3, 3)
+        for components, array in ((None, values), (tuple(a + b for a in "xyz" for b in "xyz"), values.reshape(2, 9))):
+            tensor = QuantityArrayValue(quantity, unit, array, components=components,
+                                        metadata={"rowConfiguration": "current", "columnConfiguration": "reference"})
+            restored = resources.resolve(resources.ingest(tensor))
+            np.testing.assert_array_equal(restored.values, array)
+            assert restored.metadata == tensor.metadata
+    finally:
+        resources.close()
+
+
 @pytest.mark.parametrize("quantity,unit,components,match", [
     ("kinematics.Velocity", "m.s-1", ("x", "y"), "component count"),
     ("mechanics.StressTensor", "Pa", ("xx", "yy", "zz", "xy", "yz"), "component count"),

@@ -24,6 +24,7 @@ const quantityKindSchema = z
     name: z.string(),
     domain: z.string(),
     tensorOrder: nonnegativeIntegerSchema,
+    tensorSymmetry: z.enum(['general', 'symmetric']).nullable().optional(),
     description: z.string().nullable(),
     opaque: z.boolean(),
     applicableUnits: z.array(z.string()),

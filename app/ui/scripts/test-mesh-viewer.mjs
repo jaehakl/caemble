@@ -186,8 +186,8 @@ const server = await createServer({
             visualizations: recordedVisualizations,
             recordedRules: recordedOutputs?.rules, recordedData: recordedOutputs?.data,
             resultContracts: recordedOutputs?.contracts,
-            selectedResult: picker.value,
-            onSelectedResultChange: (name) => { picker.value = name; picker.dispatchEvent(new Event('change')); },
+            selectedResult: picker.value.slice('record:'.length),
+            onSelectedResultChange: (name) => { picker.value = 'record:' + name; picker.dispatchEvent(new Event('change')); },
             onFindSelectionSource: noop, onSelectionQueryChange: noop, onSelectionSourcePathsChange: noop,
             selectionQuery: null, selectionSourceStatus: {}, viewerExpanded: false,
           }));
@@ -223,7 +223,7 @@ const server = await createServer({
         window.recordedParticleSets = particles.particles;
         for (const field of [...parsed.fields, ...transforms.motions, ...particles.particles, ...Object.keys(saved.outputs.contracts).map(label=>({label}))]) {
           const option = document.createElement('option');
-          option.value = field.label;
+          option.value = 'record:' + field.label;
           option.textContent = 'Recorded ' + field.label.replace('@visualizations.', '');
           picker.append(option);
         }
@@ -491,6 +491,8 @@ try {
               components: quantity.components,
               unit: quantity.unit,
               quantityKind: quantity.quantityKind,
+              rowConfiguration: quantity.rowConfiguration,
+              columnConfiguration: quantity.columnConfiguration,
             })),
             physicalRadius: Boolean(radius),
           }),
@@ -502,7 +504,7 @@ try {
       )
       for (const selected of fields) {
         assert.ok(selected.nodes > 4 && selected.cells > 1)
-        await fixturePicker.selectOption(selected.label)
+        await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
         await canvas.waitFor()
         if (selected.frequencies.length) {
@@ -527,7 +529,7 @@ try {
       }
       for (const selected of motions) {
         assert.ok(selected.bodyIds.length && selected.vertices > 4 && selected.triangles > 4)
-        await fixturePicker.selectOption(selected.label)
+        await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh transform` }).waitFor()
         await canvas.waitFor()
         const initial = await canvas.screenshot()
@@ -548,7 +550,7 @@ try {
       }
       for (const selected of particles) {
         assert.ok(selected.ids.length && selected.times.length && selected.attributes.length)
-        await fixturePicker.selectOption(selected.label)
+        await fixturePicker.selectOption('record:' + selected.label)
         const article = page.getByRole('article', { name: `${selected.label} particles` })
         await article.waitFor()
         await canvas.waitFor()
@@ -561,7 +563,11 @@ try {
           .waitFor()
         for (const attribute of selected.attributes) {
           await page.getByLabel('Particle 물리량', { exact: true }).selectOption(attribute.name)
-          await article.getByText(`${attribute.quantityKind} · ${attribute.unit}`, { exact: true }).waitFor()
+          const frames =
+            attribute.rowConfiguration && attribute.columnConfiguration
+              ? ' · 행: 현재 Cartesian · 열: 기준 Cartesian'
+              : ''
+          await article.getByText(`${attribute.quantityKind} · ${attribute.unit}${frames}`, { exact: true }).waitFor()
           if (attribute.components.length) {
             const component = page.getByLabel('Particle 성분', { exact: true })
             assert.deepEqual(await component.locator('option').allTextContents(), [...attribute.components, 'Norm'])
@@ -621,8 +627,14 @@ try {
         await page.evaluate(() => {
           window.renderedAxisLabels = []
         })
-        await fixturePicker.selectOption(name)
-        await page.getByRole('button', { name: '3D Point cloud', exact: true }).waitFor()
+        await fixturePicker.selectOption('record:' + name)
+        await page
+          .getByRole('button', { name: '3D Point cloud', exact: true })
+          .waitFor()
+          .catch(async (error) => {
+            console.error(`Failed to open recorded output ${name}:`, await page.locator('body').innerText())
+            throw error
+          })
         await page.getByRole('button', { name: 'Heatmap', exact: true }).click()
         const heatmap = page.locator('[data-result-visualization="heatmap"]')
         await heatmap.waitFor()

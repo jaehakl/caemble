@@ -166,7 +166,10 @@ async def test_particle_records_and_visualizations_survive_wire_storage_and_requ
             run.pending = packet
             run.acknowledge(packet.sequence)
             assert packet.ack.done()
-        assert set(records) == {"density", "velocity", "momentum"}
+        expected_records = {"density", "velocity", "momentum"}
+        if run.plan.task_specs["particles"].task["kernel"]["name"] == "mpm":
+            expected_records.update({"displacement", "stress", "volumeRatio", "referenceStress", "energy"})
+        assert set(records) == expected_records
         assert all(values.ndim == 7 for values in records.values())
         assert len(displays) == 1
         native = next(iter(displays.values()))

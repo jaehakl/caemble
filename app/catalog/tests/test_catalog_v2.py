@@ -116,9 +116,9 @@ class CatalogV3Tests(unittest.TestCase):
         expected = {
             "dc-current-density": "2.0.0", "steady-state-heat": "2.0.0",
             "ray-tracing": "2.0.0", "fdtd": "5.0.0",
-            "structural-mechanics": "6.1.0", "pressure-acoustics": "1.1.0",
+            "structural-mechanics": "7.0.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
-            "dem": "1.0.0", "sph": "1.0.0", "mpm": "1.0.0",
+            "dem": "1.0.0", "sph": "1.0.0", "mpm": "2.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -127,24 +127,26 @@ class CatalogV3Tests(unittest.TestCase):
             for manifest in manifests:
                 package = manifest["descriptor"]["name"].replace("-", "_")
                 self.assertEqual(manifest["implementation"], f"app.solvers.{package}.entry:implementation")
-            for name, version in [("structural-mechanics", "6.0.0"), ("pressure-acoustics", "1.0.0")]:
+            for name, version in [("structural-mechanics", "6.0.0"), ("structural-mechanics", "6.1.0"), ("mpm", "1.0.0"), ("pressure-acoustics", "1.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0"), ("structural-mechanics", "1.0.0"), ("structural-mechanics", "5.0.0"), ("aerodynamic-loading", "1.0.0"), ("hydrodynamic-loading", "1.0.0"), ("wind-turbine-control", "1.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                expected_version = "6.1.0" if example["repository"] == "fea" else {
-                    "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.0",
-                    "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.0",
-                    "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.0",
+                expected_version = "7.0.0" if example["repository"] == "fea" else {
+                    "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.1",
+                    "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.1",
+                    "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.1",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",
                     "dem-floor-contact": "1.0.1", "sph-hydrostatic-column": "1.0.1",
-                    "mpm-affine-compression": "1.0.1", "dem-two-material-collision": "1.0.0",
+                    "mpm-affine-compression": "2.0.0", "dem-two-material-collision": "1.0.0",
                     "dem-incline-rolling": "1.0.0", "sph-periodic-channel": "1.0.0",
                 }.get(example["key"], "5.0.0")
                 self.assertEqual(example["version"], expected_version)
                 previous = "3.0.0" if example["repository"] == "fea" else {"asymmetric-rigid-bodies": "1.0.0", "gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")
+                if example["key"] == "mpm-affine-compression":
+                    previous = "1.0.1"
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:
@@ -152,7 +154,7 @@ class CatalogV3Tests(unittest.TestCase):
 
     def test_structural_contract_owns_mesh_and_uses_semantic_boundaries(self) -> None:
         with open_catalog() as catalog:
-            descriptor = catalog.get_solver_manifest("structural-mechanics", "6.1.0")["descriptor"]
+            descriptor = catalog.get_solver_manifest("structural-mechanics", "7.0.0")["descriptor"]
             penalty = catalog.quantity_kind("mechanics.NormalContactStiffness")
         self.assertEqual(descriptor["parameters"]["spatialResolution"]["data"]["unit"], "m")
         initializations = {method["methodId"]: method for method in descriptor["methods"]["initializations"]}
@@ -186,7 +188,7 @@ class CatalogV3Tests(unittest.TestCase):
             examples = [item for item in catalog.list_experiments(limit=100)[0] if item["repository"] == "fea"]
             self.assertEqual({item["key"] for item in examples}, {
                 "boolean-connection-solid", "curved-tower-shell", "structural-analysis-modes",
-                "structural-element-basics", "structural-nonlinear-materials",
+                "structural-element-basics", "structural-nonlinear-materials", "hyperelastic-compression", "hyperelastic-tension",
             })
             for item in examples:
                 example = catalog.experiment(item["coordinate"])
@@ -198,7 +200,7 @@ class CatalogV3Tests(unittest.TestCase):
                     self.assertIn("fea.body", source, path)
                     self.assertNotRegex(source, r"\b(?:connectivity|nodeIds|nodeIdStart)\s*:")
                     self.assertLess(len(source.splitlines()), 1000, path)
-                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "6.1.0")])
+                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "7.0.0")])
 
     def test_new_solver_cli_defaults_to_abi_v3(self) -> None:
         arguments = build_parser().parse_args(
@@ -222,7 +224,7 @@ class CatalogV3Tests(unittest.TestCase):
         connection.row_factory = sqlite3.Row
         create_schema(connection)
         connection.executemany(
-            "INSERT INTO quantity_kinds VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO quantity_kinds(name, domain, tensor_order, description, opaque) VALUES (?, ?, ?, ?, ?)",
             [
                 ("ElectricFieldStrength", "electromagnetism", 1, None, 0),
                 ("Time", "general", 0, None, 0),

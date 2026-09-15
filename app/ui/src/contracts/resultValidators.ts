@@ -14,6 +14,7 @@ export const resultVisualizationSchema = z
       'particle-set',
     ]),
     coordinateSpace: z.literal('experiment').optional(),
+    configuration: z.enum(['reference', 'current']).optional(),
     particleSet: z
       .object({
         positions: z.string().min(1),
@@ -23,7 +24,14 @@ export const resultVisualizationSchema = z
         times: z.string().min(1),
         attributes: z.record(
           z.string(),
-          z.object({ path: z.string().min(1), components: z.array(z.string().min(1)).optional() }).strict(),
+          z
+            .object({
+              path: z.string().min(1),
+              components: z.array(z.string().min(1)).optional(),
+              rowConfiguration: z.literal('current').optional(),
+              columnConfiguration: z.literal('reference').optional(),
+            })
+            .strict(),
         ),
         radius: z.string().min(1).optional(),
       })
@@ -84,7 +92,7 @@ export const resultVisualizationSchema = z
       .optional(),
     spatialAxes: z.array(z.number().int().nonnegative()).optional(),
     components: z.array(z.string()).optional(),
-    valueKind: z.enum(['displacement', 'stress']).optional(),
+    valueKind: z.enum(['displacement', 'stress', 'scalar']).optional(),
     vertices: z.string().optional(),
     offsets: z.string().optional(),
     attributes: z

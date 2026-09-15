@@ -9,6 +9,8 @@ export type ParticleQuantity = Readonly<{
   unit: UcumUnit
   components: readonly string[]
   values: Float64Array
+  rowConfiguration?: 'current'
+  columnConfiguration?: 'reference'
 }>
 
 export type RecordedParticleSet = Readonly<{
@@ -22,6 +24,7 @@ export type RecordedParticleSet = Readonly<{
   positions: Float64Array
   attributes: Readonly<Record<string, ParticleQuantity>>
   radius?: string
+  configuration?: 'reference' | 'current'
 }>
 
 /** Particle identities and physical meanings come from the frozen semantic contract. */
@@ -105,7 +108,14 @@ export function parseRecordedParticleSets(
           particleIds.length,
           ...(components.length ? [components.length] : []),
         ])
-        attributes[name] = { quantityKind: schema.quantityKind, unit: schema.unit, components, values }
+        attributes[name] = {
+          quantityKind: schema.quantityKind,
+          unit: schema.unit,
+          components,
+          values,
+          rowConfiguration: attribute.rowConfiguration,
+          columnConfiguration: attribute.columnConfiguration,
+        }
       }
       // Values are addressed by explicit particle/time coordinates, never by an assumed permanent row index.
       for (const member of [
@@ -144,6 +154,7 @@ export function parseRecordedParticleSets(
         positions,
         attributes,
         radius,
+        configuration: contract.visualization.configuration,
       })
     } catch (error) {
       errors.push({ label, message: error instanceof Error ? error.message : String(error) })

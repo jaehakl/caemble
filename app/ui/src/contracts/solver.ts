@@ -52,13 +52,24 @@ export type ResultVisualization = Readonly<{
     | 'box-grid'
     | 'particle-set'
   coordinateSpace?: 'experiment'
+  configuration?: 'reference' | 'current'
   particleSet?: Readonly<{
     positions: string
     particleIds: string
     materialIndices: string
     materialNames: string
     times: string
-    attributes: Readonly<Record<string, Readonly<{ path: string; components?: readonly string[] }>>>
+    attributes: Readonly<
+      Record<
+        string,
+        Readonly<{
+          path: string
+          components?: readonly string[]
+          rowConfiguration?: 'current'
+          columnConfiguration?: 'reference'
+        }>
+      >
+    >
     radius?: string
   }>
   meshTransform?: Readonly<{
@@ -87,7 +98,7 @@ export type ResultVisualization = Readonly<{
   }>
   spatialAxes?: readonly number[]
   components?: readonly string[]
-  valueKind?: 'displacement' | 'stress'
+  valueKind?: 'displacement' | 'stress' | 'scalar'
   vertices?: string
   offsets?: string
   attributes?: Readonly<Record<string, Readonly<{ path: string; association: 'path' | 'segment' }>>>

@@ -30,7 +30,7 @@ def model_request(invocation):
     rules = [rule for rule in invocation.config["initializations"] if rule["methodId"] == "mpm.initial-motion"]
     rules += list(invocation.config.get("boundaryConditions", ()))
     units = {source: invocation.world[source]["lengthUnit"] for source, _ in roots}
-    identity = str(ContentKey.from_parts("mpm.model.v1", roots, units, origin, size, grids[0]["parameters"], rules,
+    identity = str(ContentKey.from_parts("mpm.model.v2", roots, units, origin, size, grids[0]["parameters"], rules,
                                         invocation.world["materials"], invocation.world["materialSelections"]))
     return roots, grids[0], origin, size, rules, identity
 
@@ -114,9 +114,11 @@ async def build_model(invocation, request):
                 "shear": young / (2 * (1 + poisson)), "lame": young * poisson / ((1 + poisson) * (1 - 2 * poisson)),
                 "gravity": gravity, "fixedNodes": np.flatnonzero(fixed)}
     model = {"identity": identity, "settings": settings, "mass": density * volumes, "referenceVolume": volumes,
+             "referencePositions": positions.copy(),
              "particleIds": np.arange(len(positions), dtype=np.int32), "materialIndices": np.zeros(len(positions), dtype=np.int32),
              "materials": tuple(material_records), "provenance": {"rootIds": tuple(
                  f"{source}:{root}" for (source, root), selected in root_slices.items()
                  for _ in range(selected.stop - selected.start))}}
+    model["referencePositions"].setflags(write=False)
     return model, {"positions": positions, "velocity": velocity, "deformationGradient": np.broadcast_to(np.eye(3), (len(positions), 3, 3)).copy(),
                    "affineVelocityGradient": affine}

@@ -26,6 +26,7 @@ class QuantityKind(CatalogModel):
     name: str
     domain: str
     tensor_order: int
+    tensor_symmetry: Literal["general", "symmetric"] | None = None
     description: str | None
     opaque: bool
     applicable_units: list[str]

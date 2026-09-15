@@ -4,23 +4,7 @@ from itertools import product
 
 import numpy as np
 
-
-def neo_hookean(deformation, shear, lame):
-    """Return Cauchy stress, first Piola stress and reference energy density.
-
-W = mu/2 (tr(F.T F)-3) - mu log(J) + lambda/2 log(J)^2.
-No accepted deformation or constitutive state is mutated by this calculation.
-"""
-    deformation = np.asarray(deformation)
-    jacobian = np.linalg.det(deformation)
-    if np.any(jacobian <= 0) or not np.all(np.isfinite(jacobian)):
-        raise ValueError("MPM Neo-Hookean deformation requires finite positive J")
-    logarithm = np.log(jacobian)
-    inverse_transpose = np.linalg.inv(deformation).swapaxes(-1, -2)
-    piola = shear * (deformation - inverse_transpose) + lame * logarithm[..., None, None] * inverse_transpose
-    cauchy = (piola @ deformation.swapaxes(-1, -2)) / jacobian[..., None, None]
-    energy = 0.5 * shear * (np.sum(deformation**2, axis=(-1, -2)) - 3.0) - shear * logarithm + 0.5 * lame * logarithm**2
-    return cauchy, piola, energy
+from app.methods.continuum.hyperelastic import InvalidDeformationError, neo_hookean
 
 
 def stencil(positions, origin, spacing, shape):
@@ -65,9 +49,25 @@ def grid_to_particle(grid_velocity, prepared, spacing):
     return velocity, affine, gradient
 
 
-def stable_timestep(velocity, settings):
-    wave_speed = np.sqrt((settings["lame"] + 2.0 * settings["shear"]) / settings["density"])
+def stable_timestep(velocity, deformation, settings):
+    """Maximum current acoustic speed, evaluated without a fourth-order array.
+
+    J Q(n) = mu (n.B.n) I + (lambda + mu - lambda log J) n n.T.
+    Current density is rho0/J, so J cancels in the squared wave speed.
+    """
+    jacobian = np.linalg.det(deformation)
+    if np.any(jacobian <= 0) or not np.all(np.isfinite(jacobian)):
+        raise InvalidDeformationError("MPM accepted deformation requires finite positive J")
+    stretches = np.linalg.svd(deformation, compute_uv=False)
+    shear, lame = settings["shear"], settings["lame"]
+    longitudinal = lame + shear - lame * np.log(jacobian)
+    if np.any(shear * stretches[..., -1]**2 + np.minimum(longitudinal, 0) <= 0):
+        raise InvalidDeformationError("MPM deformation is outside the strongly elliptic Neo-Hookean domain")
+    speed_squared = (shear * stretches[..., 0]**2 + np.maximum(longitudinal, 0)) / settings["density"]
+    wave_speed = float(np.sqrt(np.max(speed_squared)))
     speed = float(np.max(np.linalg.norm(velocity, axis=1), initial=0.0))
+    if not np.isfinite(wave_speed + speed):
+        raise InvalidDeformationError("MPM trial has a nonfinite wave or particle speed")
     return 0.2 * settings["spacing"] / (wave_speed + speed)
 
 
@@ -77,7 +77,7 @@ def step(positions, velocity, deformation, affine, mass, reference_volume, setti
         positions, velocity, affine, mass, settings["origin"], settings["spacing"], settings["shape"]
     )
     indices, weights, gradients, _ = prepared
-    _, piola, _ = neo_hookean(deformation, settings["shear"], settings["lame"])
+    piola = neo_hookean(deformation, settings["shear"], settings["lame"]).piola
     kirchhoff = piola @ deformation.swapaxes(-1, -2)
     internal_force = -reference_volume[:, None, None] * np.einsum("pij,pnj->pni", kirchhoff, gradients)
     force = grid_mass[:, None] * np.asarray(settings["gravity"])
@@ -90,8 +90,9 @@ def step(positions, velocity, deformation, affine, mass, reference_volume, setti
     next_deformation = (np.eye(3) + dt * velocity_gradient) @ deformation
     next_positions = positions + dt * next_velocity
     if not all(np.all(np.isfinite(value)) for value in (next_positions, next_velocity, next_affine, next_deformation)):
-        raise ValueError("MPM integration produced a nonfinite particle state")
+        raise InvalidDeformationError("MPM integration produced a nonfinite particle trial")
     neo_hookean(next_deformation, settings["shear"], settings["lame"])
+    stable_timestep(next_velocity, next_deformation, settings)
     # Fail in this trial, before accepting a particle without full support.
     stencil(next_positions, settings["origin"], settings["spacing"], settings["shape"])
     return next_positions, next_velocity, next_deformation, next_affine

@@ -29,7 +29,7 @@ const server = await createServer({
       import '/src/index.css';
       const shape = [4,3,2,2,2,2,3];
       const axes = ['x','y','z','time','frequency','amplitudePhase','component'].map((name,i)=>({name,ticks: i < 3 ? Array.from({length:shape[i]},(_,j)=>(j+.5)/shape[i]) : i===3 ? [0,1] : i===4 ? [0,10] : i===5 ? ['amplitude','phase'] : ['x','y','z'],unit:i<3?'m':i===3?'s':i===4?'Hz':undefined}));
-      const grid = { version:1,sampling:'point',components:['x','y','z'],channels:['amplitude','phase'],channelUnits:['m','rad'],origin:[0,0,0],size:[1,1,1],rotation:[[1,0,0],[0,1,0],[0,0,1]],lengthUnit:'m',gridShape:shape.slice(0,3),source:'task',rootId:'probe' };
+      const grid = { version:1,sampling:'cell-average',configuration:'current',weighting:'material-volume',components:['x','y','z'],channels:['amplitude','phase'],channelUnits:['m','rad'],origin:[0,0,0],size:[1,1,1],rotation:[[1,0,0],[0,1,0],[0,0,1]],lengthUnit:'m',gridShape:shape.slice(0,3),source:'task',rootId:'probe' };
       const values = Array.from({length:shape.reduce((a,b)=>a*b,1)},(_,i)=>Math.floor(i/3)%2 ? 0.3 : 1+(i%3)+Math.floor(i/6)*.01);
       const bytes=new Uint8Array(new Float64Array(values).buffer);
       const tensor={shape,axes:axes.map(({ticks})=>({ticks})),boxGrid:grid,storage:{kind:'base64',data:btoa(String.fromCharCode(...bytes)),byteLength:bytes.length}};
@@ -118,6 +118,8 @@ try {
         throw error
       })
   await ready()
+  assert.ok((await page.locator('body').innerText()).includes('현재 배치'))
+  assert.ok((await page.locator('body').innerText()).includes('재료 체적 가중 평균'))
   assert.equal(
     await page.getByRole('button', { name: '3D Point cloud', exact: true }).getAttribute('aria-pressed'),
     'true',

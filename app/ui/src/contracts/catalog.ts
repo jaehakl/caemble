@@ -5,6 +5,7 @@ export type CatalogQuantityKind = Readonly<{
   name: string
   domain: string
   tensorOrder: number
+  tensorSymmetry?: 'general' | 'symmetric' | null
   description?: string | null
   opaque: boolean
   applicableUnits: readonly string[]

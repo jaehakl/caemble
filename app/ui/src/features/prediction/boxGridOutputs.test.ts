@@ -85,6 +85,31 @@ function output(
 const scalar = (value: number) => ({ layout: { key: 'x', dtype: 'float64' as const, shape: [] }, values: [value] })
 
 describe('Box Grid consumer contract', () => {
+  it('preserves the material configuration in Calculation and separates Prediction cohorts', () => {
+    const records = [
+      output('field', [1, 0], 0, false, { configuration: 'current', weighting: 'material-volume' }),
+      output('field', [2, 0], 0, false, { configuration: 'current', weighting: 'material-volume' }),
+      output('field', [3, 0], 0, false, { configuration: 'reference', weighting: 'material-volume' }),
+      output('field', [4, 0], 0, false, { configuration: 'current' }),
+    ]
+    const input = createCalculationInput([records[0].rule], { field: records[0].tensor })
+    expect(input.field.boxGrid.configuration).toBe('current')
+    expect(input.field.boxGrid.weighting).toBe('material-volume')
+    const cohort = selectPredictionCohort({
+      direction: 'forward',
+      fingerprint: 'configuration',
+      inputKeys: ['x'],
+      outputKeys: ['field'],
+      rows: records.map((record, index) => ({
+        measurementId: index + 1,
+        inputs: [scalar(index)],
+        outputs: [record.sample],
+      })),
+    })
+    expect(cohort.summary.includedMeasurementIds).toEqual([1, 2])
+    expect(cohort.summary.excluded['layout-mismatch']).toBe(2)
+  })
+
   it('requires seven explicit axes and preserves geometry in Calculation input', () => {
     const record = output('field', [2, 0])
     const input = createCalculationInput([record.rule], { field: record.tensor })

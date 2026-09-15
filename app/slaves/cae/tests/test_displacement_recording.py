@@ -18,7 +18,8 @@ from app.solvers.structural_mechanics.state import configure_history
 def test_complete_displacement_history_recording(monkeypatch, samples):
     ids = np.array([10, 20, 30, 40], dtype=np.int32)
     domain = UnstructuredMeshValue(np.zeros((4, 3)), {"tet4": np.array([[0, 1, 2, 3]], dtype=np.int32)}, "m", "domain", {"nodeIds": ids})
-    model = SimpleNamespace(points=domain.points, physical_node_count=4, node_ids=ids, history_nodes=None, elements=[SimpleNamespace(nodes=np.arange(4))])
+    model = SimpleNamespace(points=domain.points, physical_node_count=4, node_ids=ids, history_nodes=None,
+                            elements=[SimpleNamespace(nodes=np.arange(4), material={"model": "mechanics.isotropic-elastic@1"})])
     config = {"parameters": {"analysis": "transient"}, "outputs": []}
     configure_history(model)
     np.testing.assert_array_equal(model.history_nodes, [0, 1, 2, 3])
@@ -29,7 +30,7 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
     solution = SimpleNamespace(history={"times": [times], "displacement": [displacement]}, displacement=np.zeros((4,6)), orientations=np.tile(np.eye(3),(4,1,1)))
     monkeypatch.setattr(visualizations, "_tet_stress", lambda *args: np.zeros((3,3)))
     monkeypatch.setattr(visualizations, "_physical_domain", lambda model: (domain, [0]))
-    descriptor = solver_catalog.descriptor("structural-mechanics", "6.1.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.0.0")
     definition = descriptor["visualizations"]["displacementHistory"]
     value = visualizations.build_visualizations(config, descriptor, model, solution)["displacementHistory"]
     validate_artifact_payload(value, definition["data"], "anything")
@@ -42,7 +43,7 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="solid", solver_name="structural-mechanics", solver_version="6.1.0", output_name="anything", artifact_type=definition["artifactType"], state_revision=1)
+        handle = artifacts.publish(value, producer_task="solid", solver_name="structural-mechanics", solver_version="7.0.0", output_name="anything", artifact_type=definition["artifactType"], state_revision=1)
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("motion", schema, recorded, 1)
         assert encoded["values"]["shape"] == [samples, 4, 3]

@@ -5,6 +5,23 @@ import numpy as np
 from app.kernel.api import UnstructuredMeshValue
 
 from ..continuum import element_response
+from app.methods.finite_element.integration import integration_points
+from app.methods.continuum.hyperelastic import neo_hookean
+
+
+def finite_deformation_fields(model, solution):
+    """Reference-cell F/P and current Cauchy response of converged hyperelastic solids."""
+    if any(element.material["model"] != "mechanics.compressible-neo-hookean@1" for element in model.elements):
+        raise ValueError("finite-deformation fields require Neo-Hookean solid elements")
+    fields = {"deformationGradient": [], "firstPiolaStress": [], "volumeRatio": []}
+    for element in model.elements:
+        gradients = integration_points("tet4", model.points[element.nodes])[0][2]
+        deformation = np.eye(3) + solution.displacement[element.nodes, :3].T @ gradients
+        response = neo_hookean(deformation, element.material["shear"], element.material["lame"])
+        fields["deformationGradient"].append(deformation)
+        fields["firstPiolaStress"].append(response.piola)
+        fields["volumeRatio"].append(np.linalg.det(deformation))
+    return {name: np.asarray(values) for name, values in fields.items()}
 
 
 def _physical_domain(model):
@@ -102,6 +119,8 @@ def _tet_stress(model, solution, index):
     element = model.elements[index]
     result = solution.stresses[index]
     if result is None:
+        if element.material["model"] == "mechanics.compressible-neo-hookean@1":
+            raise ValueError("Neo-Hookean output requires the converged formulation stress")
         result = element_response(
             "tet4", model.points[element.nodes],
             solution.displacement[element.nodes, :3].ravel(), element.material["C"],

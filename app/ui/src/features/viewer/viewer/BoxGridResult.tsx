@@ -853,6 +853,10 @@ function BoxGridControls({
       </ViewerControls>
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-3 py-2 text-xs text-slate-600" role="status">
         <strong>{name}</strong>
+        {leaf.boxGrid.configuration ? (
+          <span>{leaf.boxGrid.configuration === 'reference' ? '기준 배치' : '현재 배치'}</span>
+        ) : null}
+        {leaf.boxGrid.weighting === 'material-volume' ? <span>재료 체적 가중 평균</span> : null}
         <span>
           {animation === 'oscillation'
             ? '순간값 · 공통 시간'

@@ -371,13 +371,14 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
             for name in sorted(quantity_kinds):
                 definition = quantity_kinds[name]
                 connection.execute(
-                    "INSERT INTO quantity_kinds VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO quantity_kinds VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         name,
                         definition["domain"],
                         definition["tensorOrder"],
                         definition.get("description"),
                         int(name in opaque_names),
+                        definition.get("tensorSymmetry"),
                     ),
                 )
                 for ordinal, unit in enumerate(definition["applicableUnits"]):
@@ -501,6 +502,8 @@ def validate_output_contracts(catalog: Catalog, descriptor: dict[str, Any]) -> N
             raise CatalogError(f"{label} requires the fixed seven Box Grid axes")
         if profile.get("sampling") not in {"point", "cell-average", "aggregate"} or profile.get("frequencyKind") not in {None, "sampled", "modal"}:
             raise CatalogError(f"{label} has an unsupported sampling convention")
+        if profile.get("configuration") not in {None, "reference", "current"} or profile.get("weighting") not in {None, "material-volume"}:
+            raise CatalogError(f"{label} has an unsupported observation configuration or weighting")
         channels, components = profile.get("channels"), profile.get("components")
         if channels not in (["value"], ["amplitude", "phase"]):
             raise CatalogError(f"{label} requires value or amplitude/phase channels")
@@ -509,9 +512,13 @@ def validate_output_contracts(catalog: Catalog, descriptor: dict[str, Any]) -> N
         expected_units = [data.get("unit"), "rad"] if len(channels) == 2 else [data.get("unit")]
         if profile.get("channelUnits") != expected_units or not data.get("unit"):
             raise CatalogError(f"{label} channel units must match the quantity and phase radians")
-        order = catalog.quantity_kind(data["quantityKind"])["tensorOrder"]
-        if (order == 0 and len(components) != 1) or (order == 1 and components != ["x", "y", "z"]) or (order == 2 and components != ["xx", "yy", "zz", "xy", "yz", "xz"]):
-            raise CatalogError(f"{label} must use scalar, world XYZ, or symmetric tensor component order")
+        quantity = catalog.quantity_kind(data["quantityKind"])
+        order = quantity["tensorOrder"]
+        tensor_components = [[a + b for a in "xyz" for b in "xyz"]]
+        if quantity.get("tensorSymmetry") == "symmetric":
+            tensor_components.append(["xx", "yy", "zz", "xy", "yz", "xz"])
+        if (order == 0 and len(components) != 1) or (order == 1 and components != ["x", "y", "z"]) or (order == 2 and components not in tensor_components):
+            raise CatalogError(f"{label} components must match the QuantityKind order and tensor symmetry")
         for index, labels in [(5, channels), (6, components)]:
             if axes[index].get("length") != len(labels) or axes[index].get("ticks") != labels:
                 raise CatalogError(f"{label} channel/component axes must match the profile")

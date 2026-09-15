@@ -7,6 +7,7 @@ from ..beam import beam_deformation, beam_response, truss_response
 from ..constraints import contact_response, spring_gradient, spring_gradient_tangent
 from ..continuum import element_nonlinear_response, element_response, tet4_corotational_response
 from ..shells import shell4_response
+from ..hyperelastic import tet4_response
 from .prepared import _beam_batch
 
 
@@ -39,7 +40,12 @@ def structural_response(model, displacement, orientations, prepared, committed, 
         points = model.points[element.nodes]
         state = None if committed is None else committed[index]
         new_state, stress = state, None
-        if geometric and element.kind == "beam2":
+        if element.material["model"] == "mechanics.compressible-neo-hookean@1":
+            if not geometric or element.kind != "tet4":
+                raise ValueError("Neo-Hookean requires finite-deformation tet4 solids")
+            internal, tangent, stored_energy, stress = tet4_response(
+                displacement[element.nodes, :3], element.material, data, tangent=not approximate_tangent)
+        elif geometric and element.kind == "beam2":
             internal, tangent, stored_energy = beam_response(points, displacement[element.nodes, :3], orientations[element.nodes], data["frame"], data["localK"], consistent_tangent=not approximate_tangent)
             current_frame = beam_deformation(points, displacement[element.nodes, :3], orientations[element.nodes], data["frame"])[1]
             local = (internal.reshape(4, 3) @ current_frame).reshape(2, 6)

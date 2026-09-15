@@ -100,6 +100,7 @@ def cylinder_segments(measurement):
     "matched-impedance-duct", "plate-driven-duct",
     "transient-matched-impedance-duct", "transient-plate-driven-duct",
     "asymmetric-rigid-bodies", "sliding-contact",
+    "hyperelastic-compression", "hyperelastic-tension",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
@@ -172,6 +173,8 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                         else {"harmonicDisplacement", "harmonicStress"} if analysis == "harmonic" else {"displacement", "stress"})
             if solver == "structural-mechanics" and analysis == "transient":
                 expected.add("displacementHistory")
+            if key.startswith("hyperelastic-"):
+                expected.add("volumeRatio")
             assert set(items) == expected
             for name, item in items.items():
                 if item["contract"]["visualization"]["kind"] == "polyline":
@@ -185,6 +188,27 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert recorded["totalCurrent"].item() > 0
         if "maximumTemperature" in recorded:
             assert recorded["maximumTemperature"].item() > measurement["experiment"]["variables"]["fixedTemperature"]
+        if key.startswith("hyperelastic-"):
+            from scipy.optimize import brentq
+
+            stretch = 1 + measurement["experiment"]["variables"]["strain"]
+            shear, lame = 10000 / 2.4, 10000 * .2 / (1.2 * .6)
+            lateral = brentq(lambda value: shear * (value**2 - 1) + lame * np.log(stretch * value**2), .1, 3)
+            jacobian = stretch * lateral**2
+            nominal_stress = shear * (stretch - 1 / stretch) + lame * np.log(jacobian) / stretch
+            energy = .5 * shear * (stretch**2 + 2 * lateral**2 - 3) - shear * np.log(jacobian) + .5 * lame * np.log(jacobian)**2
+            np.testing.assert_allclose(recorded["energy"].item(), .001 * energy, rtol=1e-7)
+            np.testing.assert_allclose(recorded["reaction"].reshape(3), [.01 * nominal_stress, 0, 0], rtol=1e-7, atol=1e-8)
+            for name, configuration in (("volumeRatio", "reference"), ("currentVolumeRatio", "current")):
+                values = recorded[name].ravel()
+                assert np.any(values > 0)
+                np.testing.assert_allclose(values[values > 0], jacobian, rtol=1e-7)
+                assert metadata[name]["boxGrid"]["configuration"] == configuration
+                assert metadata[name]["axes"][3]["ticks"] == [0]
+            stress = recorded["stress"].reshape(-1, 6)
+            np.testing.assert_allclose(stress[:, 0], nominal_stress * stretch / jacobian, rtol=1e-7)
+            np.testing.assert_allclose(stress[:, 1:], 0, atol=1e-7)
+            assert not np.array_equal(recorded["displacement"], recorded["currentDisplacement"])
         if key == "asymmetric-rigid-bodies":
             masses = native["motion.motion.masses"]
             times = native["motion.motion.times"]
@@ -290,7 +314,9 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                 assert np.all(frequencies > 0) and np.all(np.diff(frequencies) > 0)
                 assert np.max(np.abs(values)) > 0
             else:
-                assert values.shape == (count, 3 if native[prefix + ".location"].item() == "node" else 6)
+                expected_shape = ((count,) if native[prefix + ".quantity"].item() == "mechanics.VolumeRatio"
+                                  else (count, 3 if native[prefix + ".location"].item() == "node" else 6))
+                assert values.shape == expected_shape
             supports = native[prefix + ".domain.metadata.supportNodes"]
             assert np.all((supports >= 0) & (supports < len(points)))
             assert native[prefix + ".domain.metadata.loadPoints"].shape == native[prefix + ".domain.metadata.loadVectors"].shape

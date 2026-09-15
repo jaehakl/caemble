@@ -400,6 +400,13 @@ Tensor 차수를 바꾸지는 않습니다. 이 규칙은 Field와 QuantityArray
 않습니다. 검증은 공개 결과와 state의 resource 경계에서 수행하며 내부 timestep의
 임시 벡터까지 Quantity 객체로 감싸지 않습니다.
 
+Catalog schema 7의 QuantityKind `tensorSymmetry`는 `general` 또는
+`symmetric`을 명시합니다. 6성분 저장은 `symmetric`으로 선언된 2차 텐서만
+허용합니다. 변형구배와 제1 Piola 응력은 전체 3×3 또는 9성분을 사용하며,
+행은 현재 Cartesian 배치, 열은 기준 Cartesian 배치입니다. Scalar 물리량의
+명시적인 성분 축 규칙은 그대로 유지합니다. 기존 Catalog를 새 저장 schema로
+옮길 때도 별도 Draft의 rebase/publish를 사용합니다.
+
 `ParticleSetValue`의 `positions`는 `[particle, 3]` world 좌표이고 `unit`은
 길이 단위입니다. `coordinate_frame`은 `world`입니다. 각 `attributes` 값은
 `QuantityArrayValue`이며 입자 수와 성분 차원이 일치해야 합니다. 별도 항목인
@@ -738,3 +745,31 @@ DEM은 실제 입자–입자와 입자–벽 접촉에 필요한 재료 쌍만 
 준비합니다. 계산하지 않는 벽–벽 관계에 모델 입력을 요구하지 않습니다.
 
 Rigid의 접촉 경로는 실제 solid의 삼각형 표면, BVH 거리, 회전 속도 한계와 접촉 impulse를 사용합니다. 초기 관통은 오류이며, 접촉 시간 단계는 수렴·관통 검사를 통과해야 승인합니다. 기본 마찰과 반발은 0입니다. 물리 계수는 Interaction 모델, 허용오차·반복 횟수·시간 설정은 Task initialization에 둡니다. 접촉점의 impulse 이력과 누적 마찰 소산은 state에 보관하고, BVH 같은 프로세스 로컬 객체는 state에 저장하지 않습니다. 관통 관측치는 solid 교집합의 두께 추정과 접촉점 간격에 기반합니다.
+
+## 공유 초탄성과 Total Lagrangian solid
+
+`methods.continuum.hyperelastic`은 Catalog와 실행 상태를 모르는 순수 수치 함수입니다.
+같은 compressible Neo-Hookean 에너지에서 W, P, Cauchy 응력과 선택적인 dP/dF를
+계산합니다. FEM은 기준 tet4 형상함수 미분과 체적을 준비하고 매 Newton 반복의
+F에서 내부력과 일관 접선을 조립합니다. MPM은 접선 배열을 요청하지 않습니다.
+작은 변형률 J2와 공회전 요소는 기존 Solver 경로에 남습니다.
+
+Surface 지정 변위는 선택한 world 병진 성분에만 적용하며, 기준 외력과 함께
+내부 하중계수로 증가합니다. 이 계수는 물리 시간이 아닙니다. 후보의 J가 양수가
+아니면 line search 또는 증분 축소로 복구합니다. 최초 모델 오류와 지원하지 않는
+재료/해석 조합을 재시도로 숨기지 않으며 승인 상태는 수렴한 증분에서만 갱신합니다.
+
+MPM의 기준 위치는 ID에 대응하는 immutable 모델 데이터입니다. 현재 변형의
+음향 tensor 최대 파속으로 timestep을 제한하며, 유효하지 않은 후보는 같은 승인
+상태에서 최대 12회 timestep을 절반으로 줄여 다시 평가합니다. 양의 J와 유한한
+응답뿐 아니라 강한 타원성도 승인 전에 검사합니다. 고정 격자 이탈은 즉시
+거부하며, 재시도로도 유효한 재료 상태를 찾지 못하면 오류를 반환합니다. 관측 F는 극분해의 회전 보간과
+log-stretch 보간으로 구성하고 응력, 밀도, J, 에너지를 다시 계산합니다.
+
+Box Grid `configuration`은 기준 또는 현재 배치의 관측 위치를 뜻합니다.
+응력 성분은 두 경우 모두 world Cauchy 응력입니다. MPM의 `weighting`이
+`material-volume`이면 기준 관측은 V0, 현재 관측은 J V0로 가중 평균합니다.
+빈 cell은 0입니다. 전체 에너지 aggregate는 모든 초기화 solid의 W V0 합이며
+Box를 공간 필터로 사용하지 않습니다. 기존 질량밀도는 전체 cell 체적을 분모로
+사용하므로 이 재료 체적 평균과 구분됩니다. 물리 mesh와 timestep은 관측 설정에
+종속되지 않습니다. API, Calculation, Prediction과 Viewer는 이 metadata를 보존합니다.
