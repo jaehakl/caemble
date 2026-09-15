@@ -650,7 +650,7 @@ export function assertExperimentAuthoringSemantics(
       return
     }
     const config = task.config
-    const allowed = new Set(['parameters', 'materialModels', ...methodCategories])
+    const allowed = new Set(['parameters', 'materialModels', 'interactionModels', ...methodCategories])
     Reflect.ownKeys(config).forEach((key) => {
       if (typeof key !== 'string' || !allowed.has(key)) addIssue(issues, `${path}.${String(key)}`, 'is not allowed.')
     })

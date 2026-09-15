@@ -9,6 +9,7 @@ import struct
 
 from caemble_catalog import Catalog, CatalogNotFoundError
 from caemble_catalog.model_schema import validate_model_parameters, validate_parameter_schema
+from caemble_catalog.interactions import model_subject, validate_interactions, validate_interaction_selections
 
 
 def material_vars_hash(variables: dict) -> str:
@@ -42,8 +43,12 @@ def validate_material_snapshot(
 ) -> dict:
     path = "material_snapshot"
     fields = {"experiment", "tasks", "modelDefinitions", "selections", "sourceHash", "varsHash"}
-    if not isinstance(value, dict) or set(value) != fields:
+    if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - {"interactions", "interactionSelections"}:
         raise ValueError(f"{path} must contain {', '.join(sorted(fields))}.")
+    if not isinstance(value["tasks"], dict):
+        raise ValueError(f"{path}.tasks must be an object.")
+    value = {**value, "interactions": value.get("interactions", {}),
+             "interactionSelections": value.get("interactionSelections", {name: {} for name in value.get("tasks", {})})}
     if not isinstance(value["sourceHash"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["sourceHash"]):
         raise ValueError(f"{path}.sourceHash must be a SHA256 digest.")
     if not isinstance(value["varsHash"], str) or not re.fullmatch(r"fnv1a64:[0-9a-f]{16}", value["varsHash"]):
@@ -67,15 +72,18 @@ def validate_material_snapshot(
         return value
     if not isinstance(value["modelDefinitions"], list):
         raise ValueError(f"{path}.modelDefinitions must be an array.")
+    value["modelDefinitions"] = list(value["modelDefinitions"])
     definitions = {}
     for index, definition in enumerate(value["modelDefinitions"]):
         if not isinstance(definition, dict) or not isinstance(definition.get("key"), str):
             raise ValueError(f"{path}.modelDefinitions[{index}] must identify a Model definition.")
+        definition = {**definition, "subject": model_subject(definition)}
+        value["modelDefinitions"][index] = definition
         key = definition["key"]
         if not re.fullmatch(r"[^\s@]+@[1-9][0-9]*", key) or key in definitions:
             raise ValueError(f"{path}.modelDefinitions[{index}].key is invalid or duplicated.")
         required = {"key", "labelKo", "description", "equation", "conventions", "parameterSchema"}
-        if set(definition) - required - {"solverRequirements"} or not required <= set(definition):
+        if set(definition) - required - {"solverRequirements", "subject"} or not required <= set(definition):
             raise ValueError(f"{path}.modelDefinitions[{index}] must contain the complete Model definition.")
         for field in required - {"parameterSchema"}:
             if not isinstance(definition[field], str):
@@ -91,6 +99,7 @@ def validate_material_snapshot(
         if catalog is not None:
             try:
                 canonical = catalog.material_model(key)
+                canonical = {**canonical, "subject": model_subject(canonical)}
             except CatalogNotFoundError as error:
                 raise ValueError(f"{path}.modelDefinitions[{index}].key is not registered in the Catalog.") from error
             if {field: definition.get(field) for field in canonical} != canonical:
@@ -121,6 +130,8 @@ def validate_material_snapshot(
                     raise ValueError(f"{model_path} must contain model and parameters.")
                 if not isinstance(model["model"], str) or model["model"] not in definitions:
                     raise ValueError(f"{model_path}.model has no captured Model definition.")
+                if model_subject(definitions[model["model"]])["kind"] != "material":
+                    raise ValueError(f"{model_path} requires a single-material model.")
                 used_models.add(model["model"])
                 if not isinstance(model["parameters"], dict):
                     raise ValueError(f"{model_path}.parameters must be an object.")
@@ -128,6 +139,12 @@ def validate_material_snapshot(
                     validate_model_parameters(definitions[model["model"]], model["parameters"], f"{model_path}.parameters")
                 except (TypeError, OverflowError, RecursionError) as error:
                     raise ValueError(f"{model_path}.parameters is invalid.") from error
+    used_models.update(validate_interactions(value["interactions"], definitions, materials))
+    if not isinstance(value["interactionSelections"], dict) or set(value["interactionSelections"]) != set(value["tasks"]):
+        raise ValueError("interactionSelections must identify every Task")
+    for task, selected in value["interactionSelections"].items():
+        available = {**value["experiment"]["materials"], **value["tasks"][task]["materials"]}
+        validate_interaction_selections(selected, value["interactions"], available)
     if set(definitions) != used_models:
         raise ValueError(f"{path}.modelDefinitions must capture exactly the models used by its Materials.")
     for task, roles in value["selections"].items():

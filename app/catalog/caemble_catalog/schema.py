@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x43414531  # "CAE1"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
 
@@ -41,6 +41,7 @@ TABLE_ORDER = (
     "artifact_types",
     "solvers",
     "solver_parameters",
+    "solver_interaction_roles",
     "solver_material_roles",
     "solver_material_model_groups",
     "solver_material_model_options",
@@ -88,7 +89,8 @@ CREATE TABLE material_models (
     description TEXT NOT NULL,
     equation TEXT NOT NULL,
     conventions TEXT NOT NULL,
-    parameter_schema_json TEXT NOT NULL CHECK(json_valid(parameter_schema_json))
+    parameter_schema_json TEXT NOT NULL CHECK(json_valid(parameter_schema_json)),
+    subject_json TEXT NOT NULL DEFAULT '{"kind":"material"}' CHECK(json_valid(subject_json))
 ) STRICT;
 
 CREATE TABLE material_model_quantity_kind_usages (
@@ -125,6 +127,17 @@ CREATE TABLE solver_parameters (
     data_json TEXT NOT NULL,
     required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0, 1)),
     PRIMARY KEY (solver_name, solver_version, name),
+    UNIQUE (solver_name, solver_version, ordinal),
+    FOREIGN KEY (solver_name, solver_version) REFERENCES solvers(name, version) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE solver_interaction_roles (
+    solver_name TEXT NOT NULL,
+    solver_version TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    definition_json TEXT NOT NULL CHECK(json_valid(definition_json)),
+    PRIMARY KEY (solver_name, solver_version, role),
     UNIQUE (solver_name, solver_version, ordinal),
     FOREIGN KEY (solver_name, solver_version) REFERENCES solvers(name, version) ON DELETE CASCADE
 ) STRICT;

@@ -671,3 +671,13 @@ initialization/output, `sim.run`/`sim.record`/`sim.release`, 결과 QuantityKind
 unit과 axes 의미를 보여야 합니다. 예제 설명과 구체적인 Catalog 계약은
 Catalog record가 소유하며 repository Markdown에 별도 원본으로 복제하지
 않습니다.
+
+## MaterialInteraction 계약
+
+Catalog Model의 `subject`는 단일 재료 또는 재료 쌍을 구분합니다. 기존 subject 없는 저장 정의는 단일 재료로 해석합니다. 새 Catalog schema 6은 이를 SQLite에 저장하며 Solver의 `interactions` 역할도 Catalog에서 읽습니다. Draft의 `solver interaction-role upsert/remove`로 대상과 모델 그룹을 편집합니다.
+
+MaterialInteraction은 순서 없는 재료 쌍마다 하나이고 그 안에 여러 모델을 둘 수 있습니다. 저작 평가기는 `material.tsx`의 named export를 자동 수집하여 실제 사용한 재료 쌍만 동결합니다. BuiltMeasurement의 `interactions`와 Task별 `interactionSelections`가 전송 계약이며, 기존 MaterialSnapshot의 `materials` 모양은 유지합니다. Worker는 정의·계수·중복·호환성과 동결한 선택을 검증합니다. 이전 입력에서 새 필드가 없으면 빈 관계로 해석하며 제거된 Solver 버전은 재지정하지 않습니다.
+
+Solver는 `world.interactions`, `world.interactionSelections`와 `world.interactionSubjects`를 받습니다. `kernel.api.world.interaction_model`로 두 part의 역할/그룹 모델을 읽습니다. 대칭 모델은 양쪽 순서로 조회할 수 있고 ordered 모델을 뒤집어 조회하면 오류입니다. 필수 그룹에 모델이 없거나 여러 후보가 있는데 Task의 `config.interactionModels` 선택이 없으면 실행 전에 거부합니다. 선택 그룹은 Catalog에 명시한 기본 동작을 Solver가 구현해야 합니다.
+
+Rigid의 접촉 경로는 실제 solid의 삼각형 표면, BVH 거리, 회전 속도 한계와 접촉 impulse를 사용합니다. 초기 관통은 오류이며, 접촉 시간 단계는 수렴·관통 검사를 통과해야 승인합니다. 기본 마찰과 반발은 0입니다. 물리 계수는 Interaction 모델, 허용오차·반복 횟수·시간 설정은 Task initialization에 둡니다. 접촉점의 impulse 이력과 누적 마찰 소산은 state에 보관하고, BVH 같은 프로세스 로컬 객체는 state에 저장하지 않습니다. 관통 관측치는 solid 교집합의 두께 추정과 접촉점 간격에 기반합니다.

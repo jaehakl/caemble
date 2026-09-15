@@ -107,6 +107,8 @@ async def promote_preflight(db, batch_id, experiment, user, copies):
     measurement.vars = frozen["experiment"]["variables"]
     measurement.material_snapshot = {"experiment": frozen["materialSnapshot"], "tasks": frozen["taskMaterialSnapshots"],
         "modelDefinitions": frozen["modelDefinitions"], "selections": frozen["materialSelections"],
+        "interactions": frozen.get("interactions", {}),
+        "interactionSelections": frozen.get("interactionSelections", {name: {} for name in frozen["taskMaterialSnapshots"]}),
         "sourceHash": frozen["experiment"]["sourceHash"], "varsHash": frozen["varsHash"]}
     contracts = {row.name: row for row in (await db.scalars(select(ExperimentRecord).where(
         ExperimentRecord.experiment_id == experiment.id))).all()}

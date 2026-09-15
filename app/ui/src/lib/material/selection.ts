@@ -15,37 +15,7 @@ export function selectTaskMaterialModels(
   const selections: Record<string, Record<string, Record<string, string>>> = Object.create(null)
   const consumed = new Set<string>()
   for (const role of descriptor.materials) {
-    const parts: CadScenePart[] = []
-    if (role.target.category === 'geometry') {
-      parts.push(...scenes[role.target.source].parts)
-    } else {
-      const calls = config[role.target.category]
-      if (Array.isArray(calls))
-        for (const [callIndex, call] of calls.entries()) {
-          if (call?.methodId !== role.target.methodId) continue
-          const targetPath = `${path}.${role.target.category}[${callIndex}].target`
-          if (!Array.isArray(call.target)) throw new CadModelError(`${targetPath} must be a target list.`)
-          for (const [targetIndex, target] of call.target.entries()) {
-            if (typeof target !== 'string')
-              throw new CadModelError(`${targetPath}[${targetIndex}] must name a target group.`)
-            const match = /^(experiment|task)\.(geometry|surface)\.(.+)$/u.exec(target)
-            if (!match) throw new CadModelError(`${targetPath}[${targetIndex}]: invalid Material target ${target}.`)
-            const scene = scenes[match[1] as 'experiment' | 'task']
-            const group = (match[2] === 'geometry' ? scene.geometryGroups : scene.surfaceGroups).find(
-              (item) => item.name === match[3],
-            )
-            if (!group)
-              throw new CadModelError(`${targetPath}[${targetIndex}]: Material target ${target} does not exist.`)
-            parts.push(
-              ...scene.parts.filter((part) =>
-                match[2] === 'geometry'
-                  ? group.geometryIds.includes(part.id)
-                  : part.surfaces.some((surface) => group.surfaceIds.includes(surface.id)),
-              ),
-            )
-          }
-        }
-    }
+    const parts = taskTargetParts(role.target, config, scenes, path)
     for (const part of parts) {
       if (!part.material && role.modelGroups.some((group) => group.required))
         throw new CadModelError(
@@ -102,4 +72,44 @@ export function selectTaskMaterialModels(
     }
   }
   return selections
+}
+
+export function taskTargetParts(
+  target: KernelDescriptor['materials'][number]['target'],
+  config: Readonly<Record<string, unknown>>,
+  scenes: Readonly<{ experiment: CadScene; task: CadScene }>,
+  path: string,
+): CadScenePart[] {
+  const parts: CadScenePart[] = []
+  if (target.category === 'geometry') {
+    parts.push(...scenes[target.source].parts)
+  } else {
+    const calls = config[target.category]
+    if (Array.isArray(calls))
+      for (const [callIndex, call] of calls.entries()) {
+        if (call?.methodId !== target.methodId) continue
+        const targetPath = `${path}.${target.category}[${callIndex}].target`
+        if (!Array.isArray(call.target)) throw new CadModelError(`${targetPath} must be a target list.`)
+        for (const [targetIndex, target] of call.target.entries()) {
+          if (typeof target !== 'string')
+            throw new CadModelError(`${targetPath}[${targetIndex}] must name a target group.`)
+          const match = /^(experiment|task)\.(geometry|surface)\.(.+)$/u.exec(target)
+          if (!match) throw new CadModelError(`${targetPath}[${targetIndex}]: invalid Material target ${target}.`)
+          const scene = scenes[match[1] as 'experiment' | 'task']
+          const group = (match[2] === 'geometry' ? scene.geometryGroups : scene.surfaceGroups).find(
+            (item) => item.name === match[3],
+          )
+          if (!group)
+            throw new CadModelError(`${targetPath}[${targetIndex}]: Material target ${target} does not exist.`)
+          parts.push(
+            ...scene.parts.filter((part) =>
+              match[2] === 'geometry'
+                ? group.geometryIds.includes(part.id)
+                : part.surfaces.some((surface) => group.surfaceIds.includes(surface.id)),
+            ),
+          )
+        }
+      }
+  }
+  return parts
 }

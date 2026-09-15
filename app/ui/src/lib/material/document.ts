@@ -1,4 +1,5 @@
-﻿import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+﻿import { normalizeInteractions, selectTaskInteractionModels } from './interactions'
+import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
 import type { MaterialSnapshot } from '@/contracts/material'
 import type { EvaluatedRuntimeDocumentSnapshot } from '@/lib/cad/execution/snapshot'
@@ -31,6 +32,11 @@ export function resolveSceneMaterials(
   if (stored) {
     for (const model of stored.modelDefinitions) {
       const current = catalog.materialModels.find((item) => item.key === model.key)
+      if (
+        canonicalMaterialJson(current?.subject ?? { kind: 'material' }) !==
+        canonicalMaterialJson(model.subject ?? { kind: 'material' })
+      )
+        throw new Error(`Saved model subject ${model.key} no longer matches the Catalog.`)
       const fields = ['key', 'labelKo', 'description', 'parameterSchema', 'equation', 'conventions'] as const
       if (
         !current ||
@@ -119,11 +125,41 @@ export function resolveSceneMaterials(
   )
   if (stored && canonicalMaterialJson(selections) !== canonicalMaterialJson(stored.selections))
     throw new Error('Saved model selections do not match the Experiment Task selections.')
+  const authoredInteractions = normalizeInteractions(snapshot.interactions ?? {}, catalog)
+  const interactions = stored ? normalizeInteractions(stored.interactions ?? {}, catalog) : authoredInteractions
+  if (stored && canonicalMaterialJson(interactions) !== canonicalMaterialJson(authoredInteractions))
+    throw new Error('Saved MaterialInteractions do not match the current source and Vars.')
+  const interactionSelections = Object.fromEntries(
+    names.map((name) => {
+      const task = snapshot.simulationProgram.tasks[name]
+      const solver = catalog.solvers.find(
+        (item) => item.name === task.kernel.name && item.version === task.kernel.version,
+      )
+      return [
+        name,
+        solver
+          ? selectTaskInteractionModels(
+              solver.descriptor,
+              task.config as Readonly<Record<string, unknown>>,
+              { experiment: scenes.experiment, task: scenes.tasks[name] },
+              interactions,
+              catalog,
+              `tasks.${name}.config`,
+            )
+          : {},
+      ]
+    }),
+  )
+  const previousSelections = stored?.interactionSelections ?? Object.fromEntries(names.map((name) => [name, {}]))
+  if (stored && canonicalMaterialJson(interactionSelections) !== canonicalMaterialJson(previousSelections))
+    throw new Error('Saved Interaction model selections do not match the Experiment Task selections.')
   const modelIds = new Set(
     [common, ...Object.values(tasks)].flatMap((scope) =>
       Object.values(scope.materials).flatMap((material) => Object.values(material.models).map((model) => model.model)),
     ),
   )
+  for (const interaction of Object.values(interactions))
+    for (const model of Object.values(interaction.models)) modelIds.add(model.model)
   if (
     stored &&
     (stored.modelDefinitions.length !== modelIds.size ||
@@ -132,6 +168,8 @@ export function resolveSceneMaterials(
   )
     throw new Error('Saved modelDefinitions must contain exactly the model contracts used by the Material snapshots.')
   return {
+    interactions,
+    interactionSelections,
     materialSnapshot: common,
     taskMaterialSnapshots: tasks,
     warnings: [],

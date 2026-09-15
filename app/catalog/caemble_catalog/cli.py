@@ -15,6 +15,7 @@ from .admin import (
     publish_draft,
     rebase_database,
     refresh_derived_data,
+    validate_interaction_role,
     writable_connection,
 )
 from .database import Catalog
@@ -317,6 +318,7 @@ def _run_solver(args: argparse.Namespace) -> None:
         return
     handler = {
         "parameter": _edit_parameter,
+        "interaction-role": _edit_interaction_role,
         "material-role": _edit_material_role,
         "material-model-group": _edit_material_model_group,
             "material-model-option": _edit_material_model_option,
@@ -406,7 +408,12 @@ def _edit_material_model(args: argparse.Namespace) -> None:
                 "key": args.key, "labelKo": args.label_ko, "description": args.description,
                 "equation": args.equation, "conventions": args.conventions,
                 "parameterSchema": args.schema_json,
+                "subject": args.subject_json,
             })
+        for row in connection.execute("SELECT definition_json FROM solver_interaction_roles"):
+            validate_interaction_role(connection, json.loads(row[0]))
+        if connection.execute("SELECT 1 FROM solver_material_model_options o JOIN material_models m ON m.key=o.model_key WHERE json_extract(m.subject_json, '$.kind') != 'material' LIMIT 1").fetchone():
+            raise CatalogError("Material roles require single-material models")
     refresh_derived_data(args.database)
 
 
@@ -426,6 +433,19 @@ def _edit_parameter(args: argparse.Namespace) -> None:
                                                   **({"required": False} if not args.required else {})})
 
     _mutate(args.database, args.name, args.version, operation)
+
+
+def _edit_interaction_role(args: argparse.Namespace) -> None:
+    def apply(manifest):
+        roles = manifest["descriptor"].setdefault("interactions", [])
+        previous = next((item for item in roles if item["role"] == args.role), None)
+        if previous is not None:
+            roles.remove(previous)
+        if args.row_action == "upsert":
+            roles.append({**args.definition_json, "role": args.role})
+        elif previous is None:
+            raise CatalogNotFoundError(f"Unknown interaction role: {args.role}")
+    _mutate(args.database, args.name, args.version, apply)
 
 
 def _edit_material_role(args: argparse.Namespace) -> None:
@@ -668,6 +688,13 @@ def build_parser() -> argparse.ArgumentParser:
     _descriptor(upsert)
     upsert.add_argument("--required", action=argparse.BooleanOptionalAction, default=True)
 
+    interaction = solver_actions.add_parser("interaction-role")
+    upsert, remove = _row_actions(interaction)
+    for item in (upsert, remove):
+        _identity(item)
+        item.add_argument("role")
+    upsert.add_argument("--definition-json", type=_data, required=True)
+
     role = solver_actions.add_parser("material-role")
     upsert, remove = _row_actions(role)
     for item in (upsert, remove):
@@ -782,6 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--equation", required=True)
     upsert.add_argument("--conventions", required=True)
     upsert.add_argument("--schema-json", type=_data, required=True)
+    upsert.add_argument("--subject-json", type=_data, default={"kind": "material"})
     remove = material_model_actions.add_parser("remove")
     remove.add_argument("key")
 

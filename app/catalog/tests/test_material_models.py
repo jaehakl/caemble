@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,6 +66,31 @@ class MaterialModelTests(unittest.TestCase):
                 self.assertEqual(group["oneOf"], ["optics.constant-complex-index@1"])
             self.assertEqual(run("solver", "material-model-option", "upsert", *identity, "optics.frequency-sampled-complex-index@1"), 0)
             self.assertEqual(run("query", "material-model", "optics.constant-complex-index@1"), 0)
+
+    def test_interaction_roles_expand_models_and_reject_invalid_draft_changes(self):
+        with open_catalog() as catalog:
+            runtime = catalog.runtime_slice(solvers=[("rigid_body", "2.0.0")], quantity_kinds=[])
+            self.assertEqual({model["key"] for model in runtime["materialModels"]}, {
+                "mechanics.mass-density@1", "contact.coulomb@1", "contact.restitution@1"})
+            self.assertEqual(catalog.material_model_relations("contact.coulomb@1")["solverRequirements"][0]["role"], "contact")
+            role = catalog.get_solver_manifest("rigid_body", "2.0.0")["descriptor"]["interactions"][0]
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "draft.sqlite3"
+            def run(*args):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    return main(["--database", str(draft), *args])
+            self.assertEqual(run("draft", "create", "--source", str(catalog_path())), 0)
+            self.assertEqual(run("material-model", "remove", "contact.coulomb@1"), 1)
+            invalid = copy.deepcopy(role)
+            invalid["modelGroups"][0]["oneOf"] = ["mechanics.mass-density@1"]
+            del invalid["role"]
+            self.assertEqual(run("solver", "interaction-role", "upsert", "rigid_body", "2.0.0", "contact", "--definition-json", json.dumps(invalid)), 1)
+            invalid = copy.deepcopy(role)
+            del invalid["role"]
+            invalid["target"]["methodId"] = "missing.method"
+            self.assertEqual(run("solver", "interaction-role", "upsert", "rigid_body", "2.0.0", "contact", "--definition-json", json.dumps(invalid)), 1)
+            with open_catalog(draft) as catalog:
+                self.assertEqual(catalog.get_solver_manifest("rigid_body", "2.0.0")["descriptor"]["interactions"][0], role)
 
     def test_optional_objects_and_variable_complete_term_sets(self):
         numeric = {"kind": "value", "dtype": "float64", "shape": []}

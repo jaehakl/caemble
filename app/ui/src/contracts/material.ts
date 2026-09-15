@@ -23,3 +23,20 @@ export type MaterialSnapshot = Readonly<{
 export type TaskMaterialSelections = Readonly<
   Record<string, Readonly<Record<string, Readonly<Record<string, string>>>>>
 >
+
+export type MaterialInteractionDefinition = Readonly<{
+  between: readonly [string, string]
+  models: Readonly<Record<string, MaterialModelInstance>>
+}>
+export type InteractionSnapshot = Readonly<Record<string, MaterialInteractionDefinition>>
+/** null records the descriptor's default behavior for an absent model. */
+export type TaskInteractionSelections = Readonly<
+  Record<
+    string,
+    readonly Readonly<{
+      between: readonly [string, string]
+      interaction: string | null
+      models: Readonly<Record<string, string | null>>
+    }>[]
+  >
+>

@@ -14,6 +14,7 @@ from .database import Catalog
 from .errors import CatalogError, CatalogNotFoundError
 from .schema import APPLICATION_ID, TABLE_ORDER, create_schema, parse_experiment_version
 from .model_schema import schema_values, validate_parameter_schema
+from .interactions import model_subject
 
 
 def canonical_json(value: Any) -> str:
@@ -54,6 +55,67 @@ def _insert_data_usages(
     return ordinal
 
 
+def validate_interaction_role(
+    connection: sqlite3.Connection,
+    role: dict[str, Any],
+    methods: dict[str, Any] | None = None,
+) -> None:
+    if not isinstance(role, dict) or set(role) != {"role", "description", "target", "modelGroups"}:
+        raise CatalogError("Interaction role requires role, description, target and modelGroups")
+    if (
+        not isinstance(role.get("role"), str)
+        or not role["role"].strip()
+        or not isinstance(role.get("description"), str)
+    ):
+        raise CatalogError("Interaction role requires a name and description")
+    target = role.get("target", {})
+    if not isinstance(target, dict):
+        raise CatalogError("Interaction role target must be an object")
+    if target.get("category") == "geometry":
+        valid_target = set(target) == {"category", "source"} and target["source"] in {"experiment", "task"}
+    else:
+        valid_target = (
+            set(target) == {"category", "methodId"}
+            and target.get("category") in {"initializations", "boundaryConditions", "outputs"}
+            and isinstance(target.get("methodId"), str)
+        )
+    if not valid_target or not isinstance(role.get("modelGroups"), list) or not role["modelGroups"]:
+        raise CatalogError("Interaction role requires a valid target and model groups")
+    if methods is not None and target["category"] != "geometry":
+        if not any(
+            method["methodId"] == target["methodId"] for method in methods.get(target["category"], [])
+        ):
+            raise CatalogError(f"Interaction role targets an unavailable method: {target['methodId']}")
+    groups = set()
+    for group in role["modelGroups"]:
+        if not isinstance(group, dict) or set(group) - {"key", "required", "oneOf", "defaultBehavior"}:
+            raise CatalogError("Interaction model group has unknown fields")
+        if (
+            not isinstance(group.get("key"), str)
+            or not group["key"].strip()
+            or group["key"] in groups
+            or not isinstance(group.get("required"), bool)
+            or not isinstance(group.get("oneOf"), list)
+            or not group["oneOf"]
+            or any(not isinstance(key, str) for key in group["oneOf"])
+            or len(group["oneOf"]) != len(set(group["oneOf"]))
+        ):
+            raise CatalogError("Interaction model groups require distinct keys, required and oneOf")
+        groups.add(group["key"])
+        if "defaultBehavior" in group and (
+            not isinstance(group["defaultBehavior"], str) or not group["defaultBehavior"].strip()
+        ):
+            raise CatalogError("Interaction defaultBehavior must be a nonempty string")
+        if not group["required"] and "defaultBehavior" not in group:
+            raise CatalogError("Optional Interaction groups must declare defaultBehavior")
+        for key in group["oneOf"]:
+            model = connection.execute(
+                "SELECT subject_json FROM material_models WHERE key=?", (key,)
+            ).fetchone()
+            if model is None or json.loads(model[0])["kind"] != "material-pair":
+                raise CatalogError(f"Interaction group requires a material-pair model: {key}")
+
+
 def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
     descriptor = manifest["descriptor"]
     solver = (descriptor["name"], descriptor["version"])
@@ -71,6 +133,9 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
             descriptor["minimumOutputs"],
         ),
     )
+    for ordinal, role in enumerate(descriptor.get("interactions", [])):
+        validate_interaction_role(connection, role, descriptor.get("methods", {}))
+        connection.execute("INSERT INTO solver_interaction_roles VALUES (?, ?, ?, ?, ?)", (*solver, ordinal, role["role"], canonical_json(role)))
     usage_ordinal = 0
     for ordinal, (name, parameter) in enumerate(descriptor.get("parameters", {}).items()):
         data = parameter["data"]
@@ -266,12 +331,15 @@ def insert_material_model(connection: sqlite3.Connection, definition: dict[str, 
     base, separator, version = key.rpartition("@")
     if not separator or not base or not version.isascii() or not version.isdigit() or str(int(version)) != version or int(version) < 1:
         raise CatalogError("Material model key must contain an exact positive version: model-id@1")
+    subject = definition.get("subject", {"kind": "material"})
+    if subject not in ({"kind": "material"}, {"kind": "material-pair", "exchange": "symmetric"}, {"kind": "material-pair", "exchange": "ordered"}):
+        raise CatalogError("Model subject requires material or material-pair with symmetric/ordered exchange")
     validate_parameter_schema(definition["parameterSchema"])
     if definition["parameterSchema"]["kind"] != "object":
         raise CatalogError("Material model parameterSchema must be an object")
     connection.execute(
-        "INSERT INTO material_models VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET label_ko=excluded.label_ko, description=excluded.description, equation=excluded.equation, conventions=excluded.conventions, parameter_schema_json=excluded.parameter_schema_json",
-        (key, definition["labelKo"], definition["description"], definition["equation"], definition["conventions"], canonical_json(definition["parameterSchema"])),
+        "INSERT INTO material_models VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET label_ko=excluded.label_ko, description=excluded.description, equation=excluded.equation, conventions=excluded.conventions, parameter_schema_json=excluded.parameter_schema_json, subject_json=excluded.subject_json",
+        (key, definition["labelKo"], definition["description"], definition["equation"], definition["conventions"], canonical_json(definition["parameterSchema"]), canonical_json(subject)),
     )
     connection.execute("DELETE FROM material_model_quantity_kind_usages WHERE model_key = ?", (key,))
     for path, leaf in schema_values(definition["parameterSchema"]):
@@ -455,11 +523,18 @@ def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
             validate_experiment_calculations(catalog.experiment(experiment["coordinate"])["calculations"])
         for model in catalog.material_models():
             validate_parameter_schema(model["parameterSchema"])
+            model_subject(model)
         for manifest in catalog.solver_manifests():
             validate_output_contracts(catalog, manifest["descriptor"])
+            for role in manifest["descriptor"].get("interactions", []):
+                validate_interaction_role(catalog._connection, role, manifest["descriptor"].get("methods", {}))
             for role in manifest["descriptor"]["materials"]:
                 if not role["modelGroups"] or any(not group["oneOf"] for group in role["modelGroups"]):
                     raise CatalogError(f"Solver {manifest['descriptor']['name']} role {role['role']} requires nonempty model groups")
+                for group in role["modelGroups"]:
+                    for key in group["oneOf"]:
+                        if model_subject(catalog.material_model(key))["kind"] != "material":
+                            raise CatalogError(f"Material role requires a single-material model: {key}")
         if catalog._all("PRAGMA foreign_key_check"):
             raise CatalogError("Catalog contains invalid foreign-key references")
     destination_path.parent.mkdir(parents=True, exist_ok=True)
@@ -503,6 +578,14 @@ def _rebuild_solver_usages(connection: sqlite3.Connection) -> None:
             connection.execute("INSERT INTO solver_quantity_kind_usages VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (*solver, ordinal, row["quantity_kind"], "material", f"materials.{row['role']}.modelGroups.{row['group_key']}.{row['model_key']}.{row['path']}", row["unit"]))
             ordinal += 1
+        for row in connection.execute("SELECT definition_json FROM solver_interaction_roles WHERE solver_name=? AND solver_version=? ORDER BY ordinal", solver):
+            role = json.loads(row["definition_json"])
+            for group in role["modelGroups"]:
+                for key in group["oneOf"]:
+                    for usage in connection.execute("SELECT * FROM material_model_quantity_kind_usages WHERE model_key=? ORDER BY path", (key,)):
+                        connection.execute("INSERT INTO solver_quantity_kind_usages VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (*solver, ordinal, usage["quantity_kind"], "interaction", f"interactions.{role['role']}.modelGroups.{group['key']}.{key}.{usage['path']}", usage["unit"]))
+                        ordinal += 1
         for row in connection.execute(
             "SELECT name, data_json FROM solver_input_ports WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
             solver,

@@ -31,7 +31,7 @@ async def test_actual_surface_child_rejection_retry_and_checkpoint_branch(key, c
                      if item["methodId"] == "acoustics.time")
     time_rule["parameters"]["windowSteps"] = 1
     measurement["experiment"]["taskScenes"]["wrongWindow"] = deepcopy(measurement["experiment"]["taskScenes"][sound_name])
-    for field in ("taskMaterialSnapshots", "materialSelections"):
+    for field in ("taskMaterialSnapshots", "materialSelections", "interactionSelections"):
         measurement[field]["wrongWindow"] = deepcopy(measurement[field][sound_name])
     run = CaeRun(measurement=measurement, max_run_seconds=180, job_id="transient-native-lifecycle")
     sim = SimulationApi(run)

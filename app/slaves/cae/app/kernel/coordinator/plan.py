@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 from caemble_catalog.model_schema import validate_parameter_schema
+from caemble_catalog.interactions import model_subject
+from app.kernel.catalog.interactions import normalize_interactions, select_interaction_models
 
 from app.kernel.api.errors import CaeError
 from app.kernel.catalog import solver_catalog
@@ -48,12 +50,15 @@ class TaskSpec:
     scene: Mapping[str, Any]
     material_snapshot: Mapping[str, Any]
     material_selections: Mapping[str, Any] = field(default_factory=dict)
+    interactions: Mapping[str, Any] = field(default_factory=dict)
+    interaction_selections: Mapping[str, Any] = field(default_factory=dict)
+    interaction_subjects: Mapping[str, Any] = field(default_factory=dict)
     artifact_payload_kinds: Mapping[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
             "task", "descriptor", "output_specs", "scene",
-            "material_snapshot", "material_selections", "artifact_payload_kinds",
+            "material_snapshot", "material_selections", "artifact_payload_kinds", "interactions", "interaction_selections", "interaction_subjects",
         ):
             object.__setattr__(self, name, read_only(getattr(self, name)))
 
@@ -109,9 +114,14 @@ class RunPlan:
             raise CaeError("invalid_material", "modelDefinitions must be an array")
         definitions = {}
         for index, definition in enumerate(measurement["modelDefinitions"]):
+            if isinstance(definition, Mapping):
+                try:
+                    definition = {**definition, "subject": model_subject(definition)}
+                except ValueError as error:
+                    raise CaeError("invalid_material", str(error)) from error
             path = f"modelDefinitions[{index}]"
             required = {"key", "labelKo", "description", "equation", "conventions", "parameterSchema"}
-            if not isinstance(definition, Mapping) or not required <= set(definition) or set(definition) - required - {"solverRequirements"}:
+            if not isinstance(definition, Mapping) or not required <= set(definition) or set(definition) - required - {"solverRequirements", "subject"}:
                 raise CaeError("invalid_material", f"{path} must contain a complete Model definition")
             if any(not isinstance(definition[field], str) for field in required - {"parameterSchema"}):
                 raise CaeError("invalid_material", f"{path} requires string model identification and description fields")
@@ -133,6 +143,17 @@ class RunPlan:
                 raise CaeError("invalid_material", f"{field_name} must identify every Task exactly once")
         experiment_materials = normalize_material_snapshot(measurement.get("materialSnapshot"), definitions, "experiment.materials")
         known_materials = dict(experiment_materials)
+        task_snapshots = {}
+        for name, snapshot in measurement["taskMaterialSnapshots"].items():
+            task_snapshots[name] = normalize_material_snapshot(snapshot, definitions, f"tasks.{name}.materials")
+            for material_name, material in task_snapshots[name].items():
+                if material_name in known_materials and known_materials[material_name] != material:
+                    raise CaeError("invalid_material", f"Material {material_name!r} has conflicting definitions in this Experiment")
+                known_materials[material_name] = material
+        interactions = normalize_interactions(measurement.get("interactions", {}), definitions, known_materials)
+        frozen_interactions = measurement.get("interactionSelections", {name: {} for name in tasks})
+        if not isinstance(frozen_interactions, Mapping) or set(frozen_interactions) != set(tasks):
+            raise CaeError("invalid_material", "interactionSelections must identify every Task")
         specs = {}
         for name, task in tasks.items():
             kernel = task["kernel"]
@@ -141,13 +162,7 @@ class RunPlan:
             abi_version = solver_catalog.abi_version(kernel["name"], kernel["version"])
             if abi_version != 3:
                 raise CaeError("unsupported_solver_abi", f"task {name} requires Solver ABI 3")
-            task_materials = normalize_material_snapshot(
-                measurement["taskMaterialSnapshots"][name], definitions, f"tasks.{name}.materials",
-            )
-            for material_name, material in task_materials.items():
-                if material_name in known_materials and known_materials[material_name] != material:
-                    raise CaeError("invalid_material", f"Material {material_name!r} has conflicting definitions in this Experiment")
-                known_materials[material_name] = material
+            task_materials = task_snapshots[name]
             selections = select_material_models(
                 descriptor, config,
                 {"experiment": measurement["experiment"]["scene"], "task": measurement["experiment"]["taskScenes"][name]},
@@ -163,6 +178,10 @@ class RunPlan:
                 artifact_type: solver_catalog.artifact_type(artifact_type).get("payloadKind")
                 for artifact_type in artifact_types
             }
+            interaction_selections = select_interaction_models(descriptor, task["config"],
+                {"experiment": measurement["experiment"]["scene"], "task": measurement["experiment"]["taskScenes"][name]},
+                interactions, definitions, frozen_interactions[name])
+            applicable = {binding["interaction"] for bindings in interaction_selections.values() for binding in bindings if binding["interaction"] is not None}
             specs[name] = TaskSpec(
                 name=name,
                 task={"kernel": kernel, "config": config},
@@ -173,9 +192,13 @@ class RunPlan:
                 scene=measurement["experiment"]["taskScenes"][name],
                 material_snapshot=task_materials,
                 material_selections=selections,
+                interactions={key: interactions[key] for key in applicable},
+                interaction_selections=interaction_selections,
+                interaction_subjects={model["model"]: model_subject(definitions[model["model"]]) for key in applicable for model in interactions[key]["models"].values()},
                 artifact_payload_kinds=artifact_payload_kinds,
             )
         used_definitions = {model["model"] for material in known_materials.values() for model in material["models"].values()}
+        used_definitions.update(model["model"] for interaction in interactions.values() for model in interaction["models"].values())
         if set(definitions) != used_definitions:
             raise CaeError("invalid_material", "modelDefinitions must capture exactly the models present in Material snapshots")
         contracts = measurement["experiment"]["simulationProgram"].get("resultContracts")
@@ -229,4 +252,7 @@ class RunPlan:
                 "task": task.material_snapshot,
             },
             "materialSelections": task.material_selections,
+            "interactions": task.interactions,
+            "interactionSelections": task.interaction_selections,
+            "interactionSubjects": task.interaction_subjects,
         })

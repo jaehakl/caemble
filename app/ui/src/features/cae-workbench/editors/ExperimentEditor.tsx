@@ -15,6 +15,7 @@ import type { CadEditorAuthoringState, CadEditorRevealRequest } from '@/features
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CadViewerSelectionQuery } from '@/features/viewer/viewer/selection'
 import { cadSourceIdSelectionAtRange } from '@/features/viewer/editor/cadSelectionSource'
+import { TaskInteractions } from './TaskInteractions'
 import { DocumentFeedback } from './DocumentFeedback'
 
 const protectedCorePaths: readonly string[] = [
@@ -310,6 +311,16 @@ export function ExperimentEditor({
           </button>
         </div>
       </header>
+      {activeTaskName &&
+      controller.materialSnapshot &&
+      controller.validatedRevision === controller.revision &&
+      controller.successfulRevision === controller.revision ? (
+        <TaskInteractions
+          task={activeTaskName}
+          snapshot={controller.materialSnapshot}
+          onOpenSource={() => selectFile(EXPERIMENT_MATERIAL_PATH)}
+        />
+      ) : null}
       <div className="min-h-0 flex-1" role="tabpanel">
         {editorModels.loadError ? (
           <div className="grid h-full place-items-center bg-rose-50 p-6 text-sm text-rose-700">

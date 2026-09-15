@@ -5,6 +5,7 @@ import type { SimulationProgramManifest } from '../simulation/types'
 import type { SerializableCadScene } from './meshSerialization'
 
 export type EvaluatedExperimentSnapshot = Readonly<{
+  interactions?: import('@/contracts/material').InteractionSnapshot
   kind: 'experiment'
   sourceHash: string
   variables: Readonly<Vars>

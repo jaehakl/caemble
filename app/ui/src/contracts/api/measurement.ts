@@ -11,6 +11,8 @@ export type MeasurementMaterialSnapshot = Readonly<{
   tasks: Readonly<Record<string, MaterialSnapshot>>
   sourceHash: string
   varsHash: string
+  interactions?: import('@/contracts/material').InteractionSnapshot
+  interactionSelections?: Readonly<Record<string, import('@/contracts/material').TaskInteractionSelections>>
   modelDefinitions: readonly CatalogMaterialModel[]
   selections: Readonly<Record<string, TaskMaterialSelections>>
 }>

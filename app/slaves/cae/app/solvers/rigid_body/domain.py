@@ -30,6 +30,7 @@ def selected_roots(invocation, rule):
 def model_request(invocation):
     """Only physical inputs identify a model; observation Boxes never enter its key."""
     roots = {}
+    motion_types = {}
     for rule in invocation.config["initializations"]:
         if rule["methodId"] != "rigid.body":
             continue
@@ -37,6 +38,9 @@ def model_request(invocation):
             if key in roots:
                 raise ValueError(f"rigid body root {key!r} is selected more than once")
             roots[key] = root
+            motion_types[key] = parameter(rule["parameters"].get("motionType", "dynamic"))
+            if motion_types[key] not in {"dynamic", "static"}:
+                raise ValueError("rigid.body motionType must be dynamic or static")
     if not roots:
         raise ValueError("rigid_body requires at least one rigid.body Geometry target")
     segments = int(parameter(invocation.config["parameters"].get("massAngularSegments", 256)))
@@ -56,8 +60,8 @@ def model_request(invocation):
             raise ValueError(f"{rule['methodId']} must target initialized rigid body roots")
         resolved.append((rule["methodId"], keys, rule["parameters"]))
     units = {source: invocation.world[source]["lengthUnit"] for source, _ in roots}
-    identity = str(ContentKey.from_parts("rigid.model.v1", roots, materials, units, segments, resolved))
-    return roots, materials, resolved, segments, identity
+    identity = str(ContentKey.from_parts("rigid.model.v2", roots, materials, units, segments, resolved, motion_types, invocation.world.get("interactions", {}), invocation.world.get("interactionSelections", {}), [rule for rule in invocation.config["initializations"] if rule["methodId"] == "rigid.contact"]))
+    return roots, materials, resolved, segments, motion_types, identity
 
 
 def reference_frame(node, scale):
@@ -72,12 +76,14 @@ def reference_frame(node, scale):
 
 
 async def build_model(invocation, request):
-    roots, materials, rules, segments, identity = request
+    roots, materials, rules, segments, motion_types, identity = request
     body_ids, root_ids, sources = [], [], []
     masses, densities, centers, inertias = [], [], [], []
     positions, orientations, vertices, triangles = [], [], [], []
     vertex_offsets, triangle_offsets = [0], [0]
     root_bodies = {}
+    static = []
+    body_parts = []
     for key, root in sorted(roots.items()):
         source, root_id = key
         if invocation.cancellation is not None:
@@ -103,6 +109,8 @@ async def build_model(invocation, request):
             body_ids.append(f"{source}:{root_id}:{component.identity}")
             root_ids.append(root_id)
             sources.append(source)
+            static.append(motion_types[key] == "static")
+            body_parts.append(root)
             masses.append(properties.mass)
             densities.append(density)
             centers.append(properties.center)
@@ -116,6 +124,7 @@ async def build_model(invocation, request):
     count = len(body_ids)
     model = {
         "identity": identity, "bodyIds": tuple(body_ids), "rootIds": tuple(root_ids),
+        "static": np.asarray(static, dtype=bool),
         "sources": tuple(sources), "masses": np.asarray(masses), "densities": np.asarray(densities),
         "localCenters": np.asarray(centers), "inertias": np.asarray(inertias),
         "vertices": np.concatenate(vertices), "triangles": np.concatenate(triangles),
@@ -155,6 +164,31 @@ async def build_model(invocation, request):
     rotations = quaternion_to_matrix(orientation)
     momentum = np.einsum("bij,bjk,bkl,bl->bi", rotations, model["inertias"],
                          rotations.swapaxes(-1, -2), omega)
+    if np.any(velocity[model["static"]]) or np.any(momentum[model["static"]]):
+        raise ValueError("static rigid bodies cannot have initial motion")
+    from app.kernel.api.world import interaction_model
+    coefficients = np.zeros((count, count, 3))
+    for i in range(count):
+        for j in range(i + 1, count):
+            friction = interaction_model(invocation.world, body_parts[i], body_parts[j], "contact", "friction")
+            rebound = interaction_model(invocation.world, body_parts[i], body_parts[j], "contact", "restitution")
+            if friction is not None:
+                if friction["model"] != "contact.coulomb@1":
+                    raise ValueError("rigid contact requires a supported Coulomb model")
+                values = friction["parameters"]
+                coefficients[i, j, :2] = [parameter(values["muStatic"]), parameter(values["muDynamic"])]
+                if not 0 <= coefficients[i, j, 1] <= coefficients[i, j, 0]:
+                    raise ValueError("Coulomb contact requires 0 <= muDynamic <= muStatic")
+            if rebound is not None:
+                if rebound["model"] != "contact.restitution@1":
+                    raise ValueError("rigid contact requires a supported restitution model")
+                coefficients[i, j, 2] = parameter(rebound["parameters"]["coefficient"])
+                if not 0 <= coefficients[i, j, 2] <= 1:
+                    raise ValueError("restitution coefficient must be between 0 and 1")
+            coefficients[j, i] = coefficients[i, j]
+    model["contactCoefficients"] = coefficients
+    model["force"][model["static"]] = 0.
+    model["torque"][model["static"]] = 0.
     for value in model.values():
         if isinstance(value, np.ndarray):
             value.setflags(write=False)

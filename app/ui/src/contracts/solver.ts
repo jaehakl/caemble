@@ -136,6 +136,18 @@ export type KernelInputPortDescriptor = Readonly<{
   data?: KernelArtifactDataSpec
 }>
 
+export type KernelInteractionDescriptor = Readonly<{
+  role: string
+  description: string
+  target: KernelMaterialDescriptor['target']
+  modelGroups: readonly Readonly<{
+    key: string
+    required: boolean
+    oneOf: readonly string[]
+    defaultBehavior?: string
+  }>[]
+}>
+
 export type KernelObservationDescriptor = Readonly<{
   description: string
   type: 'number' | 'boolean' | 'string'
@@ -153,6 +165,7 @@ export type KernelDescriptor = Readonly<{
   >
   parameters: Readonly<Record<string, KernelParameterDescriptor>>
   materials: readonly KernelMaterialDescriptor[]
+  interactions?: readonly KernelInteractionDescriptor[]
   inputPorts: Readonly<Record<string, KernelInputPortDescriptor>>
   observations: Readonly<Record<string, KernelObservationDescriptor>>
   methods: Readonly<{

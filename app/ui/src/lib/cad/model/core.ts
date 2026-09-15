@@ -22,6 +22,7 @@ export type {
   SurfaceGroupMap,
 } from './structure'
 export { Material } from './material'
+export { MaterialInteraction } from './materialInteraction'
 export { CadModelError } from './errors'
 export { Mat } from './descriptor'
 export type {

@@ -82,6 +82,41 @@ class MaterialSnapshotTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "conflicts"):
             validate_material_snapshot(snapshot)
 
+    def test_pair_snapshot_upload_and_validation_preserve_interactions(self):
+        from caemble_catalog import open_catalog
+        snapshot = self.snapshot()
+        with open_catalog() as catalog:
+            snapshot["modelDefinitions"] = [catalog.material_model("contact.restitution@1")]
+        snapshot["experiment"]["materials"] = {name: {"models": {}} for name in ("A", "B")}
+        snapshot["interactions"] = {"AB": {"between": ["A", "B"], "models": {
+            "bounce": {"model": "contact.restitution@1", "parameters": {"coefficient": {"value": .5, "unit": "1"}}}}}}
+        before = copy.deepcopy(snapshot)
+        self.assertEqual(validate_material_snapshot(snapshot)["interactions"], snapshot["interactions"])
+        self.assertEqual(snapshot, before)
+        item = self.artifact()
+        item["measurement"].update(materialSnapshot=snapshot["experiment"], modelDefinitions=snapshot["modelDefinitions"], interactions=snapshot["interactions"])
+        self.assertIs(validate_artifact_item(item, "a" * 64), item)
+        snapshot["interactions"]["BA"] = {**copy.deepcopy(snapshot["interactions"]["AB"]), "between": ["B", "A"]}
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            validate_material_snapshot(snapshot)
+
+    def test_pair_snapshot_rejects_missing_and_duplicate_model_instances(self):
+        from caemble_catalog import open_catalog
+        snapshot = self.snapshot()
+        with open_catalog() as catalog:
+            snapshot["modelDefinitions"] = [catalog.material_model("contact.restitution@1")]
+        snapshot["experiment"]["materials"] = {"A": {"models": {}}}
+        model = {"model": "contact.restitution@1", "parameters": {"coefficient": {"value": .5, "unit": "1"}}}
+        snapshot["interactions"] = {"AA": {"between": ["A", "A"], "models": {"first": model, "second": model}}}
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            validate_material_snapshot(snapshot)
+        del snapshot["interactions"]["AA"]["models"]["second"]
+        snapshot["tasks"] = {"motion": {"materials": {}}}
+        snapshot["selections"] = {"motion": {}}
+        snapshot["interactionSelections"] = {"motion": {"contact": [{"between": ["A", "A"], "interaction": "AA", "models": {"bounce": "absent"}}]}}
+        with self.assertRaisesRegex(ValueError, "unavailable model"):
+            validate_material_snapshot(snapshot)
+
     def test_vars_fingerprint_is_order_independent_preserves_shape_and_normalizes_negative_zero(self):
         self.assertEqual(material_vars_hash({}), "fnv1a64:09612b07b5ecb5a5")
         self.assertEqual(material_vars_hash({"x": -0.0, "y": [1, 2]}), material_vars_hash({"y": [1.0, 2.0], "x": 0}))
@@ -99,7 +134,9 @@ class MaterialSnapshotTests(unittest.IsolatedAsyncioTestCase):
         snapshot["modelDefinitions"] = [dict(reversed(list(definition.items())))]
         snapshot["experiment"]["materials"] = {"sample": {"models": {"response": {"model": definition["key"], "parameters": {}}}}}
         catalog = SimpleNamespace(material_model=lambda key: definition)
-        self.assertIs(validate_material_snapshot(snapshot, catalog=catalog), snapshot)
+        normalized = validate_material_snapshot(snapshot, catalog=catalog)
+        self.assertEqual(normalized["modelDefinitions"][0]["subject"], {"kind": "material"})
+        self.assertNotIn("subject", snapshot["modelDefinitions"][0])
         snapshot["modelDefinitions"][0]["conventions"] = "Changed meaning"
         with self.assertRaisesRegex(ValueError, "differs from"):
             validate_material_snapshot(snapshot, catalog=catalog)

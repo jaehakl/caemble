@@ -40,7 +40,7 @@ export type {
   CanonicalTransformNodeV1,
   CanonicalVec3V1,
 } from './evaluation/canonicalTypes'
-export { CadModelError, isFloatDType, Mat, Material, radians } from './model/core'
+export { CadModelError, isFloatDType, Mat, Material, MaterialInteraction, radians } from './model/core'
 export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/definition'
 export type {
   CadDefinition,

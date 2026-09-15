@@ -19,6 +19,20 @@ from routers.catalog import router
 
 
 class CatalogExperimentResponseTests(unittest.TestCase):
+    def test_http_response_keeps_interaction_subject_and_solver_groups(self):
+        with open_catalog() as catalog:
+            app = FastAPI()
+            app.state.catalog = catalog
+            app.include_router(router)
+            with TestClient(app) as client:
+                response = client.post("/catalog/runtime-slice", json={"solvers": [{"name": "rigid_body", "version": "2.0.0"}]})
+                self.assertEqual(response.status_code, 200, response.text)
+                value = response.json()
+                models = {model["key"]: model for model in value["materialModels"]}
+                self.assertEqual(models["contact.coulomb@1"]["subject"], {"kind": "material-pair", "exchange": "symmetric"})
+                self.assertEqual(models["mechanics.mass-density@1"]["subject"], {"kind": "material"})
+                self.assertEqual(value["solvers"][0]["descriptor"]["interactions"][0]["role"], "contact")
+
     def test_http_response_preserves_empty_and_multiple_calculations(self):
         with open_catalog() as catalog:
             example = catalog.experiment(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -63,6 +63,17 @@ class SolverMaterialRequirement(CatalogModel):
     model: str | None = None
 
 
+class MaterialSubject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["material"] = "material"
+
+
+class MaterialPairSubject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["material-pair"]
+    exchange: Literal["symmetric", "ordered"]
+
+
 class MaterialModel(CatalogModel):
     key: str
     label_ko: str
@@ -70,6 +81,7 @@ class MaterialModel(CatalogModel):
     equation: str
     conventions: str
     parameter_schema: dict[str, Any]
+    subject: MaterialSubject | MaterialPairSubject = Field(default_factory=MaterialSubject)
 
 
 class MaterialModelDetail(MaterialModel):

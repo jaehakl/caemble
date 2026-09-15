@@ -42,7 +42,8 @@ async def run(invocation):
     return SolverResult(
         state_patch=patch, artifacts=artifacts, exports=exports, visualizations=visualizations,
         observations={"time": saved["time"], "bodyCount": len(model["masses"]),
-                      "stepCount": saved["steps"], "kineticEnergy": float(kinetic)},
+                      "stepCount": saved["steps"], "kineticEnergy": float(kinetic), "contactCount": len(saved["contactHistory"]),
+                      "maxPenetration": saved["maxPenetration"], "frictionDissipation": saved["frictionDissipation"]},
     )
 
 

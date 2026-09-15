@@ -178,8 +178,10 @@ export function normalizeMaterialModels(
   input: unknown,
   path: string,
   catalog?: CatalogRuntimeSlice,
+  subject: 'material' | 'material-pair' = 'material',
 ): MaterialDefinition['models'] {
   const models = record(input, path)
+  const used = new Set<string>()
   return Object.freeze(
     Object.fromEntries(
       Object.entries(models).map(([name, raw]) => {
@@ -195,6 +197,11 @@ export function normalizeMaterialModels(
           throw new CadModelError(
             `${path}.${name}.model: ${String(instance.model)} is not registered in the active Model Catalog.`,
           )
+        if ((definition.subject?.kind ?? 'material') !== subject)
+          throw new CadModelError(`${path}.${name}.model requires a ${definition.subject?.kind ?? 'material'} subject.`)
+        if (subject === 'material-pair' && used.has(definition.key))
+          throw new CadModelError(`${path}: model ${definition.key} is duplicated in this MaterialInteraction.`)
+        used.add(definition.key)
         return [
           name,
           Object.freeze({

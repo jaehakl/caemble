@@ -89,13 +89,15 @@ function collectFileReferences(
   const analysis = { bindings: collectSourceBindings(ast.program.body) }
   const quantityKinds = new Set<string>()
   const materialModels = new Set<string>()
-  const materialConstructors = new Set(
+  const materialConstructors = new Map(
     ast.program.body.flatMap((statement) => {
       if (statement.type !== 'ImportDeclaration' || statement.source.value !== '@caemble/core') return []
       return statement.specifiers.flatMap((specifier) => {
         if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return []
         const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value
-        return imported === 'Material' ? [specifier.local.name] : []
+        return imported === 'Material' || imported === 'MaterialInteraction'
+          ? [[specifier.local.name, imported] as const]
+          : []
       })
     }),
   )
@@ -115,6 +117,9 @@ function collectFileReferences(
           : property.key.type === 'StringLiteral'
             ? property.key.value
             : null
+      if (directName === 'model' && (policy === 'material' || materialConstructors.size > 0)) {
+        materialModels.add(staticString(sourceExpression(property.value, 'Model identity'), analysis, 'Model identity'))
+      }
       if (directName === 'quantityKind') {
         quantityKinds.add(staticString(sourceExpression(property.value, 'quantityKind'), analysis, 'quantityKind'))
       }
@@ -122,7 +127,7 @@ function collectFileReferences(
     if (
       node.type === 'NewExpression' &&
       (node.callee as { type?: string; name?: string })?.type === 'Identifier' &&
-      materialConstructors.has((node.callee as { name: string }).name)
+      materialConstructors.get((node.callee as { name: string }).name) === 'Material'
     ) {
       const args = node.arguments as unknown[]
       if (args.length > 2) throw new SourceAnalysisError('Material accepts only a name and { color?, models? }.')

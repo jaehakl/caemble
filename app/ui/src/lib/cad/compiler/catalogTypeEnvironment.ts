@@ -20,7 +20,9 @@ export function catalogRuntimeTypes(slice: CatalogRuntimeSlice) {
     for (const length of [...(schema.shape ?? [])].reverse()) value = length <= 32 ? `readonly [${Array.from({ length }, () => value).join(', ')}]` : `ReadonlyArray<${value}>`
     return schema.quantityKind ? `Readonly<{ value: ${value}; unit: ApplicableUnit<${literal(schema.quantityKind)}>; dtype?: FloatDataDType; ${(schema.shape?.length ?? 0) > 0 ? 'basis?: CartesianBasis' : 'basis?: never'} }>` : value
   }
-  const models = slice.materialModels.map((entry) => `    ${literal(entry.key)}: ${inputType(entry.parameterSchema)}`)
+  const models = slice.materialModels.filter((entry) => (entry.subject?.kind ?? 'material') === 'material').map((entry) => `    ${literal(entry.key)}: ${inputType(entry.parameterSchema)}`)
+  const interactions = slice.materialModels.filter((entry) => entry.subject?.kind === 'material-pair')
+    .map((entry) => `    ${literal(entry.key)}: ${inputType(entry.parameterSchema)}`)
   return `export {}
 declare module '@caemble/core' {
   interface CatalogQuantityKindMap {
@@ -28,6 +30,9 @@ ${quantityKinds.join('\n')}
   }
   interface MaterialModelParameterMap {
 ${models.join('\n')}
+  }
+  interface InteractionModelParameterMap {
+${interactions.join('\n')}
   }
 }
 `

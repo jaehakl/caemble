@@ -47,7 +47,7 @@ def invocation(node=None, *, dt=.01, window=.03, duration=.09, output=.017, outp
         config["outputs"] = [{"methodId": "rigid.mass-density", "key": "density", "parameters": {"scope": "final"},
                               "boxGrid": grid(shape=(1, 1, 1), origin=(100., 100., 100.)).geometry}]
     return SolverInvocation(config, {}, {}, world, GeometryService(), None,
-                            solver_catalog.descriptor("rigid_body", "1.0.0"), task_name="motion")
+                            solver_catalog.descriptor("rigid_body", "2.0.0"), task_name="motion")
 
 
 async def run_to_end(current):

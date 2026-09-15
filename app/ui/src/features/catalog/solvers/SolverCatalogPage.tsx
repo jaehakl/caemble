@@ -395,22 +395,26 @@ function SolverDetail({
             ))}
           </TabsContent>
           <TabsContent className="space-y-3" value="materials">
-            {descriptor.materials.length ? (
-              descriptor.materials.map((material) => (
-                <div className="rounded-lg border p-3" key={material.role}>
+            {descriptor.materials.length || descriptor.interactions?.length ? (
+              [
+                ...descriptor.materials.map((role) => ({ ...role, pair: false })),
+                ...(descriptor.interactions ?? []).map((role) => ({ ...role, pair: true })),
+              ].map((material) => (
+                <div className="rounded-lg border p-3" key={`${material.pair}:${material.role}`}>
                   <code className="text-xs font-semibold text-primary">{material.role}</code>
                   <p className="mt-1 text-xs text-muted-foreground">{material.description}</p>
                   <p className="mt-2 text-[11px] text-muted-foreground">
                     {material.target.category === 'geometry'
                       ? `${material.target.source}.geometry`
                       : `${material.target.category}.${material.target.methodId}`}
-                    의 각 Material에 적용
+                    {material.pair ? '의 재료 쌍에 적용' : '의 각 Material에 적용'}
                   </p>
                   <div className="mt-3 space-y-3">
                     {material.modelGroups.map((group) => (
                       <div key={group.key}>
                         <p className="mb-1 text-xs font-medium">
                           {group.key} · {group.required ? '필수' : '선택'} · 하나 선택
+                          {'defaultBehavior' in group ? ` · 기본 동작: ${group.defaultBehavior}` : ''}
                         </p>
                         <div className="flex flex-wrap gap-1">
                           {group.oneOf.map((key) => (

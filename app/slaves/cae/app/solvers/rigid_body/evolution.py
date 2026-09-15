@@ -8,6 +8,7 @@ import numpy as np
 from app.methods.rigid import midpoint_step, interpolate_step
 
 from .domain import parameter
+from .contact import ContactStepper
 
 
 def time_settings(config):
@@ -52,6 +53,7 @@ def validate_finite_state(state, model, time):
 async def advance_window(invocation, model, saved, settings):
     state = {name: np.asarray(saved[name]).copy()
              for name in ("position", "velocity", "orientation", "angularMomentum")}
+    stepper = ContactStepper(invocation, model, saved, midpoint_step)
     current = float(saved["time"])
     if current >= settings["duration"]:
         raise ValueError("rigid task has already reached its configured duration")
@@ -86,12 +88,8 @@ async def advance_window(invocation, model, saved, settings):
         step = end - current
         try:
             with np.errstate(over="raise", invalid="raise", divide="raise"):
-                candidate, stages = midpoint_step(
-                    state, model["masses"], model["inverseInertias"], step,
-                    force=model["force"], torque=model["torque"],
-                    attachment_body_indices=model["attachmentBodyIndices"],
-                    attachment_arms=model["attachmentArms"], attachment_forces=model["attachmentForces"],
-                )
+                step, candidate, stages = stepper.advance(state, step)
+                end = current + step
         except (FloatingPointError, ValueError) as error:
             raise ValueError(f"rigid motion failed at time {end:g} s for bodies {model['bodyIds']!r}: {error}") from error
         validate_finite_state(candidate, model, end)
@@ -104,7 +102,7 @@ async def advance_window(invocation, model, saved, settings):
             try:
                 with np.errstate(over="raise", invalid="raise", divide="raise"):
                     sampled = candidate if output_time == end else interpolate_step(
-                        state, stages, step, (output_time - current) / step)
+                        stages.get("start", state), stages, step, (output_time - current) / step)
             except (FloatingPointError, ValueError) as error:
                 raise ValueError(f"rigid output failed at time {output_time:g} s for bodies {model['bodyIds']!r}: {error}") from error
             validate_finite_state(sampled, model, output_time)
@@ -117,6 +115,7 @@ async def advance_window(invocation, model, saved, settings):
         state, current = candidate, end
         if lattice <= current + tolerance:
             next_dt_tick += 1
+            stepper.steps = 0
         steps += 1
         if invocation.progress is not None:
             now = monotonic()
@@ -128,4 +127,5 @@ async def advance_window(invocation, model, saved, settings):
     return {**state, "time": current, "steps": steps, "nextDtTick": next_dt_tick,
             "nextOutputTick": next_output_tick, "completedWindows": window_count,
             "history": append_history(saved["history"], samples), "settings": dict(settings),
-            "model": model}
+            "model": model, "contactHistory": stepper.history, "frictionDissipation": stepper.dissipation,
+            "maxPenetration": stepper.max_penetration}

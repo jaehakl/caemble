@@ -279,6 +279,26 @@ export type GeometryInvocationAttributes<P extends object = object> = Readonly<
 // <generated:material-catalog-types>
 // Model input types are augmented in memory from the active Catalog slice.
 export interface MaterialModelParameterMap {}
+export interface InteractionModelParameterMap {}
+export type InteractionModelInstance = keyof InteractionModelParameterMap extends never
+  ? Readonly<{ model: string; parameters: Readonly<Record<string, unknown>> }>
+  : {
+      [Key in keyof InteractionModelParameterMap]: Readonly<{
+        model: Key
+        parameters: InteractionModelParameterMap[Key]
+      }>
+    }[keyof InteractionModelParameterMap]
+export type MaterialInteractionOptions = Readonly<{
+  between: readonly [Material, Material]
+  models?: Readonly<Record<string, InteractionModelInstance>>
+}>
+export class MaterialInteraction<V extends Vars = Vars> {
+  constructor(
+    name: string,
+    options: MaterialInteractionOptions | ((context: Readonly<{ vars: Readonly<V> }>) => MaterialInteractionOptions),
+  )
+  readonly name: string
+}
 export type MaterialModelKey = keyof MaterialModelParameterMap extends never ? string : keyof MaterialModelParameterMap
 export type MaterialModelInstance = keyof MaterialModelParameterMap extends never
   ? Readonly<{ model: string; parameters: Readonly<Record<string, unknown>> }>

@@ -1,4 +1,12 @@
-export { CadModelError, isFloatDType, Mat, Material, normalizeDataValueDescriptor, radians } from './core'
+export {
+  CadModelError,
+  isFloatDType,
+  Mat,
+  Material,
+  MaterialInteraction,
+  normalizeDataValueDescriptor,
+  radians,
+} from './core'
 export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './definition'
 export type {
   CadDefinition,

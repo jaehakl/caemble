@@ -135,6 +135,8 @@ def validate_artifact_item(value: object, source_hash: str) -> dict:
             "tasks": measurement["taskMaterialSnapshots"],
             "modelDefinitions": measurement.get("modelDefinitions"),
             "selections": measurement["materialSelections"],
+            "interactions": measurement.get("interactions", {}),
+            "interactionSelections": measurement.get("interactionSelections", {name: {} for name in tasks}),
             "sourceHash": experiment["sourceHash"],
             "varsHash": measurement.get("varsHash"),
         }, source_hash=source_hash, variables=experiment["variables"])
@@ -240,6 +242,8 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                     "tasks": measurement_input["taskMaterialSnapshots"],
                     "modelDefinitions": measurement_input["modelDefinitions"],
                     "selections": measurement_input["materialSelections"],
+                    "interactions": measurement_input.get("interactions", {}),
+                    "interactionSelections": measurement_input.get("interactionSelections", {name: {} for name in measurement_input["taskMaterialSnapshots"]}),
                     "sourceHash": measurement_input["experiment"]["sourceHash"],
                     "varsHash": measurement_input["varsHash"],
                 }, source_hash=cae.spec["source_hash"], variables=variables, catalog=catalog)
@@ -264,18 +268,23 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                     raise HTTPException(409, "Measurement already has an execution. Open its batch to retry.")
                 from storage.service import object_refs
                 has_objects = bool(list(object_refs([measurement.vars, measurement.material_snapshot, variables, materials])))
-                if not has_objects and (measurement.vars != variables or measurement.material_snapshot != materials):
+                try:
+                    saved_materials = validate_material_snapshot(measurement.material_snapshot, catalog=catalog)
+                except ValueError as error:
+                    raise HTTPException(409, f"Saved Measurement inputs are invalid: {error}") from error
+                if not has_objects and (measurement.vars != variables or saved_materials != materials):
                     raise HTTPException(409, "Artifact differs from the saved Measurement inputs.")
                 if has_objects:
                     if measurement.material_snapshot["varsHash"] != materials["varsHash"]:
                         raise HTTPException(409, "Artifact differs from the saved Measurement Vars.")
                     # The Slave compares the full downloaded artifact against this
                     # saved projection before executing; references may have different IDs.
-                    frozen = measurement.material_snapshot
+                    frozen = saved_materials
                     measurement_input = {**measurement_input,
                         "experiment": {**measurement_input["experiment"], "variables": measurement.vars},
                         "materialSnapshot": frozen["experiment"], "taskMaterialSnapshots": frozen["tasks"],
-                        "modelDefinitions": frozen["modelDefinitions"], "materialSelections": frozen["selections"]}
+                        "modelDefinitions": frozen["modelDefinitions"], "materialSelections": frozen["selections"],
+                        "interactions": frozen["interactions"], "interactionSelections": frozen["interactionSelections"]}
                     job.input = {**job.input, "measurement": measurement_input}
                 measurement.job_id = job.id
             else:

@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 from caemble_catalog.model_schema import validate_model_parameters
+from caemble_catalog.interactions import model_subject
 
 from app.kernel.api.errors import CaeError
 from app.kernel.api.units import convert_ucum_tensor
@@ -56,6 +57,8 @@ def normalize_material_snapshot(
             if not isinstance(model["model"], str):
                 raise CaeError("invalid_material", f"{model_path}.model requires a registered model ID")
             definition = definitions.get(model["model"])
+            if definition is not None and model_subject(definition)["kind"] != "material":
+                raise CaeError("invalid_material", f"{model_path} requires a single-material model")
             if definition is None:
                 raise CaeError("invalid_material", f"{model_path}.model is not registered: {model['model']}")
             if not isinstance(model["parameters"], Mapping):

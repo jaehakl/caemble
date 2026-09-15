@@ -16,7 +16,7 @@ from app.kernel.coordinator import SimulationApi
 from app.kernel.coordinator.run import CaeRun
 from app.kernel.execution import MmapPayloadCodec, RemoteSolverError, SpawnSolverExecutor
 from app.kernel.transport import RecordPacket
-from tests.test_catalog_examples import decode_tensor_tree
+from tests.test_catalog_examples import catalog_measurements, decode_tensor_tree
 
 
 pytestmark = pytest.mark.asyncio
@@ -70,6 +70,40 @@ async def acknowledge_visualization(run, sim):
     run.acknowledge(packet.sequence)
     await pending
     assert packet.ack.done() and packet.attachments == []
+
+
+@pytest.mark.parametrize("key", ["sliding-contact"])
+async def test_contact_history_survives_real_child_checkpoint_branches_and_release(
+    key, catalog_measurements, tmp_path, monkeypatch,
+):
+    run, sim, child_temp = runtime(catalog_measurements[key], tmp_path, monkeypatch)
+    baseline = sim._resources.stats().resource_count
+    buffers = sim._buffers.root
+    try:
+        first = await sim.run(run.tasks["motion"])
+        checkpoint = first["state"]
+        original = checkpoint.to_mutable(copy_arrays=True)
+        saved_first = original["rigid_body"]["motion"]
+        assert saved_first["contactHistory"] and saved_first["frictionDissipation"] > 0
+        second = await sim.run(run.tasks["motion"], state=checkpoint)
+        branch = await sim.run(run.tasks["motion"], state=checkpoint)
+        saved_second = second["state"].to_mutable(copy_arrays=True)
+        np.testing.assert_equal(branch["state"].to_mutable(copy_arrays=True), saved_second)
+        np.testing.assert_equal(checkpoint.to_mutable(copy_arrays=True), original)
+        final = saved_second["rigid_body"]["motion"]
+        block = next(index for index, name in enumerate(final["model"]["bodyIds"]) if "block" in name)
+        np.testing.assert_allclose(final["velocity"][block], [1.2152, 0.0, 0.0], atol=1e-7, rtol=0)
+        assert final["frictionDissipation"] > saved_first["frictionDissipation"]
+        for result in (first, second, branch):
+            sim.release(result["artifacts"])
+            sim.release(result["state"])
+        await acknowledge_visualization(run, sim)
+        gc.collect()
+        assert sim._resources.stats().resource_count == baseline
+        assert sim._buffers.files() == ()
+    finally:
+        await run.close()
+    assert not buffers.exists() and list(child_temp.iterdir()) == []
 
 
 async def test_rigid_real_children_branch_failure_record_rejection_and_release(
@@ -200,7 +234,7 @@ async def test_rigid_child_cancellation_preserves_accepted_checkpoint_and_cleans
     program["tasks"]["trial"] = deepcopy(program["tasks"]["motion"])
     program["visualizationContracts"]["trial"] = deepcopy(program["visualizationContracts"]["motion"])
     measurement["experiment"]["taskScenes"]["trial"] = deepcopy(measurement["experiment"]["taskScenes"]["motion"])
-    for field in ("taskMaterialSnapshots", "materialSelections"):
+    for field in ("taskMaterialSnapshots", "materialSelections", "interactionSelections"):
         measurement[field]["trial"] = deepcopy(measurement[field]["motion"])
     config = program["tasks"]["trial"]["config"]
     settings = next(rule["parameters"] for rule in config["initializations"] if rule["methodId"] == "rigid.time")

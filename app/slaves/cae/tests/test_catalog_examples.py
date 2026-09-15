@@ -99,7 +99,7 @@ def cylinder_segments(measurement):
     "structural-nonlinear-materials", "structural-optical-results",
     "matched-impedance-duct", "plate-driven-duct",
     "transient-matched-impedance-duct", "transient-plate-driven-duct",
-    "asymmetric-rigid-bodies",
+    "asymmetric-rigid-bodies", "sliding-contact",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
@@ -179,7 +179,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                     offsets, vertices = native[prefix + contract["offsets"]], native[prefix + contract["vertices"]]
                     assert offsets[-1] == len(vertices) and np.all(np.diff(offsets) >= 2)
         task_count = len(program["tasks"])
-        multiwindow = key in {"structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct", "asymmetric-rigid-bodies"}
+        multiwindow = key in {"structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct", "asymmetric-rigid-bodies", "sliding-contact"}
         assert len(run.trace) > task_count if multiwindow else len(run.trace) == task_count
         if "totalCurrent" in recorded:
             assert recorded["totalCurrent"].item() > 0
@@ -206,6 +206,19 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                                        recorded["massDensity"] * recorded["velocity"], atol=1e-10)
             empty = np.broadcast_to(recorded["massDensity"] == 0, recorded["velocity"].shape)
             assert np.all(recorded["velocity"][empty] == 0)
+        if key == "sliding-contact":
+            times = native["motion.motion.times"]
+            ids = list(native["motion.motion.bodyIds"])
+            moving = next(i for i, name in enumerate(ids) if "block" in name)
+            fixed = next(i for i, name in enumerate(ids) if "floor" in name)
+            velocity = native["motion.motion.velocities"]
+            position = native["motion.motion.positions"]
+            expected = 2.-measurement["experiment"]["variables"]["friction"]*9.81*times
+            np.testing.assert_allclose(velocity[:, moving, 0], expected, atol=1e-7)
+            np.testing.assert_allclose(velocity[:, fixed], 0, atol=0)
+            np.testing.assert_allclose(position[:, moving, 2], .5, atol=1e-7)
+            assert measurement["interactions"]["FloorBlock"]["between"] == ["Floor", "Block"]
+            assert len(run.trace) == 2
         if key in {"transient-matched-impedance-duct", "transient-plate-driven-duct"}:
             settings = next(rule["parameters"] for rule in program["tasks"]["acoustics"]["config"]["initializations"]
                             if rule["methodId"] == "acoustics.time")
@@ -393,7 +406,7 @@ async def test_visualization_only_official_task_needs_no_outputs(key, task_name,
     sim.release(result["state"])
 '''
     measurement["experiment"]["taskScenes"] = {task_name: measurement["experiment"]["taskScenes"][task_name]}
-    for field in ("taskMaterialSnapshots", "materialSelections"):
+    for field in ("taskMaterialSnapshots", "materialSelections", "interactionSelections"):
         measurement[field] = {task_name: measurement[field][task_name]}
     run = CaeRun(measurement=measurement, max_run_seconds=120, job_id=f"visual-only-{key}")
     run.start()
@@ -584,7 +597,7 @@ async def test_harmonic_surface_crosses_children_and_failed_frequency_call_rolls
                     if rule["methodId"] == "acoustics.spectrum")
     spectrum["parameters"]["frequencies"]["value"][-1] += 1
     measurement["experiment"]["taskScenes"]["wrongFrequency"] = deepcopy(measurement["experiment"]["taskScenes"]["acoustics"])
-    for member in ("taskMaterialSnapshots", "materialSelections"):
+    for member in ("taskMaterialSnapshots", "materialSelections", "interactionSelections"):
         measurement[member]["wrongFrequency"] = deepcopy(measurement[member]["acoustics"])
     run = CaeRun(measurement=measurement, max_run_seconds=120, job_id="harmonic-native-lifecycle")
     sim = SimulationApi(run)
@@ -642,7 +655,7 @@ async def test_structural_child_rejects_foreign_motion_without_committing_trial(
     # Same CSG and physical conditions, a different solver-generated mesh profile.
     program["tasks"]["foreign"]["config"]["parameters"]["spatialResolution"]["value"] *= .8
     measurement["experiment"]["taskScenes"]["foreign"] = deepcopy(measurement["experiment"]["taskScenes"]["transient"])
-    for field in ("taskMaterialSnapshots", "materialSelections"):
+    for field in ("taskMaterialSnapshots", "materialSelections", "interactionSelections"):
         measurement[field]["foreign"] = deepcopy(measurement[field]["transient"])
     run = CaeRun(measurement=measurement, max_run_seconds=60, job_id="structural-reject-trial")
     sim = SimulationApi(run)

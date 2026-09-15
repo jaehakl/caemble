@@ -8,6 +8,7 @@ dependencies = [
     "caemble-catalog",
     "caemble-runtime-sdk[server-slave]",
     "manifold3d==3.5.1",
+    "python-fcl==0.7.0.11",
     "numpy>=2.1,<3.0",
     "torch==2.13.0+cu126",
     "ucumvert==0.3.1",

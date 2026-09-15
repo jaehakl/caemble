@@ -4,7 +4,7 @@ import { resolveProgramBoxGrids } from '../simulation/boxGrid'
 import { Fragment, h } from '../evaluation/jsx'
 import type { CadScene } from '../evaluation/types'
 import { cadPrimitiveAuthoringBindings } from '../elements/generated'
-import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material, radians } from '../model/core'
+import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material, MaterialInteraction, radians } from '../model/core'
 import { defineTask, experiment, ExperimentDefinition, TaskDefinition, type ExternalVars } from '../model/definition'
 import { convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
@@ -16,6 +16,7 @@ import {
 } from '../source/document'
 import { resolveExperimentModuleSpecifier } from '../source/moduleResolution'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
+import { resolveMaterialSnapshot } from '../../material/resolution'
 import type { GeometryEvaluationProfile } from '../evaluation/precision'
 
 const coreModule = Object.freeze({
@@ -28,6 +29,7 @@ const coreModule = Object.freeze({
   isFloatDType,
   Mat,
   Material,
+  MaterialInteraction,
   normalizeUcumUnit,
   radians,
   TaskDefinition,
@@ -153,7 +155,7 @@ export function loadCompiledSource(compiledSource: CompiledCadSource) {
   return loadCompiledCode(compiledSource.code)
 }
 
-type CompiledMaterialRuntime = Readonly<Record<string, Material | ((...parameters: unknown[]) => Material)>>
+type CompiledMaterialRuntime = Readonly<Record<string, Material | MaterialInteraction | ((...parameters: unknown[]) => Material)>>
 
 type CompiledModuleLoader = Readonly<{
   load: (path: string) => Readonly<Record<string, unknown>>
@@ -197,14 +199,14 @@ function compiledModuleLoader(compiled: CompiledCadDocument): CompiledModuleLoad
 function compiledMaterialRuntime(loader: CompiledModuleLoader): CompiledMaterialRuntime {
   const exports = loader.load(EXPERIMENT_MATERIAL_PATH)
   if (Object.prototype.hasOwnProperty.call(exports, 'default')) {
-    throw new CadModelError('material.tsx only supports named Material object or factory exports.')
+    throw new CadModelError('material.tsx only supports named Material, MaterialInteraction, or factory exports.')
   }
   const runtime = Object.freeze(
     Object.fromEntries(
       Object.entries(exports).map(([name, value]) => {
-        if (value instanceof Material) return [name, value]
+        if (value instanceof Material || value instanceof MaterialInteraction) return [name, value]
         if (typeof value !== 'function' || value === Material) {
-          throw new CadModelError(`Material export ${name} must be a Material instance or factory.`)
+          throw new CadModelError(`Material export ${name} must be a Material, MaterialInteraction or Material factory.`)
         }
         const factory = (...parameters: unknown[]) => {
           const material = value(...parameters)
@@ -267,6 +269,7 @@ export function evaluateDocumentEntry(
   pythonSource: string,
   taskDefinitions: Readonly<Record<string, TaskDefinition>>,
   profile?: GeometryEvaluationProfile,
+  interactions: readonly MaterialInteraction[] = [],
 ): CadExecutionResult {
   if (typeof pythonSource !== 'string' || !pythonSource.trim()) {
     throw new CadModelError('Experiment evaluation requires non-empty Python simulation source.')
@@ -302,7 +305,24 @@ export function evaluateDocumentEntry(
         }),
       ),
     )
+    const registered = [...new Set(interactions)].map((item) => item.evaluate(variables))
+    const names = new Set<string>()
+    const pairs = new Set<string>()
+    const materials = [...scene.parts, ...Object.values(taskScenes).flatMap((item) => item.parts)]
+      .flatMap((part) => part.material ? [part.material] : [])
+    const used = new Set(materials.map((material) => material.name))
+    for (const interaction of registered) {
+      const pair = JSON.stringify([...interaction.between].sort())
+      if (names.has(interaction.name) || pairs.has(pair))
+        throw new CadModelError(`MaterialInteraction ${interaction.name}: names and material pairs must be unique (${pair}).`)
+      names.add(interaction.name)
+      pairs.add(pair)
+    }
+    resolveMaterialSnapshot([...materials, ...registered.flatMap((item) => item.endpoints)])
     return Object.freeze({
+      interactions: Object.freeze(Object.fromEntries(registered
+        .filter((item) => item.between.every((name) => used.has(name)))
+        .map((item) => [item.name, { between: item.between, models: item.models }]))),
       kind: 'experiment' as const,
       sourceHash,
       variables,
@@ -326,7 +346,7 @@ export function executeCompiledCode(
 
 export function executeCompiledDocument(compiled: CompiledCadDocument, vars: ExternalVars, pythonSource?: string, profile?: GeometryEvaluationProfile) {
   const loader = compiledModuleLoader(compiled)
-  compiledMaterialRuntime(loader)
+  const materials = compiledMaterialRuntime(loader)
   const entry = compiledExperimentEntry(loader)
   if (!pythonSource?.trim()) {
     throw new CadModelError(`Compiled Experiment document is missing ${EXPERIMENT_SIMULATION_PATH}.`)
@@ -338,6 +358,7 @@ export function executeCompiledDocument(compiled: CompiledCadDocument, vars: Ext
     pythonSource,
     taskDefinitionsFromCompiled(compiled, loader),
     profile,
+    Object.values(materials).filter((value): value is MaterialInteraction => value instanceof MaterialInteraction),
   )
 }
 

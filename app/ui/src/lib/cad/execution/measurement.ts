@@ -13,6 +13,8 @@ export type TaskMaterialResolution = Readonly<{
 export type MeasurementMaterialResolution = MaterialResolution &
   TaskMaterialResolution &
   Readonly<{
+    interactions?: import('@/contracts/material').InteractionSnapshot
+    interactionSelections?: Readonly<Record<string, import('@/contracts/material').TaskInteractionSelections>>
     modelDefinitions: readonly CatalogMaterialModel[]
     materialSelections: Readonly<Record<string, TaskMaterialSelections>>
   }>
@@ -23,6 +25,8 @@ export type BuiltMeasurement = Readonly<{
   varsHash: string
   materialSnapshot: MaterialSnapshot
   taskMaterialSnapshots: Readonly<Record<string, MaterialSnapshot>>
+  interactions?: import('@/contracts/material').InteractionSnapshot
+  interactionSelections?: Readonly<Record<string, import('@/contracts/material').TaskInteractionSelections>>
   modelDefinitions: readonly CatalogMaterialModel[]
   materialSelections: Readonly<Record<string, TaskMaterialSelections>>
 }>
@@ -46,6 +50,10 @@ export function buildMeasurement(
     varsHash: materialVarsHash(snapshot.variables),
     materialSnapshot: resolution.materialSnapshot,
     taskMaterialSnapshots: resolution.taskMaterialSnapshots,
+    interactions: resolution.interactions ?? {},
+    interactionSelections:
+      resolution.interactionSelections ??
+      Object.fromEntries(Object.keys(resolution.taskMaterialSnapshots).map((name) => [name, {}])),
     modelDefinitions: resolution.modelDefinitions,
     materialSelections: resolution.materialSelections,
   })
@@ -57,6 +65,10 @@ export function measurementMaterialSnapshot(built: BuiltMeasurement): Measuremen
     tasks: built.taskMaterialSnapshots,
     sourceHash: built.experiment.sourceHash,
     varsHash: built.varsHash,
+    interactions: built.interactions ?? {},
+    interactionSelections:
+      built.interactionSelections ??
+      Object.fromEntries(Object.keys(built.taskMaterialSnapshots).map((name) => [name, {}])),
     modelDefinitions: built.modelDefinitions,
     selections: built.materialSelections,
   })

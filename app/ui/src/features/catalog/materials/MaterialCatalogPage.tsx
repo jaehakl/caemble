@@ -22,6 +22,11 @@ const columns: ColumnDef<CatalogMaterialModel, unknown>[] = [
   },
   { accessorKey: 'labelKo', header: '이름' },
   {
+    id: 'subject',
+    header: '대상',
+    cell: ({ row }) => (row.original.subject?.kind === 'material-pair' ? '재료 쌍' : '재료'),
+  },
+  {
     accessorKey: 'description',
     header: '설명',
     cell: ({ row }) => <span className="line-clamp-2 text-xs text-muted-foreground">{row.original.description}</span>,
@@ -129,7 +134,11 @@ export function MaterialModelDetail({
   return (
     <>
       <CardHeader>
-        <Badge className="w-fit">Material Model</Badge>
+        <Badge className="w-fit">
+          {detail.subject?.kind === 'material-pair'
+            ? `MaterialInteraction · ${detail.subject.exchange === 'ordered' ? '순서 있음' : '대칭'}`
+            : 'Material Model'}
+        </Badge>
         <CardTitle className="font-mono text-lg break-all">{detail.key}</CardTitle>
         <CardDescription>{detail.labelKo}</CardDescription>
       </CardHeader>

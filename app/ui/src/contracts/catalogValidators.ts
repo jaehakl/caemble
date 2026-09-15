@@ -94,6 +94,12 @@ const materialModelSchema = z
     description: z.string(),
     equation: z.string(),
     conventions: z.string(),
+    subject: z
+      .union([
+        z.object({ kind: z.literal('material') }).strict(),
+        z.object({ kind: z.literal('material-pair'), exchange: z.enum(['symmetric', 'ordered']) }).strict(),
+      ])
+      .optional(),
     parameterSchema: modelParameterSchema,
   })
   .passthrough()
@@ -306,6 +312,20 @@ const kernelDescriptorSchema = z
     minimumOutputs: nonnegativeIntegerSchema.optional(),
     parameters: z.record(z.string(), kernelParameterSchema),
     materials: z.array(kernelMaterialSchema),
+    interactions: z
+      .array(
+        kernelMaterialSchema.extend({
+          modelGroups: z.array(
+            z.object({
+              key: z.string(),
+              required: z.boolean(),
+              oneOf: z.array(z.string()).min(1),
+              defaultBehavior: z.string().optional(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
     inputPorts: z.record(z.string(), kernelInputPortSchema),
     observations: z.record(z.string(), kernelObservationSchema),
     visualizations: z

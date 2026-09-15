@@ -281,7 +281,7 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
       statement.specifiers.some((specifier) => {
         if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return false
         return (
-          (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) === 'Material'
+          ['Material', 'MaterialInteraction'].includes(specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value)
         )
       })
     ) {

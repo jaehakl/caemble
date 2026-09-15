@@ -197,15 +197,22 @@ class Catalog:
             "key": row["key"], "labelKo": row["label_ko"], "description": row["description"],
             "equation": row["equation"], "conventions": row["conventions"],
             "parameterSchema": _json(row["parameter_schema_json"]),
+            "subject": _json(row["subject_json"]),
         }
 
     def material_model_relations(self, key: str) -> dict[str, Any]:
         self.material_model(key)
-        return {"solverRequirements": [
+        requirements = [
             {"solverName": row["solver_name"], "solverVersion": row["solver_version"],
              "role": row["role"], "groupKey": row["group_key"], "required": bool(row["required"])}
             for row in self._all("SELECT * FROM solver_material_requirements WHERE model_key = ? ORDER BY solver_name, solver_version, role, group_key", (key,))
-        ]}
+        ]
+        for row in self._all("SELECT * FROM solver_interaction_roles ORDER BY solver_name, solver_version, ordinal"):
+            role = _json(row["definition_json"])
+            requirements.extend({"solverName": row["solver_name"], "solverVersion": row["solver_version"],
+                "role": role["role"], "groupKey": group["key"], "required": group["required"]}
+                for group in role["modelGroups"] if key in group["oneOf"])
+        return {"solverRequirements": requirements}
 
     def material_models(self) -> list[dict[str, Any]]:
         return [self.material_model(row["key"]) for row in self._all("SELECT key FROM material_models ORDER BY key")]
@@ -275,6 +282,9 @@ class Catalog:
             "SELECT * FROM solver_material_roles WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
             (name, version),
         )
+        interactions = self._all("SELECT definition_json FROM solver_interaction_roles WHERE solver_name=? AND solver_version=? ORDER BY ordinal", (name, version))
+        if interactions:
+            descriptor["interactions"] = [_json(row["definition_json"]) for row in interactions]
         descriptor["materials"] = []
         for role in roles:
             groups = []
@@ -730,7 +740,7 @@ class Catalog:
                 "SELECT DISTINCT quantity_kind FROM solver_quantity_kind_usages WHERE solver_name = ? AND solver_version = ?",
                 (descriptor["name"], descriptor["version"]),
             ))
-            for role in descriptor["materials"]:
+            for role in [*descriptor["materials"], *descriptor.get("interactions", [])]:
                 for group in role["modelGroups"]:
                     supported_models.update(group["oneOf"])
         model_names.update(supported_models)

@@ -144,19 +144,19 @@ async def create_measurement(
         raise LookupError("experiment_id not found.")
     if experiment.source_hash != request.experiment_source_hash:
         raise HTTPException(409, "Experiment source changed before Measurement creation.")
-    validate_material_snapshot(request.material_snapshot, source_hash=experiment.source_hash, variables=request.vars, catalog=catalog)
+    material_snapshot = validate_material_snapshot(request.material_snapshot, source_hash=experiment.source_hash, variables=request.vars, catalog=catalog)
     measurement = Measurement(
         user_id=user.id,
         experiment_id=experiment.id,
         vars=request.vars,
-        material_snapshot=request.material_snapshot,
+        material_snapshot=material_snapshot,
         recorded_at=None,
     )
     db.add(measurement)
     try:
         await db.flush()
         from storage.service import bind_objects
-        await bind_objects(db, {"vars": request.vars, "materials": request.material_snapshot},
+        await bind_objects(db, {"vars": request.vars, "materials": material_snapshot},
                            user_id=user.id, experiment_id=experiment.id, measurement_id=measurement.id)
         await db.commit()
     except Exception:

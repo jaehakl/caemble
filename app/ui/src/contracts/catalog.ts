@@ -48,6 +48,7 @@ export type ModelParameterSchema = Readonly<{ description?: string; omission?: s
   )
 
 export type CatalogMaterialModel = Readonly<{
+  subject?: Readonly<{ kind: 'material' }> | Readonly<{ kind: 'material-pair'; exchange: 'symmetric' | 'ordered' }>
   key: string
   labelKo: string
   description: string

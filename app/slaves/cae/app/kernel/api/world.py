@@ -64,3 +64,20 @@ def material_model(
     material_name = part["material"]["name"]
     instance = world["materialSelections"].get(role, {}).get(material_name, {}).get(group)
     return None if instance is None else world["materials"][source][material_name]["models"][instance]
+
+
+def interaction_model(world, first_part, second_part, role, group):
+    """Read a selected pair model; None means the descriptor's default behavior."""
+    endpoints = [first_part["material"]["name"], second_part["material"]["name"]]
+    pair = sorted(endpoints)
+    for binding in world.get("interactionSelections", {}).get(role, []):
+        if sorted(binding["between"]) == pair:
+            instance = binding["models"].get(group)
+            if instance is None:
+                return None
+            interaction = world["interactions"][binding["interaction"]]
+            model = interaction["models"][instance]
+            if world.get("interactionSubjects", {}).get(model["model"], {}).get("exchange") == "ordered" and list(interaction["between"]) != endpoints:
+                raise ValueError("An ordered Interaction model must be queried in its declared endpoint order")
+            return model
+    return None
