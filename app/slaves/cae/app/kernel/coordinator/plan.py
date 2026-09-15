@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 from caemble_catalog.model_schema import validate_parameter_schema
+from caemble_catalog.model_schema import validate_model_parameters
 from caemble_catalog.interactions import model_subject
 from app.kernel.catalog.interactions import normalize_interactions, select_interaction_models
 
@@ -53,12 +54,13 @@ class TaskSpec:
     interactions: Mapping[str, Any] = field(default_factory=dict)
     interaction_selections: Mapping[str, Any] = field(default_factory=dict)
     interaction_subjects: Mapping[str, Any] = field(default_factory=dict)
+    interaction_defaults: Mapping[str, Any] = field(default_factory=dict)
     artifact_payload_kinds: Mapping[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
             "task", "descriptor", "output_specs", "scene",
-            "material_snapshot", "material_selections", "artifact_payload_kinds", "interactions", "interaction_selections", "interaction_subjects",
+            "material_snapshot", "material_selections", "artifact_payload_kinds", "interactions", "interaction_selections", "interaction_subjects", "interaction_defaults",
         ):
             object.__setattr__(self, name, read_only(getattr(self, name)))
 
@@ -182,6 +184,19 @@ class RunPlan:
                 {"experiment": measurement["experiment"]["scene"], "task": measurement["experiment"]["taskScenes"][name]},
                 interactions, definitions, frozen_interactions[name])
             applicable = {binding["interaction"] for bindings in interaction_selections.values() for binding in bindings if binding["interaction"] is not None}
+            interaction_defaults = {}
+            for role in descriptor.get("interactions", []):
+                defaults = {}
+                for group in role["modelGroups"]:
+                    default = group.get("defaultModel")
+                    if default is not None:
+                        definition = solver_catalog.material_model(default["model"])
+                        if group["required"] or default["model"] not in group["oneOf"]:
+                            raise CaeError("invalid_material", "Interaction default model must belong to an optional model group")
+                        validate_model_parameters(definition, default["parameters"], f"{role['role']}.{group['key']}.defaultModel")
+                        defaults[group["key"]] = default
+                if defaults:
+                    interaction_defaults[role["role"]] = defaults
             specs[name] = TaskSpec(
                 name=name,
                 task={"kernel": kernel, "config": config},
@@ -195,6 +210,7 @@ class RunPlan:
                 interactions={key: interactions[key] for key in applicable},
                 interaction_selections=interaction_selections,
                 interaction_subjects={model["model"]: model_subject(definitions[model["model"]]) for key in applicable for model in interactions[key]["models"].values()},
+                interaction_defaults=interaction_defaults,
                 artifact_payload_kinds=artifact_payload_kinds,
             )
         used_definitions = {model["model"] for material in known_materials.values() for model in material["models"].values()}
@@ -255,4 +271,5 @@ class RunPlan:
             "interactions": task.interactions,
             "interactionSelections": task.interaction_selections,
             "interactionSubjects": task.interaction_subjects,
+            "interactionDefaults": task.interaction_defaults,
         })

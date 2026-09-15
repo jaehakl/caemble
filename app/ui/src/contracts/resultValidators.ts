@@ -3,8 +3,32 @@ import type { MeasurementVisualization, RecordedResultContracts, ResultProvenanc
 
 export const resultVisualizationSchema = z
   .object({
-    kind: z.enum(['tensor', 'bundle', 'mesh-field', 'mesh-transform', 'structured-field', 'polyline', 'box-grid']),
+    kind: z.enum([
+      'tensor',
+      'bundle',
+      'mesh-field',
+      'mesh-transform',
+      'structured-field',
+      'polyline',
+      'box-grid',
+      'particle-set',
+    ]),
     coordinateSpace: z.literal('experiment').optional(),
+    particleSet: z
+      .object({
+        positions: z.string().min(1),
+        particleIds: z.string().min(1),
+        materialIndices: z.string().min(1),
+        materialNames: z.string().min(1),
+        times: z.string().min(1),
+        attributes: z.record(
+          z.string(),
+          z.object({ path: z.string().min(1), components: z.array(z.string().min(1)).optional() }).strict(),
+        ),
+        radius: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     meshTransform: z
       .object({
         bodyIds: z.string().min(1),
@@ -69,6 +93,11 @@ export const resultVisualizationSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if ((value.kind === 'particle-set') !== Boolean(value.particleSet))
+      context.addIssue({
+        code: 'custom',
+        message: 'Particle visualization requires explicit coordinate, identity and quantity paths.',
+      })
     if ((value.kind === 'mesh-transform') !== Boolean(value.meshTransform))
       context.addIssue({ code: 'custom', message: 'Mesh transforms require their explicit mesh and pose paths.' })
     if (Boolean(value.frequency) !== Boolean(value.phasor) || (value.frequency && value.time))

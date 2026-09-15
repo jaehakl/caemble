@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, Response
 from gpstation.utils.csrf import require_web_csrf
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from models import (
 )
 from service.experiment import (
     delete_experiment_versions,
+    experiment_thumbnail,
     experiment_usage,
     experiment_versions,
     list_experiments as list_experiment_rows,
@@ -24,13 +25,8 @@ router = APIRouter(prefix="/experiment", tags=["experiment"])
 @router.get("/{experiment_id}/thumbnail")
 async def read_thumbnail(experiment_id: int, db: AsyncSession = Depends(get_db),
                          user: UserData | None = Depends(require_roles(["*"]))):
-    from db import ExperimentThumbnail
-    from service.experiment_access import require_experiment_read
-    await require_experiment_read(db, experiment_id, user)
-    thumbnail = await db.get(ExperimentThumbnail, experiment_id)
-    if thumbnail is None:
-        raise HTTPException(404, "Thumbnail not found.")
-    return Response(content=thumbnail.data, media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
+    data = await experiment_thumbnail(db, experiment_id, user=user)
+    return Response(content=data, media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
 
 
 @router.post(

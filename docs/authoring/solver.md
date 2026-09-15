@@ -14,6 +14,16 @@ Read docs/development/solver-development.md and app/slaves/cae/AGENTS.md complet
 
 Finish with the implementation and Catalog changes, Example identity, actual commands/checks run, numerical evidence, source/Catalog hashes and any untested device-specific behavior. Keep user-facing reference in Documentation and architecture/operations in development documentation.
 
+## Particle values and physical arrays
+
+Use `QuantityArrayValue` for each physical Particle attribute. It carries the same QuantityKind, UCUM unit, basis/components and array validation as `FieldValue`; the Field constructor stays flat. Read the QuantityKind and artifact definitions from the Catalog rather than guessing them from attribute names. Scalars need no component basis. A scalar QuantityKind can also carry an explicit axis of named scalar components, as the existing structural stress Field does. Its labels must be unique and match the final array dimension; this storage axis does not change the physical Tensor order. Explicit compact symmetric Tensor components and Field sample axes retain their declared meaning.
+
+Create particles from canonical Geometry and frozen Material inputs. `ParticleSetValue` carries world positions, unique int32 or int64 `particle_ids`, `material_indices` and a self-contained frozen Material table. Preserve IDs, their declared integer dtype, Material references and physical quantities together when reordering arrays. Keep solver-specific continuation state distinct from portable physical exports. A particle attribute's `attribute_field(name)` view shares its array and omits unrelated attributes from the exported domain.
+
+Keep numerical time stepping and computational grids independent from Box Grid observation settings. Save reproducible physical state at each invocation window; leave neighbor-search structures and rebuildable grid workspaces in the child. Export the Particle attributes declared by the native contract, return particle displays through existing automatic visualization Bundles, and record only the declared numerical Box Grid outputs. Check uninterrupted versus split execution, passive observation changes, material/ID correspondence, shared mmap storage and failed-trial rollback.
+
+Use the existing Material and MaterialInteraction selection paths. `material_model_by_name` and `interaction_model_by_name` support Particle Material references without dummy Geometry. Optional Interaction groups can declare a validated Catalog `defaultModel`; explicit invalid or ambiguous selections must still fail. A common body target includes particles and fixed walls. Optional groups preserve Material-pair overrides without requiring explicit models for unused wall–wall contacts.
+
 Command sequence (PowerShell 7, repository root). Read both required files completely; agent context returns their exact checkout text/hash within its explicit budget. The focused tests and physical tolerances still come from the changed implementation.
 
 ```powershell

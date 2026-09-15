@@ -13,7 +13,7 @@ from typing import Any, Iterable
 from .database import Catalog
 from .errors import CatalogError, CatalogNotFoundError
 from .schema import APPLICATION_ID, TABLE_ORDER, create_schema, parse_experiment_version
-from .model_schema import schema_values, validate_parameter_schema
+from .model_schema import schema_values, validate_parameter_schema, validate_model_parameters
 from .interactions import model_subject
 
 
@@ -42,14 +42,15 @@ def _insert_data_usages(
                 (*solver, ordinal, quantity_kind, f"{path}.axes[{axis_index}]", axis.get("unit")),
             )
             ordinal += 1
-    if data.get("resourceKind") == "structuredBundle":
-        for name, member in data.get("members", {}).items():
+    if data.get("resourceKind") in {"structuredBundle", "particleSet"}:
+        collection = "attributes" if data["resourceKind"] == "particleSet" else "members"
+        for name, member in data.get(collection, {}).items():
             ordinal = _insert_data_usages(
                 connection,
                 solver,
                 member,
                 context,
-                f"{path}.members.{name}",
+                f"{path}.{collection}.{name}",
                 ordinal,
             )
     return ordinal
@@ -88,7 +89,7 @@ def validate_interaction_role(
             raise CatalogError(f"Interaction role targets an unavailable method: {target['methodId']}")
     groups = set()
     for group in role["modelGroups"]:
-        if not isinstance(group, dict) or set(group) - {"key", "required", "oneOf", "defaultBehavior"}:
+        if not isinstance(group, dict) or set(group) - {"key", "required", "oneOf", "defaultBehavior", "defaultModel"}:
             raise CatalogError("Interaction model group has unknown fields")
         if (
             not isinstance(group.get("key"), str)
@@ -114,6 +115,14 @@ def validate_interaction_role(
             ).fetchone()
             if model is None or json.loads(model[0])["kind"] != "material-pair":
                 raise CatalogError(f"Interaction group requires a material-pair model: {key}")
+        if "defaultModel" in group:
+            default = group["defaultModel"]
+            if (group["required"] or not isinstance(default, dict)
+                    or set(default) != {"model", "parameters"} or default["model"] not in group["oneOf"]):
+                raise CatalogError("Interaction defaultModel requires an optional group and a supported model")
+            row = connection.execute("SELECT parameter_schema_json FROM material_models WHERE key=?", (default["model"],)).fetchone()
+            validate_model_parameters({"parameterSchema": json.loads(row[0])}, default["parameters"],
+                                      f"interactions.{role['role']}.{group['key']}.defaultModel.parameters")
 
 
 def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
@@ -656,6 +665,8 @@ def _rebuild_artifact_types(connection: sqlite3.Connection) -> None:
                 name,
                 "tensor"
                 if json.loads(data_json).get("boxGrid")
+                else "particle-set"
+                if json.loads(data_json).get("resourceKind") == "particleSet"
                 else "structured-bundle"
                 if json.loads(data_json).get("resourceKind") == "structuredBundle"
                 else "field"

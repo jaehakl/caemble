@@ -24,6 +24,8 @@ import { parseRecordedMeshFields, type MeshRenderData } from '@/features/viewer/
 import { MeshFieldResult } from '@/features/viewer/viewer/MeshFieldResult'
 import { parseRecordedMeshTransforms } from '@/features/viewer/viewer/meshTransforms'
 import { MeshTransformResult } from '@/features/viewer/viewer/MeshTransformResult'
+import { parseRecordedParticleSets } from '@/features/viewer/viewer/particleSets'
+import { ParticleSetResult } from '@/features/viewer/viewer/ParticleSetResult'
 
 // Box Grid carries its experiment placement in the recorded Box metadata.
 function usesExperimentCoordinates(visualization: NonNullable<RecordedResultContracts[string]>['visualization']) {
@@ -166,12 +168,17 @@ function ViewerContent({
     () => parseRecordedMeshTransforms(recordedRules, recordedData, resultContracts ?? {}),
     [recordedRules, recordedData, resultContracts],
   )
+  const particles = useMemo(
+    () => parseRecordedParticleSets(recordedRules, recordedData, resultContracts ?? {}),
+    [recordedRules, recordedData, resultContracts],
+  )
   const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [])
   const [localSelectedView, setSelectedView] = useState('')
   const selectedView = selectedResult ?? localSelectedView
   const selectionMade = useRef(false)
   const selectedField = mesh.fields.find((field) => field.label === selectedView)
   const selectedMotion = transforms.motions.find((motion) => motion.label === selectedView)
+  const selectedParticles = particles.particles.find((value) => value.label === selectedView)
   const selectedContract = resultContracts?.[selectedView]
   const viewerDocument = useMemo(
     () =>
@@ -211,6 +218,7 @@ function ViewerContent({
       if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
       if (result.visualization.kind === 'mesh-transform')
         return transforms.motions.some((motion) => motion.label === name)
+      if (result.visualization.kind === 'particle-set') return particles.particles.some((value) => value.label === name)
       if (result.visualization.kind === 'polyline') return polylines.bundles.some((bundle) => bundle.id === name)
       return Object.keys(recordedData).some((path) => path === name || path.startsWith(`${name}.`))
     })
@@ -220,6 +228,7 @@ function ViewerContent({
         usesExperimentCoordinates(result.visualization) &&
         (result.visualization.kind === 'mesh-field' ||
           result.visualization.kind === 'mesh-transform' ||
+          result.visualization.kind === 'particle-set' ||
           result.visualization.kind === 'polyline' ||
           result.visualization.kind === 'box-grid' ||
           (result.visualization.kind === 'structured-field' && result.visualization.grid)),
@@ -260,6 +269,7 @@ function ViewerContent({
     resultErrors,
     mesh,
     transforms,
+    particles,
     polylines,
     frameMatches,
   ])
@@ -285,7 +295,12 @@ function ViewerContent({
       ? undefined
       : recordedRules.find((rule) => rule.label === selectedView)?.result.axes?.[gridAxis]?.unit
   const displayUnit =
-    sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? selectedMotion?.lengthUnit ?? gridUnit ?? 'm'
+    sceneDocument?.scene?.lengthUnit ??
+    selectedField?.lengthUnit ??
+    selectedMotion?.lengthUnit ??
+    selectedParticles?.lengthUnit ??
+    gridUnit ??
+    'm'
   function sameResultInvocation(name: string) {
     if (!selectedView || selectedView === name) return true
     const selected = resultProvenance[selectedView]
@@ -315,6 +330,7 @@ function ViewerContent({
     deformationScale = 0,
     heatmapRenderData?: HeatmapRenderData,
     geometryOpacity = 1,
+    showParticleGeometry = false,
   ) => (
     <>
       {deformationScale > 0 && selectedLines.length ? (
@@ -324,7 +340,9 @@ function ViewerContent({
       ) : null}
       <CadViewer
         activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
-        experiment={deformationScale > 0 || selectedMotion ? null : sceneDocument}
+        experiment={
+          deformationScale > 0 || selectedMotion || (selectedParticles && !showParticleGeometry) ? null : sceneDocument
+        }
         onFindSelectionSource={onFindSelectionSource}
         onRenderEnd={experimentDocument.handleRenderEnd}
         onRenderError={experimentDocument.handleRenderError}
@@ -335,9 +353,11 @@ function ViewerContent({
         meshRenderData={meshRenderData}
         heatmapRenderData={heatmapRenderData}
         geometryOpacity={geometryOpacity}
-        meshIdentity={selectedField?.identity ?? selectedMotion?.identity}
+        meshIdentity={selectedField?.identity ?? selectedMotion?.identity ?? selectedParticles?.identity}
         displayUnit={displayUnit}
-        preserveCameraOnUpdate={Boolean(comparison) || autoSelectResult || Boolean(selectedMotion)}
+        preserveCameraOnUpdate={
+          Boolean(comparison) || autoSelectResult || Boolean(selectedMotion) || Boolean(selectedParticles)
+        }
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         onToggleViewerExpanded={onToggleViewerExpanded}
@@ -442,6 +462,14 @@ function ViewerContent({
           <p role="alert" className="p-3 text-red-700">
             {selectedView}: {resultErrors[selectedView]}
           </p>
+        ) : selectedParticles ? (
+          <ParticleSetResult
+            key={selectedView}
+            particles={selectedParticles}
+            displayUnit={displayUnit}
+            canOverlayGeometry={canOverlayGeometry}
+            renderViewer={(data, showGeometry) => renderScene(data, 0, undefined, 1, showGeometry)}
+          />
         ) : selectedMotion ? (
           <MeshTransformResult
             key={selectedView}
@@ -470,7 +498,9 @@ function ViewerContent({
             recordReference={recordReference}
           />
         ) : selectedContract &&
-          !['mesh-field', 'mesh-transform', 'polyline'].includes(selectedContract.visualization.kind) ? (
+          !['mesh-field', 'mesh-transform', 'polyline', 'particle-set'].includes(
+            selectedContract.visualization.kind,
+          ) ? (
           <ResultTensorView
             key={selectedView}
             name={selectedView}
@@ -486,6 +516,7 @@ function ViewerContent({
         ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
         ...mesh.errors.filter((error) => !resultErrors[error.label]),
         ...transforms.errors.filter((error) => !resultErrors[error.label]),
+        ...particles.errors.filter((error) => !resultErrors[error.label]),
         ...polylines.errors.filter((error) => !resultErrors[error.label]),
       ]
         .filter((error) => error.label !== selectedView || !resultErrors[selectedView])

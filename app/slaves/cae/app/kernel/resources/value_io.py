@@ -9,11 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from app.kernel.api.quantities import validate_field_domain, validate_quantity_array
+from app.kernel.api.units import convert_ucum_value
 from app.kernel.api.values import (
     BundleValue,
     FieldLocation,
     FieldValue,
     ParticleSetValue,
+    QuantityArrayValue,
     RaySetValue,
     StructuredGridValue,
     UnstructuredMeshValue,
@@ -23,6 +26,7 @@ from app.kernel.resources.nodes import (
     FieldResource,
     MappingResource,
     ParticleSetResource,
+    QuantityArrayResource,
     RaySetResource,
     ResourceKind,
     ResourceRef,
@@ -42,8 +46,8 @@ if TYPE_CHECKING:
 def ingest_value(
     store: ResourceStore,
     value: Any,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
@@ -62,11 +66,15 @@ def ingest_value(
             UnstructuredMeshValue,
             FieldValue,
             ParticleSetValue,
+            QuantityArrayValue,
             RaySetValue,
             BundleValue,
         ),
     )
     value_id = id(value)
+    if isinstance(value, np.ndarray):
+        # Identical views share storage even when their Python object IDs differ.
+        value_id = (value.__array_interface__["data"][0], value.shape, value.strides, value.dtype.str)
     if tracked and value_id in memo:
         return memo[value_id]
     if tracked and value_id in active:
@@ -85,6 +93,8 @@ def ingest_value(
             ref = _ingest_unstructured_mesh(store, value, memo, active, created, copy_arrays)
         elif isinstance(value, FieldValue):
             ref = _ingest_field(store, value, memo, active, created, copy_arrays)
+        elif isinstance(value, QuantityArrayValue):
+            ref = _ingest_quantity(store, value, memo, active, created, copy_arrays)
         elif isinstance(value, ParticleSetValue):
             ref = _ingest_particle_set(store, value, memo, active, created, copy_arrays)
         elif isinstance(value, RaySetValue):
@@ -115,8 +125,8 @@ def ingest_value(
 def ingest_mapping(
     store: ResourceStore,
     value: Mapping[Any, Any],
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
@@ -137,8 +147,8 @@ def ingest_mapping(
 def _ingest_structured_grid(
     store: ResourceStore,
     value: StructuredGridValue,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
@@ -180,8 +190,8 @@ def _ingest_structured_grid(
 def _ingest_unstructured_mesh(
     store: ResourceStore,
     value: UnstructuredMeshValue,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
@@ -209,11 +219,16 @@ def _ingest_unstructured_mesh(
 def _ingest_field(
     store: ResourceStore,
     value: FieldValue,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
+    try:
+        component_rank = validate_quantity_array(value, store.quantity_kind(value.quantity_kind), "field")
+        validate_field_domain(value, component_rank)
+    except ValueError as error:
+        raise ResourceValidationError(str(error)) from error
     domain_ref = ingest_value(store, value.domain, memo, active, created, copy_arrays)
     domain_kind = store.kind(domain_ref)
     spatial = {ResourceKind.STRUCTURED_GRID, ResourceKind.UNSTRUCTURED_MESH}
@@ -227,13 +242,6 @@ def _ingest_field(
         )
     values_ref = ingest_value(store, value.values, memo, active, created, copy_arrays)
     values = store._tensor(values_ref, "field values")
-    store._require_numeric(values, "field values")
-    if value.components is not None and (
-        values.ndim == 0 or values.shape[-1] != len(value.components)
-    ):
-        raise ResourceValidationError(
-            "field values trailing dimension must match components"
-        )
     basis = (
         None
         if value.basis is None
@@ -256,24 +264,71 @@ def _ingest_field(
     )
 
 
+def _ingest_quantity(
+    store: ResourceStore, value: QuantityArrayValue, memo: dict[object, ResourceRef],
+    active: set[object], created: list[str], copy_arrays: bool,
+) -> ResourceRef:
+    try:
+        validate_quantity_array(value, store.quantity_kind(value.quantity_kind), "quantity")
+    except ValueError as error:
+        raise ResourceValidationError(str(error)) from error
+    values = ingest_value(store, value.values, memo, active, created, copy_arrays)
+    basis = None if value.basis is None else ingest_value(store, value.basis, memo, active, created, copy_arrays)
+    metadata = ingest_value(store, value.metadata, memo, active, created, copy_arrays)
+    return store._add_node(QuantityArrayResource(value.quantity_kind, value.unit, values,
+                                                basis, value.components, metadata), created)
+
+
 def _ingest_particle_set(
     store: ResourceStore,
     value: ParticleSetValue,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
+    try:
+        convert_ucum_value(1, value.unit, "m")
+    except Exception as error:
+        raise ResourceValidationError("particle positions require a length unit") from error
     positions_ref = ingest_value(store, value.positions, memo, active, created, copy_arrays)
     attributes = ingest_value(store, value.attributes, memo, active, created, copy_arrays)
     metadata = ingest_value(store, value.metadata, memo, active, created, copy_arrays)
     positions = store._tensor(positions_ref, "particle positions")
     store._require_numeric(positions, "particle positions")
-    if positions.ndim != 2 or positions.shape[1] == 0:
+    if (positions.ndim != 2 or positions.shape[1] != 3 or np.iscomplexobj(positions)
+            or not np.all(np.isfinite(positions))):
         raise ResourceValidationError(
-            "particle positions must have shape [particle, coordinate]"
+            "particle positions must have finite shape [particle, 3]"
         )
-    _validate_attributes(store, attributes, positions.shape[0], "particle")
+    count = positions.shape[0]
+    for name, quantity in value.attributes.items():
+        rank = 1 if quantity.components is not None else store.quantity_kind(quantity.quantity_kind)["tensorOrder"]
+        entity_shape = quantity.values.shape[:-rank] if rank else quantity.values.shape
+        if entity_shape != (count,):
+            raise ResourceValidationError(f"particle attribute {name!r} must have first dimension {count} and only component dimensions")
+    ids = value.particle_ids
+    indices = value.material_indices
+    if (not isinstance(ids, np.ndarray) or ids.dtype not in (np.dtype("int32"), np.dtype("int64"))
+            or ids.shape != (count,) or np.any(ids < 0) or len(np.unique(ids)) != count):
+        raise ResourceValidationError("particle_ids must contain unique nonnegative int32 or int64 IDs matching particle count")
+    if (not isinstance(indices, np.ndarray) or not np.issubdtype(indices.dtype, np.integer)
+            or indices.shape != (count,) or np.any(indices < 0) or np.any(indices >= len(value.materials))):
+        raise ResourceValidationError("material_indices must match particles and reference the material table")
+    material_keys = set()
+    for material in value.materials:
+        if (not isinstance(material, Mapping) or material.get("source") not in {"experiment", "task"}
+                or not isinstance(material.get("name"), str) or not material["name"]
+                or not isinstance(material.get("definition"), Mapping)
+                or material.get("task") is not None and not isinstance(material["task"], str)):
+            raise ResourceValidationError("particle materials require source, name, task and frozen definition")
+        key = material["source"], material.get("task"), material["name"]
+        if key in material_keys:
+            raise ResourceValidationError("particle material table contains duplicate material references")
+        material_keys.add(key)
+    ids_ref = ingest_value(store, ids, memo, active, created, copy_arrays)
+    indices_ref = ingest_value(store, indices, memo, active, created, copy_arrays)
+    materials_ref = ingest_value(store, value.materials, memo, active, created, copy_arrays)
     store._require_mapping(metadata, "particle metadata")
     return store._add_node(
         ParticleSetResource(
@@ -282,6 +337,10 @@ def _ingest_particle_set(
             attributes,
             value.identity,
             metadata,
+            ids_ref,
+            indices_ref,
+            materials_ref,
+            value.coordinate_frame,
         ),
         created,
     )
@@ -290,8 +349,8 @@ def _ingest_particle_set(
 def _ingest_ray_set(
     store: ResourceStore,
     value: RaySetValue,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
@@ -327,8 +386,8 @@ def _ingest_ray_set(
 def _ingest_structured_bundle(
     store: ResourceStore,
     value: BundleValue,
-    memo: dict[int, ResourceRef],
-    active: set[int],
+    memo: dict[object, ResourceRef],
+    active: set[object],
     created: list[str],
     copy_arrays: bool,
 ) -> ResourceRef:
@@ -413,6 +472,12 @@ def resolve_value(
         )
         memo[ref.resource_id] = value
         return value
+    if isinstance(node, QuantityArrayResource):
+        value = QuantityArrayValue(node.quantity_kind, node.unit, resolve_value(store, node.values, memo),
+                                   None if node.basis is None else resolve_value(store, node.basis, memo),
+                                   node.components, resolve_value(store, node.metadata, memo))
+        memo[ref.resource_id] = value
+        return value
     if isinstance(node, FieldResource):
         value = FieldValue(
             resolve_value(store, node.domain_ref, memo),
@@ -433,6 +498,10 @@ def resolve_value(
             resolve_value(store, node.attributes, memo),
             node.identity,
             resolve_value(store, node.metadata, memo),
+            particle_ids=resolve_value(store, node.particle_ids, memo),
+            material_indices=resolve_value(store, node.material_indices, memo),
+            materials=resolve_value(store, node.materials, memo),
+            coordinate_frame=node.coordinate_frame,
         )
         memo[ref.resource_id] = value
         return value
@@ -508,6 +577,12 @@ def materialize_value(
         )
         memo[ref.resource_id] = value
         return value
+    if isinstance(node, QuantityArrayResource):
+        value = QuantityArrayValue(node.quantity_kind, node.unit, materialize_value(store, node.values, memo, copy_arrays),
+                                   None if node.basis is None else materialize_value(store, node.basis, memo, copy_arrays),
+                                   node.components, materialize_value(store, node.metadata, memo, copy_arrays))
+        memo[ref.resource_id] = value
+        return value
     if isinstance(node, FieldResource):
         value = FieldValue(
             materialize_value(store, node.domain_ref, memo, copy_arrays),
@@ -530,6 +605,10 @@ def materialize_value(
             materialize_value(store, node.attributes, memo, copy_arrays),
             node.identity,
             materialize_value(store, node.metadata, memo, copy_arrays),
+            particle_ids=materialize_value(store, node.particle_ids, memo, copy_arrays),
+            material_indices=materialize_value(store, node.material_indices, memo, copy_arrays),
+            materials=materialize_value(store, node.materials, memo, copy_arrays),
+            coordinate_frame=node.coordinate_frame,
         )
         memo[ref.resource_id] = value
         return value

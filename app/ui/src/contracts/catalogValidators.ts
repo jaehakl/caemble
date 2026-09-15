@@ -195,6 +195,14 @@ const kernelArtifactDataSpecSchema = z.union([
   kernelDataSpecSchema,
   z
     .object({
+      resourceKind: z.literal('particleSet'),
+      coordinateUnit: z.string().min(1),
+      coordinateFrame: z.literal('world'),
+      attributes: z.record(z.string(), kernelDataSpecSchema),
+    })
+    .passthrough(),
+  z
+    .object({
       resourceKind: z.literal('structuredBundle'),
       members: z.record(z.string(), kernelDataSpecSchema),
     })
@@ -321,6 +329,10 @@ const kernelDescriptorSchema = z
               required: z.boolean(),
               oneOf: z.array(z.string()).min(1),
               defaultBehavior: z.string().optional(),
+              defaultModel: z
+                .object({ model: z.string().min(1), parameters: z.record(z.string(), z.unknown()) })
+                .strict()
+                .optional(),
             }),
           ),
         }),

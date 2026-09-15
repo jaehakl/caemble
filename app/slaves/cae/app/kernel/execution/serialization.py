@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import io
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 import numpy as np
 
 from app.kernel.resources.buffers import BufferStore, MmapArrayDescriptor
+
+
+@dataclass(frozen=True, slots=True)
+class InlineArrayPayload:
+    buffer_id: int
+    dtype: np.dtype
+    shape: tuple[int, ...]
+    fortran_order: bool
+    data: bytes
+    readonly: bool
+    array_type: type
 
 
 class PayloadCodec(Protocol):
@@ -118,21 +129,35 @@ class _MmapPickler(pickle.Pickler):
         self._buffer_store = buffer_store
         self._transaction_id = transaction_id
         self._array_threshold = array_threshold
-        self._descriptors: dict[int, MmapArrayDescriptor] = {}
+        self._descriptors: dict[tuple[Any, ...], MmapArrayDescriptor] = {}
+        self._inline: dict[tuple[Any, ...], InlineArrayPayload] = {}
 
     def persistent_id(self, value: Any) -> Any:
         if not isinstance(value, np.ndarray):
             return None
-        if value.dtype.hasobject or value.size == 0 or value.nbytes < self._array_threshold:
+        if value.dtype.hasobject:
             return None
-        descriptor = self._descriptors.get(id(value))
+        storage = (value.__array_interface__["data"][0], value.shape, value.strides, value.dtype.str)
+        if value.size == 0 or value.nbytes < self._array_threshold:
+            if not np.issubdtype(value.dtype, np.number):
+                return None
+            inline = self._inline.get(storage)
+            if inline is None:
+                fortran = bool(value.flags.f_contiguous and not value.flags.c_contiguous)
+                inline = InlineArrayPayload(len(self._inline), value.dtype, value.shape, fortran,
+                                            value.tobytes(order="F" if fortran else "C"),
+                                            not value.flags.writeable, type(value))
+                self._inline[storage] = inline
+            return "caemble-inline-array-v1", replace(inline, readonly=not value.flags.writeable)
+        descriptor = self._descriptors.get(storage)
         if descriptor is None:
             descriptor = self._buffer_store.descriptor_for(value)
             if descriptor is None:
                 descriptor = self._buffer_store.publish(value, self._transaction_id)
             else:
                 self._buffer_store.retain(descriptor, self._transaction_id)
-            self._descriptors[id(value)] = descriptor
+            self._descriptors[storage] = descriptor
+        descriptor = replace(descriptor, readonly=not value.flags.writeable)
         return "caemble-mmap-array-v1", descriptor
 
 
@@ -146,9 +171,27 @@ class _MmapUnpickler(pickle.Unpickler):
         super().__init__(stream)
         self._buffer_store = buffer_store
         self._transaction_id = transaction_id
-        self._arrays: dict[str, np.memmap[Any, Any]] = {}
+        self._arrays: dict[tuple[str, bool], np.memmap[Any, Any]] = {}
+        self._inline_arrays: dict[int, np.ndarray[Any, Any]] = {}
+        self._inline_views: dict[tuple[int, bool], np.ndarray[Any, Any]] = {}
 
     def persistent_load(self, persistent_id: Any) -> Any:
+        if (isinstance(persistent_id, tuple) and len(persistent_id) == 2
+                and persistent_id[0] == "caemble-inline-array-v1"
+                and isinstance(persistent_id[1], InlineArrayPayload)):
+            descriptor = persistent_id[1]
+            key = descriptor.buffer_id, descriptor.readonly
+            view = self._inline_views.get(key)
+            if view is None:
+                array = self._inline_arrays.get(descriptor.buffer_id)
+                if array is None:
+                    array = np.frombuffer(bytearray(descriptor.data), dtype=descriptor.dtype).reshape(
+                        descriptor.shape, order="F" if descriptor.fortran_order else "C")
+                    self._inline_arrays[descriptor.buffer_id] = array
+                view = array.view(descriptor.array_type)
+                view.flags.writeable = not descriptor.readonly
+                self._inline_views[key] = view
+            return view
         if (
             not isinstance(persistent_id, tuple)
             or len(persistent_id) != 2
@@ -157,11 +200,12 @@ class _MmapUnpickler(pickle.Unpickler):
         ):
             raise pickle.UnpicklingError("unsupported mmap persistent ID")
         descriptor = persistent_id[1]
-        array = self._arrays.get(descriptor.buffer_id)
+        key = (descriptor.buffer_id, descriptor.readonly)
+        array = self._arrays.get(key)
         if array is None:
             array = self._buffer_store.open(
                 descriptor,
                 transaction_id=self._transaction_id,
             )
-            self._arrays[descriptor.buffer_id] = array
+            self._arrays[key] = array
         return array

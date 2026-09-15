@@ -13,7 +13,11 @@ import { parseCatalogRuntimeSlice } from '../src/contracts/catalogValidators'
 
 const database = path.resolve(process.argv[2] ?? '../catalog/caemble_catalog/catalog.sqlite3')
 const outputDirectory = path.resolve(process.argv[3] ?? 'node_modules/.tmp/catalog-examples')
-const { examples, catalog } = readCatalogExamples(database)
+const { examples, catalog, meta } = readCatalogExamples(database)
+assert.ok(meta.experimentCount > 0, 'The Catalog must contain executable Examples.')
+assert.equal(examples.length, meta.experimentCount, 'The fixture build must cover every Catalog Example.')
+assert.equal(new Set(examples.map((example) => example.coordinate)).size, meta.experimentCount)
+assert.equal(catalog.catalogRevision, meta.catalogRevision)
 // Exercise the same response boundary as POST /catalog/runtime-slice before installation.
 parseCatalogRuntimeSlice(catalog)
 installCatalogRuntimeSlice(catalog)
@@ -59,4 +63,4 @@ for (const example of examples) {
   writeFileSync(path.join(outputDirectory, `${example.key}.json`), JSON.stringify(measurement), 'utf8')
   console.log(`${example.coordinate}: compiled, evaluated, and built ${taskNames.length} tasks`)
 }
-assert.equal(examples.length, 21)
+console.log(`All ${meta.experimentCount} Catalog Examples compiled and built at ${meta.catalogRevision}`)

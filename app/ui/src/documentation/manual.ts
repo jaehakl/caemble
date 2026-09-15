@@ -27,6 +27,7 @@ import page25 from '../../../../docs/manual/troubleshooting/troubleshooting-read
 import page26 from '../../../../docs/manual/troubleshooting/troubleshooting-target-manifest.md?raw'
 import page27 from '../../../../docs/manual/troubleshooting/troubleshooting-units-materials.md?raw'
 import page28 from '../../../../docs/manual/troubleshooting/troubleshooting-runtime-results.md?raw'
+import particlePage from '../../../../docs/manual/program/program-particles.md?raw'
 import type { DocumentPage } from './types'
 import { manualBody } from './body'
 
@@ -248,6 +249,16 @@ export const manualDocuments: readonly DocumentPage[] = [
     },
     sourcePath: 'docs/manual/program/program-ray-tracing.md',
     content: manualBody(page11),
+  },
+  {
+    id: 'program-particles',
+    section: 'program',
+    anchor: 'experiment-program-particles',
+    title: '입자 해석: DEM, SPH, MPM',
+    summary: 'Geometry에서 입자를 생성하고 시간·물리량·Material을 확인하는 실행과 Viewer 안내입니다.',
+    keywords: ['particles', 'DEM', 'SPH', 'MPM', '입자', '접촉', '유체', '압축', 'MaterialInteraction'],
+    sourcePath: 'docs/manual/program/program-particles.md',
+    content: manualBody(particlePage),
   },
   {
     ...{

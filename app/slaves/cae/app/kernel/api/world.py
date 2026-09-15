@@ -61,20 +61,29 @@ def material_model(
     source: str = "experiment",
 ) -> dict[str, Any] | None:
     """Read the explicitly selected model instance for a Material role/group."""
-    material_name = part["material"]["name"]
+    return material_model_by_name(world, part["material"]["name"], role, group, source)
+
+
+def material_model_by_name(world, material_name, role, group, source="experiment"):
+    """Resolve a frozen Material directly, without manufacturing a Geometry part."""
     instance = world["materialSelections"].get(role, {}).get(material_name, {}).get(group)
     return None if instance is None else world["materials"][source][material_name]["models"][instance]
 
 
 def interaction_model(world, first_part, second_part, role, group):
     """Read a selected pair model; None means the descriptor's default behavior."""
-    endpoints = [first_part["material"]["name"], second_part["material"]["name"]]
+    return interaction_model_by_name(world, first_part["material"]["name"], second_part["material"]["name"], role, group)
+
+
+def interaction_model_by_name(world, first_name, second_name, role, group):
+    """Resolve selected pair coefficients, or the Catalog's explicit default model."""
+    endpoints = [first_name, second_name]
     pair = sorted(endpoints)
     for binding in world.get("interactionSelections", {}).get(role, []):
         if sorted(binding["between"]) == pair:
             instance = binding["models"].get(group)
             if instance is None:
-                return None
+                return world.get("interactionDefaults", {}).get(role, {}).get(group)
             interaction = world["interactions"][binding["interaction"]]
             model = interaction["models"][instance]
             if world.get("interactionSubjects", {}).get(model["model"], {}).get("exchange") == "ordered" and list(interaction["between"]) != endpoints:

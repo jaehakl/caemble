@@ -61,20 +61,57 @@ class UnstructuredMeshValue:
 
 
 @dataclass(frozen=True, slots=True)
+class QuantityArrayValue:
+    """A domain-independent physical array, with explicit component meaning."""
+
+    quantity_kind: str
+    unit: str
+    values: np.ndarray[Any, Any]
+    basis: Any = None
+    components: tuple[str, ...] | None = None
+    metadata: Mapping[str, Any] = dataclass_field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_quantity_metadata(self)
+
+
+@dataclass(frozen=True, slots=True)
 class ParticleSetValue:
     positions: np.ndarray[Any, Any]
     unit: str
-    attributes: Mapping[str, np.ndarray[Any, Any]] = dataclass_field(
+    attributes: Mapping[str, QuantityArrayValue] = dataclass_field(
         default_factory=dict
     )
     identity: str | None = None
     metadata: Mapping[str, Any] = dataclass_field(default_factory=dict)
+    particle_ids: np.ndarray[Any, Any] = dataclass_field(kw_only=True)
+    material_indices: np.ndarray[Any, Any] = dataclass_field(kw_only=True)
+    materials: tuple[Mapping[str, Any], ...] = dataclass_field(kw_only=True)
+    coordinate_frame: str = dataclass_field(default="world", kw_only=True)
 
     def __post_init__(self) -> None:
         _validate_unit(self.unit)
         _validate_identity(self.identity)
         _validate_named_values("particle attributes", self.attributes)
         _validate_metadata(self.metadata)
+        if self.coordinate_frame != "world":
+            raise ValueError("particle coordinate_frame must be world")
+        if any(not isinstance(value, QuantityArrayValue) for value in self.attributes.values()):
+            raise ValueError("particle attributes must be QuantityArrayValue objects")
+        object.__setattr__(self, "materials", tuple(self.materials))
+
+    def attribute_field(self, name: str) -> FieldValue:
+        """Expose one attribute without copying its array or exporting other attributes."""
+        from dataclasses import replace
+
+        quantity = self.attributes[name]
+        values = quantity.values.view()
+        values.flags.writeable = False
+        positions = self.positions.view()
+        positions.flags.writeable = False
+        domain = replace(self, positions=positions, attributes={})
+        return FieldValue(domain, FieldLocation.PARTICLE, quantity.quantity_kind, quantity.unit,
+                          values, quantity.basis, quantity.components, quantity.metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,19 +166,22 @@ class FieldValue:
             location = FieldLocation(self.location)
         except ValueError as error:
             raise ValueError(f"unsupported field location {self.location!r}") from error
-        if not isinstance(self.quantity_kind, str) or not self.quantity_kind:
-            raise ValueError("field quantity_kind must be a non-empty string")
-        _validate_unit(self.unit)
-        _validate_metadata(self.metadata)
-        components = None if self.components is None else tuple(self.components)
-        if components is not None and (
-            not components
-            or any(not isinstance(component, str) or not component for component in components)
-            or len(set(components)) != len(components)
-        ):
-            raise ValueError("field components must be unique non-empty strings")
+        _validate_quantity_metadata(self)
         object.__setattr__(self, "location", location)
-        object.__setattr__(self, "components", components)
+
+
+def _validate_quantity_metadata(value: QuantityArrayValue | FieldValue) -> None:
+    if not isinstance(value.quantity_kind, str) or not value.quantity_kind:
+        raise ValueError("quantity_kind must be a non-empty string")
+    _validate_unit(value.unit)
+    _validate_metadata(value.metadata)
+    components = None if value.components is None else tuple(value.components)
+    if components is not None and (
+        not components or any(not isinstance(component, str) or not component for component in components)
+        or len(set(components)) != len(components)
+    ):
+        raise ValueError("quantity components must be unique non-empty strings")
+    object.__setattr__(value, "components", components)
 
 
 def _validate_unit(unit: str) -> None:

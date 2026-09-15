@@ -109,6 +109,34 @@ class MaterialModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not declared"):
             validate_model_parameters(definition, {"offset": 1, "typo": 0})
 
+    def test_interaction_default_model_is_typed_and_transactional(self):
+        with open_catalog() as catalog:
+            original = catalog.get_solver_manifest("rigid_body", "2.0.0")["descriptor"]["interactions"][0]
+        with tempfile.TemporaryDirectory() as directory:
+            draft = Path(directory) / "default.sqlite3"
+            def run(*args):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    return main(["--database", str(draft), *args])
+            self.assertEqual(run("draft", "create", "--source", str(catalog_path())), 0)
+            role = copy.deepcopy(original)
+            fallback = {"model": "contact.coulomb@1", "parameters": {
+                "muStatic": {"value": 0, "unit": "1"}, "muDynamic": {"value": 0, "unit": "1"},
+            }}
+            role["modelGroups"][0]["defaultModel"] = fallback
+            command = ("solver", "interaction-role", "upsert", "rigid_body", "2.0.0", "contact", "--definition-json")
+            self.assertEqual(run(*command, json.dumps(role)), 0)
+            invalid = copy.deepcopy(role)
+            invalid["modelGroups"][0]["defaultModel"]["parameters"]["muStatic"]["unit"] = "m"
+            self.assertEqual(run(*command, json.dumps(invalid)), 1)
+            invalid = copy.deepcopy(role)
+            invalid["modelGroups"][0]["required"] = True
+            self.assertEqual(run(*command, json.dumps(invalid)), 1)
+            invalid = copy.deepcopy(role)
+            invalid["modelGroups"][0]["defaultModel"]["model"] = "contact.restitution@1"
+            self.assertEqual(run(*command, json.dumps(invalid)), 1)
+            with open_catalog(draft) as catalog:
+                self.assertEqual(catalog.get_solver_manifest("rigid_body", "2.0.0")["descriptor"]["interactions"][0], role)
+
     def test_quantities_require_canonical_unit_shape_and_finite_values(self):
         with open_catalog() as catalog:
             definition = catalog.material_model("electrical.ohmic-conduction@1")

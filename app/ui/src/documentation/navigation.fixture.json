@@ -90,6 +90,12 @@
     "aliases": ["non-sequential-ray-tracing", "ray-tracing-thin-film"]
   },
   {
+    "id": "program-particles",
+    "section": "program",
+    "anchor": "experiment-program-particles",
+    "aliases": []
+  },
+  {
     "id": "program-simulate",
     "section": "program",
     "anchor": "experiment-program-simulate",

@@ -39,9 +39,9 @@ def test_task_snapshot_and_each_invocation_isolate_nested_numpy_arrays():
 
 @pytest.mark.asyncio
 async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contracts():
-    field_data = {"dtype": "float64", "axes": [{"name": "node"}], "quantityKind": "TestTemperature", "unit": "K"}
+    field_data = {"dtype": "float64", "axes": [{"name": "node"}], "quantityKind": "thermodynamics.Temperature", "unit": "K"}
     sample_data = {"resourceKind": "structuredBundle", "members": {
-        "temperature": {"dtype": "float64", "axes": [{"name": "particle"}], "quantityKind": "TestTemperature", "unit": "K"},
+        "temperature": {"dtype": "float64", "axes": [{"name": "particle"}], "quantityKind": "thermodynamics.Temperature", "unit": "K"},
     }}
     outputs = {
         "field": {"artifactType": "test/mesh-field@1", "payloadKind": "field", "data": field_data},

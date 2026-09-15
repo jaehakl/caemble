@@ -7,6 +7,8 @@ import pickle
 from collections.abc import Mapping
 from typing import Any
 
+from tests.particle_fixtures import particle_identity
+
 import numpy as np
 import pytest
 
@@ -15,6 +17,7 @@ from app.kernel.api import (
     ContentKey,
     FieldValue,
     ParticleSetValue,
+    QuantityArrayValue,
     RaySetValue,
     StatePatch,
     StructuredGridValue,
@@ -57,7 +60,7 @@ def test_field_materialize_detaches_domain_for_another_store(
     consumer = ResourceStore()
     try:
         values = np.array([300.0, 310.0, 320.0, 330.0])
-        field = FieldValue(mesh, "node", "Temperature", "K", values)
+        field = FieldValue(mesh, "node", "thermodynamics.Temperature", "K", values)
         root = source.ingest(field)
         lease = source.acquire(root)
         local = source.resolve(root)
@@ -73,7 +76,7 @@ def test_field_materialize_detaches_domain_for_another_store(
         assert exported.domain.identity == "mesh-deformed"
         assert exported.domain.metadata["sourceIdentity"] == "mesh-original"
         assert exported.location == "node"
-        assert exported.quantity_kind == "Temperature"
+        assert exported.quantity_kind == "thermodynamics.Temperature"
         assert exported.unit == "K"
         np.testing.assert_array_equal(exported.domain.cells["tetra4"], [[0, 1, 2, 3]])
         assert exported.values.flags.writeable is mutable
@@ -119,7 +122,7 @@ def test_canonical_value_pickle_round_trip_preserves_content_keys(
     values = [
         mesh,
         StructuredGridValue((2,), (np.array([0.0, 1.0]),), "m"),
-        ParticleSetValue(np.zeros((2, 3)), "m"),
+        ParticleSetValue(np.zeros((2, 3)), "m", **particle_identity()),
         RaySetValue(np.zeros((1, 3)), np.array([[1.0, 0.0, 0.0]]), "m"),
         BundleValue("test/domain", {"mesh": mesh}),
         ContentKey.from_parts("geometry", "sample"),
@@ -141,15 +144,15 @@ def test_particle_and_ray_fields_keep_domain_attributes_in_nested_bundles(mutabl
     resources = ResourceStore()
     positions = np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0]])
     particles = ParticleSetValue(
-        positions, "m", {"mass": np.array([1.0, 2.0])}, identity="particles-a",
-    )
+        positions, "m", {"mass": QuantityArrayValue("Mass", "kg", np.array([1.0, 2.0]))}, identity="particles-a",
+     **particle_identity())
     rays = RaySetValue(
         positions, np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), "m",
         {"wavelength": np.array([400.0, 600.0])}, identity="rays-a",
     )
     bundle = BundleValue("test/sampling", {
-        "particles": FieldValue(particles, "particle", "Temperature", "K", np.array([300.0, 301.0])),
-        "rays": FieldValue(rays, "ray", "RadiantFlux", "W", np.array([2.0, 3.0])),
+        "particles": FieldValue(particles, "particle", "thermodynamics.Temperature", "K", np.array([300.0, 301.0])),
+        "rays": FieldValue(rays, "ray", "optics.RadiantFlux", "W", np.array([2.0, 3.0])),
         "positions": positions,
     })
     try:
@@ -159,7 +162,7 @@ def test_particle_and_ray_fields_keep_domain_attributes_in_nested_bundles(mutabl
         ray_field = detached.members["rays"]
         assert particle_field.domain.positions is ray_field.domain.origins
         assert particle_field.domain.positions is detached.members["positions"]
-        np.testing.assert_array_equal(particle_field.domain.attributes["mass"], [1.0, 2.0])
+        np.testing.assert_array_equal(particle_field.domain.attributes["mass"].values, [1.0, 2.0])
         np.testing.assert_array_equal(ray_field.domain.attributes["wavelength"], [400.0, 600.0])
         assert particle_field.location == "particle"
         assert ray_field.location == "ray"
@@ -176,7 +179,7 @@ def test_field_domain_and_values_reuse_mmap_backing_across_resource_roots(
     buffers = BufferStore()
     resources = ResourceStore()
     try:
-        field = FieldValue(mesh, "node", "Temperature", "K", np.arange(4.0))
+        field = FieldValue(mesh, "node", "thermodynamics.Temperature", "K", np.arange(4.0))
         codec = MmapPayloadCodec(buffers, array_threshold=1)
         first = codec.begin_invocation()
         decoded = first.decode(first.encode({

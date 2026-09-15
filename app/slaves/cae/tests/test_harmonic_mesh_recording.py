@@ -11,17 +11,25 @@ from app.kernel.transport.recording import materialize_record_value
 from app.kernel.transport.tensor import decode_attachment_tensors, encode_recorded_data
 
 
-@pytest.mark.parametrize("location,components", [("node", 3), ("cell", 6), ("node", 1)])
+@pytest.mark.parametrize("location,components,quantity", [
+    ("node", 3, "kinematics.Displacement"), ("cell", 6, "mechanics.StressTensor"),
+    ("cell", 6, "Pressure"), ("node", 1, "Pressure"),
+])
 @pytest.mark.parametrize("samples", [2, 3000])
-def test_harmonic_mesh_bundle_roundtrip(location, components, samples):
+def test_harmonic_mesh_bundle_roundtrip(location, components, quantity, samples):
     frequencies = np.arange(samples, dtype=np.float64) + 17.0
     count = 4 if location == "node" else 1
     values = (np.arange(count * samples * components).reshape(count, samples, components) * (1 + 2j)).astype(np.complex64)
     domain = UnstructuredMeshValue(np.eye(4, 3), {"tet4": np.array([[0, 1, 2, 3]], dtype=np.int32)}, "m", "mesh")
-    field = FieldValue(domain, location, "Pressure", "Pa", values, metadata={
+    unit, labels = {
+        1: ("Pa", ("value",)),
+        3: ("m", ("x", "y", "z")),
+        6: ("Pa", ("xx", "yy", "zz", "xy", "yz", "xz")),
+    }[components]
+    field = FieldValue(domain, location, quantity, unit, values, components=labels, metadata={
         "sampleAxes": [{"axis": 1, "name": "frequency", "unit": "Hz", "ticks": frequencies}],
     })
-    value_schema = {"dtype": "complex64", "unit": "Pa", "quantityKind": "Pressure", "axes": [
+    value_schema = {"dtype": "complex64", "unit": unit, "quantityKind": quantity, "axes": [
         {"name": "entity"}, {"name": "frequency", "unit": "Hz", "quantityKind": "Frequency"}, {"length": components},
     ]}
     schema = {"field": {"values": value_schema, "location": {"dtype": "string"}, "domain": {

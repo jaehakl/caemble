@@ -20,6 +20,7 @@ class ResourceKind(StrEnum):
     STRUCTURED_GRID = "structured-grid"
     UNSTRUCTURED_MESH = "unstructured-mesh"
     FIELD = "field"
+    QUANTITY_ARRAY = "quantity-array"
     PARTICLE_SET = "particle-set"
     RAY_SET = "ray-set"
     STRUCTURED_BUNDLE = "structured-bundle"
@@ -98,12 +99,27 @@ class FieldResource:
 
 
 @dataclass(frozen=True, slots=True)
+class QuantityArrayResource:
+    quantity_kind: str
+    unit: str
+    values: ResourceRef
+    basis: ResourceRef | None
+    components: tuple[str, ...] | None
+    metadata: ResourceRef
+    kind: ResourceKind = ResourceKind.QUANTITY_ARRAY
+
+
+@dataclass(frozen=True, slots=True)
 class ParticleSetResource:
     positions: ResourceRef
     unit: str
     attributes: ResourceRef
     identity: str | None
     metadata: ResourceRef
+    particle_ids: ResourceRef
+    material_indices: ResourceRef
+    materials: ResourceRef
+    coordinate_frame: str
     kind: ResourceKind = ResourceKind.PARTICLE_SET
 
 
@@ -174,6 +190,7 @@ ResourceNode = (
     | StructuredGridResource
     | UnstructuredMeshResource
     | FieldResource
+    | QuantityArrayResource
     | ParticleSetResource
     | RaySetResource
     | StructuredBundleResource

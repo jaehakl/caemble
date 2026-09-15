@@ -35,9 +35,32 @@ export type KernelStructuredBundleSpec = Readonly<{
   resourceKind: 'structuredBundle'
   members: Readonly<Record<string, KernelDataSpec>>
 }>
+export type KernelParticleSetSpec = Readonly<{
+  resourceKind: 'particleSet'
+  coordinateUnit: string
+  coordinateFrame: 'world'
+  attributes: Readonly<Record<string, KernelDataSpec>>
+}>
 export type ResultVisualization = Readonly<{
-  kind: 'tensor' | 'bundle' | 'mesh-field' | 'mesh-transform' | 'structured-field' | 'polyline' | 'box-grid'
+  kind:
+    | 'tensor'
+    | 'bundle'
+    | 'mesh-field'
+    | 'mesh-transform'
+    | 'structured-field'
+    | 'polyline'
+    | 'box-grid'
+    | 'particle-set'
   coordinateSpace?: 'experiment'
+  particleSet?: Readonly<{
+    positions: string
+    particleIds: string
+    materialIndices: string
+    materialNames: string
+    times: string
+    attributes: Readonly<Record<string, Readonly<{ path: string; components?: readonly string[] }>>>
+    radius?: string
+  }>
   meshTransform?: Readonly<{
     bodyIds: string
     vertices: string
@@ -70,7 +93,7 @@ export type ResultVisualization = Readonly<{
   attributes?: Readonly<Record<string, Readonly<{ path: string; association: 'path' | 'segment' }>>>
 }>
 
-export type KernelArtifactDataSpec = (KernelDataSpec | KernelStructuredBundleSpec) &
+export type KernelArtifactDataSpec = (KernelDataSpec | KernelStructuredBundleSpec | KernelParticleSetSpec) &
   Readonly<{
     visualization?: ResultVisualization
     recording?: 'mesh-field' | 'mesh-series' | 'structured-field'
@@ -145,6 +168,7 @@ export type KernelInteractionDescriptor = Readonly<{
     required: boolean
     oneOf: readonly string[]
     defaultBehavior?: string
+    defaultModel?: Readonly<{ model: string; parameters: Readonly<Record<string, unknown>> }>
   }>[]
 }>
 

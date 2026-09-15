@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Calculation, CalculationExperimentRecord, Experiment, ExperimentDemo, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
+from db import ExperimentThumbnail
 from models import (
     ExperimentBase,
     ExperimentRecordBase,
@@ -577,6 +578,14 @@ async def delete_experiment_versions(
     for owner_id, namespaces in namespaces_by_owner.items():
         await _cleanup_empty_namespaces(db, owner_id, namespaces)
     await db.commit()
+
+
+async def experiment_thumbnail(db: AsyncSession, experiment_id: int, *, user: UserData | None) -> bytes:
+    await require_experiment_read(db, experiment_id, user=user)
+    thumbnail = await db.get(ExperimentThumbnail, experiment_id)
+    if thumbnail is None:
+        raise HTTPException(404, "Thumbnail not found.")
+    return thumbnail.data
 
 
 async def experiment_versions(

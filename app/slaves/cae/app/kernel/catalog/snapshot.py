@@ -18,11 +18,13 @@ class SolverCatalog:
         artifact_types: dict[str, dict[str, Any]] | None = None,
         catalog_revision: str | None = None,
         material_models: dict[str, dict[str, Any]] | None = None,
+        quantity_kinds: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self._entries = copy.deepcopy(entries)
         self._artifact_types = copy.deepcopy(artifact_types or {})
         self.catalog_revision = catalog_revision
         self._material_models = copy.deepcopy(material_models or {})
+        self.quantity_kinds = copy.deepcopy(quantity_kinds or {})
 
     @classmethod
     def discover(cls, catalog_path: Path | None = None) -> SolverCatalog:
@@ -33,6 +35,7 @@ class SolverCatalog:
                 artifact_types=catalog.artifact_types(),
                 catalog_revision=catalog.meta()["catalogRevision"],
                 material_models=catalog.material_models(),
+                quantity_kinds=catalog.list_quantity_kinds(limit=catalog.meta()["quantityKindCount"])[0],
             )
         finally:
             catalog.close()
@@ -45,6 +48,7 @@ class SolverCatalog:
         artifact_types: list[dict[str, Any]] | None = None,
         catalog_revision: str | None = None,
         material_models: list[dict[str, Any]] | None = None,
+        quantity_kinds: list[dict[str, Any]] | None = None,
     ) -> SolverCatalog:
         return cls(
             {
@@ -57,6 +61,7 @@ class SolverCatalog:
             },
             catalog_revision,
             {item["key"]: item for item in material_models or ()},
+            {item["name"]: item for item in quantity_kinds or ()},
         )
 
     def manifests(self) -> list[dict[str, Any]]:

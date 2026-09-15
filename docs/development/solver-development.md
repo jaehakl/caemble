@@ -383,6 +383,54 @@ Solver의 내부·연성 domain field는 `FieldValue`, ray path와 복합 표시
 `BundleValue`로 전달합니다. 수치 Output은 Box Grid Tensor로 변환합니다.
 내부 ResourceRef를 Solver 입출력이나 method API에 노출하지 않습니다.
 
+### 공통 물리량과 Particle 값
+
+`QuantityArrayValue`는 domain 없는 물리 배열입니다. `quantity_kind`, `unit`,
+`values`와 선택적인 `basis`, `components`, `metadata`를 가지며,
+`FieldValue`는 기존 평탄한 인자를 유지하면서 같은 물리량 검증을 사용합니다.
+Runtime은 이번 실행에서 고정한 Catalog QuantityKind로 UCUM 차원과 Tensor
+차수를 확인합니다. 속성 이름이나 배열 모양으로 물리량을 추측하지 않습니다.
+Scalar에는 basis나 components가 필요하지 않습니다. Tensor는 Cartesian
+성분을 명시하거나 전체 Tensor 축을 보존합니다. Scalar QuantityKind에도 여러
+Scalar 값을 담은 명시적인 `components` 축을 둘 수 있습니다. 기존 구조 Solver의
+Pressure 6성분 응력이 이 표현을 사용하며, 이 저장 축이 QuantityKind의 물리적
+Tensor 차수를 바꾸지는 않습니다. 이 규칙은 Field와 QuantityArray에 동일하게
+적용하고 성분 이름의 유일성과 배열의 마지막 축 길이를 검증합니다. 대칭 2차 Tensor의 명시적인
+6성분 표현과 Field의 `sampleAxes`도 보존하며 entity 축과 표본 축을 혼동하지
+않습니다. 검증은 공개 결과와 state의 resource 경계에서 수행하며 내부 timestep의
+임시 벡터까지 Quantity 객체로 감싸지 않습니다.
+
+`ParticleSetValue`의 `positions`는 `[particle, 3]` world 좌표이고 `unit`은
+길이 단위입니다. `coordinate_frame`은 `world`입니다. 각 `attributes` 값은
+`QuantityArrayValue`이며 입자 수와 성분 차원이 일치해야 합니다. 별도 항목인
+`particle_ids`는 중복 없는 음이 아닌 int32 또는 int64 배열이고 `material_indices`는
+`materials` 대응표를 가리키는 정수 배열입니다. 대응표는 `source`, `task`,
+`name`, frozen Material `definition`을 보존하므로 export를 다른 child에서
+해석하기 위해 원래 Geometry를 다시 조회할 필요가 없습니다. ID와 재료 참조에는
+QuantityKind를 붙이지 않습니다.
+
+`particles.attribute_field(name)`은 같은 배열을 참조하는 읽기 전용 Field
+표현을 제공합니다. 그 domain에는 좌표·ID·재료 대응을 유지하고 다른 속성은
+포함하지 않습니다. Particle 속성 안에는 완전한 Field를 넣지 않으므로 순환
+domain 참조가 생기지 않습니다. Resource와 mmap 경로는 동일한 backing
+array를 공유하는 view도 보존합니다. 읽기 전용 Field 표현을 만들 때 원본 계산
+배열의 writeable 설정은 바꾸지 않습니다.
+
+Particle Solver는 Geometry와 Material 및 생성 설정으로 입자를 생성하고,
+배열 순서를 영구 identity로 사용하지 않습니다. 첫 입자 Solver들은 생성 후
+입자 수가 고정됩니다. 호출 경계의 Particle 상태에는 다음 계산에 필요한
+물리량과 solver별 접촉·재료 이력을 보존하고 이웃 탐색 가속 자료나 재생성
+가능한 계산 격자는 child에 둡니다. 공유 물리량 계약이 같아도 다른 Solver의
+continuation state를 직접 계승할 수 있다는 뜻은 아닙니다.
+
+입자 native export는 Catalog의 `particleSet` 계약에 선언한 속성만 내보냅니다.
+자동 particle visualization은 기존 typed Bundle과 visualization collection을
+사용하며 위치·ID·재료·시간·선택 물리량을 보존합니다. DEM의 물리적 반경은
+화면의 점 크기 설정과 별개입니다. 수치 Output은 기존 Box Grid를 사용합니다.
+Cell 질량을 전체 cell 체적으로 나눈 밀도, 운동량을 전체 cell 체적으로 나눈
+운동량 밀도, 운동량을 질량으로 나눈 속도를 기록하며 빈 cell은 0입니다.
+출력 Box·해상도·표본 간격은 물리 계산의 격자와 시간적분을 결정하지 않습니다.
+
 StatePatch와 여러 Artifact를 한 번에 ingest할 때 동일한 domain과 array의
 공유 관계를 보존합니다. mmap으로 전달된 배열은 backing buffer를 재사용하며,
 Python 객체 identity가 바뀌어도 별도 buffer 사본을 만들 필요가 없습니다.
@@ -679,5 +727,14 @@ Catalog Model의 `subject`는 단일 재료 또는 재료 쌍을 구분합니다
 MaterialInteraction은 순서 없는 재료 쌍마다 하나이고 그 안에 여러 모델을 둘 수 있습니다. 저작 평가기는 `material.tsx`의 named export를 자동 수집하여 실제 사용한 재료 쌍만 동결합니다. BuiltMeasurement의 `interactions`와 Task별 `interactionSelections`가 전송 계약이며, 기존 MaterialSnapshot의 `materials` 모양은 유지합니다. Worker는 정의·계수·중복·호환성과 동결한 선택을 검증합니다. 이전 입력에서 새 필드가 없으면 빈 관계로 해석하며 제거된 Solver 버전은 재지정하지 않습니다.
 
 Solver는 `world.interactions`, `world.interactionSelections`와 `world.interactionSubjects`를 받습니다. `kernel.api.world.interaction_model`로 두 part의 역할/그룹 모델을 읽습니다. 대칭 모델은 양쪽 순서로 조회할 수 있고 ordered 모델을 뒤집어 조회하면 오류입니다. 필수 그룹에 모델이 없거나 여러 후보가 있는데 Task의 `config.interactionModels` 선택이 없으면 실행 전에 거부합니다. 선택 그룹은 Catalog에 명시한 기본 동작을 Solver가 구현해야 합니다.
+
+Particle 경로는 `material_model_by_name`과 `interaction_model_by_name`으로
+같은 frozen 선택을 조회합니다. Material 조회에는 이름과 scene source를
+전달하며 입자마다 임시 Geometry를 만들지 않습니다. Interaction의 선택 그룹에
+Catalog `defaultModel`이 선언되어 있으면 Runtime이 모델 정의와 정규화한 계수를
+확인하고 `world.interactionDefaults`에 고정합니다. 명시적으로 선택한 모델이
+없을 때만 기본 모델을 사용하며 잘못된 선택을 기본값으로 대체하지 않습니다.
+DEM은 실제 입자–입자와 입자–벽 접촉에 필요한 재료 쌍만 수치 계수로
+준비합니다. 계산하지 않는 벽–벽 관계에 모델 입력을 요구하지 않습니다.
 
 Rigid의 접촉 경로는 실제 solid의 삼각형 표면, BVH 거리, 회전 속도 한계와 접촉 impulse를 사용합니다. 초기 관통은 오류이며, 접촉 시간 단계는 수렴·관통 검사를 통과해야 승인합니다. 기본 마찰과 반발은 0입니다. 물리 계수는 Interaction 모델, 허용오차·반복 횟수·시간 설정은 Task initialization에 둡니다. 접촉점의 impulse 이력과 누적 마찰 소산은 state에 보관하고, BVH 같은 프로세스 로컬 객체는 state에 저장하지 않습니다. 관통 관측치는 solid 교집합의 두께 추정과 접촉점 간격에 기반합니다.

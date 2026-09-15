@@ -14,7 +14,11 @@ import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
 import { cadSourceHash } from '../src/lib/cad/source/document'
 import type { Tensor } from '../src/lib/cad/model/types'
 
-const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+const { examples, catalog, meta } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+assert.ok(meta.experimentCount > 0, 'The Catalog must contain executable Examples.')
+assert.equal(examples.length, meta.experimentCount, 'The client build must cover every Catalog Example.')
+assert.equal(new Set(examples.map((example) => example.coordinate)).size, meta.experimentCount)
+assert.equal(catalog.catalogRevision, meta.catalogRevision)
 const declarations = path.resolve('src/lib/cad/api')
 const temporary = mkdtempSync(path.join(os.tmpdir(), 'caemble-client-build-'))
 cpSync('dist-cli', temporary, { recursive: true })
@@ -86,7 +90,7 @@ try {
     assert.equal('renderScene' in actual.measurement.experiment, false)
     console.log(`${example.key}: isolated artifact matches canonical browser input`)
   }
-  assert.equal(examples.length, 21)
+  console.log(`All ${meta.experimentCount} Catalog Examples passed isolated build parity at ${meta.catalogRevision}`)
 
   const fdtd = examples.find((example) => example.key === 'fdtd-drude-slab')!
   const trcBundle = fdtd.sourceBundle

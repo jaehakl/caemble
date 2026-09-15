@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
-import type { CatalogExperimentDetail, CatalogRuntimeSlice } from '../src/contracts/catalog'
+import type { CatalogExperimentDetail, CatalogMeta, CatalogRuntimeSlice } from '../src/contracts/catalog'
 import type { CompiledCadDocument } from '../src/lib/cad/compiler/types'
 import { compileNodeCadDocument } from '../src/platform/node/cadCompiler'
 
@@ -23,14 +23,14 @@ with open_catalog(sys.argv[1]) as c:
   quantity_kinds=[q['name'] for q in c.list_quantity_kinds(limit=10000)[0]],
   material_models=[m['key'] for m in c.list_material_models(limit=10000)[0]])
  examples=[c.experiment(e['coordinate']) for e in c.list_experiments(limit=10000)[0]]
- print(json.dumps(dict(examples=examples,catalog=runtime)))
+ print(json.dumps(dict(examples=examples,catalog=runtime,meta=c.meta())))
 `,
         database,
         path.resolve('../catalog'),
       ],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
     ),
-  ) as { examples: CatalogExperimentDetail[]; catalog: CatalogRuntimeSlice }
+  ) as { examples: CatalogExperimentDetail[]; catalog: CatalogRuntimeSlice; meta: CatalogMeta }
 }
 
 export function compileCatalogExample(

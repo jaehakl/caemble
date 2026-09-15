@@ -2,6 +2,7 @@ import page0 from '../../../../docs/development/architecture.md?raw'
 import page1 from '../../../../docs/development/solver-development.md?raw'
 import structuralMechanicsPage from '../../../../docs/development/structural-mechanics.md?raw'
 import rigidBodyPage from '../../../../docs/development/rigid-body.md?raw'
+import particlesPage from '../../../../docs/development/particles.md?raw'
 import pressureAcousticsPage from '../../../../docs/development/pressure-acoustics.md?raw'
 import pressureAcousticsValidationPage from '../../../../docs/development/pressure-acoustics-validation.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
@@ -53,6 +54,14 @@ export const developmentDocuments: readonly DocumentPage[] = [
     sourcePath: 'docs/development/rigid-body.md',
     keywords: ['rigid', 'multibody', 'CSG', 'mass', '강체', '관성'],
     content: documentBody(rigidBodyPage),
+  },
+  {
+    id: 'development.particles',
+    title: '공통 물리량과 입자 해석 검증',
+    summary: 'DEM·SPH·MPM 수치 구현, 상태·자원 경계와 검증',
+    sourcePath: 'docs/development/particles.md',
+    keywords: ['DEM', 'SPH', 'MPM', 'Particle', 'Quantity', '검증'],
+    content: documentBody(particlesPage),
   },
   {
     id: 'development.pressure-acoustics',

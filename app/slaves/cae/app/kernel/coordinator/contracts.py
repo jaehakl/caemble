@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from app.kernel.api import BundleValue, FieldValue
+from app.kernel.api import BundleValue, FieldValue, ParticleSetValue, QuantityArrayValue
 
 
 def validate_artifact_payload(
@@ -16,6 +16,18 @@ def validate_artifact_payload(
     require_spatial_field: bool = False,
 ) -> None:
     """Validate the storage contract projected from a Catalog artifact type."""
+
+    if contract.get("resourceKind") == "particleSet":
+        if not isinstance(value, ParticleSetValue):
+            raise ValueError(f"{path} must be a ParticleSetValue")
+        if value.unit != contract.get("coordinateUnit") or value.coordinate_frame != contract.get("coordinateFrame", "world"):
+            raise ValueError(f"{path} particle coordinates differ from its artifact contract")
+        expected = contract.get("attributes", {})
+        if set(value.attributes) != set(expected):
+            raise ValueError(f"{path} particle attributes differ from its artifact contract")
+        for name, attribute in value.attributes.items():
+            validate_artifact_payload(attribute, expected[name], f"{path}.attributes.{name}")
+        return
 
     if contract.get("resourceKind") == "structuredBundle":
         if not isinstance(value, BundleValue):
@@ -41,7 +53,10 @@ def validate_artifact_payload(
 
     if require_spatial_field and not isinstance(value, FieldValue):
         raise ValueError(f"{path} must be a FieldValue")
-    if isinstance(value, FieldValue):
+    if isinstance(value, (FieldValue, QuantityArrayValue)):
+        if isinstance(value, QuantityArrayValue):
+            if value.quantity_kind != contract.get("quantityKind") or value.unit != contract.get("unit"):
+                raise ValueError(f"{path} quantity or unit differs from its artifact contract")
         if require_spatial_field:
             if value.location.value not in {"node", "edge", "face", "cell"}:
                 raise ValueError(f"{path}.location is not spatial")
@@ -103,7 +118,8 @@ def validate_artifact_payload(
     tensor_order = contract.get("tensorOrder", 0)
     if isinstance(tensor_order, bool) or not isinstance(tensor_order, int) or tensor_order < 0:
         raise ValueError(f"{path} has an invalid tensor order")
-    expected_rank = len(axes) + tensor_order
+    explicit_components = isinstance(value, (FieldValue, QuantityArrayValue)) and value.components is not None
+    expected_rank = len(axes) + (1 if tensor_order and explicit_components else tensor_order)
     if array.ndim != expected_rank:
         raise ValueError(f"{path} must have rank {expected_rank}, got {array.ndim}")
     for index, axis in enumerate(axes):
@@ -115,7 +131,7 @@ def validate_artifact_payload(
                 f"{path} axis {index} must have length {length}, got {array.shape[index]}"
             )
     basis = contract.get("basis")
-    if tensor_order and isinstance(basis, (list, tuple)):
+    if tensor_order and isinstance(basis, (list, tuple)) and not explicit_components:
         dimension = len(basis)
         if array.shape[len(axes) :] != (dimension,) * tensor_order:
             raise ValueError(

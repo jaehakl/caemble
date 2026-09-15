@@ -7,6 +7,8 @@ import pickle
 from collections.abc import Mapping
 from pathlib import Path
 
+from tests.particle_fixtures import particle_identity
+
 import numpy as np
 import pytest
 
@@ -16,6 +18,7 @@ from app.kernel.api import (
     FieldValue,
     FieldLocation,
     ParticleSetValue,
+    QuantityArrayValue,
     RaySetValue,
     BundleValue,
     StructuredGridValue,
@@ -45,16 +48,16 @@ def test_structured_grid_and_field_are_immutable_linked_resources() -> None:
         identity="grid-a",
         metadata={"geometryHash": "abc"},
     )
-    values = np.arange(12, dtype=np.float64).reshape(2, 3, 2)
+    values = np.arange(18, dtype=np.float64).reshape(2, 3, 3)
     field_ref, bundle_ref = resources.ingest_many((
         FieldValue(
             domain=grid,
             location="cell",
-            quantity_kind="ElectricCurrentDensity",
+            quantity_kind="electromagnetism.ElectricCurrentDensity",
             unit="A/m2",
             values=values,
-            basis={"kind": "cartesian"},
-            components=("x", "y"),
+            basis=np.eye(3),
+            components=("x", "y", "z"),
             metadata={"solver": "dc"},
         ),
         BundleValue("test/vector-field", {"values": values, "domain": grid}),
@@ -76,10 +79,10 @@ def test_structured_grid_and_field_are_immutable_linked_resources() -> None:
     description = resources.describe(field_ref)
     grid_ref = description.metadata["domainRef"]
     assert description.kind is ResourceKind.FIELD
-    assert description.shape == (2, 3, 2)
+    assert description.shape == (2, 3, 3)
     assert resources.kind(grid_ref) is ResourceKind.STRUCTURED_GRID
-    assert description.metadata["quantityKind"] == "ElectricCurrentDensity"
-    assert description.metadata["components"] == ("x", "y")
+    assert description.metadata["quantityKind"] == "electromagnetism.ElectricCurrentDensity"
+    assert description.metadata["components"] == ("x", "y", "z")
     assert resources.reference_count(grid_ref) == 2
 
     detached = resources.materialize(field_ref)
@@ -97,19 +100,19 @@ def test_structured_grid_and_field_are_immutable_linked_resources() -> None:
 def test_field_contract_rejects_tagged_mapping_payloads() -> None:
     values = np.arange(3, dtype=np.float64)
     contract = {
-        "dtype": "float64", "quantityKind": "Temperature", "unit": "K",
+        "dtype": "float64", "quantityKind": "thermodynamics.Temperature", "unit": "K",
         "axes": [{"name": "x"}],
     }
     tagged = {
         "kind": "caemble.structured-field/v1", "value": values,
         "domainRef": {"kind": "caemble.structured-grid/v1", "shape": [3]},
-        "location": "cell", "quantityKind": "Temperature", "unit": "K",
+        "location": "cell", "quantityKind": "thermodynamics.Temperature", "unit": "K",
     }
     with pytest.raises(ValueError, match="must be a FieldValue"):
         validate_artifact_payload(tagged, contract, "field", require_spatial_field=True)
     domain = StructuredGridValue((3,), (values,), "m")
     validate_artifact_payload(
-        FieldValue(domain, "cell", "Temperature", "K", values),
+        FieldValue(domain, "cell", "thermodynamics.Temperature", "K", values),
         contract, "field", require_spatial_field=True,
     )
 
@@ -167,10 +170,10 @@ def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> Non
     )
     particles_ref = resources.ingest(
         ParticleSetValue(
-            positions=np.array([[0.0, 0.0], [1.0, 1.0]]),
+            positions=np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]),
             unit="m",
-            attributes={"mass": np.array([1.0, 2.0])},
-        )
+            attributes={"mass": QuantityArrayValue("Mass", "kg", np.array([1.0, 2.0]))},
+         **particle_identity())
     )
     rays_ref = resources.ingest(
         RaySetValue(
@@ -198,8 +201,8 @@ def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> Non
             ParticleSetValue(
                 positions=np.zeros((2, 3)),
                 unit="m",
-                attributes={"mass": np.ones(3)},
-            )
+                attributes={"mass": QuantityArrayValue("Mass", "kg", np.ones(3))},
+             **particle_identity())
         )
     with pytest.raises(ResourceValidationError, match="cannot be zero"):
         resources.ingest(RaySetValue(np.zeros((1, 3)), np.zeros((1, 3)), "m"))
@@ -208,14 +211,14 @@ def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> Non
 def test_field_metadata_and_domain_are_validated() -> None:
     resources = ResourceStore()
     grid = StructuredGridValue((2,), (np.array([0.0, 1.0]),), "m")
-    particles = ParticleSetValue(np.zeros((2, 3)), "m")
+    particles = ParticleSetValue(np.zeros((2, 3)), "m", **particle_identity())
 
     with pytest.raises(ResourceValidationError, match="trailing dimension"):
         resources.ingest(
             FieldValue(
                 grid,
                 "cell",
-                "Velocity",
+                "kinematics.Velocity",
                 "m/s",
                 np.ones((2, 2)),
                 components=("x", "y", "z"),
@@ -226,7 +229,7 @@ def test_field_metadata_and_domain_are_validated() -> None:
             FieldValue(
                 particles,
                 "cell",
-                "Temperature",
+                "thermodynamics.Temperature",
                 "K",
                 np.ones(2),
             )

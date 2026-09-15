@@ -64,6 +64,10 @@ export function projectArtifactRecordingSchema(
   referenceLengthUnit: string,
 ): RecordedDataSpecNode {
   const { visualization, recording, ...data } = artifactData
+  if ('resourceKind' in data && data.resourceKind === 'particleSet')
+    throw new CadModelError(
+      'Native ParticleSet exports are not recording schemas; use the automatic particle visualization.',
+    )
   let schema: RecordedDataSpecNode = 'resourceKind' in data ? data.members : (data as RecordedDataSpec)
   if (recording === 'mesh-field')
     schema = meshFieldSchema(data as RecordedDataSpec, referenceLengthUnit, Boolean(visualization?.nodeIdsPath))

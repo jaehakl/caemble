@@ -129,6 +129,7 @@ const server = await createServer({
       import { MeshFieldResult } from '/src/features/viewer/viewer/MeshFieldResult.tsx';
       import { MeshTransformResult } from '/src/features/viewer/viewer/MeshTransformResult.tsx';
       import { parseRecordedMeshTransforms } from '/src/features/viewer/viewer/meshTransforms.ts';
+      import { parseRecordedParticleSets } from '/src/features/viewer/viewer/particleSets.ts';
       import JscadViewer from '/src/features/viewer/viewer/JscadViewer.tsx';
       import { WorkbenchViewer } from '/src/features/cae-workbench/viewer/WorkbenchViewer.tsx';
       import { visualizationData } from '/src/features/viewer/viewer/visualizationData.ts';
@@ -211,12 +212,16 @@ const server = await createServer({
         if (Object.keys(visual.errors).length) throw new Error(JSON.stringify(visual.errors));
         const parsed = parseRecordedMeshFields(visual.rules, visual.data, visual.contracts);
         const transforms = parseRecordedMeshTransforms(visual.rules, visual.data, visual.contracts);
+        const particles = parseRecordedParticleSets(visual.rules, visual.data, visual.contracts);
         if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors));
         if (transforms.errors.length) throw new Error(JSON.stringify(transforms.errors));
-        if (!parsed.fields.length && !transforms.motions.length) throw new Error('The saved result has no native meshes.');
+        if (particles.errors.length) throw new Error(JSON.stringify(particles.errors));
+        if (!parsed.fields.length && !transforms.motions.length && !particles.particles.length)
+          throw new Error('The saved result has no native geometry.');
         window.recordedMeshFields = parsed.fields;
         window.recordedMeshMotions = transforms.motions;
-        for (const field of [...parsed.fields, ...transforms.motions, ...Object.keys(saved.outputs.contracts).map(label=>({label}))]) {
+        window.recordedParticleSets = particles.particles;
+        for (const field of [...parsed.fields, ...transforms.motions, ...particles.particles, ...Object.keys(saved.outputs.contracts).map(label=>({label}))]) {
           const option = document.createElement('option');
           option.value = field.label;
           option.textContent = 'Recorded ' + field.label.replace('@visualizations.', '');
@@ -224,7 +229,7 @@ const server = await createServer({
         }
         document.getElementById('saved-result-status').textContent = 'Saved result: ' + saved.jobId;
         if (${serverOnly}) {
-          picker.value = [...parsed.fields, ...transforms.motions][0].label;
+          picker.value = [...parsed.fields, ...transforms.motions, ...particles.particles][0].label;
           picker.dispatchEvent(new Event('change'));
         }
       }
@@ -474,7 +479,27 @@ try {
           triangles: triangles.length / 3,
         })),
       )
-      assert.ok(fields.length + motions.length, 'The production decoder must reopen saved native meshes.')
+      const particles = await page.evaluate(() =>
+        window.recordedParticleSets.map(
+          ({ label, particleIds, materialIndices, materialNames, times, attributes, radius }) => ({
+            label,
+            ids: Array.from(particleIds),
+            materials: Array.from(materialIndices, (index) => materialNames[index]),
+            times: Array.from(times),
+            attributes: Object.entries(attributes).map(([name, quantity]) => ({
+              name,
+              components: quantity.components,
+              unit: quantity.unit,
+              quantityKind: quantity.quantityKind,
+            })),
+            physicalRadius: Boolean(radius),
+          }),
+        ),
+      )
+      assert.ok(
+        fields.length + motions.length + particles.length,
+        'The production decoder must reopen saved native geometry.',
+      )
       for (const selected of fields) {
         assert.ok(selected.nodes > 4 && selected.cells > 1)
         await fixturePicker.selectOption(selected.label)
@@ -521,6 +546,62 @@ try {
         assert.equal(await page.getByRole('alert').count(), 0)
         await page.screenshot({ path: path.join(outputDirectory, 'mesh-viewer-recorded-rigid.png') })
       }
+      for (const selected of particles) {
+        assert.ok(selected.ids.length && selected.times.length && selected.attributes.length)
+        await fixturePicker.selectOption(selected.label)
+        const article = page.getByRole('article', { name: `${selected.label} particles` })
+        await article.waitFor()
+        await canvas.waitFor()
+        assert.equal(await page.getByLabel('Particle 점 크기').count(), selected.physicalRadius ? 0 : 1)
+        await page.getByLabel('Particle ID', { exact: true }).selectOption(String(selected.ids.at(-1)))
+        await article
+          .getByText(`ID ${selected.ids.at(-1)} · Material ${selected.materials.at(-1)} · t = ${selected.times[0]} s`, {
+            exact: true,
+          })
+          .waitFor()
+        for (const attribute of selected.attributes) {
+          await page.getByLabel('Particle 물리량', { exact: true }).selectOption(attribute.name)
+          await article.getByText(`${attribute.quantityKind} · ${attribute.unit}`, { exact: true }).waitFor()
+          if (attribute.components.length) {
+            const component = page.getByLabel('Particle 성분', { exact: true })
+            assert.deepEqual(await component.locator('option').allTextContents(), [...attribute.components, 'Norm'])
+            await component.selectOption(String(attribute.components.length - 1))
+            await component.selectOption('magnitude')
+          }
+        }
+        await page.getByLabel('Particle 물리량', { exact: true }).selectOption('material')
+        const initial = await canvas.screenshot()
+        const hasMotion = await page.evaluate((label) => {
+          const item = window.recordedParticleSets.find((candidate) => candidate.label === label)
+          const width = item.particleIds.length * 3
+          const last = (item.times.length - 1) * width
+          return item.positions
+            .subarray(0, width)
+            .some((value, index) => Math.abs(value - item.positions[last + index]) > 1e-6)
+        }, selected.label)
+        if (selected.times.length > 1) {
+          await page.getByLabel('Animation time').evaluate((input, time) => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(time))
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+          }, selected.times.at(-1))
+          await article
+            .getByText(
+              `ID ${selected.ids.at(-1)} · Material ${selected.materials.at(-1)} · t = ${selected.times.at(-1)} s`,
+              { exact: true },
+            )
+            .waitFor()
+          if (hasMotion)
+            assert.ok(
+              !initial.equals(await canvas.screenshot()),
+              'Saved particle positions must change the rendered frame.',
+            )
+        }
+        assert.equal(await page.getByRole('alert').count(), 0)
+        await page.screenshot({
+          path: path.join(outputDirectory, `mesh-viewer-recorded-particles-${savedResult.jobId}.png`),
+        })
+      }
       await page.evaluate(() => {
         const original = CanvasRenderingContext2D.prototype.fillText
         window.renderedAxisLabels = []
@@ -559,8 +640,8 @@ try {
       }
       assert.deepEqual(errors, [])
       console.log(
-        `Production local-result decoding and WorkbenchViewer reopened ${fields.length} fields, ${motions.length} motions and ${Object.keys(savedResult.outputs.contracts).length} Outputs:`,
-        { fields, motions },
+        `Production local-result decoding and WorkbenchViewer reopened ${fields.length} fields, ${motions.length} motions, ${particles.length} particle sets and ${Object.keys(savedResult.outputs.contracts).length} Outputs:`,
+        { fields, motions, particles },
       )
     }
     await page.evaluate((field) => {

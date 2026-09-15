@@ -48,7 +48,7 @@ class SimulationApi:
 
     def __init__(self, run: SimulationHost) -> None:
         self._run = run
-        self._resources = ResourceStore(f"run-{run.run_id}")
+        self._resources = ResourceStore(f"run-{run.run_id}", quantity_kinds=solver_catalog.quantity_kinds or None)
         self._states = StateStore(self._resources, state_store_id=f"states-{run.run_id}")
         self._artifacts = ArtifactStore(
             self._resources,

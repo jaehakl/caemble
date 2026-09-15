@@ -10,6 +10,7 @@ from app.kernel.api.values import (
     BundleValue,
     FieldValue,
     ParticleSetValue,
+    QuantityArrayValue,
     RaySetValue,
     StructuredGridValue,
     UnstructuredMeshValue,
@@ -45,9 +46,16 @@ def materialize_record_value(
             return {"value": value["value"], "axes": axes} if axes is not None else value["value"]
 
     project_members = _select_members or isinstance(
-        value, (FieldValue, StructuredGridValue, UnstructuredMeshValue, ParticleSetValue, RaySetValue)
+        value, (FieldValue, QuantityArrayValue, StructuredGridValue, UnstructuredMeshValue, ParticleSetValue, RaySetValue)
     )
-    if isinstance(value, FieldValue):
+    if isinstance(value, QuantityArrayValue):
+        value = value.values if "dtype" in schema else {
+            "quantity": value.quantity_kind, "valueUnit": value.unit, "values": value.values,
+            **({"components": value.components} if value.components is not None else {}),
+            **({"componentBasis": value.basis} if value.basis is not None else {}),
+            "metadata": value.metadata,
+        }
+    elif isinstance(value, FieldValue):
         if "dtype" in schema:
             if isinstance(value.domain, StructuredGridValue):
                 return {"value": value.values, "axes": _structured_field_axes(value, schema)}
@@ -99,6 +107,10 @@ def materialize_record_value(
             **({"identity": value.identity} if value.identity is not None else {}),
             "lengthUnit": value.unit,
             "positions": value.positions,
+            "coordinateFrame": value.coordinate_frame,
+            "particleIds": value.particle_ids,
+            "materialIndices": value.material_indices,
+            "materials": value.materials,
             "attributes": value.attributes,
             "metadata": value.metadata,
         }

@@ -109,7 +109,7 @@ def test_structured_field_record_preserves_explicit_spacing_on_single_cell_axes(
         (1, 3), (np.array([1.25]), np.array([0.1, 0.3, 0.5])), "m",
         metadata={"spacings": (2.5, 0.2)},
     )
-    field = FieldValue(domain, "cell", "Temperature", "K", np.ones((1, 3)))
+    field = FieldValue(domain, "cell", "thermodynamics.Temperature", "K", np.ones((1, 3)))
     schema = {"dtype": "float64", "axes": [{"name": "x"}, {"name": "y"}]}
     try:
         recorded = materialize_record_value(

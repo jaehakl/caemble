@@ -15,6 +15,7 @@ from app.kernel.resources.nodes import (
     FieldResource,
     MappingResource,
     ParticleSetResource,
+    QuantityArrayResource,
     RaySetResource,
     ResourceDescription,
     ResourceKind,
@@ -43,7 +44,7 @@ _DELETE = object()
 class ResourceStore:
     """Run-scoped immutable resource graph with explicit root leases."""
 
-    def __init__(self, store_id: str | None = None) -> None:
+    def __init__(self, store_id: str | None = None, *, quantity_kinds: Mapping[str, Mapping[str, Any]] | None = None) -> None:
         self.store_id = store_id or f"resources-{uuid.uuid4()}"
         self._nodes: dict[str, ResourceNode] = {}
         self._inbound_references: dict[str, int] = {}
@@ -53,6 +54,22 @@ class ResourceStore:
         self._sequence = 0
         self._closed = False
         self._lock = threading.RLock()
+        self._quantity_kinds = None if quantity_kinds is None else copy.deepcopy(dict(quantity_kinds))
+
+    def quantity_kind(self, name: str) -> Mapping[str, Any]:
+        if self._quantity_kinds is None:
+            from caemble_catalog import open_catalog
+
+            catalog = open_catalog(immutable=True)
+            try:
+                definitions, _ = catalog.list_quantity_kinds(limit=catalog.meta()["quantityKindCount"])
+                self._quantity_kinds = {item["name"]: item for item in definitions}
+            finally:
+                catalog.close()
+        try:
+            return self._quantity_kinds[name]
+        except KeyError as error:
+            raise ResourceValidationError(f"quantity_kind is not registered: {name}") from error
 
     def ingest(self, value: Any, *, copy_arrays: bool = True) -> ResourceRef:
         return self.ingest_many((value,), copy_arrays=copy_arrays)[0]
@@ -66,8 +83,8 @@ class ResourceStore:
         """Ingest several roots in one transaction, preserving aliases between them."""
         with self._lock:
             self._ensure_open()
-            memo: dict[int, ResourceRef] = {}
-            active: set[int] = set()
+            memo: dict[object, ResourceRef] = {}
+            active: set[object] = set()
             created: list[str] = []
             try:
                 return tuple(
@@ -207,7 +224,7 @@ class ResourceStore:
                         identity=node.identity,
                     ),
                 )
-            if isinstance(node, FieldResource):
+            if isinstance(node, (FieldResource, QuantityArrayResource)):
                 values = self._tensor(node.values, "field values")
                 basis = None if node.basis is None else resolve_value(self, node.basis, {})
                 return ResourceDescription(
@@ -218,8 +235,8 @@ class ResourceStore:
                     tuple(values.shape),
                     self._resource_metadata(
                         node.metadata,
-                        domainRef=node.domain_ref,
-                        location=node.location.value,
+                        **({"domainRef": node.domain_ref, "location": node.location.value}
+                           if isinstance(node, FieldResource) else {}),
                         quantityKind=node.quantity_kind,
                         unit=node.unit,
                         basis=basis,
@@ -459,7 +476,10 @@ class ResourceStore:
                 node.metadata,
             )
         if isinstance(node, ParticleSetResource):
-            return (node.positions, node.attributes, node.metadata)
+            return (node.positions, node.attributes, node.metadata, node.particle_ids,
+                    node.material_indices, node.materials)
+        if isinstance(node, QuantityArrayResource):
+            return (node.values, *((node.basis,) if node.basis is not None else ()), node.metadata)
         if isinstance(node, RaySetResource):
             return (node.origins, node.directions, node.attributes, node.metadata)
         if isinstance(node, StructuredBundleResource):

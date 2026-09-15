@@ -62,7 +62,9 @@ class CatalogV3Tests(unittest.TestCase):
                 version="5.0.0",
             )
 
-        self.assertEqual(total, 22)
+        self.assertEqual(total, len(experiments))
+        self.assertTrue({"dem-floor-contact", "sph-hydrostatic-column", "mpm-affine-compression"}.issubset(
+            {item["key"] for item in experiments}))
         self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
@@ -116,6 +118,7 @@ class CatalogV3Tests(unittest.TestCase):
             "ray-tracing": "2.0.0", "fdtd": "5.0.0",
             "structural-mechanics": "6.1.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
+            "dem": "1.0.0", "sph": "1.0.0", "mpm": "1.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -136,6 +139,9 @@ class CatalogV3Tests(unittest.TestCase):
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.0",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.0",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",
+                    "dem-floor-contact": "1.0.1", "sph-hydrostatic-column": "1.0.1",
+                    "mpm-affine-compression": "1.0.1", "dem-two-material-collision": "1.0.0",
+                    "dem-incline-rolling": "1.0.0", "sph-periodic-channel": "1.0.0",
                 }.get(example["key"], "5.0.0")
                 self.assertEqual(example["version"], expected_version)
                 previous = "3.0.0" if example["repository"] == "fea" else {"asymmetric-rigid-bodies": "1.0.0", "gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")

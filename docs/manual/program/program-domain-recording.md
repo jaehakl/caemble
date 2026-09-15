@@ -10,6 +10,7 @@ Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고�
 
 - `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 변형 배율을, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
 - `polyline`: 계약에 연결된 정점과 offset으로 경로를 구성합니다. 여러 결과를 독립적으로 선택할 수 있습니다.
+- `particle-set`: 입자의 저장 시각·물리량 성분·ID·Material을 확인합니다. DEM의 실제 반경과 SPH·MPM의 화면 점 크기를 구분합니다. [입자 해석 안내](program-particles.md)에서 실행 예제와 제한을 확인하세요.
 - `box-grid`: Histogram, Line Chart, Heatmap, 3D Point cloud로 수치 Output을 표시합니다. 채널·성분·표시 축과 나머지 축의 집계 또는 개별 index를 선택합니다.
 
 초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변형 배율이 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.

@@ -101,7 +101,7 @@ async def test_state_and_artifact_share_canonical_field_resources(monkeypatch: p
         del args, kwargs
         field = FieldValue(
             StructuredGridValue((4,), (np.arange(4.0),), "m"),
-            "cell", "TestField", "1", shared,
+            "cell", "Dimensionless", "1", shared,
         )
         return SolverExecutionTransaction(SolverResult(StatePatch().put("field", field), {"field": field}))
 
@@ -262,7 +262,7 @@ async def test_abi3_spatial_field_output_requires_complete_metadata(
             "data": {
                 "dtype": "float64",
                 "axes": [{"name": "x"}],
-                "quantityKind": "TestField",
+                "quantityKind": "Dimensionless",
                 "unit": "1",
             },
         }}
@@ -284,7 +284,7 @@ async def test_abi3_spatial_field_output_accepts_complete_domain_contract(
             (2,), (np.array([0.25, 0.75]),), "m", identity="line-grid",
             metadata={"spacing": [0.5]},
         ),
-        "cell", "TestField", "1", np.ones(2, dtype=np.float64),
+        "cell", "Dimensionless", "1", np.ones(2, dtype=np.float64),
     )
 
     async def invoke(*args: Any, **kwargs: Any) -> SolverExecutionTransaction[SolverResult]:
@@ -298,7 +298,7 @@ async def test_abi3_spatial_field_output_accepts_complete_domain_contract(
             "data": {
                 "dtype": "float64",
                 "axes": [{"name": "x"}],
-                "quantityKind": "TestField",
+                "quantityKind": "Dimensionless",
                 "unit": "1",
             },
         }}
@@ -332,7 +332,7 @@ async def test_typed_field_record_preserves_structured_grid_axes_without_copying
     domain = StructuredGridValue((2, 3), axes, "m")
     values = np.arange(6, dtype=np.float64).reshape(2, 3)
     handle = sim._artifacts.publish(
-        FieldValue(domain, "cell", "TestField", "1", values),
+        FieldValue(domain, "cell", "Dimensionless", "1", values),
         producer_task="producer",
         solver_name="producer",
         solver_version="1.0.0",
@@ -377,7 +377,7 @@ async def test_abi3_spatial_input_rejects_legacy_tensor_before_solver_runs(
             "data": {
                 "dtype": "float64",
                 "axes": [{"name": "x"}],
-                "quantityKind": "TestField",
+                "quantityKind": "Dimensionless",
                 "unit": "1",
             },
         }}

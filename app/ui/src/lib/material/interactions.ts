@@ -3,7 +3,7 @@ import type { InteractionSnapshot, TaskInteractionSelections } from '@/contracts
 import type { KernelDescriptor } from '@/contracts/solver'
 import type { CadScene } from '../cad/evaluation/types'
 import { CadModelError } from '../cad/model/errors'
-import { normalizeMaterialModels } from '../cad/model/materialNormalization'
+import { normalizeMaterialModels, normalizeModelParameters } from '../cad/model/materialNormalization'
 import { taskTargetParts } from './selection'
 
 export function normalizeInteractions(input: InteractionSnapshot, catalog: CatalogRuntimeSlice): InteractionSnapshot {
@@ -51,6 +51,19 @@ export function selectTaskInteractionModels(
   const consumed = new Set<string>()
   const result: Record<string, TaskInteractionSelections[string]> = {}
   for (const role of descriptor.interactions ?? []) {
+    for (const group of role.modelGroups) {
+      const fallback = group.defaultModel
+      if (!fallback) continue
+      const definition = catalog.materialModels.find((model) => model.key === fallback.model)
+      if (group.required || !group.oneOf.includes(fallback.model) || definition?.subject?.kind !== 'material-pair')
+        throw new CadModelError(`${path}.${role.role}.${group.key}: invalid default Interaction model.`)
+      normalizeModelParameters(
+        definition.parameterSchema,
+        fallback.parameters,
+        `${path}.${role.role}.${group.key}.defaultModel`,
+        catalog,
+      )
+    }
     const parts = taskTargetParts(role.target, config, scenes, path)
     if (parts.some((part) => !part.material))
       throw new CadModelError(`${path}.${role.role}: contact targets require Materials.`)
