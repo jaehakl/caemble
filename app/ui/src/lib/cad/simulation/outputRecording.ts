@@ -6,16 +6,52 @@ import type { KernelTaskConfig } from './kernelContract'
 import type { KernelArtifactDataSpec } from '@/contracts/solver'
 import { assertBoxGridProfile } from '@/contracts/boxGrid'
 
-/** The common tet volume serialization, not a Solver-specific output declaration. */
-function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string, nodeIds = false): RecordedDataSpecNode {
+/** Explicit surface topology adds a projection without changing stored volume schemas. */
+function meshFieldSchema(
+  values: RecordedDataSpec,
+  lengthUnit: string,
+  nodeIds = false,
+  cellType: 'tet4' | 'tri3' = 'tet4',
+): RecordedDataSpecNode {
   const integer = (name: string, length?: number) => ({
     dtype: 'int32' as const,
     axes: [{ name }, ...(length === undefined ? [] : [{ length }])],
   })
   const text = { dtype: 'string' as const }
   const strings = (name: string) => ({ ...text, axes: [{ name }] })
+  const { metadata, ...valueSchema } = values
+  const fieldMetadata =
+    metadata &&
+    Object.fromEntries(
+      Object.entries(metadata).map(([name, field]) => {
+        const shape = field.shape ?? []
+        return [
+          name,
+          {
+            dtype: field.dtype,
+            ...(field.unit ? { unit: field.unit, quantityKind: field.quantityKind } : {}),
+            ...(shape.length
+              ? {
+                  axes: shape.map((length, index) => ({
+                    name: `dimension${index}`,
+                    ...(length === null ? {} : { length }),
+                  })),
+                }
+              : {}),
+          },
+        ]
+      }),
+    )
+  const boundaryProvenance = {
+    offsets: integer('boundaryOffset'),
+    sources: strings('alias'),
+    rootIds: strings('alias'),
+    sourceNodeIds: strings('alias'),
+    surfaceIndices: integer('alias'),
+  }
   return {
-    values,
+    values: valueSchema,
+    ...(fieldMetadata ? { metadata: fieldMetadata } : {}),
     location: text,
     quantity: text,
     valueUnit: text,
@@ -24,37 +60,43 @@ function meshFieldSchema(values: RecordedDataSpec, lengthUnit: string, nodeIds =
       identity: text,
       lengthUnit: text,
       points: { dtype: 'float64', quantityKind: 'Length', unit: lengthUnit, axes: [{ name: 'node' }, { length: 3 }] },
-      cells: { tet4: integer('cell', 4) },
-      metadata: {
-        ...(nodeIds ? { nodeIds: integer('node') } : {}),
-        boundaryFaces: integer('face', 3),
-        cellRegions: integer('cell'),
-        regionIds: strings('region'),
-        supportNodes: integer('support'),
-        loadPoints: {
-          dtype: 'float64',
-          quantityKind: 'Length',
-          unit: lengthUnit,
-          axes: [{ name: 'load' }, { length: 3 }],
-        },
-        loadVectors: {
-          dtype: 'float64',
-          quantityKind: 'mechanics.ForceMagnitude',
-          unit: 'N',
-          axes: [{ name: 'load' }, { length: 3 }],
-        },
-        quality: {
-          cellVolumes: { dtype: 'float64', quantityKind: 'Volume', unit: `${lengthUnit}3`, axes: [{ name: 'cell' }] },
-          meanRatios: { dtype: 'float64', quantityKind: 'Dimensionless', unit: '1', axes: [{ name: 'cell' }] },
-        },
-        boundaryProvenance: {
-          offsets: integer('boundaryOffset'),
-          sources: strings('alias'),
-          rootIds: strings('alias'),
-          sourceNodeIds: strings('alias'),
-          surfaceIndices: integer('alias'),
-        },
-      },
+      cells: { [cellType]: integer('cell', cellType === 'tri3' ? 3 : 4) },
+      metadata:
+        cellType === 'tri3'
+          ? {
+              sourceModelIdentity: text,
+              sourceMeshNodeIds: integer('node'),
+              boundaryProvenance,
+            }
+          : {
+              ...(nodeIds ? { nodeIds: integer('node') } : {}),
+              boundaryFaces: integer('face', 3),
+              cellRegions: integer('cell'),
+              regionIds: strings('region'),
+              supportNodes: integer('support'),
+              loadPoints: {
+                dtype: 'float64',
+                quantityKind: 'Length',
+                unit: lengthUnit,
+                axes: [{ name: 'load' }, { length: 3 }],
+              },
+              loadVectors: {
+                dtype: 'float64',
+                quantityKind: 'mechanics.ForceMagnitude',
+                unit: 'N',
+                axes: [{ name: 'load' }, { length: 3 }],
+              },
+              quality: {
+                cellVolumes: {
+                  dtype: 'float64',
+                  quantityKind: 'Volume',
+                  unit: `${lengthUnit}3`,
+                  axes: [{ name: 'cell' }],
+                },
+                meanRatios: { dtype: 'float64', quantityKind: 'Dimensionless', unit: '1', axes: [{ name: 'cell' }] },
+              },
+              boundaryProvenance,
+            },
     },
   } as RecordedDataSpecNode
 }
@@ -63,14 +105,19 @@ export function projectArtifactRecordingSchema(
   artifactData: KernelArtifactDataSpec,
   referenceLengthUnit: string,
 ): RecordedDataSpecNode {
-  const { visualization, recording, ...data } = artifactData
+  const { visualization, recording, mesh, ...data } = artifactData
   if ('resourceKind' in data && data.resourceKind === 'particleSet')
     throw new CadModelError(
       'Native ParticleSet exports are not recording schemas; use the automatic particle visualization.',
     )
   let schema: RecordedDataSpecNode = 'resourceKind' in data ? data.members : (data as RecordedDataSpec)
   if (recording === 'mesh-field')
-    schema = meshFieldSchema(data as RecordedDataSpec, referenceLengthUnit, Boolean(visualization?.nodeIdsPath))
+    schema = meshFieldSchema(
+      data as RecordedDataSpec,
+      referenceLengthUnit,
+      Boolean(visualization?.nodeIdsPath),
+      mesh?.cellType,
+    )
   if (recording === 'mesh-series' && 'resourceKind' in data) {
     schema = {
       ...data.members,

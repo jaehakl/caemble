@@ -291,6 +291,8 @@ class VisibleDataReader:
             "dtype": row["dtype"],
             "dataSchema": _bounded_value(row["data_schema"]),
             **result,
+            **{key: row["data"][key] for key in ("axes", "boxGrid", "metadata") if key in row["data"]},
+            **({"resultProvenance": row["data"]["provenance"]} if "provenance" in row["data"] else {}),
             "provenance": _provenance(
                 "recorded_data",
                 row["id"],

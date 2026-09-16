@@ -9,7 +9,9 @@ from scipy.sparse.linalg import splu
 
 from app.kernel.api.errors import CaeError
 from app.methods.finite_volume.tetrahedral import cell_operators, upwind_convection
-from .linear import LinearFlowSolution, LinearFlowSystem, flow_mass_residual
+from .linear import LinearFlowSolution, LinearFlowSystem, TransientPressureInverse, flow_mass_residual
+from .periodic import split_gravity
+from .pressure_recycling import PressureSubspace
 
 
 @dataclass(frozen=True)
@@ -37,15 +39,17 @@ class PreparedTransientFlow:
         self.pressure_fixed = np.isfinite(self.boundary_pressure) & (mesh.neighbour < 0)
         self.velocity_operators = cell_operators(mesh, self.velocity_fixed)
         self.pressure_operators = cell_operators(mesh, self.pressure_fixed)
-        self.free_interpolation = cell_operators(mesh, np.zeros(len(mesh.faces), dtype=bool)).face_value
+        self.free_interpolation = cell_operators(mesh, np.zeros(mesh.face_count, dtype=bool)).face_value
         self.diffusion = (-self.viscosity * mesh.divergence @ self.velocity_operators.normal_gradient).tocsr()
         self.diffusion_boundary = self.viscosity * mesh.divergence @ self.velocity_operators.normal_gradient_boundary
         self.length = float(np.cbrt(mesh.cell_volumes.sum()))
         self.areas = np.linalg.norm(mesh.area_vectors, axis=1)
         self.normals = mesh.area_vectors / self.areas[:, None]
         center = np.average(mesh.cell_centers, axis=0, weights=mesh.cell_volumes)
-        self.hydrostatic = self.density * ((mesh.cell_centers - center) @ np.asarray(gravity, dtype=float))
-        self.face_hydrostatic = self.density * ((mesh.face_centers - center) @ np.asarray(gravity, dtype=float))
+        hydrostatic_gravity, self.driving_acceleration = split_gravity(mesh, gravity)
+        self.hydrostatic = self.density * ((mesh.cell_centers - center) @ hydrostatic_gravity)
+        self.face_hydrostatic = self.density * ((mesh.face_centers - center) @ hydrostatic_gravity)
+        self.body_force = self.density * mesh.cell_volumes[:, None] * self.driving_acceleration
         self.projection_matrix = (-mesh.divergence @ self.pressure_operators.normal_gradient).tocsr()
         self.preconditioner_dt, self.pressure_factor = None, None
         self.free = np.arange(len(mesh.cells)) if np.any(self.pressure_fixed) else np.arange(1, len(mesh.cells))
@@ -78,7 +82,10 @@ class PreparedTransientFlow:
                     + self.pressure_operators.gauss_gradient_boundary @ boundary_values).reshape(-1, 3)
         flux = base_flux - (self.pressure_operators.normal_gradient @ potential + boundary_flux) / scale
         residual = self.projection_matrix @ potential - rhs
-        denominator = max(float(np.linalg.norm(rhs)), float(np.linalg.norm(boundary_flux)))
+        # A divergence-free acceleration can leave only cancellation roundoff
+        # in rhs. Its actual transported flux supplies the physical scale.
+        denominator = max(float(np.linalg.norm(rhs)), float(np.linalg.norm(boundary_flux)),
+                          float(np.linalg.norm(scale * base_flux)))
         relative = float(np.linalg.norm(residual) / denominator) if denominator else (0. if not np.any(residual) else float("inf"))
         if (not np.all(np.isfinite(potential)) or not np.all(np.isfinite(flux))
                 or not np.isfinite(relative) or relative > tolerance):
@@ -94,9 +101,9 @@ class PreparedTransientFlow:
             await progress({"stage": "flow-initialization", "completed": 0, "total": 2, "time": 0.})
         await asyncio.sleep(0)
         velocity_values, pressure_values, offset = self._boundary_values()
-        potential_boundary = np.zeros(len(self.mesh.faces))
+        potential_boundary = np.zeros(self.mesh.face_count)
         potential_boundary[self.velocity_fixed] = -np.einsum("ij,ij->i", velocity_values[self.velocity_fixed], self.normals[self.velocity_fixed])
-        _, gradient, flux, velocity_projection_residual = self._project(np.zeros(len(self.mesh.faces)), potential_boundary, 1., tolerance)
+        _, gradient, flux, velocity_projection_residual = self._project(np.zeros(self.mesh.face_count), potential_boundary, 1., tolerance)
         velocity = -gradient
         prescribed = np.einsum("ij,ij->i", velocity_values, self.mesh.area_vectors)
         flux[self.velocity_fixed] = prescribed[self.velocity_fixed]
@@ -107,7 +114,7 @@ class PreparedTransientFlow:
         await asyncio.sleep(0)
         convection, convection_boundary = upwind_convection(self.mesh, flux, self.velocity_operators)
         force = (self.diffusion_boundary @ velocity_values - self.diffusion @ velocity
-                 - self.density * (convection @ velocity + convection_boundary @ velocity_values))
+                 - self.density * (convection @ velocity + convection_boundary @ velocity_values) + self.body_force)
         acceleration = force / (self.density * self.mesh.cell_volumes[:, None])
         acceleration_face = self.free_interpolation @ acceleration
         acceleration_flux = np.einsum("ij,ij->i", acceleration_face, self.mesh.area_vectors)
@@ -133,7 +140,7 @@ class PreparedTransientFlow:
         old_velocity, old_flux = np.asarray(velocity, dtype=float), np.asarray(face_volume_flux, dtype=float)
         old_pressure = np.asarray(pressure, dtype=float)
         if (old_velocity.shape != (len(self.mesh.cells), 3) or old_pressure.shape != (len(self.mesh.cells),)
-                or old_flux.shape != (len(self.mesh.faces),) or not np.all(np.isfinite(old_velocity))
+                or old_flux.shape != (self.mesh.face_count,) or not np.all(np.isfinite(old_velocity))
                 or not np.all(np.isfinite(old_pressure)) or not np.all(np.isfinite(old_flux))):
             raise ValueError("transient initial fields must have finite mesh-aligned cell and face values")
         values, pressure_values, offset = self._boundary_values(boundary_velocity, boundary_pressure)
@@ -143,15 +150,21 @@ class PreparedTransientFlow:
         old_difference[self.velocity_fixed] = 0
         mass_diagonal = self.density * self.mesh.cell_volumes / dt
         if dt != self.preconditioner_dt:
-            self.preconditioner_dt, self.pressure_factor = dt, None
+            self.preconditioner_dt = dt
+            self.pressure_factor = TransientPressureInverse(self.projection_factor,
+                self.mesh.cell_volumes[self.free], self.density / dt, self.viscosity)
         diffusion_rhs = self.diffusion_boundary @ values
         pressure_span = float(np.ptp(pressure_values[self.pressure_fixed])) if np.any(self.pressure_fixed) else 0.
         speed = max(float(np.max(np.linalg.norm(old_velocity, axis=1))),
-                    float(np.max(np.linalg.norm(values, axis=1))), dt * pressure_span / (self.density * self.length))
+                    float(np.max(np.linalg.norm(values, axis=1))), dt * pressure_span / (self.density * self.length),
+                    dt * float(np.linalg.norm(self.driving_acceleration)))
         reference_force = (self.viscosity * speed / self.length**2 + self.density * speed**2 / self.length
-                           + pressure_span / self.length)
+                           + pressure_span / self.length + self.density * float(np.linalg.norm(self.driving_acceleration)))
         linear_force_scale = reference_force + self.density * speed / dt
         lag_flux, iterate_pressure = old_flux.copy(), old_pressure - self.hydrostatic - offset
+        # Restart/Picard reuse belongs to this candidate only. Rebuilding it at
+        # every physical step preserves identical whole-window/checkpoint paths.
+        pressure_subspace = PressureSubspace()
         iterations = 0
         residuals = {"mass": float("inf"), "momentum": float("inf"), "pressure": float("inf"), "flux": float("inf")}
         position = self.mesh.face_centers[int(np.argmax(self.mesh.nonorthogonality))].tolist()
@@ -164,16 +177,17 @@ class PreparedTransientFlow:
             await asyncio.sleep(0)
             convection, convection_boundary = upwind_convection(self.mesh, lag_flux, self.velocity_operators)
             matrix = self.diffusion + sparse.diags(mass_diagonal) + self.density * convection
-            rhs = diffusion_rhs + mass_diagonal[:, None] * old_velocity - self.density * (convection_boundary @ values)
+            rhs = (diffusion_rhs + mass_diagonal[:, None] * old_velocity
+                   - self.density * (convection_boundary @ values) + self.body_force)
             try:
                 system = LinearFlowSystem(self.mesh, self.velocity_operators, self.pressure_operators, matrix, rhs,
                     self.velocity_fixed, self.pressure_fixed, values, pressure_values, reference_speed=speed,
                     force_density_scale=linear_force_scale, old_flux_difference=old_difference,
-                    temporal_coefficient=self.density / dt, pressure_factor=self.pressure_factor,
-                    preconditioner_diagonal=self.diffusion.diagonal() + mass_diagonal)
+                    temporal_coefficient=self.density / dt, pressure_factor=self.pressure_factor)
                 self.pressure_factor = system.pressure_factor
                 result = await system.solve(iterate_pressure, max_iterations=max_iterations, tolerance=min(tolerance * .1, 1e-10),
-                                            cancellation=cancellation, progress=progress, stage="flow-pressure-iteration")
+                                            cancellation=cancellation, progress=progress, stage="flow-pressure-iteration",
+                                            recycle=pressure_subspace)
             except CaeError as error:
                 if error.code != "solver_convergence":
                     raise
@@ -188,9 +202,9 @@ class PreparedTransientFlow:
             gradient = (self.pressure_operators.gauss_gradient @ result.pressure
                         + self.pressure_operators.gauss_gradient_boundary @ pressure_values).reshape(-1, 3)
             pressure_force = self.mesh.cell_volumes[:, None] * gradient
-            actual_residual = inertia + diffusion + advection + pressure_force
+            actual_residual = inertia + diffusion + advection + pressure_force - self.body_force
             scale = max(reference_force, *(float(np.max(np.linalg.norm(term, axis=1) / self.mesh.cell_volumes))
-                                           for term in (inertia, diffusion, advection, pressure_force)))
+                                           for term in (inertia, diffusion, advection, pressure_force, self.body_force)))
             absolute = float(np.max(np.linalg.norm(actual_residual, axis=1) / self.mesh.cell_volumes))
             worst_cell = int(np.argmax(np.linalg.norm(actual_residual, axis=1) / self.mesh.cell_volumes))
             position = self.mesh.cell_centers[worst_cell].tolist()

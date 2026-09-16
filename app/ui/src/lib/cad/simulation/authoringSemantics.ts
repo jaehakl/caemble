@@ -1,4 +1,5 @@
 import { normalizeMaterialModels } from '../model/materialNormalization'
+import { assertMetadataSchema } from '@/contracts/resultMetadata'
 import { selectTaskMaterialModels } from '../../material/selection'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import { geometries } from '@jscad/modeling'
@@ -523,7 +524,12 @@ function validateRecordedSchema(
     })
     return
   }
-  const allowed = new Set(['dtype', 'tensorOrder', 'axes', 'unit', 'quantityKind', 'basis', 'boxGrid'])
+  const allowed = new Set(['dtype', 'tensorOrder', 'axes', 'unit', 'quantityKind', 'basis', 'boxGrid', 'metadata'])
+  if (node.metadata !== undefined) {
+    try { assertMetadataSchema(node.metadata) } catch (error) {
+      addIssue(issues, `${path}.metadata`, error instanceof Error ? error.message : String(error))
+    }
+  }
   Reflect.ownKeys(node).forEach((key) => {
     if (typeof key !== 'string' || !allowed.has(key))
       addIssue(issues, `${path}.${String(key)}`, 'is not a RecordedData descriptor field.')

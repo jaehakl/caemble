@@ -95,7 +95,7 @@ export const resultVisualizationSchema = z
       .optional(),
     spatialAxes: z.array(z.number().int().nonnegative()).optional(),
     components: z.array(z.string()).optional(),
-    valueKind: z.enum(['displacement', 'stress', 'scalar']).optional(),
+    valueKind: z.enum(['displacement', 'stress', 'scalar', 'vector']).optional(),
     vertices: z.string().optional(),
     offsets: z.string().optional(),
     attributes: z

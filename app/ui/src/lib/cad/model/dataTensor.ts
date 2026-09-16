@@ -1,3 +1,4 @@
+import { assertResultMetadata, cloneResultMetadata } from '@/contracts/resultMetadata'
 import type {
   DataDType,
   Complex64Value,
@@ -157,6 +158,7 @@ function tensorAxes(schema: DataSchema, value: DataTensorInput, shape: readonly 
 }
 
 function tensorInput(schema: DataSchema, value: DataTensorInput) {
+  assertResultMetadata(schema.metadata, value.metadata)
   const shape = inferShape(value.value)
   const axes = tensorAxes(schema, value, shape)
   const rawBytes = encodeRaw(value.value, shape, schema.dtype)
@@ -170,6 +172,7 @@ export function createDataTensor(schema: DataSchema, value: DataTensorInput, _pa
   const normalized = tensorInput(schema, value)
   return Object.freeze({
     shape: normalized.shape,
+    ...(value.metadata === undefined ? {} : { metadata: cloneResultMetadata(value.metadata) }),
     ...(value.boxGrid === undefined ? {} : { boxGrid: structuredClone(value.boxGrid) }),
     ...(value.provenance === undefined ? {} : { provenance: structuredClone(value.provenance) }),
     ...(normalized.axes.length === 0 ? {} : { axes: normalized.axes }),
@@ -190,6 +193,7 @@ export function createAttachmentDataTensor(
     return Object.freeze({
       tensor: Object.freeze({
         shape: normalized.shape,
+        ...(value.metadata === undefined ? {} : { metadata: cloneResultMetadata(value.metadata) }),
         ...(value.boxGrid === undefined ? {} : { boxGrid: structuredClone(value.boxGrid) }),
     ...(value.provenance === undefined ? {} : { provenance: structuredClone(value.provenance) }),
         ...(normalized.axes.length === 0 ? {} : { axes: normalized.axes }),
@@ -202,6 +206,7 @@ export function createAttachmentDataTensor(
   return Object.freeze({
     tensor: Object.freeze({
       shape: normalized.shape,
+      ...(value.metadata === undefined ? {} : { metadata: cloneResultMetadata(value.metadata) }),
       ...(value.boxGrid === undefined ? {} : { boxGrid: structuredClone(value.boxGrid) }),
     ...(value.provenance === undefined ? {} : { provenance: structuredClone(value.provenance) }),
       ...(normalized.axes.length === 0 ? {} : { axes: normalized.axes }),
@@ -266,6 +271,7 @@ function readRawNumber(dtype: Exclude<DataDType, 'string'>, bytes: Uint8Array, i
 }
 
 export function createDataTensorAccessor(schema: DataSchema, value: RecordedDataTensor, _path = 'DataTensor'): DataTensorAccessor {
+  assertResultMetadata(schema.metadata, value.metadata, `${_path}.metadata`)
   const tensor = value
   const rawBytes = tensorBytes(tensor, schema.dtype)
   const strides = tensorStrides(tensor.shape)
@@ -290,6 +296,7 @@ export function persistDataTensor(schema: DataSchema, value: RecordedDataTensor 
   const accessor = createDataTensorAccessor(schema, isDataTensor(value) ? value : createDataTensor(schema, value, path), path)
   return Object.freeze({
     shape: accessor.shape,
+    ...(accessor.tensor.metadata === undefined ? {} : { metadata: cloneResultMetadata(accessor.tensor.metadata) }),
     ...(accessor.tensor.boxGrid === undefined ? {} : { boxGrid: structuredClone(accessor.tensor.boxGrid) }),
     ...(accessor.tensor.provenance === undefined ? {} : { provenance: structuredClone(accessor.tensor.provenance) }),
     ...(accessor.tensor.axes === undefined ? {} : { axes: accessor.tensor.axes }),

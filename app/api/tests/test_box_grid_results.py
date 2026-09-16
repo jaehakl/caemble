@@ -18,10 +18,52 @@ from gpstation.db import JobRecord, JobVisualization
 from models import CalculationBase, RoleEnum, UserData
 from service.box_grid import validate_box_grid_schema, validate_box_grid_tensor
 from service.calculation import upsert_calculations
+from service.data_tools import VisibleDataReader
 from service.measurement_service import get_recorded_data, get_visualizations
 
 
 class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
+    async def test_candidate_result_metadata_survives_storage_and_requery(self):
+        metadata_schema = {
+            "pressureOffset": {"dtype": "float64", "quantityKind": "Pressure", "unit": "Pa"},
+            "momentOrigin": {"dtype": "float64", "quantityKind": "Length", "unit": "m", "shape": [3]},
+            "surfaceTargets": {"dtype": "string", "shape": [None]},
+            "contribution": {"dtype": "string", "values": ["total", "pressure", "viscous"]},
+        }
+        for count in (2, 10000):
+            with self.subTest(count=count):
+                schema, tensor = box_schema((count, 1, 1, 1, 1, 1, 1)), box_tensor((count, 1, 1, 1, 1, 1, 1))
+                schema["metadata"] = metadata_schema
+                tensor["metadata"] = {"pressureOffset": -12., "momentOrigin": [0.2, 0.3, 1.], "surfaceTargets": ["experiment.surface.wall"], "contribution": "total"}
+                raw = struct.pack(f"<{count}d", *([-4.] * count))
+                tensor["storage"] = {"kind": "attachments", "ids": ["values"], "byteLength": len(raw)}
+                saved = persist_record(schema, tensor, {"values": raw})
+                validate_box_grid_tensor(schema, saved)
+                record = ExperimentRecord(id=2, name="load", quantity_kind="Dimensionless", tensor_order=0, dtype="float64", data_schema=schema)
+                db = SimpleNamespace(get=AsyncMock(side_effect=[SimpleNamespace(experiment_id=7), SimpleNamespace(result_contracts={})]),
+                    execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [(SimpleNamespace(data=saved), record)])))
+                with patch("service.measurement_service.require_experiment_read", AsyncMock()):
+                    response = await get_recorded_data(db, 1, user=None)
+                leaf = response.model_dump()["recorded_data"]["load"]
+                self.assertEqual(leaf["data"]["metadata"], tensor["metadata"])
+                self.assertEqual(leaf["data_schema"]["metadata"], metadata_schema)
+                reader = VisibleDataReader(AsyncMock(), "owner")
+                with patch.object(reader, "_recorded_row", AsyncMock(return_value={
+                    "id": 2, "name": "load", "dtype": "float64", "quantity_kind": "Dimensionless",
+                    "data_schema": schema, "data": saved,
+                })):
+                    sliced = await reader.read_recorded_slice(2, 1, 1)
+                self.assertEqual(sliced["values"], [-4.])
+                self.assertEqual(sliced["dataSchema"]["metadata"], metadata_schema)
+                for key in ("axes", "boxGrid", "metadata"):
+                    self.assertEqual(sliced[key], tensor[key])
+                self.assertEqual(sliced["resultProvenance"], tensor["provenance"])
+                self.assertEqual(sliced["provenance"]["kind"], "database")
+                for broken in ({}, {**tensor["metadata"], "pressureOffset": float("nan")},
+                               {**tensor["metadata"], "momentOrigin": [0, 0]}, {**tensor["metadata"], "extra": 1}):
+                    with self.assertRaises(ValueError):
+                        validate_box_grid_tensor(schema, {**saved, "metadata": broken})
+
     def test_rejects_legacy_and_malformed_numerical_results(self):
         schema, tensor = box_schema(), box_tensor()
         validate_box_grid_tensor(schema, tensor)

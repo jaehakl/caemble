@@ -13,6 +13,7 @@ from db import ExperimentRecord, Measurement, MeasurementVisualization, Recorded
 from gpstation.db import Job, JobRecord, JobVisualization
 from gpstation.service.state import utcnow
 from service.box_grid import validate_box_grid_tensor, validate_result_provenance
+from caemble_catalog.result_metadata import validate_result_metadata
 
 INLINE_BYTES = 64 * 1024
 NUMERIC_FORMATS = {
@@ -38,7 +39,11 @@ def persist_record(schema: dict, value: dict, attachments: dict[str, bytes]) -> 
             name: persist_record(member, value[name], attachments)
             for name, member in schema.items()
         }
-    tensor = {"shape": value["shape"], **{key: value[key] for key in ("axes", "boxGrid", "provenance") if key in value}}
+    if "metadata" in schema:
+        validate_result_metadata(schema["metadata"], value.get("metadata"))
+    elif "metadata" in value:
+        raise ValueError("Recorded tensor contains undeclared result metadata.")
+    tensor = {"shape": value["shape"], **{key: value[key] for key in ("axes", "boxGrid", "provenance", "metadata") if key in value}}
     storage = value["storage"]
     if storage["kind"] == "base64":
         from storage.contracts import ObjectReference

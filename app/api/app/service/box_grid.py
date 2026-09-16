@@ -1,5 +1,6 @@
 """The persisted numerical result boundary accepts only Box Grid tensors."""
 import math
+from caemble_catalog.result_metadata import validate_metadata_schema, validate_result_metadata
 
 GEOMETRY_FIELDS = {"origin", "size", "rotation", "lengthUnit", "gridShape", "source", "rootId"}
 
@@ -17,6 +18,8 @@ def validate_result_provenance(provenance: dict) -> None:
 def validate_box_grid_schema(schema: dict) -> None:
     if not isinstance(schema, dict) or schema.get("dtype") not in {"float32", "float64"}:
         raise ValueError("Outputs require a real-valued Box Grid Tensor schema.")
+    if "metadata" in schema:
+        validate_metadata_schema(schema["metadata"])
     axes, grid = schema.get("axes"), schema.get("boxGrid")
     if not isinstance(axes, list) or len(axes) != 7 or not all(isinstance(axis, dict) for axis in axes):
         raise ValueError("Box Grid Tensor schemas require exactly seven axes.")
@@ -83,3 +86,7 @@ def validate_box_grid_tensor(schema: dict, tensor: dict) -> None:
     if grid["sampling"] == "aggregate" and shape[:3] != [1, 1, 1]:
         raise ValueError("Aggregate Outputs require gridShape [1, 1, 1].")
     validate_result_provenance(tensor.get("provenance"))
+    if "metadata" in schema:
+        validate_result_metadata(schema["metadata"], tensor.get("metadata"))
+    elif "metadata" in tensor:
+        raise ValueError("Recorded tensor contains undeclared result metadata.")

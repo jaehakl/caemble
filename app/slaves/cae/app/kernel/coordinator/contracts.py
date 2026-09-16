@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from app.kernel.api import BundleValue, FieldValue, ParticleSetValue, QuantityArrayValue
+from caemble_catalog.result_metadata import validate_result_metadata
 
 
 def validate_artifact_payload(
@@ -66,6 +67,16 @@ def validate_artifact_payload(
         raw = value["value"]
     else:
         raw = value
+
+    if "metadata" in contract:
+        metadata = value.metadata if isinstance(value, (FieldValue, QuantityArrayValue)) else value.get("metadata") if isinstance(value, Mapping) else None
+        validate_result_metadata(contract["metadata"], metadata, f"{path}.metadata", allow_extra=isinstance(value, (FieldValue, QuantityArrayValue)))
+    if "mesh" in contract:
+        from app.kernel.api import UnstructuredMeshValue
+        mesh = contract["mesh"]
+        if (not isinstance(value, FieldValue) or not isinstance(value.domain, UnstructuredMeshValue)
+                or mesh.get("version") != 1 or set(value.domain.cells) != {mesh.get("cellType")}):
+            raise ValueError(f"{path} mesh differs from its declared topology")
 
     if "boxGrid" in contract:
         profile = contract["boxGrid"]

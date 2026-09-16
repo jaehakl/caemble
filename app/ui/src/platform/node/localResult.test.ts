@@ -17,7 +17,7 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
 })
 
-async function fixture() {
+async function fixture(withMetadata = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'caemble-local-result-'))
   directories.push(root)
   const artifact = path.join(root, 'build')
@@ -30,6 +30,9 @@ async function fixture() {
       tensorOrder: 0,
       axes: calculationExampleInput.signal.axes,
       boxGrid: calculationExampleInput.signal.boxGrid,
+      ...(withMetadata
+        ? { metadata: { pressureOffset: { dtype: 'float64', quantityKind: 'Pressure', unit: 'Pa' } } }
+        : {}),
     },
     complex: { dtype: 'complex64', tensorOrder: 0, quantityKind: 'Length', unit: 'm', axes: [{ name: 'samples' }] },
     signal: { dtype: 'float64', tensorOrder: 0, quantityKind: 'Length', unit: 'm', axes: [{ name: 'samples' }] },
@@ -49,6 +52,7 @@ async function fixture() {
     grid: {
       shape: calculationExampleInput.signal.shape,
       boxGrid: calculationExampleInput.signal.boxGrid,
+      ...(withMetadata ? { metadata: { pressureOffset: -12 } } : {}),
       axes: calculationExampleInput.signal.axes.map((axis) => ({ ticks: axis.ticks })),
       storage: {
         kind: 'inline',
@@ -206,6 +210,19 @@ async function fixture() {
 }
 
 describe('local CAE result adapter', () => {
+  it('keeps candidate metadata after local export, requery and Calculation normalization', async () => {
+    const { result, artifact } = await fixture(true)
+    const output = path.join(path.dirname(artifact), 'metadata-export')
+    await exportLocalResult(result, output)
+    const inspected = await inspectLocalResult(output)
+    expect(inspected.records.find((record) => record.name === 'group.grid')?.metadata).toEqual({ pressureOffset: -12 })
+    expect((await sliceLocalResult(output, 'group.grid')).metadata).toEqual({ pressureOffset: -12 })
+    const input = await createLocalCalculationInput(output, ['group.grid'])
+    expect(input['group.grid'].metadata).toEqual({ pressureOffset: -12 })
+    expect(input['group.grid'].metadataSchema).toEqual({
+      pressureOffset: { dtype: 'float64', quantityKind: 'Pressure', unit: 'Pa' },
+    })
+  })
   it('exports frozen input, record JSON and exact binary files into an independently movable directory', async () => {
     const { result, artifact } = await fixture()
     const root = path.dirname(artifact)

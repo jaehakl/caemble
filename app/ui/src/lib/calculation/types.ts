@@ -35,6 +35,8 @@ export type CalculationInputLeaf = Readonly<{
   tensorOrder: number
   unit?: string
   boxGrid: NonNullable<RecordedDataTensor['boxGrid']>
+  metadata?: RecordedDataTensor['metadata']
+  metadataSchema?: import('@/contracts/resultMetadata').ResultMetadataSchema
 }>
 
 export type CalculationInput = Readonly<Record<string, CalculationInputLeaf>>

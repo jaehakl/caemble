@@ -4,6 +4,7 @@ import { convertUcumValue } from '@/lib/cad/model/units'
 import { getQuantityKindTensorOrder } from '@/lib/quantitykind/runtime'
 import { CALCULATION_INPUT_MAX_BYTES, CalculationExecutionError, type CalculationInput } from './types'
 import { assertCalculationInput } from './validation'
+import { cloneResultMetadata } from '@/contracts/resultMetadata'
 
 type ResolvedRuleResult = RecordedDataRule['result'] & Readonly<{ tensorOrder?: number }>
 
@@ -131,6 +132,23 @@ export function createCalculationInput(
             ...(result.quantityKind === undefined ? {} : { quantityKind: result.quantityKind }),
             tensorOrder,
             boxGrid: accessor.tensor.boxGrid!,
+            ...(accessor.tensor.metadata === undefined
+              ? {}
+              : {
+                  metadata: cloneResultMetadata(accessor.tensor.metadata),
+                  metadataSchema: Object.freeze(
+                    Object.fromEntries(
+                      Object.entries(result.metadata!).map(([name, field]) => [
+                        name,
+                        Object.freeze({
+                          ...field,
+                          ...(field.shape ? { shape: Object.freeze([...field.shape]) } : {}),
+                          ...(field.values ? { values: Object.freeze([...field.values]) } : {}),
+                        }),
+                      ]),
+                    ),
+                  ),
+                }),
             ...(result.unit === undefined ? {} : { unit: result.unit }),
           }),
         ] as const

@@ -1,5 +1,6 @@
 import { convertUcumValue } from '@/lib/cad/model/units'
 import { assertBoxGridData, BOX_GRID_AXES } from '@/contracts/boxGrid'
+import { assertResultMetadata, type ResultMetadataSchema } from '@/contracts/resultMetadata'
 import {
   CALCULATION_INPUT_MAX_BYTES,
   CALCULATION_OUTPUT_MAX_ELEMENTS,
@@ -97,7 +98,7 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
     if (!pathPattern.test(path)) throw new Error(`Calculation input path is invalid: ${path}`)
     const leaf = secureRecord(rawLeaf, `Calculation input ${path}`)
     const unexpected = Object.keys(leaf).filter(
-      (key) => !['dtype', 'shape', 'data', 'axes', 'quantityKind', 'tensorOrder', 'unit', 'boxGrid'].includes(key),
+      (key) => !['dtype', 'shape', 'data', 'axes', 'quantityKind', 'tensorOrder', 'unit', 'boxGrid', 'metadata', 'metadataSchema'].includes(key),
     )
     if (unexpected.length > 0)
       throw new Error(`Calculation input ${path} contains unsupported fields: ${unexpected.join(', ')}.`)
@@ -109,6 +110,7 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
       throw new Error(`Calculation input ${path} must be a nonempty seven-axis Box Grid Output.`)
     }
     assertBoxGridData(leaf.boxGrid, shape)
+    assertResultMetadata(leaf.metadataSchema as ResultMetadataSchema | undefined, leaf.metadata, `${path}.metadata`)
     if (
       !Number.isInteger(leaf.tensorOrder) ||
       (leaf.tensorOrder as number) < 0 ||

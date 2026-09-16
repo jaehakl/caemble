@@ -243,6 +243,11 @@ export function predictedRecordedData(
   onOrdinalAxisFallback?: (warning: Readonly<{ axisIndex: number; blockKey: string; length: number }>) => void,
   candidateBoxGrids?: Readonly<Record<string, BoxGridData>>,
 ): RecordedData {
+  const unresolvedMetadata = rules.find((rule) => rule.result.metadata !== undefined)
+  if (unresolvedMetadata)
+    throw new Error(
+      `${unresolvedMetadata.label}: Prediction cannot resolve declared result metadata for a new Candidate. Use a Solver result for this Output.`,
+    )
   const ruleMap = new Map(rules.map((rule) => [rule.label, rule]))
   const sampleMap = new Map(samples.map((sample) => [sample.layout.key, sample]))
   if (ruleMap.size !== rules.length || sampleMap.size !== samples.length || sampleMap.size !== ruleMap.size) {

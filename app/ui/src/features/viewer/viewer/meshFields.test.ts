@@ -16,6 +16,8 @@ import {
 } from './meshFields'
 import { meshHarmonicAtPhase } from './meshDeformation'
 import { resultVisualizationSchema } from '@/contracts/resultValidators'
+import { projectArtifactRecordingSchema } from '@/lib/cad/simulation/outputRecording'
+import type { KernelArtifactDataSpec } from '@/contracts/solver'
 
 const view: MeshFieldView = {
   component: 'magnitude',
@@ -97,6 +99,124 @@ function fixture(stress = false) {
 }
 
 describe('recorded mesh fields', () => {
+  it.each([false, true])('renders an explicitly recorded tri3 traction snapshot, empty=%s', (empty) => {
+    const declaration: KernelArtifactDataSpec = {
+      dtype: 'float64',
+      quantityKind: 'Pressure',
+      unit: 'Pa',
+      axes: [
+        { name: 'cell' },
+        { name: 'time', length: 1, unit: 's', quantityKind: 'Time' },
+        { name: 'component', length: 3 },
+      ],
+      recording: 'mesh-field',
+      mesh: { version: 1, cellType: 'tri3' },
+      metadata: {
+        pressureOffset: { dtype: 'float64', quantityKind: 'Pressure', unit: 'Pa' },
+        normalConvention: { dtype: 'string' },
+      },
+      visualization: resultVisualizationSchema.parse({
+        kind: 'mesh-field',
+        valueKind: 'vector',
+        components: ['x', 'y', 'z'],
+      }),
+    }
+    const schema = projectArtifactRecordingSchema(declaration, 'm')
+    expect(schema).toHaveProperty('domain.cells.tri3')
+    expect(schema).not.toHaveProperty('domain.cells.tet4')
+    expect(schema).not.toHaveProperty('domain.metadata.quality')
+    expect(schema).not.toHaveProperty('values.metadata')
+    const values: Record<string, unknown> = {
+      'domain.kind': 'unstructured-mesh',
+      'domain.identity': 'surface',
+      'domain.lengthUnit': 'm',
+      'domain.points': empty
+        ? []
+        : [
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+          ],
+      'domain.cells.tri3': empty ? [] : [[0, 1, 2]],
+      'domain.metadata.sourceModelIdentity': 'original-volume',
+      'domain.metadata.sourceMeshNodeIds': empty ? [] : [3, 9, 12],
+      'domain.metadata.boundaryProvenance.offsets': empty ? [0] : [0, 1],
+      'domain.metadata.boundaryProvenance.sources': empty ? [] : ['experiment'],
+      'domain.metadata.boundaryProvenance.rootIds': empty ? [] : ['fluid'],
+      'domain.metadata.boundaryProvenance.sourceNodeIds': empty ? [] : ['wall'],
+      'domain.metadata.boundaryProvenance.surfaceIndices': empty ? [] : [2],
+      location: 'cell',
+      quantity: 'Pressure',
+      valueUnit: 'Pa',
+      values: empty ? [] : [[[3, 4, 0]]],
+      'metadata.pressureOffset': -12,
+      'metadata.normalConvention': 'outward-fluid',
+    }
+    const rules: RecordedDataRule[] = [],
+      data: Record<string, unknown> = {}
+    const add = (node: unknown, prefix: string) => {
+      if (!node || typeof node !== 'object') throw new Error('Invalid fixture schema')
+      if (!('dtype' in node)) {
+        for (const [name, child] of Object.entries(node)) add(child, prefix ? `${prefix}.${name}` : name)
+        return
+      }
+      const result = node as DataSchema,
+        label = `traction.${prefix}`
+      rules.push({ label, result, methodId: 'fixture', target: [], parameters: {} })
+      const actual = values[prefix] as Parameters<typeof createDataTensor>[1]['value']
+      const shape =
+        prefix === 'domain.points'
+          ? [empty ? 0 : 3, 3]
+          : prefix === 'domain.cells.tri3'
+            ? [empty ? 0 : 1, 3]
+            : prefix === 'values'
+              ? [empty ? 0 : 1, 1, 3]
+              : Array.isArray(actual)
+                ? [actual.length]
+                : []
+      data[label] = {
+        shape,
+        axes: result.axes?.map((axis) => (axis.name === 'time' ? { ticks: [0.0375] } : { implicitOrdinal: true })),
+        storage: { kind: 'inline', value: actual },
+      }
+    }
+    add(schema, '')
+    const contracts: RecordedResultContracts = {
+      traction: {
+        task: 'fluid',
+        output: 'traction',
+        solver: { name: 'fixture', version: '1' },
+        artifactType: 'fixture/traction@1',
+        catalogRevision: 'fixture',
+        schema,
+        visualization: declaration.visualization!,
+      },
+    }
+    const parsed = parseRecordedMeshFields(rules, data as RecordedData, contracts)
+    expect(parsed.errors).toEqual([])
+    const field = parsed.fields[0]
+    expect(field.cellType).toBe('tri3')
+    expect(field.snapshotTime).toBe(0.0375)
+    expect(field.metadata).toEqual({ pressureOffset: -12, normalConvention: 'outward-fluid' })
+    expect(field.boundaryCells.length).toBe(empty ? 0 : 1)
+    const rendered = createMeshFieldRenderData(field, {
+      ...view,
+      wireframe: false,
+      overlays: false,
+      clipAxis: 0,
+      clipFraction: 0.5,
+    })
+    expect(rendered.geometries.length).toBe(empty ? 0 : 1)
+    expect(rendered.bounds.min.every(Number.isFinite)).toBe(true)
+    if (!empty) {
+      expect(rendered.maximum).toBe(5)
+      // One clipped triangle becomes a quadrilateral; no volume cap is synthesized.
+      expect(rendered.geometries[0].indices.length).toBe(6)
+      expect(Array.from(rendered.geometries[0].positions).filter((_, index) => index % 3 === 2)).toEqual([
+        0, 0, 0, 0, 0, 0,
+      ])
+    }
+  })
   it.each(['pressure', 'velocity'] as const)('restores a %s cell snapshot with its singleton time axis', (kind) => {
     const input = fixture(true)
     const vector = kind === 'velocity'

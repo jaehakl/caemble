@@ -244,6 +244,7 @@ export async function inspectLocalResult(location: string) {
         shape: isDataTensor(tensor) ? tensor.shape : null,
         axes: isDataTensor(tensor) ? (tensor.axes ?? []) : [],
         boxGrid: isDataTensor(tensor) ? tensor.boxGrid : undefined,
+        metadata: isDataTensor(tensor) ? tensor.metadata : undefined,
         storage: isDataTensor(tensor) ? tensor.storage.kind : null,
         byteLength: isDataTensor(tensor) && tensor.storage.kind !== 'inline' ? tensor.storage.byteLength : null,
       }
@@ -360,6 +361,7 @@ export async function sliceLocalResult(
     shape: tensor.shape,
     axes: tensor.axes ?? [],
     boxGrid: tensor.boxGrid,
+    metadata: tensor.metadata,
     offset,
     total,
     values: Array.from({ length: count }, (_, index) => accessor.at(firstIndex + index)),

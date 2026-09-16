@@ -87,7 +87,9 @@ async def advance_window(invocation, domain, saved, clock, controls, stepper):
                 fraction = float(np.clip((sampled_time - current) / used, 0., 1.))
                 samples.append({"times": min(sampled_time, accepted),
                                 "pressure": solution.pressure + fraction * (candidate.pressure - solution.pressure),
-                                "velocity": solution.velocity + fraction * (candidate.velocity - solution.velocity)})
+                                "velocity": solution.velocity + fraction * (candidate.velocity - solution.velocity),
+                                "boundaryFlux": (solution.face_volume_flux + fraction *
+                                    (candidate.face_volume_flux - solution.face_volume_flux))[domain.mesh.boundary_interface_indices]})
             output_tick += 1
         # Boundary clipping alone must not reduce the next proposal. A rejected
         # trial does reduce it, even if the rejected step ended on a window edge.

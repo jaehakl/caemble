@@ -17,7 +17,8 @@ export function matchMeshDisplacement(field: RecordedMeshField, candidate: Recor
     !field.nodeIds ||
     !candidate.nodeIds ||
     field.nodeIds.length !== candidate.nodeIds.length ||
-    field.cells.length !== candidate.cells.length
+    field.cells.length !== candidate.cells.length ||
+    (field.cellType ?? 'tet4') !== (candidate.cellType ?? 'tet4')
   )
     return undefined
   try {

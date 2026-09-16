@@ -31,11 +31,14 @@ def observation(shape=(2, 2, 2), origin=(0, 0, 0), size=(1, 1, 1), rotation=None
 
 def output_problem(grid, pressure=(0., -4.)):
     with open_catalog() as catalog:
-        descriptor = catalog.get_solver_manifest("incompressible-flow", "2.0.0")["descriptor"]
+        descriptor = catalog.get_solver_manifest("incompressible-flow", "3.0.0")["descriptor"]
+    descriptor["visualizations"].pop("traction")  # These tests isolate volume projection.
     points = np.concatenate((TETRAHEDRON, TETRAHEDRON * .5 + [1., 0., 0.]))
     cells = np.arange(8).reshape(2, 4)
     domain = SimpleNamespace(mesh=SimpleNamespace(points=points, cells=cells), density=960.,
-                             identity="two-fluid-cells", metadata={"pressureReference": "volume-mean-zero"})
+                             identity="two-fluid-cells", metadata={"pressureReference": "volume-mean-zero",
+                                 "pressureReferencePoint": [0., 0., 0.],
+                                 "hydrostaticGravity": [0., 0., 0.], "drivingAcceleration": [0., 0., 0.]})
     solution = SimpleNamespace(pressure=np.asarray(pressure), velocity=np.array([[1., 2., 3.], [-3., 1., 4.]]),
                                face_volume_flux=np.array([1., -1., 0.]), iterations=2)
     config = {"outputs": [{"key": key, "methodId": "flow." + name, "boxGrid": grid.geometry}
@@ -117,7 +120,7 @@ def test_pressure_velocity_and_density_share_overlap_and_preserve_metadata(monke
         return prepare(*args, **kwargs)
 
     monkeypatch.setattr(TetrahedralBoxOverlap, "prepare", counted)
-    artifacts, visuals = build_outputs(invocation, domain, solution)
+    artifacts, exports, visuals = build_outputs(invocation, domain, solution)
     assert len(calls) == 1
     assert set(artifacts) == {"pressure", "velocity", "density"}
     np.testing.assert_allclose(artifacts["pressure"]["value"].ravel(), [0., -4., 0., 0.])
@@ -150,7 +153,7 @@ def test_pressure_velocity_and_density_share_overlap_and_preserve_metadata(monke
 
 def test_weighted_output_means_differ_from_full_box_density_and_ignore_observation_settings():
     invocation, domain, solution = output_problem(observation(shape=(1, 1, 1), size=(2, 1, 1)), pressure=(-2., 6.))
-    artifacts, visuals = build_outputs(invocation, domain, solution)
+    artifacts, exports, visuals = build_outputs(invocation, domain, solution)
     assert artifacts["pressure"]["value"].item() == pytest.approx(-10 / 9)
     np.testing.assert_allclose(artifacts["velocity"]["value"].ravel(), (8 * solution.velocity[0] + solution.velocity[1]) / 9)
     assert artifacts["density"]["value"].item() == pytest.approx(90.)
@@ -158,7 +161,7 @@ def test_weighted_output_means_differ_from_full_box_density_and_ignore_observati
     changed = deepcopy(invocation)
     for output in changed.config["outputs"]:
         output["boxGrid"] = observation(shape=(8, 4, 3), origin=(-.1, -.1, -.1), size=(2., 1.4, 1.4)).geometry
-    finer, native = build_outputs(changed, domain, solution)
+    finer, exports, native = build_outputs(changed, domain, solution)
     cell_volume = np.prod([2., 1.4, 1.4]) / (8 * 4 * 3)
     assert finer["density"]["value"].sum() * cell_volume == pytest.approx(180., rel=1e-13)
     for name in visuals:
@@ -166,7 +169,7 @@ def test_weighted_output_means_differ_from_full_box_density_and_ignore_observati
     for name, value in original.items():
         np.testing.assert_array_equal(getattr(solution, name), value)
     changed.config["outputs"] = []
-    empty, native = build_outputs(changed, domain, solution)
+    empty, exports, native = build_outputs(changed, domain, solution)
     assert empty == {} and set(native) == {"pressure", "velocity"}
 
 
@@ -198,7 +201,7 @@ def test_time_history_scopes_share_mapping_and_native_uses_actual_window_end(mon
         return prepare(*args, **kwargs)
 
     monkeypatch.setattr(TetrahedralBoxOverlap, "prepare", counted)
-    artifacts, visuals = build_outputs(invocation, domain, solution, samples=samples, time=.035)
+    artifacts, exports, visuals = build_outputs(invocation, domain, solution, samples=samples, time=.035)
     assert len(calls) == 1
     for name in ("pressure", "velocity", "density"):
         np.testing.assert_array_equal(artifacts[name]["axes"][3]["ticks"], samples["times"])
@@ -223,14 +226,17 @@ def test_native_snapshot_recording_retains_actual_time_and_vector_components(mon
         monkeypatch.setattr("app.kernel.transport.tensor.INLINE_LIMIT_BYTES", 8)
     invocation, domain, solution = output_problem(observation())
     invocation.config["outputs"] = []
-    visuals = build_outputs(invocation, domain, solution, time=.0375)[1]
+    visuals = build_outputs(invocation, domain, solution, time=.0375)[2]
     resources = ResourceStore()
     artifacts, leases = ArtifactStore(resources), []
     try:
         for name, field in visuals.items():
             data = invocation.descriptor["visualizations"][name]["data"]
             validate_artifact_payload(field, data, name)
-            schema = {"values": data, "location": {"dtype": "string"}, "domain": {
+            schema = {"values": {key: value for key, value in data.items() if key not in {"metadata", "mesh"}},
+                      "metadata": {name: {"dtype": member["dtype"], **({"axes": [{} for _ in member["shape"]]}
+                                    if member.get("shape") else {})} for name, member in data["metadata"].items()},
+                      "location": {"dtype": "string"}, "domain": {
                 "identity": {"dtype": "string"}, "points": {"dtype": "float64", "axes": [{}, {}]},
                 "cells": {"tet4": {"dtype": "int32", "axes": [{}, {}]}},
             }}
@@ -242,6 +248,8 @@ def test_native_snapshot_recording_retains_actual_time_and_vector_components(mon
             assert (encoded["values"]["storage"]["kind"] == "attachments") is attached
             decoded = decode_tensor_tree(schema, encoded, {blob.id: bytes(blob.data) for blob in attachments})
             np.testing.assert_array_equal(decoded["values"][:, 0], getattr(solution, name))
+            assert decoded["metadata.pressureKind"] == "gauge"
+            assert decoded["metadata.pressureReference"] == domain.metadata["pressureReference"]
     finally:
         for lease in leases:
             resources.release(lease)

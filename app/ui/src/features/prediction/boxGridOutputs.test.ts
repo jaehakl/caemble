@@ -85,6 +85,22 @@ function output(
 const scalar = (value: number) => ({ layout: { key: 'x', dtype: 'float64' as const, shape: [] }, values: [value] })
 
 describe('Box Grid consumer contract', () => {
+  it('rejects unresolved candidate result metadata before constructing predicted records', () => {
+    const record = output('field', [2, 0])
+    const rule = {
+      ...record.rule,
+      result: {
+        ...record.rule.result,
+        metadata: {
+          pressureOffset: { dtype: 'float64' as const, quantityKind: 'Pressure', unit: 'Pa' },
+        },
+      },
+    }
+    expect(() => predictedRecordedData([record.sample], [rule])).toThrow(
+      'Prediction cannot resolve declared result metadata',
+    )
+    expect(() => predictedRecordedData([record.sample], [record.rule])).not.toThrow()
+  })
   it('preserves the material configuration in Calculation and separates Prediction cohorts', () => {
     const records = [
       output('field', [1, 0], 0, false, { configuration: 'current', weighting: 'material-volume' }),

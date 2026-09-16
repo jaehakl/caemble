@@ -15,6 +15,7 @@ from .errors import CatalogError, CatalogNotFoundError
 from .schema import APPLICATION_ID, TABLE_ORDER, create_schema, parse_experiment_version
 from .model_schema import schema_values, validate_parameter_schema, validate_model_parameters
 from .interactions import model_subject
+from .result_metadata import validate_metadata_schema
 
 
 def canonical_json(value: Any) -> str:
@@ -42,6 +43,10 @@ def _insert_data_usages(
                 (*solver, ordinal, quantity_kind, f"{path}.axes[{axis_index}]", axis.get("unit")),
             )
             ordinal += 1
+    for name, field in data.get("metadata", {}).items():
+        ordinal = _insert_data_usages(
+            connection, solver, field, context, f"{path}.metadata.{name}", ordinal,
+        )
     if data.get("resourceKind") in {"structuredBundle", "particleSet"}:
         collection = "attributes" if data["resourceKind"] == "particleSet" else "members"
         for name, member in data.get(collection, {}).items():
@@ -491,7 +496,29 @@ def rebase_database(path: Path) -> None:
     refresh_derived_data(source_path)
 
 
+def validate_artifact_data(data: dict[str, Any], path: str) -> None:
+    if "metadata" in data:
+        try:
+            validate_metadata_schema(data["metadata"], f"{path}.metadata")
+        except ValueError as error:
+            raise CatalogError(str(error)) from error
+    if "mesh" in data and (
+        data.get("recording") != "mesh-field"
+        or data["mesh"] not in ({"version": 1, "cellType": "tet4"}, {"version": 1, "cellType": "tri3"})
+    ):
+        raise CatalogError(f"{path}.mesh requires mesh-field recording with version 1 and tri3 or tet4 cells")
+    for collection in ("members", "attributes"):
+        for name, member in data.get(collection, {}).items():
+            validate_artifact_data(member, f"{path}.{collection}.{name}")
+
+
 def validate_output_contracts(catalog: Catalog, descriptor: dict[str, Any]) -> None:
+    for category in ("outputs", "exports"):
+        for method in descriptor["methods"].get(category, []):
+            validate_artifact_data(method["data"], f"{descriptor['name']}.{category}.{method['methodId']}")
+    for category in ("visualizations", "inputPorts"):
+        for name, contract in descriptor.get(category, {}).items():
+            validate_artifact_data(contract["data"], f"{descriptor['name']}.{category}.{name}")
     for method in descriptor["methods"]["outputs"]:
         label = f"Solver {descriptor['name']} Output {method['methodId']}"
         data, target = method["data"], method["target"]

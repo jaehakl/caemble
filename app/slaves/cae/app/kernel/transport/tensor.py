@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 from sdk.protocol.packets import Attachment
+from caemble_catalog.result_metadata import validate_result_metadata
 
 INLINE_LIMIT_BYTES = 64 * 1024
 ATTACHMENT_SHARD_BYTES = 16 * 1024 * 1024
@@ -67,12 +68,18 @@ def encode_tensor(
     axes = None
     box_grid = None
     provenance = None
+    metadata = None
     raw_value = value
     if isinstance(value, dict) and "value" in value:
         raw_value = value["value"]
         axes = _materialize_metadata(value.get("axes"))
         box_grid = _materialize_metadata(value.get("boxGrid"))
         provenance = _materialize_metadata(value.get("provenance"))
+        metadata = _materialize_metadata(value.get("metadata"))
+    if "metadata" in schema:
+        validate_result_metadata(schema["metadata"], metadata, f"{name}.metadata")
+    elif metadata is not None:
+        raise ValueError(f"{name} carries undeclared result metadata")
     dtype_name = schema["dtype"]
 
     if dtype_name == "string":
@@ -84,10 +91,11 @@ def encode_tensor(
             shape = list(array.shape)
             normalized = array.tolist()
         raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        meaning = {key: item for key, item in (("boxGrid", box_grid), ("provenance", provenance), ("metadata", metadata)) if item is not None}
         if len(raw) <= INLINE_LIMIT_BYTES:
-            return _inline_tensor(shape, axes, normalized), [], len(raw)
+            return {**_inline_tensor(shape, axes, normalized), **meaning}, [], len(raw)
         attachments = _shard(name, sequence, raw, "application/json; charset=utf-8")
-        return _attachment_tensor(shape, axes, attachments, len(raw)), attachments, len(raw)
+        return {**_attachment_tensor(shape, axes, attachments, len(raw)), **meaning}, attachments, len(raw)
 
     encoded = np.asarray(raw_value, dtype=dtype_for(dtype_name), order="C")
     shape = list(encoded.shape)
@@ -105,6 +113,8 @@ def encode_tensor(
             tensor["boxGrid"] = box_grid
         if provenance is not None:
             tensor["provenance"] = provenance
+        if metadata is not None:
+            tensor["metadata"] = metadata
         return tensor, [], len(raw)
     attachments = _shard(name, sequence, raw, "application/octet-stream")
     tensor = _attachment_tensor(shape, axes, attachments, len(raw))
@@ -112,6 +122,8 @@ def encode_tensor(
         tensor["boxGrid"] = box_grid
     if provenance is not None:
         tensor["provenance"] = provenance
+    if metadata is not None:
+        tensor["metadata"] = metadata
     return tensor, attachments, len(raw)
 
 

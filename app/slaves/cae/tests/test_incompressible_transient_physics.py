@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from numpy.polynomial.legendre import leggauss
 from scipy import sparse
+from scipy.sparse.linalg import splu
 
 from app.kernel.coordinator.plan import detached
 from app.kernel.coordinator.run import CaeRun
@@ -13,7 +14,7 @@ from app.methods.finite_element.tetrahedron import tetrahedron_quadrature
 from app.methods.finite_volume.tetrahedral import cell_operators
 from app.methods.geometry import GeometryService
 from app.solvers.incompressible_flow.domain import build_domain
-from app.solvers.incompressible_flow.linear import LinearFlowSystem
+from app.solvers.incompressible_flow.linear import LinearFlowSystem, TransientPressureInverse
 from app.solvers.incompressible_flow.transient import PreparedTransientFlow, TransientStepFailure
 from tests.test_incompressible_methods import tetrahedral_box
 from tests.test_incompressible_physics import pressure_duct_boundaries
@@ -215,6 +216,27 @@ def test_pure_inertia_pressure_correction_has_no_skew_gradient_remainder():
     _, corrected_flux, _ = system.response(checkerboard)
     exact = -dt/density * (pressure_operators.normal_gradient @ checkerboard)
     np.testing.assert_allclose(corrected_flux, exact, rtol=2e-14, atol=2e-16)
+
+
+@pytest.mark.asyncio
+async def test_transient_pressure_inverse_is_exact_in_the_pure_inertia_limit():
+    mesh = tetrahedral_box((3, 3, 3))
+    velocity_fixed, pressure_fixed = mesh.neighbour < 0, np.zeros(mesh.face_count, dtype=bool)
+    velocity_operators, pressure_operators = cell_operators(mesh, velocity_fixed), cell_operators(mesh, pressure_fixed)
+    density, dt = 1.7, .013
+    free = np.arange(1, len(mesh.cells))
+    laplacian = (-mesh.divergence @ pressure_operators.normal_gradient).tocsr()
+    inverse = TransientPressureInverse(splu(laplacian[free][:, free].tocsc()), mesh.cell_volumes[free], density/dt, 0.)
+    velocity = np.random.default_rng(94).normal(size=(len(mesh.cells), 3))
+    mass = density*mesh.cell_volumes/dt
+    system = LinearFlowSystem(mesh, velocity_operators, pressure_operators,
+        sparse.diags(mass), mass[:, None]*velocity, velocity_fixed, pressure_fixed,
+        np.zeros((mesh.face_count, 3)), np.zeros(mesh.face_count), reference_speed=1.,
+        force_density_scale=density/dt, pressure_factor=inverse)
+    result = await system.solve(max_iterations=1, tolerance=1e-10)
+    assert result.iterations == 1
+    assert result.mass_residual < 1e-10 and result.pressure_residual < 1e-10
+    assert np.average(result.pressure, weights=mesh.cell_volumes) == pytest.approx(0., abs=2e-14)
 
 
 @pytest.mark.validation

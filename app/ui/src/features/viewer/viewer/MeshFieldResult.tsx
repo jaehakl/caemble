@@ -193,11 +193,14 @@ export function MeshFieldResult({
     >
       <h3 className="px-2 pt-2 text-sm font-semibold text-slate-900">{field.label}</h3>
       <p className="px-2 text-xs text-slate-500">
-        {(field.points.length / 3).toLocaleString()} nodes · {(field.cells.length / 4).toLocaleString()} tetrahedra ·{' '}
-        {field.location} values · coordinates {field.lengthUnit}
+        {(field.points.length / 3).toLocaleString()} nodes ·{' '}
+        {(field.cells.length / (field.cellType === 'tri3' ? 3 : 4)).toLocaleString()}{' '}
+        {field.cellType === 'tri3' ? 'triangles' : 'tetrahedra'} · {field.location} values · coordinates{' '}
+        {field.lengthUnit}
         {field.configuration ? ` · ${field.configuration === 'reference' ? '기준 배치' : '현재 배치'}` : ''}
         {field.weighting === 'reference-volume' ? ' · 기준 체적 가중 평균' : ''}
         {field.signConvention === 'compression-positive' ? ' · 압축 양수' : ''}
+        {field.snapshotTime !== undefined ? ` · time ${field.snapshotTime} ${field.snapshotTimeUnit ?? 's'}` : ''}
       </p>
       <ViewerControls>
         <details

@@ -65,9 +65,26 @@ async def test_aligned_windows_share_steps_and_keep_endpoint_out_of_history():
     whole, _, _ = await advance_window(invocation, domain, saved, {**clock, "windowSize": .4}, controls, whole_stepper)
     assert [(call[0], call[1]) for call in stepper.calls] == [(call[0], call[1]) for call in whole_stepper.calls]
     np.testing.assert_array_equal(result["pressure"], whole["pressure"])
-    for name in ("times", "pressure", "velocity"):
+    for name in ("times", "pressure", "velocity", "boundaryFlux"):
         np.testing.assert_array_equal(history_values(result)[name], history_values(whole)[name])
     assert result["steps"] == whole["steps"] == 4
+
+
+@pytest.mark.asyncio
+async def test_boundary_flux_history_interpolates_only_accepted_corrected_fluxes():
+    invocation, domain, saved, clock, controls = window_fixture(dt=.1, duration=.1, window=.1, interval=.01)
+    before = ContentKey.from_parts("checkpoint", saved)
+    stepper = ClockStepper(domain.mesh, transported_speed=1., fail_dt_above=.03)
+    result, _, diagnostics = await advance_window(invocation, domain, saved, clock, controls, stepper)
+    history = history_values(result)
+    assert diagnostics["retryCount"] >= 2
+    final_flux = domain.mesh.area_vectors[domain.mesh.boundary_interface_indices, 0]
+    np.testing.assert_array_equal(history["velocity"], 0.)
+    np.testing.assert_allclose(history["boundaryFlux"][1], .4 * final_flux, atol=1e-15)
+    np.testing.assert_allclose(history["boundaryFlux"][2], .8 * final_flux, atol=1e-15)
+    np.testing.assert_allclose(history["boundaryFlux"][-1], final_flux, atol=1e-15)
+    assert history["boundaryFlux"].shape[1] < len(result["faceVolumeFlux"])
+    assert ContentKey.from_parts("checkpoint", saved) == before
 
 
 @pytest.mark.asyncio

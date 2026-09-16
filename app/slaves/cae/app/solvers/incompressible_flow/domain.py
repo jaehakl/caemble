@@ -9,6 +9,7 @@ from app.kernel.api import ContentKey
 from app.kernel.api.world import geometry_parts, material_model
 from app.methods.finite_volume.tetrahedral import FaceMesh, create_fv_mesh
 from app.methods.mesh.models import VolumeMeshingProfile
+from .periodic import apply_periodic, boundary_patches, freeze_periodic, split_gravity
 
 
 def parameter(value):
@@ -25,15 +26,20 @@ class FlowDomain:
     boundary_pressure: np.ndarray
     identity: str
     metadata: dict
+    surface_regions: dict | None = None
+    boundary_roles: np.ndarray | None = None
+    boundary_patches: dict | None = None
+    periodic_topology: dict | None = None
 
 
-def prepare_boundaries(mesh, regions, rules):
+def prepare_boundaries(mesh, regions, rules, analysis="steady-stokes"):
     """Unassigned exterior faces are walls; explicit conditions may not overlap."""
     velocity = np.full((len(mesh.faces), 3), np.nan)
     pressure = np.full(len(mesh.faces), np.nan)
     exterior = mesh.neighbour < 0
     velocity[exterior] = 0.0
     assigned = np.zeros(len(mesh.faces), dtype=bool)
+    periodic = np.zeros(len(mesh.faces), dtype=bool)
     for rule in rules:
         selected = []
         for target in rule["target"]:
@@ -64,10 +70,17 @@ def prepare_boundaries(mesh, regions, rules):
                 raise ValueError("flow opening pressure must be finite gauge pressure in Pa")
             pressure[faces] = prescribed
             velocity[faces] = np.nan
+        elif method == "flow.periodic":
+            if len(rule["target"]) != 2:
+                raise ValueError("flow.periodic requires exactly two ordered surface targets")
+            periodic[faces] = True
+            velocity[faces] = np.nan
         else:
             raise ValueError(f"unsupported flow boundary condition {method!r}")
     prescribed_velocity = exterior & np.isfinite(velocity[:, 0])
-    if not np.any(prescribed_velocity):
+    if not np.any(prescribed_velocity) and not (analysis == "transient-navier-stokes" and np.all(periodic[exterior])):
+        if np.all(periodic[exterior]):
+            raise ValueError("steady periodic flow requires a no-slip or prescribed velocity boundary to determine mean velocity")
         raise ValueError("all pressure-open boundaries leave the Stokes velocity undetermined; "
                          "a no-slip or prescribed velocity boundary is required")
     if not np.any(np.isfinite(pressure)):
@@ -75,6 +88,24 @@ def prepare_boundaries(mesh, regions, rules):
         if abs(float(fluxes.sum())) > 1e-10 * max(float(np.abs(fluxes).sum()), np.finfo(float).tiny):
             raise ValueError(f"closed flow boundary has incompatible net prescribed volume flux {fluxes.sum():g} m3/s")
     return velocity, pressure
+
+
+def resolve_surface_regions(scene, source, mesh, metadata):
+    """Resolve selectors to the preserved canonical physical boundary order."""
+    provenance = metadata["boundaryProvenance"]
+    lookup = {}
+    for boundary in range(len(mesh.boundary_face_map)):
+        for index in range(provenance["offsets"][boundary], provenance["offsets"][boundary + 1]):
+            key = (str(provenance["rootIds"][index]), str(provenance["sourceNodeIds"][index]),
+                   int(provenance["surfaceIndices"][index]))
+            lookup.setdefault(key, set()).add(boundary)
+    result = {}
+    for group in scene["surfaceGroups"]:
+        selected = set()
+        for selector in group["selectors"]:
+            selected.update(lookup.get((selector["rootId"], selector["sourceNodeId"], selector["surfaceIndex"]), ()))
+        result[f"{source}.surface.{group['name']}"] = np.asarray(sorted(selected), dtype=np.int64)
+    return result
 
 
 def domain_request(invocation, controls=None):
@@ -114,7 +145,7 @@ def domain_request(invocation, controls=None):
                 raise ValueError(f"flow boundary target {target!r} has no fluid boundary")
             selectors.extend(fluid_selectors)
         boundaries.append((rule["methodId"], selectors, rule.get("parameters", {})))
-    identity = str(ContentKey.from_parts("incompressible-flow.model.v2", source, part["id"],
+    identity = str(ContentKey.from_parts("incompressible-flow.model.v3", source, part["id"],
         part["node"], scene["lengthUnit"], material, resolution, gravity, boundaries,
         parameter(parameters.get("analysis", "steady-stokes")), controls or {}))
     return {"source": source, "scene": scene, "part": part, "density": density,
@@ -137,7 +168,24 @@ async def build_domain(invocation, request=None):
         selected = [volume.boundary_face_indices(selector) for selector in surface["selectors"]]
         indices = np.unique(np.concatenate(selected)) if selected else np.empty(0, dtype=int)
         regions[f"{source}.surface.{surface['name']}"] = mesh.boundary_face_map[indices]
-    velocity, pressure = prepare_boundaries(mesh, regions, invocation.config["boundaryConditions"])
+    analysis = parameter(invocation.config["parameters"].get("analysis", "steady-stokes"))
+    velocity, pressure = prepare_boundaries(mesh, regions, invocation.config["boundaryConditions"], analysis)
+    boundary_ids = mesh.boundary_face_map
+    roles = np.full(len(boundary_ids), "wall", dtype="<U13")
+    roles[np.isfinite(pressure[boundary_ids])] = "pressure-open"
+    roles[np.any(velocity[boundary_ids] != 0, axis=1) & np.all(np.isfinite(velocity[boundary_ids]), axis=1)] = "velocity"
+    roles[~np.isfinite(pressure[boundary_ids]) & ~np.all(np.isfinite(velocity[boundary_ids]), axis=1)] = "periodic"
+    # A stationary explicitly prescribed velocity remains a velocity condition,
+    # not an automatically selected solid wall for traction export.
+    for rule in invocation.config["boundaryConditions"]:
+        if rule["methodId"] == "flow.velocity-inlet":
+            selected = np.concatenate([regions[target] for target in rule["target"]])
+            roles[np.isin(boundary_ids, selected)] = "velocity"
+    pairs = [{"sourceFaces": regions[rule["target"][0]], "targetFaces": regions[rule["target"][1]],
+              "translation": parameter(rule["parameters"]["translation"])}
+             for rule in invocation.config["boundaryConditions"] if rule["methodId"] == "flow.periodic"]
+    mesh = apply_periodic(mesh, pairs, invocation.cancellation)
+    velocity, pressure = velocity[mesh.interface_owner_faces], pressure[mesh.interface_owner_faces]
     aliases = [entry for entries in volume.boundary_provenance for entry in entries]
     metadata = {
         "nodeIds": np.arange(len(mesh.points), dtype=np.int64),
@@ -158,8 +206,13 @@ async def build_domain(invocation, request=None):
             "surfaceIndices": np.asarray([entry.surface_index for entry in aliases], dtype=np.int32),
         },
         "provenance": {"source": source, "geometryHash": scene["geometryHash"], "rootId": part["id"]},
-        "analysis": parameter(invocation.config["parameters"].get("analysis", "steady-stokes")),
+        "analysis": analysis,
         "pressureReference": "pressure-boundaries" if np.any(np.isfinite(pressure)) else "volume-mean-zero",
     }
+    hydrostatic_gravity, driving_acceleration = split_gravity(mesh, request["gravity"])
+    metadata.update(pressureReferencePoint=np.average(mesh.cell_centers, axis=0, weights=mesh.cell_volumes),
+                    hydrostaticGravity=hydrostatic_gravity, drivingAcceleration=driving_acceleration)
+    surface_regions = resolve_surface_regions(scene, source, mesh, metadata)
     return FlowDomain(mesh, request["density"], request["viscosity"], request["gravity"],
-                      velocity, pressure, request["identity"], metadata)
+                      velocity, pressure, request["identity"], metadata, surface_regions, roles,
+                      boundary_patches(mesh), freeze_periodic(mesh))

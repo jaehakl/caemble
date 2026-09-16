@@ -2,6 +2,7 @@ import { resultVisualizationSchema } from './resultValidators'
 import { BOX_GRID_AXES, assertBoxGridProfile } from './boxGrid'
 import { calculationDefinitionSchema } from './api/calculationValidators'
 import { z } from 'zod'
+import { assertMetadataSchema, type ResultMetadataSchema } from './resultMetadata'
 import type {
   CatalogExperimentDetail,
   CatalogExperimentListItem,
@@ -163,7 +164,15 @@ const kernelDataAxisSchema = z.union([
     })
     .passthrough(),
 ])
-const kernelDataFields = { axes: z.array(kernelDataAxisSchema).optional() }
+const metadataSchema = z.custom<ResultMetadataSchema>((value) => {
+  try {
+    assertMetadataSchema(value)
+    return true
+  } catch {
+    return false
+  }
+})
+const kernelDataFields = { axes: z.array(kernelDataAxisSchema).optional(), metadata: metadataSchema.optional() }
 const kernelFloatDataFields = {
   dtype: z.enum(['float16', 'float32', 'float64', 'complex64']),
   unit: z.string(),
@@ -246,6 +255,10 @@ const kernelOutputMethodSchema = kernelMethodSchema.extend({
     z.object({
       visualization: resultVisualizationSchema,
       recording: z.enum(['mesh-field', 'mesh-series', 'structured-field']).optional(),
+      mesh: z
+        .object({ version: z.literal(1), cellType: z.enum(['tet4', 'tri3']) })
+        .strict()
+        .optional(),
     }),
   ),
 })

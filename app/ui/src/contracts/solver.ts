@@ -1,4 +1,5 @@
 import type { BoxGridProfile } from './boxGrid'
+import type { ResultMetadataSchema } from './resultMetadata'
 
 export type KernelArtifactType = `${string}@${number}`
 
@@ -15,7 +16,11 @@ export type KernelDataAxis = Readonly<{
 }> &
   Readonly<{ unit: string; quantityKind: string } | { unit?: never; quantityKind?: never }>
 
-export type KernelDataSpec = Readonly<{ axes?: readonly KernelDataAxis[]; boxGrid?: BoxGridProfile }> &
+export type KernelDataSpec = Readonly<{
+  axes?: readonly KernelDataAxis[]
+  boxGrid?: BoxGridProfile
+  metadata?: ResultMetadataSchema
+}> &
   Readonly<
     | {
         dtype: KernelFloatDType
@@ -101,7 +106,7 @@ export type ResultVisualization = Readonly<{
   }>
   spatialAxes?: readonly number[]
   components?: readonly string[]
-  valueKind?: 'displacement' | 'stress' | 'scalar'
+  valueKind?: 'displacement' | 'stress' | 'scalar' | 'vector'
   vertices?: string
   offsets?: string
   attributes?: Readonly<Record<string, Readonly<{ path: string; association: 'path' | 'segment' }>>>
@@ -111,6 +116,7 @@ export type KernelArtifactDataSpec = (KernelDataSpec | KernelStructuredBundleSpe
   Readonly<{
     visualization?: ResultVisualization
     recording?: 'mesh-field' | 'mesh-series' | 'structured-field'
+    mesh?: Readonly<{ version: 1; cellType: 'tet4' | 'tri3' }>
   }>
 
 export type KernelValueSpec = KernelDataSpec &

@@ -39,18 +39,22 @@ def save_domain(domain):
             "boundaryFaces": domain.metadata["boundaryFaces"], "metadata": domain.metadata,
             "density": domain.density, "viscosity": domain.viscosity, "gravity": domain.gravity,
             "boundaryVelocity": domain.boundary_velocity, "boundaryPressure": domain.boundary_pressure,
+            "periodicTopology": domain.periodic_topology, "boundaryRoles": domain.boundary_roles,
+            "boundaryPatches": domain.boundary_patches,
             "requestIdentity": domain.identity,
-            "identity": str(ContentKey.from_parts("incompressible-flow.fixed-mesh.v2", domain.identity,
-                domain.mesh.points, domain.mesh.cells, domain.metadata["boundaryFaces"]))}
+            "identity": str(ContentKey.from_parts("incompressible-flow.fixed-mesh.v3", domain.identity,
+                domain.mesh.points, domain.mesh.cells, domain.metadata["boundaryFaces"], domain.periodic_topology))}
 
 
 def initial_state(domain, solution, clock):
     return {"model": save_domain(domain), "clock": clock, "time": 0., "steps": 0, "windows": 0,
             "nextDt": clock["dt"], "nextDtTick": 1, "pressure": solution.pressure, "velocity": solution.velocity,
             "faceVolumeFlux": solution.face_volume_flux,
+            "boundaryInterfaceIndices": domain.mesh.boundary_interface_indices,
             "history": {"times": (np.asarray([0.]),),
                         "pressure": (solution.pressure[None, :],),
-                        "velocity": (solution.velocity[None, :, :],)}}
+                        "velocity": (solution.velocity[None, :, :],),
+                        "boundaryFlux": (solution.face_volume_flux[domain.mesh.boundary_interface_indices][None, :],)}}
 
 
 def read_checkpoint(saved, request, clock):
@@ -60,14 +64,22 @@ def read_checkpoint(saved, request, clock):
         raise ValueError("flow continuation requires the checkpoint's physical time settings")
     model = saved["model"]
     mesh = create_fv_mesh(model["points"], model["cells"], model["boundaryFaces"])
+    if model["periodicTopology"] is not None:
+        from .periodic import restore_periodic
+        mesh = restore_periodic(mesh, model["periodicTopology"])
+    from .domain import resolve_surface_regions
+    regions = resolve_surface_regions(request["scene"], request["source"], mesh, model["metadata"])
     return FlowDomain(mesh, model["density"], model["viscosity"], model["gravity"],
-                      model["boundaryVelocity"], model["boundaryPressure"], model["requestIdentity"], model["metadata"])
+                      model["boundaryVelocity"], model["boundaryPressure"], model["requestIdentity"], model["metadata"],
+                      surface_regions=regions, periodic_topology=model["periodicTopology"],
+                      boundary_roles=model["boundaryRoles"], boundary_patches=model["boundaryPatches"])
 
 
 def history_values(saved):
     """A window endpoint is exposed without becoming a permanent observation tick."""
     result = {name: np.concatenate(chunks) for name, chunks in saved["history"].items()}
-    endpoint = {"times": saved["time"], "pressure": saved["pressure"], "velocity": saved["velocity"]}
+    endpoint = {"times": saved["time"], "pressure": saved["pressure"], "velocity": saved["velocity"],
+                "boundaryFlux": saved["faceVolumeFlux"][saved["boundaryInterfaceIndices"]]}
     tolerance = 8 * np.finfo(float).eps * max(abs(saved["time"]), np.finfo(float).tiny)
     if abs(result["times"][-1] - saved["time"]) <= tolerance:
         result["times"][-1] = saved["time"]

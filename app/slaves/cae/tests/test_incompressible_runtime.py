@@ -23,6 +23,88 @@ from tests.test_catalog_examples import decode_tensor_tree
 
 
 @pytest.mark.asyncio
+async def test_periodic_checkpoint_branches_keep_topology_and_observers_passive(catalog_builds):
+    measurement = catalog_builds["incompressible-sph-periodic-channel"]
+    groups = measurement["experiment"]["scene"]["surfaceGroups"]
+    selector = next(group for group in groups if group["name"] == "xMinus")["selectors"][0]
+    groups.append({"name": "yWalls", "selectors": [{**selector, "surfaceIndex": index} for index in (2, 3)]})
+    config = measurement["experiment"]["simulationProgram"]["tasks"]["flow"]["config"]
+    clock = next(rule["parameters"] for rule in config["initializations"] if rule["methodId"] == "flow.time")
+    for name, value in (("dt", .005), ("duration", .03), ("windowSize", .01), ("outputInterval", .007)):
+        clock[name]["value"] = value
+    run = CaeRun(measurement=measurement, max_run_seconds=180, job_id="periodic-checkpoint")
+    sim = SimulationApi(run)
+    run.simulation_api = sim
+    sim._executor = SpawnSolverExecutor(codec=MmapPayloadCodec(sim._buffers, array_threshold=64))
+    baseline = sim._resources.stats().resource_count
+    children = {child.pid for child in multiprocessing.active_children()}
+    buffers, cache = sim._buffers.root, Path(sim._geometry_cache.name)
+    pending = None
+    try:
+        first = await sim.run(run.tasks["flow"])
+        original = first["state"].to_mutable(copy_arrays=True)
+        fingerprint = ContentKey.from_parts("periodic-checkpoint", original)
+        saved = original["incompressible_flow"]["flow"]
+        assert saved["model"]["periodicTopology"] is not None
+        assert len(saved["boundaryInterfaceIndices"]) < len(saved["faceVolumeFlux"])
+        np.testing.assert_allclose(np.concatenate(saved["history"]["times"]), [0., .007])
+        second = await sim.run(run.tasks["flow"], state=first["state"])
+        expected = second["state"].to_mutable(copy_arrays=True)["incompressible_flow"]["flow"]
+        spec = run.plan.task_specs["flow"]
+        changed = detached(spec.task)
+        observer = next(rule for rule in changed["config"]["initializations"] if rule["methodId"] == "flow.observe-surface")
+        observer["target"] = ["experiment.surface.yWalls"]
+        observer["parameters"]["name"] = "walls"
+        changed_clock = next(rule["parameters"] for rule in changed["config"]["initializations"] if rule["methodId"] == "flow.time")
+        changed_clock["outputInterval"]["value"] = .004
+        flow_output = next(output for output in changed["config"]["outputs"] if output["key"] == "flowRate")
+        flow_output["parameters"]["surface"] = "walls"
+        flow_output["parameters"]["scope"] = "final"
+        run.plan = replace(run.plan, task_specs={**run.plan.task_specs, "flow": replace(spec, task=changed)})
+        branch = await sim.run(run.plan.tasks["flow"], state=first["state"])
+        actual = branch["state"].to_mutable(copy_arrays=True)["incompressible_flow"]["flow"]
+        assert actual["model"]["identity"] == expected["model"]["identity"]
+        for name in ("pressure", "velocity", "faceVolumeFlux", "boundaryInterfaceIndices"):
+            np.testing.assert_array_equal(actual[name], expected[name], err_msg=name)
+        assert ContentKey.from_parts("topology", actual["model"]["periodicTopology"]) == ContentKey.from_parts(
+            "topology", saved["model"]["periodicTopology"])
+        np.testing.assert_allclose(np.concatenate(actual["history"]["times"]), [0., .007, .012, .016, .02])
+        np.testing.assert_array_equal(np.concatenate(actual["history"]["boundaryFlux"])[:2],
+                                      np.concatenate(saved["history"]["boundaryFlux"]))
+        observed = sim._artifacts.materialize(branch["artifacts"]["flowRate"])
+        np.testing.assert_array_equal(observed["value"], 0.)
+        np.testing.assert_array_equal(observed["axes"][3]["ticks"], [.02])
+        assert observed["metadata"]["surfaceTargets"] == ["experiment.surface.yWalls"]
+        del observed
+        assert ContentKey.from_parts("periodic-checkpoint", first["state"].to_mutable(copy_arrays=True)) == fingerprint
+        bad = detached(spec.task)
+        bad["config"]["boundaryConditions"][0]["parameters"]["translation"]["value"][0] *= 1.01
+        before = sim._resources.stats(), sim._states.revisions(), sim._buffers.files()
+        with pytest.raises(RemoteSolverError, match="different geometry, material, boundary or integration model"):
+            await execute_solver(replace(spec, task=bad), first["state"].to_mutable(copy_arrays=False), {},
+                                 run.plan.world(spec), run.progress, executor=sim._executor, timeout=120)
+        assert (sim._resources.stats(), sim._states.revisions(), sim._buffers.files()) == before
+        for result in (first, second, branch):
+            sim.release((result["state"], result["artifacts"]))
+        pending = asyncio.create_task(sim._flush_visualizations())
+        packet = await asyncio.wait_for(run.queue.get(), timeout=30)
+        assert isinstance(packet, RecordPacket)
+        run.pending = packet
+        run.acknowledge(packet.sequence)
+        await pending
+        gc.collect()
+        assert sim._resources.stats().resource_count == baseline
+        assert sim._buffers.files() == ()
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        await run.close()
+    assert not buffers.exists() and not cache.exists()
+    assert {child.pid for child in multiprocessing.active_children()} == children
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("attachments,closed,transient", [
     (False, False, False), (True, False, False), (False, True, False), (True, False, True),
 ], ids=["inline", "attachments", "hydrostatic", "startup"])
@@ -67,7 +149,11 @@ async def test_flow_records_survive_wire_storage_requery_and_ack(catalog_builds,
                 records[packet.name] = decode_tensor_tree(run.schemas[packet.name], tensor, blobs)[""]
                 geometries[packet.name] = tensor["boxGrid"]
                 assert tensor["storage"]["kind"] == ("attachments" if attachments else "inline")
-                assert tensor["provenance"]["solver"] == {"name": "incompressible-flow", "version": "2.0.0"}
+                assert tensor["provenance"]["solver"] == {"name": "incompressible-flow", "version": "3.0.0"}
+                assert tensor["metadata"]["pressureKind"] == "gauge"
+                assert tensor["metadata"]["pressureReference"] == ("volume-mean-zero" if closed else "pressure-boundaries")
+                assert set(tensor["metadata"]) == set(run.schemas[packet.name]["metadata"])
+                assert tensor["metadata"]["coordinateFrame"] == "world"
                 assert records[packet.name].shape[3:6] == (len(expected_times), 1, 1)
                 np.testing.assert_allclose(tensor["axes"][3]["ticks"], expected_times, rtol=0, atol=1e-14)
             else:
@@ -76,13 +162,20 @@ async def test_flow_records_survive_wire_storage_requery_and_ack(catalog_builds,
                     assert entry["contract"]["visualization"]["kind"] == "mesh-field"
                     assert entry["data"]["values"]["axes"][1] == {"name": "time", "unit": "s", "ticks": [endpoint]}
                     assert displays[name]["values"].shape[1:] == ((1,) if name == "pressure" else (1, 3))
+                    assert displays[name]["metadata.pressureKind"] == "gauge"
+                    assert displays[name]["metadata.pressureReference"] == ("volume-mean-zero" if closed else "pressure-boundaries")
+                    if name == "traction":
+                        assert displays[name]["domain.cells.tri3"].shape[1] == 3
+                        assert displays[name]["metadata.actionTarget"] == "fluid-on-solid"
+                        assert displays[name]["metadata.pressureOffset"] == 0
+                        assert displays[name]["metadata.contribution"] == "total"
             sequences.append(packet.sequence)
             assert packet.resource_hold is not None and not packet.ack.done()
             run.pending = packet
             run.acknowledge(packet.sequence)
             assert packet.ack.done()
         assert set(records) == {"pressure", "velocity", "density"}
-        assert set(displays) == {"pressure", "velocity"}
+        assert set(displays) == {"pressure", "velocity", "traction"}
         observations = run.trace[-1]["observations"]
         assert observations["pressureReference"] == ("volume-mean-zero" if closed else "pressure-boundaries")
         assert max(observations[name] for name in ("massResidual", "momentumResidual", "pressureResidual")) <= 1e-8
@@ -330,8 +423,11 @@ async def test_flow_checkpoint_branches_reject_changes_cancel_and_release(catalo
         np.testing.assert_allclose(np.concatenate(whole_saved["history"]["times"]), np.arange(11) * .002,
                                    rtol=0, atol=1e-14)
         for name, handle in continuous._visualizations["flow"].items():
-            np.testing.assert_array_equal(continuous._artifacts.materialize(handle).values[:, 0], split_saved[name])
+            expected = (split_saved[name] if name in {"pressure", "velocity"}
+                        else sim._artifacts.materialize(sim._visualizations["flow"][name]).values[:, 0])
+            np.testing.assert_array_equal(continuous._artifacts.materialize(handle).values[:, 0], expected)
             assert continuous._artifacts.materialize(handle).metadata["sampleAxes"][0]["ticks"] == [.02]
+        del expected
         continuous.release((whole["artifacts"], whole["state"]))
         for name in second["artifacts"]:
             a = sim._artifacts.materialize(second["artifacts"][name])

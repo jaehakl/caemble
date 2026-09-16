@@ -26,6 +26,7 @@ SOLVER_TESTS = {
 METHOD_FILE_CONSUMERS = {
     "app/methods/finite_volume/tetrahedral.py": ("incompressible_flow",),
     "app/methods/coupling/tetrahedral.py": ("incompressible_flow",),
+    "app/methods/coupling/polygons.py": ("incompressible_flow",),
 }
 METHOD_CONSUMERS = {
     "particles": PARTICLES,
@@ -49,7 +50,8 @@ KERNEL_TESTS = (
     "test_solver_entries", "test_actual_solver_chain", "test_particle_field_handoff",
     "test_particle_runtime", "test_particle_faults", "test_rigid_runtime",
     "test_acoustic_transient_lifecycle", "test_regression_*",
-    "test_incompressible_runtime",
+    "test_incompressible_runtime", "test_incompressible_handoff",
+    "test_result_metadata",
 )
 COMMON_TESTS = ("test_architecture_boundaries", "test_solver_entries", "test_material_models", "test_material_interactions")
 

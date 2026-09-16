@@ -5,7 +5,7 @@ from itertools import combinations, permutations
 import numpy as np
 import pytest
 
-from app.methods.finite_volume.tetrahedral import cell_operators, create_fv_mesh, upwind_convection
+from app.methods.finite_volume.tetrahedral import _gradient_extensions, cell_operators, create_fv_mesh, upwind_convection
 
 
 def tetrahedral_box(shape=(3, 3, 3), size=(1., 1., 1.), *, irregular=True):
@@ -46,6 +46,18 @@ def test_tetrahedral_face_geometry_and_conservation():
     flux[~internal] = 0
     assert abs(np.sum(mesh.divergence @ flux)) < 1e-13
     assert np.array_equal(np.sort(mesh.boundary_face_map), np.flatnonzero(~internal))
+
+
+def test_gradient_extension_adds_second_ring_without_reweighting_original_neighbours():
+    mesh = tetrahedral_box((3, 3, 3))
+    rows, columns, delta, weights = _gradient_extensions(mesh)
+    internal = mesh.neighbour >= 0
+    immediate = {tuple(sorted(pair)) for pair in zip(mesh.owner[internal], mesh.neighbour[internal], strict=True)}
+    assert len(rows) > len(mesh.cells)
+    assert all(tuple(sorted(pair)) not in immediate for pair in zip(rows, columns, strict=True))
+    assert np.all(rows != columns) and np.all(weights > 0)
+    np.testing.assert_array_equal(mesh.gradient_weights, 1.)
+    np.testing.assert_allclose(delta, mesh.cell_centers[columns]-mesh.cell_centers[rows], atol=0.)
 
 
 @pytest.mark.parametrize("gradient", ([0., 0., 0.], [1.7, -.4, 2.1]))

@@ -1,8 +1,13 @@
 import type { RecordedResultContracts } from '@/contracts/results'
 import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, type DataTensorAccessor } from '@/lib/cad/model/dataTensor'
+import type { ResultMetadata } from '@/contracts/resultMetadata'
 
 export type RecordedMeshField = Readonly<{
+  cellType?: 'tet4' | 'tri3'
+  metadata?: ResultMetadata
+  snapshotTime?: number
+  snapshotTimeUnit?: UcumUnit
   label: string
   identity: string
   task?: string
@@ -18,7 +23,7 @@ export type RecordedMeshField = Readonly<{
   lengthUnit: UcumUnit
   valueUnit: UcumUnit
   quantity: string
-  valueKind?: 'displacement' | 'stress' | 'scalar'
+  valueKind?: 'displacement' | 'stress' | 'scalar' | 'vector'
   location: 'node' | 'cell'
   points: Float64Array
   cells: Uint32Array
@@ -104,14 +109,25 @@ export function parseRecordedMeshFields(
       const readField = (member: string) => read(semantic.fieldPath ? `${semantic.fieldPath}.${member}` : member)
       if (readField('domain.kind')?.at(0) !== 'unstructured-mesh') continue
       const points = readField('domain.points')
-      const cells = readField('domain.cells.tet4')
+      const surfaceCells = readField('domain.cells.tri3')
+      const volumeCells = readField('domain.cells.tet4')
+      if (surfaceCells && volumeCells) throw new Error('A mesh field requires one declared cell topology.')
+      const cellType = surfaceCells ? 'tri3' : 'tet4'
+      const cellWidth = cellType === 'tri3' ? 3 : 4
+      const cells = surfaceCells ?? volumeCells
       const values = readField('values')
       const location = readField('location')?.at(0)
-      if (!points || !cells || !values) throw new Error('The recorded field requires points, tet4 cells and values.')
-      if (points.shape.length !== 2 || points.shape[1] !== 3 || cells.shape.length !== 2 || cells.shape[1] !== 4) {
-        throw new Error('Mesh coordinates must be N×3 and tet4 connectivity M×4.')
+      if (!points || !cells || !values) throw new Error('The recorded field requires points, cells and values.')
+      if (
+        points.shape.length !== 2 ||
+        points.shape[1] !== 3 ||
+        cells.shape.length !== 2 ||
+        cells.shape[1] !== cellWidth
+      ) {
+        throw new Error(`Mesh coordinates must be N×3 and ${cellType} connectivity M×${cellWidth}.`)
       }
-      if (!points.shape[0] || !cells.shape[0]) throw new Error('A recorded volume mesh must contain nodes and cells.')
+      if (cellType === 'tet4' && (!points.shape[0] || !cells.shape[0]))
+        throw new Error('A recorded volume mesh must contain nodes and cells.')
       if (location !== 'node' && location !== 'cell') throw new Error(`Unsupported field location: ${String(location)}`)
       const count = location === 'node' ? points.shape[0] : cells.shape[0]
       const frequency = semantic.frequency
@@ -196,9 +212,9 @@ export function parseRecordedMeshFields(
         return node
       })
       const faces = new Map<string, { nodes: number[]; cell: number; count: number }>()
-      for (let cell = 0; cell < cells.shape[0]; cell += 1) {
+      for (let cell = 0; cellType === 'tet4' && cell < cells.shape[0]; cell += 1) {
         for (const face of tetFaces) {
-          const nodes = face.map((vertex) => connectivity[cell * 4 + vertex])
+          const nodes = face.map((vertex) => connectivity[cell * cellWidth + vertex])
           const key = [...nodes].sort((a, b) => a - b).join(',')
           const existing = faces.get(key)
           if (existing) existing.count += 1
@@ -208,14 +224,20 @@ export function parseRecordedMeshFields(
       const declaredBoundary = readField('domain.metadata.boundaryFaces')
       if (declaredBoundary && (declaredBoundary.shape.length !== 2 || declaredBoundary.shape[1] !== 3))
         throw new Error('Recorded boundary faces must have shape B×3.')
-      const boundary = declaredBoundary
-        ? Array.from({ length: declaredBoundary.shape[0] }, (_, index) => {
-            const nodes = [0, 1, 2].map((axis) => Number(declaredBoundary.get([index, axis])))
-            const face = faces.get([...nodes].sort((a, b) => a - b).join(','))
-            if (!face) throw new Error('Recorded boundary face is not part of the volume mesh.')
-            return { nodes, cell: face.cell }
-          })
-        : [...faces.values()].filter((face) => face.count === 1)
+      const boundary =
+        cellType === 'tri3'
+          ? Array.from({ length: cells.shape[0] }, (_, cell) => ({
+              nodes: [0, 1, 2].map((vertex) => connectivity[cell * 3 + vertex]),
+              cell,
+            }))
+          : declaredBoundary
+            ? Array.from({ length: declaredBoundary.shape[0] }, (_, index) => {
+                const nodes = [0, 1, 2].map((axis) => Number(declaredBoundary.get([index, axis])))
+                const face = faces.get([...nodes].sort((a, b) => a - b).join(','))
+                if (!face) throw new Error('Recorded boundary face is not part of the mesh.')
+                return { nodes, cell: face.cell }
+              })
+            : [...faces.values()].filter((face) => face.count === 1)
       const regionIds = readField('domain.metadata.regionIds')
       const regions = readField('domain.metadata.cellRegions')
       const supports = readField('domain.metadata.supportNodes')
@@ -223,7 +245,7 @@ export function parseRecordedMeshFields(
       const loadVectors = readField('domain.metadata.loadVectors')
       const components = readField('components')
       if (regions && (regions.shape.length !== 1 || regions.size !== cells.shape[0]))
-        throw new Error('Material region codes must match the volume cells.')
+        throw new Error('Material region codes must match the mesh cells.')
       for (let index = 0; index < (regions?.size ?? 0); index += 1) {
         const region = Number(regions!.at(index))
         if (!Number.isSafeInteger(region) || region < 0 || region >= (regionIds?.size ?? 1))
@@ -321,8 +343,29 @@ export function parseRecordedMeshFields(
         })
         if (!historyValues.every(Number.isFinite)) throw new Error('Animation contains non-finite displacements.')
       }
+      const valueRule = byLabel.get(`${label}.${semantic.fieldPath ? `${semantic.fieldPath}.` : ''}values`)
+      const snapshotAxis = valueRule?.result.axes?.findIndex((axis) => axis.name === 'time') ?? -1
+      const snapshotTime =
+        snapshotAxis >= 0 && values.shape[snapshotAxis] === 1
+          ? Number(values.tensor.axes?.[snapshotAxis]?.ticks?.[0])
+          : undefined
+      if (snapshotTime !== undefined && !Number.isFinite(snapshotTime)) throw new Error('Snapshot time must be finite.')
+      const metadataPrefix = `${label}.${semantic.fieldPath ? `${semantic.fieldPath}.` : ''}metadata.`
+      const metadata = Object.fromEntries(
+        rules
+          .filter((rule) => rule.label.startsWith(metadataPrefix))
+          .map((rule) => {
+            const tensor = read(rule.label.slice(label.length + 1))
+            if (!tensor) throw new Error('A declared mesh metadata field is missing.')
+            return [rule.label.slice(metadataPrefix.length), tensor.materialize()]
+          }),
+      ) as ResultMetadata
       fields.push(
         Object.freeze({
+          cellType,
+          metadata,
+          snapshotTime,
+          snapshotTimeUnit: snapshotAxis >= 0 ? valueRule?.result.axes?.[snapshotAxis].unit : undefined,
           label,
           task: contracts[label].task,
           coordinateSpace: semantic.coordinateSpace,
@@ -398,6 +441,8 @@ export function createMeshFieldRenderData(
 ) {
   if (field.spectrum || displacement?.spectrum)
     throw new Error('Select a frequency and phase before rendering a harmonic mesh field.')
+  if (!field.points.length)
+    return { geometries: [], bounds: { min: [0, 0, 0], max: [0, 0, 0] }, minimum: 0, maximum: 0, cut: 0 }
   const lengthScale = convertUcumValue(1, field.lengthUnit, displayUnit, 'Mesh display length')
   const displacementScale =
     displacement?.componentCount === 3 && displacement.location === 'node' && displacement.valueKind === 'displacement'
@@ -524,7 +569,7 @@ export function createMeshFieldRenderData(
     }
     if (polygon.length >= 3) emitPolygon(polygon, cell)
   }
-  if (axis >= 0) {
+  if (axis >= 0 && field.cellType !== 'tri3') {
     for (let cell = 0; cell < field.cells.length / 4; cell += 1) {
       const vertices = [0, 1, 2, 3].map((index) => vertex(field.cells[cell * 4 + index], cell))
       if (!vertices.some((item) => item.point[axis] < cut) || !vertices.some((item) => item.point[axis] > cut)) continue

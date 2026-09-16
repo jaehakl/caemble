@@ -43,11 +43,11 @@ async def run(invocation):
         if "incompressible_flow" not in invocation.state:
             patch = patch.put(("incompressible_flow",), {})
         patch = patch.put(("incompressible_flow", invocation.task_name), saved)
-    artifacts, visualizations = build_outputs(invocation, domain, solution, samples=samples, time=time)
+    artifacts, exports, visualizations = build_outputs(invocation, domain, solution, samples=samples, time=time)
     if invocation.cancellation is not None:
         invocation.cancellation.raise_if_cancelled()
     return SolverResult(
-        state_patch=patch, artifacts=artifacts, visualizations=visualizations,
+        state_patch=patch, artifacts=artifacts, exports=exports, visualizations=visualizations,
         observations={
             **diagnostics, "analysis": analysis, "time": time,
             "massResidual": solution.mass_residual,

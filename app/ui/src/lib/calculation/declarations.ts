@@ -71,6 +71,8 @@ interface CalculationInputAxis {
 }
 
 interface CalculationInputLeaf {
+  readonly metadata?: Readonly<Record<string, ResultMetadataValue>>
+  readonly metadataSchema?: Readonly<Record<string, { readonly dtype: string; readonly shape?: readonly (number | null)[]; readonly unit?: string; readonly quantityKind?: string; readonly values?: readonly string[] }>>
   readonly dtype: ${calculationInputDtypes.map((dtype) => `'${dtype}'`).join(' | ')}
   readonly shape: readonly number[]
   readonly data: readonly number[]
@@ -98,6 +100,7 @@ interface CalculationInputLeaf {
 }
 
 type CalculationInput = Readonly<Record<string, CalculationInputLeaf>>
+type ResultMetadataValue = string | boolean | number | readonly ResultMetadataValue[]
 
 interface CalculationOutput {
   readonly dtype: CalculationDtype

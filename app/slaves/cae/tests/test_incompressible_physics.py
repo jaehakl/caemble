@@ -206,3 +206,45 @@ def test_unconverged_stokes_candidate_is_not_returned():
     velocity, pressure, _, _ = pressure_duct_boundaries(mesh)
     with pytest.raises(CaeError, match="did not converge in 1 iterations"):
         asyncio.run(solve_stokes(mesh, 1., 1., [0, 0, 0], velocity, pressure, max_iterations=1))
+
+
+def test_pressure_iteration_cancellation_preserves_initial_pressure_and_progress():
+    mesh = tetrahedral_box((3, 2, 2), (2., 1., 1.))
+    velocity, pressure, _, _ = pressure_duct_boundaries(mesh)
+    initial = np.where(np.arange(len(mesh.cells)) % 2, .3, -.3)
+    before = initial.copy()
+    events = []
+
+    def check_cancelled():
+        if len(events) >= 3:
+            raise asyncio.CancelledError
+
+    async def progress(event):
+        assert event["stage"] == "stokes-iteration"
+        events.append(event["completed"])
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(solve_stokes(mesh, 1., 1., [0, 0, 0], velocity, pressure,
+            initial_pressure=initial, cancellation=SimpleNamespace(raise_if_cancelled=check_cancelled), progress=progress))
+    assert events == [0, 1, 2]
+    np.testing.assert_array_equal(initial, before)
+
+
+def test_driven_closed_cavity_pressure_has_zero_mean_independent_of_initial_gauge():
+    mesh = tetrahedral_box((3, 3, 3))
+    boundary = mesh.neighbour < 0
+    velocity = np.full((mesh.face_count, 3), np.nan)
+    velocity[boundary] = 0.
+    velocity[boundary & np.isclose(mesh.face_centers[:, 2], 1.), 0] = 1.
+    pressure = np.full(mesh.face_count, np.nan)
+    initial = np.where(np.arange(len(mesh.cells)) % 2, .3, -.3)
+    results = [asyncio.run(solve_stokes(mesh, 1., 1., [0, 0, 0], velocity, pressure,
+        initial_pressure=initial + offset, tolerance=1e-10)) for offset in (0., 17.)]
+    for result in results:
+        assert result.iterations > 0
+        assert np.linalg.norm(result.velocity) > .1
+        assert abs(np.average(result.pressure, weights=mesh.cell_volumes)) < 1e-13
+        assert max(result.mass_residual, result.momentum_residual, result.pressure_residual) <= 1e-10
+    np.testing.assert_allclose(results[1].pressure, results[0].pressure, rtol=0., atol=1e-9)
+    np.testing.assert_allclose(results[1].velocity, results[0].velocity, rtol=0., atol=1e-10)
+    np.testing.assert_allclose(results[1].face_volume_flux, results[0].face_volume_flux, rtol=0., atol=1e-11)
