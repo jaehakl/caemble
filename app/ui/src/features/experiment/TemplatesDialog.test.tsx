@@ -61,7 +61,7 @@ const templates = [
     description: 'Beam description',
     bundleHash: 'beam-hash',
     concepts: [],
-    relatedSolvers: [{ name: 'structural-mechanics', version: '7.0.0', description: 'Structural mechanics' }],
+    relatedSolvers: [{ name: 'structural-mechanics', version: '7.1.0', description: 'Structural mechanics' }],
   },
   {
     key: 'empty',

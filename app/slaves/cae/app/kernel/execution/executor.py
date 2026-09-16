@@ -414,7 +414,7 @@ class SpawnSolverExecutor:
             if has_message:
                 try:
                     message = await asyncio.to_thread(_receive_message, connection, receive_lock)
-                except EOFError:
+                except (EOFError, OSError):
                     message = None
                 if not isinstance(message, ChildMessage):
                     raise SolverProtocolError(
@@ -480,7 +480,7 @@ class SpawnSolverExecutor:
             if has_message:
                 try:
                     message = await asyncio.to_thread(_receive_message, connection, receive_lock)
-                except EOFError:
+                except (EOFError, OSError):
                     message = None
                 if message is not None:
                     if not isinstance(message, ChildMessage):
@@ -569,9 +569,12 @@ class SpawnSolverExecutor:
         if process.is_alive():
             process.terminate()
             await _join_process(process, self._exit_grace)
-            raise SolverProtocolError(
-                f"solver {locator} sent a terminal message but did not exit"
-            )
+            # A natural exit can win the race with terminate(), especially on
+            # Windows. Exit code zero still proves the terminal result is clean.
+            if process.exitcode != 0:
+                raise SolverProtocolError(
+                    f"solver {locator} sent a terminal message but did not exit"
+                )
         await _join_process(process, 0)
         if process.exitcode != 0:
             raise SolverProcessExitedError(locator, process.exitcode, process.pid)

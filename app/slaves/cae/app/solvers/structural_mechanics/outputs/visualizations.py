@@ -50,10 +50,13 @@ def build_visualizations(config, descriptor, model, solution):
         if name == "displacement":
             visuals[name] = FieldValue(domain, "node", data["quantityKind"], data["unit"], solution.displacement[:count, :3], data.get("basis"), ("x", "y", "z"), {"configuration": "reference"})
         elif name == "stress":
-            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], compact, data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"), {"configuration": "reference", "stressMeasure": "cauchy"})
+            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], compact, data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"), {"configuration": "reference", "stressMeasure": "cauchy", "sampling": "cell-average", "weighting": "reference-volume"})
+        elif name == "meanPressure" and all(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements):
+            values = -np.trace(stresses, axis1=-2, axis2=-1) / 3
+            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], values, metadata={"configuration": "reference", "sampling": "cell-average", "weighting": "reference-volume", "signConvention": "compression-positive"})
         elif name == "volumeRatio" and all(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements):
             values = finite_deformation_fields(model, solution)["volumeRatio"][cell_order]
-            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], values, metadata={"configuration": "reference"})
+            visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], values, metadata={"configuration": "reference", "sampling": "cell-average", "weighting": "reference-volume"})
         elif name == "displacementHistory" and parameter(config["parameters"]["analysis"]) == "transient":
             histories = history_members(model, solution, model.node_ids[:count])
             data = data["members"]["field"]

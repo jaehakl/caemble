@@ -15,6 +15,9 @@ export const resultVisualizationSchema = z
     ]),
     coordinateSpace: z.literal('experiment').optional(),
     configuration: z.enum(['reference', 'current']).optional(),
+    sampling: z.literal('cell-average').optional(),
+    weighting: z.literal('reference-volume').optional(),
+    signConvention: z.literal('compression-positive').optional(),
     particleSet: z
       .object({
         positions: z.string().min(1),

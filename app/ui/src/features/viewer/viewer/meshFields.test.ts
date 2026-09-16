@@ -97,6 +97,25 @@ function fixture(stress = false) {
 }
 
 describe('recorded mesh fields', () => {
+  it('retains cell averaging and the compression-positive convention on reread', () => {
+    const input = fixture(true)
+    const semantic = resultVisualizationSchema.parse({
+      ...input.contracts.field.visualization,
+      configuration: 'reference',
+      sampling: 'cell-average',
+      weighting: 'reference-volume',
+      signConvention: 'compression-positive',
+    })
+    const contracts = { field: { ...input.contracts.field, visualization: semantic } }
+    const result = parseRecordedMeshFields(input.rules, input.data, contracts)
+    expect(result.errors).toEqual([])
+    expect(result.fields[0]).toMatchObject({
+      configuration: 'reference',
+      sampling: 'cell-average',
+      weighting: 'reference-volume',
+      signConvention: 'compression-positive',
+    })
+  })
   it.each([
     ['displacement', 3, 4, 2],
     ['stress', 6, 1, 2],

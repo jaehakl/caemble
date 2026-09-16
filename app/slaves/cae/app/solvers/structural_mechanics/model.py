@@ -48,6 +48,8 @@ class StructuralModel:
     boundary_regions: dict[str, dict[str, Any]] = field(default_factory=dict)
     cell_regions: dict[str, np.ndarray] = field(default_factory=dict)
     prescribed: dict[int, float] = field(default_factory=dict)
+    solid_formulation: str = "displacement"
+    follower_pressures: list[tuple[np.ndarray, float]] = field(default_factory=list)
 
     @property
     def size(self) -> int:
@@ -75,6 +77,9 @@ class StructuralSolution:
     kinetic_energy: float = 0.0
     spectrum: dict[str, Any] = field(default_factory=dict)
     contact_history: list[Any] = field(default_factory=list)
+    auxiliary_pressure: np.ndarray | None = None
+    bubble: np.ndarray | None = None
+    equilibrium_energy: float = 0.0
 
 
 @dataclass(frozen=True)

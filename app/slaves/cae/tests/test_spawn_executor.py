@@ -6,8 +6,10 @@ import os
 import pickle
 import subprocess
 import sys
+import threading
 import time
 import unittest
+from unittest.mock import AsyncMock, Mock, patch
 from collections.abc import Awaitable
 from typing import Any
 
@@ -23,6 +25,8 @@ from app.kernel.execution import (
     SolverProcessExitedError,
     SpawnSolverExecutor,
 )
+from app.kernel.execution.errors import SolverProtocolError
+from app.kernel.execution.serialization import PicklePayloadCodec
 from tests.solver_test_support import invocation
 from tests.executor_transport_fixtures import (
     SlowInvocationDecodeCodec,
@@ -36,6 +40,30 @@ _FIXTURES = "tests.spawn_executor_fixtures"
 
 
 class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pipe_close_between_poll_and_receive_reports_child_exit(self):
+        process = Mock(exitcode=23, pid=123)
+        process.is_alive.return_value = False
+        connection = Mock()
+        connection.poll.side_effect = [True, BrokenPipeError(), BrokenPipeError()]
+        executor = SpawnSolverExecutor()
+        with patch('app.kernel.execution.executor._join_process', new_callable=AsyncMock):
+            with self.assertRaises(SolverProcessExitedError) as raised:
+                await executor._monitor('crashed', process, connection, None, None, 10., PicklePayloadCodec(),
+                                        123, time.monotonic()+10, time.monotonic(), threading.Lock())
+        self.assertEqual(raised.exception.exit_code, 23)
+
+    async def test_clean_exit_racing_with_termination_retains_terminal_result(self):
+        for exit_code in (0, -15):
+            process = Mock(exitcode=exit_code)
+            process.is_alive.return_value = True
+            with patch('app.kernel.execution.executor._join_process', new_callable=AsyncMock):
+                executor = SpawnSolverExecutor(exit_grace=0)
+                if exit_code == 0:
+                    await executor._require_clean_exit('finished', process)
+                else:
+                    with self.assertRaises(SolverProtocolError):
+                        await executor._require_clean_exit('hung', process)
+
     async def _run_with_heartbeat(self, awaitable: Awaitable[Any]) -> tuple[Any, int]:
         ticks = 0
         running = True

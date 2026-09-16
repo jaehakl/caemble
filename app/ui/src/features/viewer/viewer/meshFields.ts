@@ -8,6 +8,9 @@ export type RecordedMeshField = Readonly<{
   task?: string
   coordinateSpace?: string
   configuration?: 'reference' | 'current'
+  sampling?: 'cell-average'
+  weighting?: 'reference-volume'
+  signConvention?: 'compression-positive'
   nodeIds?: Int32Array
   times?: Float64Array
   timeUnit?: UcumUnit
@@ -324,6 +327,9 @@ export function parseRecordedMeshFields(
           task: contracts[label].task,
           coordinateSpace: semantic.coordinateSpace,
           configuration: semantic.configuration,
+          sampling: semantic.sampling,
+          weighting: semantic.weighting,
+          signConvention: semantic.signConvention,
           nodeIds,
           times,
           timeUnit,

@@ -105,6 +105,7 @@ def selected_material(invocation, rule, role, part=None):
         raise ValueError(f"{role} requires an explicitly selected constitutive model")
     result = {key: parameter(value) for key, value in selected["parameters"].items()}
     result["model"] = selected["model"]
+    result["identity"] = (source, part["material"]["name"])
     if selected["model"] in ("mechanics.isotropic-elastic@1", "mechanics.j2-plasticity@1"):
         result["C"] = isotropic_elasticity(result["E"], result["nu"])
     elif selected["model"] == "mechanics.orthotropic-elastic@1":
@@ -382,6 +383,11 @@ async def build_geometry_model(invocation):
                             model.prescribed[dof] = value
                             fixed.add(dof)
                 support_nodes.update(map(int, region["nodes"]))
+            elif method == "fea.follower-pressure":
+                pressure = float(p["pressure"])
+                if not np.isfinite(pressure):
+                    raise ValueError("follower pressure must be finite")
+                model.follower_pressures.append((region["faces"].copy(), pressure))
             elif method in ("fea.surface-load", "fea.traction", "fea.pressure"):
                 if method == "fea.surface-load":
                     nodes, values = distribute_resultant(model.points, region["faces"], np.asarray(p["force"]), np.asarray(p["moment"]), np.asarray(p["referencePoint"]))

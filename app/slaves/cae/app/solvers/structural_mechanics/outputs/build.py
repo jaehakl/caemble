@@ -25,7 +25,7 @@ def build_outputs(config, descriptor, model, solution, motion=None, surface_samp
             definition = next(item for item in descriptor["methods"]["exports"] if item["methodId"] == method)["data"]
             domain, order = _physical_domain(model)
             value = FieldValue(domain, "cell", definition["quantityKind"], definition["unit"], finite_fields[name][order], np.eye(3),
-                               metadata={"configuration": "reference", "rowConfiguration": "current", "columnConfiguration": "reference"})
+                               metadata={"configuration": "reference", "rowConfiguration": "current", "columnConfiguration": "reference", "sampling": "cell-average", "weighting": "reference-volume"})
         elif method == "fea.interface":
             value = BundleValue("caemble.mechanics/interface@1", interface_members(model), interface_metadata(model))
         elif method == "fea.motion":

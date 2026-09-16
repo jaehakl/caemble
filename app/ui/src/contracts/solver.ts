@@ -53,6 +53,9 @@ export type ResultVisualization = Readonly<{
     | 'particle-set'
   coordinateSpace?: 'experiment'
   configuration?: 'reference' | 'current'
+  sampling?: 'cell-average'
+  weighting?: 'reference-volume'
+  signConvention?: 'compression-positive'
   particleSet?: Readonly<{
     positions: string
     particleIds: string

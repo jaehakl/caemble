@@ -8,6 +8,7 @@ from ..interfaces.resultants import physical_support_reactions
 from ..model import HarmonicSolution
 from .fields import _physical_domain, _tet_stress, finite_deformation_fields
 from .history import history_members
+from ..solid_fields import sample_solid
 
 
 def _tet_plane_triangles(reference, displacement, origin, normal):
@@ -67,6 +68,13 @@ def _box_section_resultant(model, solution, grid, parameters):
     force, moment = np.zeros(3), np.zeros(3)
     from app.methods.fields.box_grid import clip_box_polygon
     for index, element in enumerate(model.elements):
+        if solution.bubble is not None:
+            from .mixed_section import mini_section_resultant
+            triangles = _tet_plane_triangles(model.points[element.nodes], np.zeros((4, 3)), origin, normal)
+            part_force, part_moment = mini_section_resultant(model, solution, index, triangles, normal, reference, grid)
+            force += part_force
+            moment += part_moment
+            continue
         stress = _tet_stress(model, solution, index)
         triangles = _tet_plane_triangles(model.points[element.nodes], solution.displacement[element.nodes, :3], origin, normal)
         for triangle in triangles:
@@ -113,6 +121,8 @@ def build_box_outputs(config, descriptor, model, solution):
                 raise ValueError(f"{method} requires gridShape [1, 1, 1]")
             if method == "fea.strain-energy":
                 sampled = solution.strain_energy
+            elif method == "fea.equilibrium-energy":
+                sampled = solution.equilibrium_energy
             elif method == "fea.buckling-factor":
                 index = int(parameters["modeIndex"]) - 1
                 if index < 0 or index >= len(solution.spectrum["factors"]):
@@ -148,6 +158,14 @@ def build_box_outputs(config, descriptor, model, solution):
                     points = points + solution.displacement[:, :3]
                 samplers[identity] = TetrahedralSampler.prepare(points, cells, grid.points("m"))
             sampler = samplers[identity]
+            finite_method = {"fea.displacement": "displacement", "fea.stress-field": "cauchyStress",
+                             "fea.volume-ratio": "volumeRatio", "fea.mean-pressure": "meanPressure"}
+            if method in finite_method and (solution.bubble is not None or method == "fea.mean-pressure"):
+                sampled = sample_solid(model, solution, sampler, grid.points("m"), finite_method[method], current=data["boxGrid"].get("configuration") == "current")
+                if method == "fea.stress-field":
+                    sampled = sampled[..., (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
+                artifacts[output["key"]] = pack_box_grid(grid, data, sampled, times=times, frequencies=frequencies)
+                continue
             location = "node"
             if method == "fea.displacement":
                 values = solution.displacement[:, :3]

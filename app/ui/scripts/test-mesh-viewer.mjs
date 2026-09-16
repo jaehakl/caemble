@@ -461,14 +461,18 @@ try {
     if (savedResult) {
       await page.getByText(`Saved result: ${savedResult.jobId}`, { exact: true }).waitFor()
       const fields = await page.evaluate(() =>
-        window.recordedMeshFields.map(({ label, points, cells, spectrum, componentCount, valueKind }) => ({
-          label,
-          nodes: points.length / 3,
-          cells: cells.length / 4,
-          frequencies: Array.from(spectrum?.frequencies ?? []),
-          componentCount,
-          valueKind,
-        })),
+        window.recordedMeshFields.map(
+          ({ label, points, cells, spectrum, componentCount, valueKind, weighting, signConvention }) => ({
+            label,
+            nodes: points.length / 3,
+            cells: cells.length / 4,
+            frequencies: Array.from(spectrum?.frequencies ?? []),
+            componentCount,
+            valueKind,
+            weighting,
+            signConvention,
+          }),
+        ),
       )
       const motions = await page.evaluate(() =>
         window.recordedMeshMotions.map(({ label, bodyIds, times, vertices, triangles }) => ({
@@ -507,6 +511,8 @@ try {
         await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
         await canvas.waitFor()
+        if (selected.weighting === 'reference-volume') await page.getByText(/기준 체적 가중 평균/).waitFor()
+        if (selected.signConvention === 'compression-positive') await page.getByText(/압축 양수/).waitFor()
         if (selected.frequencies.length) {
           assert.equal(
             await page.getByLabel(`${selected.label} frequency`).inputValue(),

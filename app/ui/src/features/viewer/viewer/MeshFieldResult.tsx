@@ -196,6 +196,8 @@ export function MeshFieldResult({
         {(field.points.length / 3).toLocaleString()} nodes · {(field.cells.length / 4).toLocaleString()} tetrahedra ·{' '}
         {field.location} values · coordinates {field.lengthUnit}
         {field.configuration ? ` · ${field.configuration === 'reference' ? '기준 배치' : '현재 배치'}` : ''}
+        {field.weighting === 'reference-volume' ? ' · 기준 체적 가중 평균' : ''}
+        {field.signConvention === 'compression-positive' ? ' · 압축 양수' : ''}
       </p>
       <ViewerControls>
         <details

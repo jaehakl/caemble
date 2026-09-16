@@ -23,7 +23,7 @@ sys.path.insert(0,sys.argv[1])
 from caemble_catalog import open_catalog
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
-    data=catalog.runtime_slice(solvers=[('structural-mechanics','7.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
+    data=catalog.runtime_slice(solvers=[('structural-mechanics','7.1.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),
@@ -35,12 +35,15 @@ with open_catalog() as catalog:
     const tasks = {
       solid: {
         kind: 'caemble-kernel-task' as const,
-        kernel: { name: 'structural-mechanics', version: '7.0.0' },
+        kernel: { name: 'structural-mechanics', version: '7.1.0' },
         config: {
           outputs: [
             { key: 'motion', methodId: 'fea.displacement' },
             { key: 'animation', methodId: 'fea.displacement-history' },
             { key: 'modes', methodId: 'fea.modal-displacement' },
+            { key: 'meanPressure', methodId: 'fea.mean-pressure' },
+            { key: 'currentMeanPressure', methodId: 'fea.current-mean-pressure' },
+            { key: 'equilibriumEnergy', methodId: 'fea.equilibrium-energy' },
           ],
         },
       },
@@ -57,6 +60,18 @@ with open_catalog() as catalog:
     expect(animation.schema).toHaveProperty('axes.3.name', 'time')
     expect(animation.visualization.kind).toBe('box-grid')
     expect(canonicalRecordedDataTree({ motion: reference })).toHaveProperty('motion.tensorOrder', 1)
+    for (const [output, configuration] of [
+      ['meanPressure', 'reference'],
+      ['currentMeanPressure', 'current'],
+    ]) {
+      const pressure = resolveRecordedOutputReferences({ task: 'solid', output }, tasks, output)
+      expect(pressure).toHaveProperty('unit', 'Pa')
+      expect(pressure).toHaveProperty('boxGrid.configuration', configuration)
+      expect(pressure).toHaveProperty('axes.6.length', 1)
+    }
+    const energy = resolveRecordedOutputReferences({ task: 'solid', output: 'equilibriumEnergy' }, tasks, 'energy')
+    expect(energy).toHaveProperty('unit', 'J')
+    expect(energy).toHaveProperty('boxGrid.sampling', 'aggregate')
     expect(resolveRecordedOutputReferences({ task: 'solid', output: 'modes' }, tasks, 'modes')).toHaveProperty(
       'boxGrid.frequencyKind',
       'modal',

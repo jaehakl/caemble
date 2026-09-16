@@ -773,3 +773,29 @@ Box Grid `configuration`은 기준 또는 현재 배치의 관측 위치를 뜻�
 Box를 공간 필터로 사용하지 않습니다. 기존 질량밀도는 전체 cell 체적을 분모로
 사용하므로 이 재료 체적 평균과 구분됩니다. 물리 mesh와 timestep은 관측 설정에
 종속되지 않습니다. API, Calculation, Prediction과 Viewer는 이 metadata를 보존합니다.
+
+
+## MINI 혼합 solid와 현재 면 압력
+
+MINI 구성식은 독립적인 F와 q를 받으며 q를 고정한 dP/dF, dP/dq와 체적
+잔차의 미분을 함께 반환합니다. 절점 변위·q와 요소 내부 bubble은 FEM이
+소유하며, q를 기존 회전 슬롯이나 Material 계수로 저장하지 않습니다.
+Bubble의 행렬과 잔차를 함께 축약하고 전역 보정 후 bubble을 복원합니다.
+중력의 bubble 성분도 같은 적분으로 계산합니다. 힘·체적·bubble 잔차를
+각각 무차원화하고 모두 수렴한 증분에서만 세 해 배열을 승인합니다.
+
+MINI 출력은 FEM 내부 평가 경계에서 수렴한 F와 q로 응력을 구합니다.
+현재 위치는 실제 bubble 변형 사상을 역으로 풀며, 역변환 실패를 빈 영역의
+0으로 바꾸지 않습니다. Native 셀 값은 기준 체적 가중 평균입니다.
+단면력은 기준 단면의 P N 적분, 모멘트는 실제 변형 위치의 팔로 계산합니다.
+
+strainEnergy는 integral W(F) dV0를 유지합니다. equilibriumEnergy는
+q의 질량행렬 M과 M q=lambda g 관계로 제거한 이산 에너지이며,
+integral[mu/2 (F:F-3)-mu ln J] + q^T M q/(2 lambda)입니다.
+두 에너지 차이와 반력의 가상일을 독립적으로 검사합니다. 평균압은
+-trace(Cauchy stress)/3이며 내부 q나 외부 압력으로 대체하지 않습니다.
+
+Follower pressure는 후보의 현재 삼각형 면적 벡터로 힘을 계산하고 그
+미분을 외력 접선으로 조립합니다. MINI bubble은 경계에서 0이므로 이
+표면 하중에 bubble 자유도를 추가하지 않습니다. 기존 기준 압력의 의미는
+유지하며, 마지막 승인 변형에서 실제 하중과 반력을 복원합니다.

@@ -10,6 +10,7 @@ from .analyses.buckling import buckling_analysis
 from .analyses.harmonic import solve_harmonic
 from .analyses.modal import modal_analysis
 from .analyses.static import static_analysis
+from .analyses.mixed_static import mixed_static_analysis
 from .analyses.transient import initialize_acceleration
 from .analyses.window import advance_window
 from .clock import clock_tolerance
@@ -28,7 +29,7 @@ from .state import append_history, configure_history, encode_state, initial_solu
 async def run(invocation: SolverInvocation) -> SolverResult:
     parameters = {key: parameter(value) for key, value in invocation.config["parameters"].items()}
     analysis = parameters["analysis"]
-    finite_outputs = {"fea.current-displacement", "fea.current-stress-field", "fea.volume-ratio", "fea.current-volume-ratio", "fea.strain-energy"}
+    finite_outputs = {"fea.current-displacement", "fea.current-stress-field", "fea.volume-ratio", "fea.current-volume-ratio", "fea.strain-energy", "fea.equilibrium-energy", "fea.mean-pressure", "fea.current-mean-pressure"}
     if analysis != "static" and any(output["methodId"] in finite_outputs for output in invocation.config["outputs"]):
         raise ValueError("finite-deformation snapshot outputs require static analysis")
     transient_surfaces = [output for output in invocation.config.get("exports", ()) if output["methodId"] == "fea.transient-surface-motion"]
@@ -54,7 +55,14 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     ):
         raise ValueError("control input requires a fea.rotor initialization")
     model = await build_geometry_model(invocation)
+    model.solid_formulation = parameters.get("solidFormulation", "displacement")
+    if model.solid_formulation not in ("displacement", "mixed-mini"):
+        raise ValueError("unknown solidFormulation")
     hyperelastic = any(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements)
+    if (model.solid_formulation == "mixed-mini" or model.follower_pressures) and not hyperelastic:
+        raise ValueError("mixed-mini and follower pressure require Neo-Hookean solids")
+    if not hyperelastic and any(output["methodId"] in ("fea.mean-pressure", "fea.current-mean-pressure") for output in invocation.config["outputs"]):
+        raise ValueError("mean-pressure snapshots currently require Neo-Hookean solids")
     if hyperelastic:
         if analysis != "static" or not parameters["geometricNonlinear"]:
             raise ValueError("Neo-Hookean requires static analysis with geometricNonlinear=true")
@@ -62,6 +70,11 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             raise ValueError("Neo-Hookean solids cannot be mixed with small-strain material models")
         if model.contacts or model.links or model.springs or model.rotor is not None:
             raise ValueError("Neo-Hookean currently supports solid surface constraints and reference loads without contact or connections")
+        if model.solid_formulation == "mixed-mini":
+            if any(element.material["lame"] <= 0 for element in model.elements):
+                raise ValueError("mixed-mini requires 0 < nu < 0.5")
+            if len({element.material["identity"] for element in model.elements}) != 1:
+                raise ValueError("mixed-mini requires one frozen Material shared by all solids")
     configure_history(model)
     surface_samples = None
     if transient_surfaces:
@@ -118,7 +131,10 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         if analysis == "buckling" and (parameters["geometricNonlinear"] or model.contacts or any(e.material["model"] == "mechanics.j2-plasticity@1" for e in model.elements)):
             raise ValueError("linear buckling requires an elastic small-displacement preload without contact")
         apply_resultant_loads(invocation, model)
-        solution = static_analysis(model, prepared, stiffness, mass, parameters["relativeTolerance"], int(parameters["maxIterations"]), bool(parameters["geometricNonlinear"]), invocation.cancellation)
+        if model.solid_formulation == "mixed-mini":
+            solution = mixed_static_analysis(model, parameters["relativeTolerance"], int(parameters["maxIterations"]), invocation.cancellation)
+        else:
+            solution = static_analysis(model, prepared, stiffness, mass, parameters["relativeTolerance"], int(parameters["maxIterations"]), bool(parameters["geometricNonlinear"]), invocation.cancellation)
         if analysis == "buckling":
             spectrum_rule = next(item for item in invocation.config["initializations"] if item["methodId"] == "fea.spectrum")
             solution.spectrum = buckling_analysis(model, stiffness, solution.displacement, prepared, int(parameter(spectrum_rule["parameters"]["modeCount"])))
@@ -145,6 +161,8 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         observations = {"iterations": len(solution.frequencies), "relativeResidual": float(solution.relative_residuals.max())}
     else:
         observations = {"time": float(solution.time), "iterations": int(solution.iterations), "relativeResidual": float(solution.residual), "couplingResidual": float(coupling_residual), "couplingConverged": bool(converged), "strainEnergy": float(solution.strain_energy), "kineticEnergy": float(solution.kinetic_energy)}
+        if analysis == "static" and "equilibriumEnergy" in invocation.descriptor.get("observations", {}):
+            observations["equilibriumEnergy"] = float(solution.equilibrium_energy)
     return SolverResult(state_patch=patch, artifacts=artifacts, exports=exports, visualizations=visuals, observations=observations)
 
 

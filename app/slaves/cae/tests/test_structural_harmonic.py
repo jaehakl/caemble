@@ -74,7 +74,7 @@ async def test_harmonic_entry_uses_reference_linear_problem_with_either_geometri
         "outputs": [{"methodId": "fea.harmonic-displacement", "key": "displacement", "parameters": {},
                      "boxGrid": grid(shape=(1, 1, 1), origin=(.15, .15, .15), size=(.1, .1, .1)).geometry}],
     }
-    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "7.0.0"), task_name="structure")
+    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "7.1.0"), task_name="structure")
     linear = await run(invocation)
     config["parameters"]["geometricNonlinear"] = True
     geometric_flag = await run(invocation)
@@ -174,7 +174,7 @@ def test_surface_selection_order_and_duplicate_targets_preserve_mesh_identity_an
 
 def test_harmonic_record_and_native_export_share_the_solution_independently_of_probe_box():
     model, solution = tetrahedron_motion()
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
     probe = grid(shape=(1, 1, 1), origin=(.15, .15, .15), size=(.1, .1, .1))
     config = {"parameters": {"analysis": "harmonic"}, "outputs": [{"methodId": "fea.harmonic-displacement", "key": "displacement", "parameters": {}, "boxGrid": probe.geometry}],
               "exports": [{"methodId": "fea.harmonic-surface-motion", "key": "surfaceMotion", "target": ["experiment.surface.radiating"]}]}
@@ -194,7 +194,7 @@ def test_harmonic_record_and_native_export_share_the_solution_independently_of_p
 
 def test_catalog_harmonic_visuals_use_true_complex_displacement_and_stress():
     model, solution = tetrahedron_motion()
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
     visuals = build_visualizations({"parameters": {"analysis": "harmonic"}}, descriptor, model, solution)
     assert set(visuals) == {"harmonicDisplacement", "harmonicStress"}
     for name, value in visuals.items():

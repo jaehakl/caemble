@@ -101,6 +101,7 @@ def cylinder_segments(measurement):
     "transient-matched-impedance-duct", "transient-plate-driven-duct",
     "asymmetric-rigid-bodies", "sliding-contact",
     "hyperelastic-compression", "hyperelastic-tension",
+    "mixed-mini-compression", "mixed-mini-cylinder-inflation",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
@@ -173,8 +174,8 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                         else {"harmonicDisplacement", "harmonicStress"} if analysis == "harmonic" else {"displacement", "stress"})
             if solver == "structural-mechanics" and analysis == "transient":
                 expected.add("displacementHistory")
-            if key.startswith("hyperelastic-"):
-                expected.add("volumeRatio")
+            if key.startswith(("hyperelastic-", "mixed-mini-")):
+                expected.update(("volumeRatio", "meanPressure"))
             assert set(items) == expected
             for name, item in items.items():
                 if item["contract"]["visualization"]["kind"] == "polyline":
@@ -188,6 +189,22 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert recorded["totalCurrent"].item() > 0
         if "maximumTemperature" in recorded:
             assert recorded["maximumTemperature"].item() > measurement["experiment"]["variables"]["fixedTemperature"]
+        if key.startswith("mixed-mini-"):
+            assert recorded["energy"].item() > 0
+            assert 0 < recorded["equilibriumEnergy"].item() <= recorded["energy"].item() + 1e-7
+            for prefix in ("", "current"):
+                stress_name = "stress" if not prefix else "currentStress"
+                pressure_name = "meanPressure" if not prefix else "currentMeanPressure"
+                stress = recorded[stress_name].reshape(-1, 6)
+                np.testing.assert_allclose(recorded[pressure_name].ravel(), -stress[:, :3].sum(axis=1)/3, atol=1e-9)
+            assert np.any(recorded["volumeRatio"] > 0)
+            assert not np.array_equal(recorded["displacement"], recorded["currentDisplacement"])
+            if key == 'mixed-mini-cylinder-inflation':
+                # The subtracted cylinder's retained wall has the solid's
+                # inward radial normal; positive cavity pressure expands it.
+                load_points = native['solid.displacement.domain.metadata.loadPoints']
+                load_vectors = native['solid.displacement.domain.metadata.loadVectors']
+                assert np.all(np.sum(load_points[:, :2]*load_vectors[:, :2], axis=1) > 0)
         if key.startswith("hyperelastic-"):
             from scipy.optimize import brentq
 
@@ -314,7 +331,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                 assert np.all(frequencies > 0) and np.all(np.diff(frequencies) > 0)
                 assert np.max(np.abs(values)) > 0
             else:
-                expected_shape = ((count,) if native[prefix + ".quantity"].item() == "mechanics.VolumeRatio"
+                expected_shape = ((count,) if native[prefix + ".quantity"].item() == "mechanics.VolumeRatio" or prefix.endswith(".meanPressure")
                                   else (count, 3 if native[prefix + ".location"].item() == "node" else 6))
                 assert values.shape == expected_shape
             supports = native[prefix + ".domain.metadata.supportNodes"]

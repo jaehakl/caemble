@@ -10,6 +10,7 @@ from ..operators.inertia import inertial_response
 from ..operators.internal import structural_response
 from app.methods.rigid.rotations import rotation_exp
 from ..state import initial_solution
+from ..loads import follower_pressure, update_follower_display
 
 
 def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterations=30, geometric=False, cancellation=None):
@@ -57,6 +58,10 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
                     weight, _, weight_tangent, _, _ = inertial_response(model, displacement, rotations, zero_motion, gravity.reshape(-1, 6), prepared, mass, geometric, derivatives=True)
                     current_external = target * (model.force.ravel() + weight)
                     tangent = tangent - target * weight_tangent
+                if model.follower_pressures:
+                    pressure_force, pressure_tangent = follower_pressure(model, displacement)
+                    current_external += target * pressure_force
+                    tangent -= target * pressure_tangent
                 T = constraint_transform(model, rotations)
                 residual = T.T @ (current_external - internal)
                 force_scale = max(np.linalg.norm(T.T @ current_external), np.linalg.norm(internal) if displacement_driven else 0., 1.0)
@@ -79,6 +84,8 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
                     if rotating_gravity:
                         weight = inertial_response(model, candidate_u, candidate_R, zero_motion, gravity.reshape(-1, 6), prepared, mass, geometric)[0]
                         candidate_external = target * (model.force.ravel() + weight)
+                    if model.follower_pressures:
+                        candidate_external += target * follower_pressure(model, candidate_u, tangent=False)[0]
                     candidate_residual = candidate_external - candidate_force
                     # 가는 보는 축/굽힘 강성 차이가 큽니다. 원시 힘의 norm만
                     # 줄이면 유효한 굽힘 Newton 증분을 지나치게 잘라 버립니다.
@@ -101,10 +108,14 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
     if rotating_gravity:
         weight = inertial_response(model, solution.displacement, solution.orientations, zero_motion, gravity.reshape(-1, 6), prepared, mass, geometric)[0]
         external = model.force.ravel() + weight
+    if model.follower_pressures:
+        external += follower_pressure(model, solution.displacement, tangent=False)[0]
+        update_follower_display(model, solution.displacement)
     solution.reaction = support_reactions(model, solution.orientations, internal - external)
     T = constraint_transform(model, solution.orientations)
     solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / max(np.linalg.norm(T.T @ external), np.linalg.norm(internal) if displacement_driven else 0., 1.0))
     solution.element_history, solution.stresses = history, stress
     solution.strain_energy = float(energy)
+    solution.equilibrium_energy = float(energy)
     solution.contact_history = contact_response(model.points, solution.displacement, model.contacts)[2] if model.contacts else []
     return solution
