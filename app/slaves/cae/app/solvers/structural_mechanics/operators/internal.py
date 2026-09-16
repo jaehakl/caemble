@@ -9,9 +9,13 @@ from ..continuum import element_nonlinear_response, element_response, tet4_corot
 from ..shells import shell4_response
 from ..hyperelastic import tet4_response
 from .prepared import _beam_batch
+from ..thermal import thermal_element_response
 
 
 def structural_response(model, displacement, orientations, prepared, committed, geometric=False, approximate_tangent=False):
+    if prepared.thermal_batch is not None:
+        from .thermal import thermal_batch_response
+        return thermal_batch_response(model, displacement, prepared)
     force = np.zeros(model.size)
     rows, columns, values = [], [], []
     history, stresses = [], []
@@ -40,7 +44,10 @@ def structural_response(model, displacement, orientations, prepared, committed, 
         points = model.points[element.nodes]
         state = None if committed is None else committed[index]
         new_state, stress = state, None
-        if element.material["model"] == "mechanics.compressible-neo-hookean@1":
+        if model.thermal_strain is not None:
+            tangent = data["K"]
+            internal, stress, stored_energy = thermal_element_response(points, values_u, element.material["C"], model.thermal_strain[index])
+        elif element.material["model"] == "mechanics.compressible-neo-hookean@1":
             if not geometric or element.kind != "tet4":
                 raise ValueError("Neo-Hookean requires finite-deformation tet4 solids")
             internal, tangent, stored_energy, stress = tet4_response(

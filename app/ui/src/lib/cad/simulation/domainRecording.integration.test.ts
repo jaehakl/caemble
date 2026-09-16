@@ -23,7 +23,7 @@ sys.path.insert(0,sys.argv[1])
 from caemble_catalog import open_catalog
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
-    data=catalog.runtime_slice(solvers=[('structural-mechanics','7.1.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
+    data=catalog.runtime_slice(solvers=[('structural-mechanics','7.2.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),
@@ -35,7 +35,7 @@ with open_catalog() as catalog:
     const tasks = {
       solid: {
         kind: 'caemble-kernel-task' as const,
-        kernel: { name: 'structural-mechanics', version: '7.1.0' },
+        kernel: { name: 'structural-mechanics', version: '7.2.0' },
         config: {
           outputs: [
             { key: 'motion', methodId: 'fea.displacement' },
@@ -44,6 +44,9 @@ with open_catalog() as catalog:
             { key: 'meanPressure', methodId: 'fea.mean-pressure' },
             { key: 'currentMeanPressure', methodId: 'fea.current-mean-pressure' },
             { key: 'equilibriumEnergy', methodId: 'fea.equilibrium-energy' },
+            { key: 'warpage', methodId: 'fea.surface-warpage' },
+            { key: 'normalDisplacement', methodId: 'fea.maximum-normal-displacement' },
+            { key: 'stressRms', methodId: 'fea.rms-von-mises-stress' },
           ],
         },
       },
@@ -72,6 +75,16 @@ with open_catalog() as catalog:
     const energy = resolveRecordedOutputReferences({ task: 'solid', output: 'equilibriumEnergy' }, tasks, 'energy')
     expect(energy).toHaveProperty('unit', 'J')
     expect(energy).toHaveProperty('boxGrid.sampling', 'aggregate')
+    for (const [output, unit] of [
+      ['warpage', 'm'],
+      ['normalDisplacement', 'm'],
+      ['stressRms', 'Pa'],
+    ]) {
+      const aggregate = resolveRecordedOutputReferences({ task: 'solid', output }, tasks, output)
+      expect(aggregate).toHaveProperty('unit', unit)
+      expect(aggregate).toHaveProperty('boxGrid.sampling', 'aggregate')
+      expect(aggregate).toHaveProperty('axes.6.length', 1)
+    }
     expect(resolveRecordedOutputReferences({ task: 'solid', output: 'modes' }, tasks, 'modes')).toHaveProperty(
       'boxGrid.frequencyKind',
       'modal',

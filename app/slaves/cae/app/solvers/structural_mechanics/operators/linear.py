@@ -17,6 +17,9 @@ def element_dofs(element):
 
 
 def prepare_matrices(model):
+    if model.thermal_strain is not None:
+        from .thermal import prepare_thermal_matrices
+        return prepare_thermal_matrices(model)
     rows, columns, stiffness_values, mass_values, damping_values = [], [], [], [], []
     prepared = []
     for element in model.elements:

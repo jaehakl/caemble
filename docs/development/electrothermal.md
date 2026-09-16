@@ -69,8 +69,40 @@ Robin 경계는 `h (T - Tambient)`를 일관된 삼각형 mass matrix로 조립�
 meander와 별도의 Gold 패드로 구성된다. 기본 열경계는 프레임 장착면의 고정온도와
 나머지 외부 면의 단열이다. 재료 계수의 개발 가정과 출처는 예제의 material.tsx가
 소유한다. 전압과 연속 치수 Vars로 형상을 다시 빌드해 비교한다. 공기 손실,
-복사, 온도 의존 물성, 전기열 반복, 계면 열저항, 열용량·펄스·시간 이력과
-열변형은 제공하지 않는다.
+복사, 온도 의존 물성, 전기열 반복, 계면 열저항, 열용량·펄스·시간 이력은
+포함하지 않는다. 열변형은 아래의 단방향 정적 연결로 제공한다.
+
+## 정적 열변형
+
+정상 microheater는 DC → Heat → Structural을 순서대로 실행한다. Heat의 native
+절점 온도(K)를 Structural의 temperature 입력으로 전달하며, 기록용 Box Grid는
+연성 입력으로 사용하지 않는다. 구조도 같은 전체 assembly와 적층 mesh를 사용하고
+모든 실제 재료 계면을 명시적으로 bonded 처리한다. 프레임 장착면의 병진 변위만
+고정하며 가열판과 지지대는 자유롭게 변형한다.
+
+Material의 상수 scalar 선팽창계수와 Task 영역별 무응력 온도를 구분한다.
+무응력 온도를 Heat의 고정온도나 Material의 다른 기준온도에서 추측하지 않는다.
+온도 입력과 열팽창 영역 설정은 함께 사용한다. 적용하지 않은 영역에는 열변형률을
+추가하지 않는다. 현재 열연성은 등방성 또는 직교이방성 선형 탄성 tet4 solid의
+작은 변형 정적 해석만 지원하며, 열팽창 자체는 등방성이다.
+
+각 적분점에서 `epsilon_th = alpha (T - T_sf) I`를 보간하고
+`sigma = C (epsilon - epsilon_th)`를 사용한다. 내부력·반력·응력·단면력과
+탄성에너지는 같은 탄성변형률에 기반한다. 에너지는 열하중을 뺀 변형률의
+이차형식이며 `u^T K u / 2`로 대체하지 않는다. 온도 입력이 없으면 기존 기계
+해석 경로를 사용한다. 서로 다른 assembly와 누락된 온도 영역은 거부한다.
+
+SiN 가열판 윗면의 최대 절대 면외 변위와 뒤틀림을 native P1 해에서 기록한다.
+뒤틀림은 관측 Box로 자른 기준 평면에서 면적 가중 최소제곱 평면을 제거한
+변위의 최대–최소 차이이다. 응력 지표는 가열판 중앙 80%와 각 지지대 길이 중앙
+50% 영역의 체적 가중 RMS von Mises 응력이다. 선형 응력의 제곱을 적분한 후
+제곱근을 취하며, 관측 grid의 표본 평균이나 날카로운 고정부의 최대값이 아니다.
+Box Grid 응력은 관측점 온도로 평가하고, 표시용 native cell 응력은 체적 평균이다.
+
+형상과 물리적 층 두께를 유지한 공간·두께 정련으로 굽힘도 별도 검증한다.
+tet4의 굽힘은 전기·열보다 더 조밀한 mesh가 필요할 수 있다. 예제 물성은
+개발 가정이며 실측 박막 계수·제조 잔류응력과 같지 않다. 열좌굴·대변형·소성·
+접촉 열연성·동적 응답·변형 형상의 전기열 피드백은 포함하지 않는다.
 
 ## 검증 소유권과 이관
 
@@ -78,10 +110,12 @@ meander와 별도의 Gold 패드로 구성된다. 기본 열경계는 프레임 
   보존, 얇은 층과 native 요소 대응.
 - `tests/test_microheater.py`: 공식 예제의 전압·선폭 변화, 공간·두께 방향
   연속 정련의 2% 기준, 실제 child, ACK와 취소·실패 정리.
+- `tests/test_structural_thermal.py`: 자유·구속 팽창, 비균일 온도의 에너지 미분,
+  이종재료 굽힘 정련, native 온도 대응과 관측 grid에 독립적인 뒤틀림·응력 적분.
 - `tests/test_actual_solver_chain.py`, `tests/test_coordinator_solver_chain.py`:
   서로 다른 child 사이의 공통 mesh cache와 typed artifact 전달.
 - `tests/test_geometry_volume_mesh.py`와 기존 소비자 검사: Structural 등
-  공통 Geometry·mesh 소비자의 회귀. Structural 공개 계약은 변경하지 않는다.
+  공통 Geometry·mesh 소비자의 회귀. 온도 없는 기존 Structural 해석도 검사한다.
 
 Fiber Bundle과 전기열 notched-bar도 FEM 계약을 사용한다. Fiber Bundle은 단자에서
 가닥 중심을 분리하고 패드와 체적으로 겹치게 하여 거의 접하는 Boolean 접합의

@@ -299,7 +299,7 @@ def test_physical_field_excludes_reference_nodes_and_section_integrates_tet_trac
     solution = initial_solution(model)
     solution.stresses[0] = np.tile([10., 0., 0., 0., 0., 0.], (4, 1))
 
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
     artifacts, _, visuals = build_outputs(
         {"parameters": {"analysis": "static"}, "outputs": [
             {"methodId": "fea.stress-field", "key": "stress", "boxGrid": grid(shape=(1,1,1), size=(.1,.1,.1)).geometry},
@@ -352,7 +352,7 @@ def test_box_stress_samples_one_volume_and_visualization_preserves_both_volumes(
     }
     solution = initial_solution(model)
     solution.stresses = [np.tile([1., 0., 0., 0., 0., 0.], (4, 1)), np.tile([2., 0., 0., 0., 0., 0.], (4, 1))]
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
     artifacts, _, visuals = build_outputs({"parameters": {"analysis": "static"}, "outputs": [{
         "methodId": "fea.stress-field", "key": "stress",
         "boxGrid": grid(shape=(1, 1, 1), origin=(2., 0., 0.), size=(.1, .1, .1)).geometry,
@@ -412,7 +412,7 @@ def test_attachment_support_wrench_is_conserved_on_physical_field_and_history():
         solution.reaction[4, 3:],
     )
 
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
     artifacts, _, _ = build_outputs({"parameters": {"analysis": "static"}, "outputs": [
         {"methodId": "fea.reaction", "key": "force", "boxGrid": grid(shape=(1, 1, 1)).geometry},
         {"methodId": "fea.reaction-moment", "key": "moment", "boxGrid": grid(shape=(1, 1, 1)).geometry,
@@ -447,7 +447,7 @@ def test_box_plastic_strain_uses_tensor_shear_without_mutating_native_history():
     solution = initial_solution(model)
     engineering = np.array([[.1,.2,.3,.4,.6,.8]])
     solution.element_history[0] = {"plasticStrain": engineering, "equivalentPlasticStrain": np.array([.5])}
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
     config = {"parameters": {"analysis": "static"}, "outputs": [{"methodId": "fea.plastic-strain", "key": "strain",
               "boxGrid": grid(shape=(1,1,1),size=(.1,.1,.1)).geometry}]}
     result = build_outputs(config,descriptor,model,solution)[0]["strain"]

@@ -7,6 +7,7 @@ import struct
 from app.kernel.api.world import geometry_part, geometry_parts, material_model
 from app.methods.geometry.surfaces import select_boundary_region
 from app.methods.mesh.models import VolumeMeshingProfile
+from app.methods.mesh.subdomain import build_volume_subdomain
 from collections.abc import Mapping
 from .constraints import revolute_joints
 from .materials import isotropic_elasticity, orient_elasticity, orthotropic_elasticity
@@ -191,6 +192,34 @@ async def build_geometry_model(invocation):
     if not np.isfinite(resolution) or resolution <= 0:
         raise ValueError("spatialResolution must be a positive length")
     profile = VolumeMeshingProfile(max_element_size=resolution)
+    mesh_rules = [rule for rule in config["initializations"] if rule["methodId"] == "fea.mesh"]
+    region_rules = [rule for rule in config["initializations"] if rule["methodId"] == "fea.region-mesh"]
+    if region_rules and not mesh_rules:
+        raise ValueError("fea.region-mesh requires fea.mesh")
+    assembly_roots = set()
+    if mesh_rules:
+        if len(mesh_rules) != 1:
+            raise ValueError("fea.mesh must identify one canonical assembly")
+        for target in mesh_rules[0]["target"]:
+            source, kind, group = target.split(".", 2)
+            if source != "experiment" or kind != "geometry":
+                raise ValueError("fea.mesh requires experiment Geometry targets")
+            assembly_roots.update(part["id"] for part in geometry_parts(invocation.world[source], group))
+        sizes, layers = {}, {}
+        for rule in region_rules:
+            for target in rule["target"]:
+                source, kind, group = target.split(".", 2)
+                if source != "experiment" or kind != "geometry":
+                    raise ValueError("fea.region-mesh requires experiment Geometry targets")
+                for part in geometry_parts(invocation.world[source], group):
+                    if part["id"] in sizes:
+                        raise ValueError("region mesh rules must not overlap")
+                    sizes[part["id"]] = parameter(rule["parameters"]["maxElementSize"])
+                    layers[part["id"]] = int(parameter(rule["parameters"].get("layerSubdivisions", 1)))
+        axis = mesh_rules[0]["parameters"].get("layerAxis", "none")
+        axis = None if axis == "none" else "xyz".index(axis)
+        profile = VolumeMeshingProfile(resolution, region_max_element_sizes=tuple(sizes.items()),
+                                       layer_axis=axis, layer_subdivisions=tuple(layers.items()) if axis is not None else ())
     body_parts, part_rules = {}, {}
     for rule in body_rules:
         for target in rule["target"]:
@@ -254,6 +283,9 @@ async def build_geometry_model(invocation):
         clusters = [cluster for cluster in clusters if not cluster & selected] + [joined]
     point_blocks, cell_blocks, face_blocks, aliases = [], [], [], []
     cell_roots, root_names, quality = [], [], []
+    assembly_domain = None
+    if mesh_rules and (len(clusters) != 1 or set(body_parts) != {("experiment", root) for root in assembly_roots}):
+        raise ValueError("fea.mesh requires all assembly bodies in one explicitly bonded cluster")
     for cluster in sorted(clusters, key=lambda value: sorted(value)):
         sources = {key[0] for key in cluster}
         if len(sources) != 1:
@@ -262,7 +294,11 @@ async def build_geometry_model(invocation):
         root_ids = sorted(key[1] for key in cluster)
         if invocation.cancellation is not None:
             invocation.cancellation.raise_if_cancelled()
-        mesh = await invocation.geometry.volume_mesh(invocation.world[source], root_ids, "m", profile, progress=invocation.progress)
+        if mesh_rules:
+            subdomain = await build_volume_subdomain(invocation.geometry, invocation.world[source], root_ids, root_ids, profile, invocation.progress)
+            mesh, assembly_domain = subdomain.assembly, subdomain.field_domain
+        else:
+            mesh = await invocation.geometry.volume_mesh(invocation.world[source], root_ids, "m", profile, progress=invocation.progress)
         offset = sum(len(block) for block in point_blocks)
         point_blocks.append(mesh.points)
         cell_blocks.append(mesh.cells + offset)
@@ -279,6 +315,7 @@ async def build_geometry_model(invocation):
     faces = np.concatenate(face_blocks)
     cell_roots = np.asarray(cell_roots, dtype=np.int32)
     model = StructuralModel(np.arange(len(points), dtype=np.int64), points, [], np.empty(0, dtype=int), np.empty(0, dtype=int), np.zeros((len(points), 6)), physical_node_count=len(points))
+    model.assembly_domain = assembly_domain
     material_frames = {}
     for rule in config["initializations"]:
         if rule["methodId"] == "fea.material-frame":
@@ -425,6 +462,9 @@ async def build_geometry_model(invocation):
     model.provenance = {source: invocation.world[source]["geometryHash"] for source in ("experiment", "task") if source in invocation.world}
     model.provenance.update({"representation": "csg-tet4-v2", "spatialResolution": resolution, "physicalNodeCount": len(points), "boundaryFaces": faces.astype(np.int32), "cellRegions": cell_roots, "regionIds": [f"{source}:{root}" for source, root in root_names], "supportNodes": np.asarray(sorted(support_nodes), dtype=np.int32), "loadPoints": np.asarray(load_points, dtype=float).reshape(-1, 3), "loadVectors": np.asarray(load_vectors, dtype=float).reshape(-1, 3), "auxiliaryNodes": dict(references)})
     model.provenance["elementBlocks"] = [{"methodId": "fea.body", "target": part_rules[key]["target"], "rootId": key[1], "cellType": "tet4", "elementIds": np.flatnonzero(cell_roots == index).astype(np.int32)} for index, key in enumerate(root_names)]
+    if assembly_domain is not None:
+        for key in ("assemblyIdentity", "parentCellIds", "parentNodeIds"):
+            model.provenance[key] = assembly_domain.metadata[key]
     model.provenance["quality"] = {"cellVolumes": np.concatenate([item.cell_volumes for item in quality]), "meanRatios": np.concatenate([item.mean_ratios for item in quality])}
     model.provenance["boundaryProvenance"] = {
         "offsets": np.r_[0, np.cumsum([len(group) for group in aliases])].astype(np.int32),

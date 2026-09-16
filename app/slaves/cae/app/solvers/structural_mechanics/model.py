@@ -50,6 +50,9 @@ class StructuralModel:
     prescribed: dict[int, float] = field(default_factory=dict)
     solid_formulation: str = "displacement"
     follower_pressures: list[tuple[np.ndarray, float]] = field(default_factory=list)
+    assembly_domain: Any = None
+    thermal_strain: np.ndarray | None = None
+    thermal_force: np.ndarray | None = None
 
     @property
     def size(self) -> int:

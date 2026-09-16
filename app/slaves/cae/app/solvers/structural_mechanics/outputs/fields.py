@@ -88,6 +88,7 @@ def _physical_domain(model):
     for name in (
         "boundaryFaces", "cellRegions", "regionIds", "supportNodes", "loadPoints",
         "loadVectors", "quality", "boundaryProvenance",
+        "assemblyIdentity", "parentCellIds", "parentNodeIds",
     ):
         if name in provenance:
             metadata[name] = provenance[name]

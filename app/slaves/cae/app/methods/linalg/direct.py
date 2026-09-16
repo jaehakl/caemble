@@ -4,10 +4,10 @@ import warnings
 
 import numpy as np
 from scipy import sparse
-from scipy.sparse.linalg import MatrixRankWarning, spsolve
+from scipy.sparse.linalg import MatrixRankWarning, splu, spsolve
 
 
-def solve_sparse(matrix, rhs):
+def solve_sparse(matrix, rhs, *, ordering="COLAMD", positive_definite=False):
     """Solve without regularizing singular systems or concealing resonances."""
     matrix = sparse.csr_matrix(matrix)
     if matrix.shape[0] == 0:
@@ -22,7 +22,18 @@ def solve_sparse(matrix, rhs):
     with warnings.catch_warnings():
         warnings.simplefilter("error", MatrixRankWarning)
         try:
-            value = scale * spsolve((D @ matrix @ D).tocsc(), scale * rhs)
+            scaled = (D @ matrix @ D).tocsc()
+            if positive_definite:
+                # Only callers that establish positive definiteness may disable
+                # numerical row pivoting; it otherwise destroys the sparse
+                # symmetric ordering on very thin elasticity meshes.
+                factor = splu(scaled, permc_spec=ordering, diag_pivot_thresh=0., options={"SymmetricMode": True})
+                if np.any(factor.U.diagonal() <= 0):
+                    raise ValueError("linear system is not positive definite")
+                value = scale * factor.solve(scale * rhs)
+                value += scale * factor.solve(scale * (rhs - matrix @ value))
+            else:
+                value = scale * spsolve(scaled, scale * rhs, permc_spec=ordering)
         except (MatrixRankWarning, RuntimeError) as error:
             raise ValueError("linear system is singular") from error
     if not np.all(np.isfinite(value)):

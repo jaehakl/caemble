@@ -30,7 +30,7 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
     solution = SimpleNamespace(history={"times": [times], "displacement": [displacement]}, displacement=np.zeros((4,6)), orientations=np.tile(np.eye(3),(4,1,1)))
     monkeypatch.setattr(visualizations, "_tet_stress", lambda *args: np.zeros((3,3)))
     monkeypatch.setattr(visualizations, "_physical_domain", lambda model: (domain, [0]))
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.1.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
     definition = descriptor["visualizations"]["displacementHistory"]
     value = visualizations.build_visualizations(config, descriptor, model, solution)["displacementHistory"]
     validate_artifact_payload(value, definition["data"], "anything")
@@ -43,7 +43,7 @@ def test_complete_displacement_history_recording(monkeypatch, samples):
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="solid", solver_name="structural-mechanics", solver_version="7.1.0", output_name="anything", artifact_type=definition["artifactType"], state_revision=1)
+        handle = artifacts.publish(value, producer_task="solid", solver_name="structural-mechanics", solver_version="7.2.0", output_name="anything", artifact_type=definition["artifactType"], state_revision=1)
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("motion", schema, recorded, 1)
         assert encoded["values"]["shape"] == [samples, 4, 3]

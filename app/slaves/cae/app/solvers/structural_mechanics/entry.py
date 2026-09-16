@@ -24,11 +24,15 @@ from .model import HarmonicSolution
 from .operators.linear import prepare_matrices
 from .outputs.build import build_outputs
 from .state import append_history, configure_history, encode_state, initial_solution, read_state
+from .thermal import configure_thermal_expansion, prepare_thermal_force
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
     parameters = {key: parameter(value) for key, value in invocation.config["parameters"].items()}
     analysis = parameters["analysis"]
+    reference_aggregates = {"fea.maximum-normal-displacement", "fea.surface-warpage", "fea.rms-von-mises-stress"}
+    if any(output["methodId"] in reference_aggregates for output in invocation.config["outputs"]) and (analysis != "static" or parameters["geometricNonlinear"]):
+        raise ValueError("reference displacement and stress aggregates require static small-strain analysis")
     finite_outputs = {"fea.current-displacement", "fea.current-stress-field", "fea.volume-ratio", "fea.current-volume-ratio", "fea.strain-energy", "fea.equilibrium-energy", "fea.mean-pressure", "fea.current-mean-pressure"}
     if analysis != "static" and any(output["methodId"] in finite_outputs for output in invocation.config["outputs"]):
         raise ValueError("finite-deformation snapshot outputs require static analysis")
@@ -56,6 +60,9 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         raise ValueError("control input requires a fea.rotor initialization")
     model = await build_geometry_model(invocation)
     model.solid_formulation = parameters.get("solidFormulation", "displacement")
+    configure_thermal_expansion(invocation, model)
+    if model.thermal_strain is not None and invocation.progress is not None:
+        await invocation.progress({"stage": "thermal-structural-assembly", "completed": 0, "total": 1})
     if model.solid_formulation not in ("displacement", "mixed-mini"):
         raise ValueError("unknown solidFormulation")
     hyperelastic = any(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements)
@@ -84,6 +91,7 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     if invocation.cancellation is not None:
         invocation.cancellation.raise_if_cancelled()
     prepared = prepare_matrices(model)
+    prepare_thermal_force(model, prepared)
     stiffness = prepared.stiffness
     mass = prepared.mass
     damping = prepared.damping

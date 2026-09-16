@@ -13,7 +13,7 @@ SOLVER_TESTS = {
     "heat_transfer": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_microheater", "test_box_grid_outputs"),
     "ray_tracing": ("test_ray_*", "test_spectrometer_example", "test_box_grid_outputs"),
     "fdtd": ("test_fdtd_*", "test_gold_fcc_example"),
-    "structural_mechanics": ("test_structural_*", "test_hyperelastic", "test_mixed_*", "test_displacement_recording", "test_harmonic_*", "test_transient_*", "test_acoustic_transient_lifecycle"),
+    "structural_mechanics": ("test_structural_*", "test_microheater", "test_hyperelastic", "test_mixed_*", "test_displacement_recording", "test_harmonic_*", "test_transient_*", "test_acoustic_transient_lifecycle"),
     "pressure_acoustics": ("test_acoustic_*", "test_pressure_acoustics", "test_harmonic_surface_methods", "test_transient_coupling_methods"),
     "rigid_body": ("test_rigid_*",),
     "dem": ("test_dem_*", "test_particle_final_review", "test_particle_*"),
@@ -23,11 +23,11 @@ SOLVER_TESTS = {
 }
 # Specific method ownership takes precedence over a broad package rule.
 METHOD_FILE_CONSUMERS = {
-    "app/methods/finite_element/scalar.py": ("dc_current_density", "heat_transfer"),
-    "app/methods/mesh/subdomain.py": ("dc_current_density", "heat_transfer"),
-    "app/methods/geometry/layered.py": ("dc_current_density", "heat_transfer"),
-    "app/methods/coupling/assembly.py": ("dc_current_density", "heat_transfer"),
-    "app/methods/fields/tetrahedral.py": ("heat_transfer",),
+    "app/methods/finite_element/scalar.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/mesh/subdomain.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/geometry/layered.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/coupling/assembly.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/fields/tetrahedral.py": ("heat_transfer", "structural_mechanics"),
     "app/methods/finite_volume/tetrahedral.py": ("incompressible_flow",),
     "app/methods/coupling/tetrahedral.py": ("incompressible_flow",),
     "app/methods/coupling/polygons.py": ("incompressible_flow",),

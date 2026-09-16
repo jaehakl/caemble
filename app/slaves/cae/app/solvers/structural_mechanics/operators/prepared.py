@@ -17,6 +17,7 @@ class PreparedStructuralOperators:
     damping: sparse.csr_matrix
     element_data: list[dict[str, Any]]
     beam_batch: dict[str, Any] | None = None
+    thermal_batch: dict[str, Any] | None = None
 
 
 def _beam_batch(model, displacement, orientations, prepared):

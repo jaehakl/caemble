@@ -6,9 +6,9 @@ from scipy.sparse.linalg import ArpackNoConvergence, eigsh
 from app.methods.linalg.direct import solve_sparse
 
 
-def solve_linear(matrix, rhs):
+def solve_linear(matrix, rhs, *, ordering="COLAMD", positive_definite=False):
     try:
-        return solve_sparse(matrix, rhs)
+        return solve_sparse(matrix, rhs, ordering=ordering, positive_definite=positive_definite)
     except ValueError as error:
         raise ValueError(f"structural solve failed; check supports and active connections: {error}") from error
 

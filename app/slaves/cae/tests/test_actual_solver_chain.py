@@ -247,3 +247,74 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path, use_cache: b
     assert thermal.observations["sourcePower"] == pytest.approx(electric.observations["inputPower"], rel=1e-6)
     assert thermal.observations["outwardPower"] == pytest.approx(electric.observations["inputPower"], rel=1e-6)
     assert any(value.get("stage") == "heat-fem" for value in progress if isinstance(value, dict))
+
+
+@pytest.mark.asyncio
+async def test_heat_to_structure_native_temperature_cache_equivalence(tmp_path):
+    """Two actual children share a canonical volume; caching changes no physics."""
+    shared_world = world()
+    models = shared_world["materials"]["experiment"]["Copper"]["models"]
+    models["elastic"] = {"model": "mechanics.isotropic-elastic@1", "parameters": {"E": 2e9, "nu": .3, "density": 1000.}}
+    models["expansion"] = {"model": "mechanics.isotropic-thermal-expansion@1", "parameters": {"alpha": 1e-5}}
+    shared_world["materialSelections"].update({
+        "bodyDomain": {"Copper": {"constitutive": "elastic"}},
+        "thermalExpansionDomain": {"Copper": {"expansion": "expansion"}},
+    })
+    for name, index in (("yMinus", 2), ("zMinus", 4)):
+        shared_world["experiment"]["surfaceGroups"].append({"name": name, "selectors": [
+            {"rootId": "conductor-root", "sourceNodeId": "conductor-node", "surfaceIndex": index}]})
+    target = ["experiment.geometry.conductor"]
+    heat_config = {
+        "parameters": {"relativeTolerance": parameter(1e-9)},
+        "initializations": [
+            {"methodId": "heat.mesh", "target": target, "parameters": {"maxElementSize": {"value": .15, "unit": "m"}}},
+            {"methodId": "heat.body", "target": target, "parameters": {}},
+        ],
+        "boundaryConditions": [{"methodId": "heat.fixed-temperature", "target": ["experiment.surface.sourceTerminal"],
+                                "parameters": {"temperature": parameter(310.)}}],
+        "exports": [{"methodId": "heat.native-temperature", "key": "temperature", "target": [], "parameters": {}}],
+        "outputs": [],
+    }
+    structure_config = {
+        "parameters": {"analysis": "static", "geometricNonlinear": False,
+                       "spatialResolution": {"value": .15, "unit": "m"}, "relativeTolerance": 1e-9, "maxIterations": 30},
+        "initializations": [
+            {"methodId": "fea.mesh", "target": target, "parameters": {}},
+            {"methodId": "fea.body", "target": target, "parameters": {}},
+            {"methodId": "fea.thermal-expansion", "target": target, "parameters": {"stressFreeTemperature": parameter(300.)}},
+        ],
+        "boundaryConditions": [{"methodId": "fea.fixed", "target": ["experiment.surface." + name],
+                                "parameters": {"components": [component]}}
+                               for name, component in (("sourceTerminal", "x"), ("yMinus", "y"), ("zMinus", "z"))],
+        "outputs": [],
+    }
+    catalog, results = SolverCatalog.discover(), []
+    for use_cache in (False, True):
+        resources = SolverResourceServices(geometry_cache_path=str(tmp_path) if use_cache else None)
+        exports = {}
+        for name, version, config, inputs in (
+            ("heat-transfer", "1.0.0", heat_config, {}),
+            ("structural-mechanics", "7.2.0", structure_config, exports),
+        ):
+            task = {"kernel": {"name": name, "version": version}, "config": config}
+            spec = TaskSpec(name, task, catalog.descriptor(name, version), catalog.locator(name, version), 3, {}, {}, {})
+            transaction = await execute_solver(spec, {}, inputs, shared_world, None,
+                                               executor=SpawnSolverExecutor(), timeout=30, resources=resources)
+            result = transaction.value
+            transaction.commit()
+            if name == "heat-transfer":
+                temperature = result.exports["temperature"]
+                original = temperature.values.copy()
+                exports["temperature"] = InputArtifact("temperature", "caemble.heat/temperature@2", name, name, version,
+                                                       "temperature", 0, None, temperature)
+            else:
+                displacement = result.visualizations["displacement"]
+                expected = 1e-4 * (displacement.domain.points + [.5, .1, .1])
+                np.testing.assert_allclose(displacement.values, expected, rtol=1e-8, atol=1e-14)
+                np.testing.assert_allclose(result.visualizations["stress"].values, 0., atol=2e9 * 1e-4 * 1e-8)
+                assert result.observations["strainEnergy"] < 2e9 * 1e-8 * .04 * 1e-16
+                assert displacement.domain.metadata["assemblyIdentity"] == temperature.domain.metadata["assemblyIdentity"]
+                np.testing.assert_array_equal(original, temperature.values)
+                results.append(displacement.values)
+        assert len(FileResourceCache(tmp_path).entry_paths()) == (2 if use_cache else 0)
+    np.testing.assert_array_equal(*results)

@@ -261,6 +261,9 @@ def physical_orientation_matrices(
     if physical_count is None:
         return result
     physical_count = int(physical_count)
+    if model.thermal_strain is not None:
+        from .operators.thermal import thermal_polar_frames
+        return thermal_polar_frames(model, displacement)
     projected = np.zeros((physical_count, 3, 3))
     weights = np.zeros(physical_count)
     for element in model.elements:

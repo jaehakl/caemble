@@ -27,8 +27,13 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
         T = constraint_transform(model, solution.orientations)
         for dof, value in model.prescribed.items():
             solution.displacement.ravel()[dof] = value
-        rhs = T.T @ (external - stiffness @ solution.displacement.ravel())
-        solution.displacement += np.asarray(T @ solve_linear(T.T @ stiffness @ T, rhs)).reshape(-1, 6) if T.shape[1] else 0
+        applied = external if model.thermal_force is None else external + model.thermal_force
+        rhs = T.T @ (applied - stiffness @ solution.displacement.ravel())
+        # The thermal solid matrix is symmetric. A symmetric graph ordering
+        # limits sparse-factor fill in the very thin, conforming layered mesh.
+        ordering = "COLAMD" if model.thermal_force is None else "MMD_AT_PLUS_A"
+        solution.displacement += np.asarray(T @ solve_linear(T.T @ stiffness @ T, rhs, ordering=ordering,
+            positive_definite=model.thermal_force is not None)).reshape(-1, 6) if T.shape[1] else 0
         solution.orientations = np.asarray([rotation_exp(value[3:]) for value in solution.displacement])
         for slave, (master, axis_index) in revolute_joints(model).items():
             solution.displacement[slave, 3 + axis_index] -= solution.displacement[master, 3 + axis_index]
@@ -114,6 +119,12 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
     solution.reaction = support_reactions(model, solution.orientations, internal - external)
     T = constraint_transform(model, solution.orientations)
     solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / max(np.linalg.norm(T.T @ external), np.linalg.norm(internal) if displacement_driven else 0., 1.0))
+    if model.thermal_force is not None:
+        scale = max(np.linalg.norm(T.T @ external), np.linalg.norm(T.T @ model.thermal_force),
+                    np.linalg.norm(stiffness @ solution.displacement.ravel()) if displacement_driven else 0., np.finfo(float).tiny)
+        solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / scale)
+        if solution.residual > tolerance:
+            raise ValueError(f"thermal structural relative residual {solution.residual:g} exceeds {tolerance:g}")
     solution.element_history, solution.stresses = history, stress
     solution.strain_energy = float(energy)
     solution.equilibrium_energy = float(energy)

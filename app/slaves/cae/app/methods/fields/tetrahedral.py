@@ -46,17 +46,19 @@ def scalar_box_statistics(points, cells, values, grid):
     coordinates = grid.local_points(np.asarray(points), "m") / np.asarray(grid.geometry["size"])
     total_volume = integral = 0.0
     minimum, maximum = np.inf, -np.inf
-    for cell in cells:
+    cells = np.asarray(cells)
+    vertices = coordinates[cells]
+    selected = np.flatnonzero(np.all(vertices.max(axis=1) > 0, axis=1) & np.all(vertices.min(axis=1) < 1, axis=1))
+    inside = np.all((vertices[selected] >= 0) & (vertices[selected] <= 1), axis=(1, 2))
+    contained = selected[inside]
+    if len(contained):
+        volumes = np.abs(np.linalg.det(vertices[contained, 1:] - vertices[contained, :1])) / 6
+        nodal = np.asarray(values)[cells[contained]]
+        total_volume, integral = volumes.sum(), volumes @ nodal.mean(axis=1)
+        minimum, maximum = nodal.min(), nodal.max()
+    for cell in cells[selected[~inside]]:
         vertices = coordinates[cell]
-        if np.any(vertices.max(axis=0) <= 0) or np.any(vertices.min(axis=0) >= 1):
-            continue
         nodal = np.asarray(values)[cell]
-        if np.all((vertices >= 0) & (vertices <= 1)):
-            volume = abs(np.linalg.det(vertices[1:] - vertices[0])) / 6
-            total_volume += volume
-            integral += volume * nodal.mean()
-            minimum, maximum = min(minimum, nodal.min()), max(maximum, nodal.max())
-            continue
         polygons = clipped_tetrahedron(vertices)
         if not polygons:
             continue

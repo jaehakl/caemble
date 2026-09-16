@@ -117,7 +117,7 @@ class CatalogV3Tests(unittest.TestCase):
         expected = {
             "dc-current-density": "3.0.0", "heat-transfer": "1.0.0",
             "ray-tracing": "2.0.0", "fdtd": "5.0.0",
-            "structural-mechanics": "7.1.0", "pressure-acoustics": "1.1.0",
+            "structural-mechanics": "7.2.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
             "dem": "1.0.0", "sph": "1.1.0", "mpm": "2.0.0",
             "incompressible-flow": "3.0.0",
@@ -129,18 +129,18 @@ class CatalogV3Tests(unittest.TestCase):
             for manifest in manifests:
                 package = manifest["descriptor"]["name"].replace("-", "_")
                 self.assertEqual(manifest["implementation"], f"app.solvers.{package}.entry:implementation")
-            for name, version in [("structural-mechanics", "6.0.0"), ("structural-mechanics", "6.1.0"), ("structural-mechanics", "7.0.0"), ("mpm", "1.0.0"), ("pressure-acoustics", "1.0.0"), ("sph", "1.0.0"), ("incompressible-flow", "1.0.0"), ("incompressible-flow", "2.0.0")]:
+            for name, version in [("structural-mechanics", "7.1.0"), ("structural-mechanics", "6.0.0"), ("structural-mechanics", "6.1.0"), ("structural-mechanics", "7.0.0"), ("mpm", "1.0.0"), ("pressure-acoustics", "1.0.0"), ("sph", "1.0.0"), ("incompressible-flow", "1.0.0"), ("incompressible-flow", "2.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for name, version in [("dc-current-density", "2.0.0"), ("steady-state-heat", "2.0.0"), ("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0"), ("structural-mechanics", "1.0.0"), ("structural-mechanics", "5.0.0"), ("aerodynamic-loading", "1.0.0"), ("hydrodynamic-loading", "1.0.0"), ("wind-turbine-control", "1.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                expected_version = "7.1.0" if example["repository"] == "fea" else {
-                    "fiber-bundle": "6.0.1", "electro-thermal-notched-bar": "6.0.1", "steady-microheater": "1.0.0",
-                    "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.2",
-                    "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.2",
-                    "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.2",
+                expected_version = "7.1.1" if example["repository"] == "fea" else {
+                    "fiber-bundle": "6.0.1", "electro-thermal-notched-bar": "6.0.1", "steady-microheater": "1.1.0",
+                    "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.3",
+                    "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.3",
+                    "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.3",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",
                     "dem-floor-contact": "1.0.1", "sph-hydrostatic-column": "1.1.0",
                     "mpm-affine-compression": "2.0.0", "dem-two-material-collision": "1.0.0",
@@ -163,9 +163,32 @@ class CatalogV3Tests(unittest.TestCase):
                 for solver in example["relatedSolvers"]:
                     self.assertEqual(solver["version"], expected[solver["name"]])
 
+    def test_static_thermal_contract_reuses_native_temperature_and_explicit_reference(self) -> None:
+        with open_catalog() as catalog:
+            structure = catalog.get_solver_manifest("structural-mechanics", "7.2.0")["descriptor"]
+            heat = catalog.get_solver_manifest("heat-transfer", "1.0.0")["descriptor"]
+            expansion = catalog.material_model("mechanics.isotropic-thermal-expansion@1")
+            microheater = catalog.experiment("steady-microheater")
+        port = structure["inputPorts"]["temperature"]
+        native = next(method for method in heat["methods"]["exports"] if method["methodId"] == "heat.temperature")
+        self.assertEqual(port["artifactTypes"], ["caemble.heat/temperature@2"])
+        self.assertEqual(port["data"], native["data"])
+        self.assertEqual(port["minimumOccurrences"], 0)
+        rule = next(method for method in structure["methods"]["initializations"] if method["methodId"] == "fea.thermal-expansion")
+        self.assertEqual(set(rule["parameters"]), {"stressFreeTemperature"})
+        self.assertNotIn("default", rule["parameters"]["stressFreeTemperature"])
+        self.assertEqual(rule["parameters"]["stressFreeTemperature"]["data"]["unit"], "K")
+        self.assertEqual(set(expansion["parameterSchema"]["fields"]), {"alpha"})
+        self.assertEqual(expansion["parameterSchema"]["fields"]["alpha"]["shape"], [])
+        self.assertEqual(expansion["parameterSchema"]["fields"]["alpha"]["unit"], "K-1")
+        self.assertEqual(microheater["version"], "1.1.0")
+        self.assertEqual({item["name"] for item in microheater["relatedSolvers"]},
+                         {"dc-current-density", "heat-transfer", "structural-mechanics"})
+        self.assertIn("tasks/structural.tsx", microheater["sourceBundle"]["files"])
+
     def test_structural_contract_owns_mesh_and_uses_semantic_boundaries(self) -> None:
         with open_catalog() as catalog:
-            descriptor = catalog.get_solver_manifest("structural-mechanics", "7.1.0")["descriptor"]
+            descriptor = catalog.get_solver_manifest("structural-mechanics", "7.2.0")["descriptor"]
             penalty = catalog.quantity_kind("mechanics.NormalContactStiffness")
         self.assertEqual(descriptor["parameters"]["spatialResolution"]["data"]["unit"], "m")
         initializations = {method["methodId"]: method for method in descriptor["methods"]["initializations"]}
@@ -212,7 +235,7 @@ class CatalogV3Tests(unittest.TestCase):
                     self.assertIn("fea.body", source, path)
                     self.assertNotRegex(source, r"\b(?:connectivity|nodeIds|nodeIdStart)\s*:")
                     self.assertLess(len(source.splitlines()), 1000, path)
-                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "7.1.0")])
+                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "7.2.0")])
 
     def test_new_solver_cli_defaults_to_abi_v3(self) -> None:
         arguments = build_parser().parse_args(

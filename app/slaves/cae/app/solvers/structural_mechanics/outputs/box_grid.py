@@ -2,65 +2,22 @@
 
 import numpy as np
 
-from ..continuum import integration_points, physical_rotation_vectors
+from ..continuum import physical_rotation_vectors
 from ..domain import parameter
 from ..interfaces.resultants import physical_support_reactions
 from ..model import HarmonicSolution
 from .fields import _physical_domain, _tet_stress, finite_deformation_fields
 from .history import history_members
+from .sections import _tet_plane_triangles
 from ..solid_fields import sample_solid
-
-
-def _tet_plane_triangles(reference, displacement, origin, normal):
-    """Current triangles of a material tet's intersection with a reference plane."""
-    distances = (reference - origin) @ normal
-    scale = max(np.max(np.linalg.norm(reference - reference.mean(axis=0), axis=1)), 1.)
-    tolerance = 64 * np.finfo(float).eps * scale
-    positive, negative = distances > tolerance, distances < -tolerance
-    on_plane = np.abs(distances) <= tolerance
-    barycentric = [np.eye(4)[index] for index in np.flatnonzero(on_plane)]
-    if np.any(positive) and np.any(negative):
-        for first in range(4):
-            for second in range(first + 1, 4):
-                if distances[first] * distances[second] < -tolerance**2:
-                    fraction = distances[first] / (distances[first] - distances[second])
-                    value = np.zeros(4)
-                    value[first], value[second] = 1 - fraction, fraction
-                    barycentric.append(value)
-    elif np.count_nonzero(on_plane) < 3 or not np.any(negative):
-        # A plane coincident with a shared face belongs to its negative side.
-        return []
-    unique = []
-    for value in barycentric:
-        if not any(np.linalg.norm(value - previous) <= 1e-12 for previous in unique):
-            unique.append(value)
-    if len(unique) < 3:
-        return []
-    barycentric = np.asarray(unique)
-    plane_points = barycentric @ reference
-    center = plane_points.mean(axis=0)
-    first = plane_points[np.argmax(np.linalg.norm(plane_points - center, axis=1))] - center
-    first /= np.linalg.norm(first)
-    second = np.cross(normal, first)
-    angles = np.arctan2((plane_points - center) @ second, (plane_points - center) @ first)
-    barycentric = barycentric[np.argsort(angles)]
-    current_nodes = reference + displacement
-    current_points = barycentric @ current_nodes
-    gradients = integration_points("tet4", reference)[0][3]
-    deformation = current_nodes.T @ gradients
-    current_normal = np.linalg.solve(deformation.T, normal)
-    current_normal /= np.linalg.norm(current_normal)
-    triangles = []
-    for index in range(1, len(current_points) - 1):
-        triangle = current_points[[0, index, index + 1]]
-        if np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0]) @ current_normal < 0:
-            triangle = triangle[[0, 2, 1]]
-        triangles.append(triangle)
-    return triangles
+from ..thermal import thermal_stress_at
+from .thermal import surface_displacement_metrics, rms_von_mises_stress, thermal_section_resultant
 
 
 def _box_section_resultant(model, solution, grid, parameters):
     """Integrate the solved stress over a clipped, oriented section of the probe Box."""
+    if model.thermal_strain is not None:
+        return thermal_section_resultant(model, solution, grid, parameters)
     origin = np.asarray(parameters["origin"], dtype=float)
     normal = np.asarray(parameters["normal"], dtype=float)
     normal /= np.linalg.norm(normal)
@@ -99,7 +56,8 @@ def build_box_outputs(config, descriptor, model, solution):
         if unsupported:
             raise ValueError(f"harmonic analysis requires harmonic Box Grid outputs, received {unsupported}")
     else:
-        rotations = physical_rotation_vectors(model, solution.displacement, solution.orientations)
+        rotations = (physical_rotation_vectors(model, solution.displacement, solution.orientations)
+                     if any(output["methodId"] == "fea.rotation" for output in config["outputs"]) else None)
         stresses = np.asarray([_tet_stress(model, solution, index) for index in cell_order]).reshape(-1, 3, 3)
         compact = stresses[:, (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
     definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
@@ -140,6 +98,11 @@ def build_box_outputs(config, descriptor, model, solution):
             elif method in ("fea.section-force", "fea.section-moment"):
                 force, moment_value = _box_section_resultant(model, solution, grid, parameters)
                 sampled = force if method == "fea.section-force" else moment_value
+            elif method in ("fea.maximum-normal-displacement", "fea.surface-warpage"):
+                maximum, warpage = surface_displacement_metrics(model, solution, grid, parameters)
+                sampled = maximum if method == "fea.maximum-normal-displacement" else warpage
+            elif method == "fea.rms-von-mises-stress":
+                sampled = rms_von_mises_stress(model, solution, grid)
             else:
                 names = {"fea.strain-energy-history": "strainEnergy", "fea.kinetic-energy-history": "kineticEnergy",
                          "fea.power-history": "power", "fea.generator-speed-history": "generatorSpeed",
@@ -158,6 +121,13 @@ def build_box_outputs(config, descriptor, model, solution):
                     points = points + solution.displacement[:, :3]
                 samplers[identity] = TetrahedralSampler.prepare(points, cells, grid.points("m"))
             sampler = samplers[identity]
+            if method == "fea.stress-field" and model.thermal_strain is not None:
+                sampled = np.zeros((len(sampler.cell_indices), 6))
+                for cell in np.unique(sampler.cell_indices[sampler.cell_indices >= 0]):
+                    selected = sampler.cell_indices == cell
+                    sampled[selected] = thermal_stress_at(model, solution, cell_order[cell], sampler.barycentric[selected])
+                artifacts[output["key"]] = pack_box_grid(grid, data, sampled.reshape((*sampler.shape, 6)))
+                continue
             finite_method = {"fea.displacement": "displacement", "fea.stress-field": "cauchyStress",
                              "fea.volume-ratio": "volumeRatio", "fea.mean-pressure": "meanPressure"}
             if method in finite_method and (solution.bubble is not None or method == "fea.mean-pressure"):
