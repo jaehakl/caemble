@@ -127,6 +127,37 @@ describe('Catalog API response boundaries', () => {
     })
   })
 
+  it('accepts a native cell export without a visualization request', async () => {
+    const native = {
+      methodId: 'example.cell-field',
+      description: 'Native coupling field',
+      minimumOccurrences: 0,
+      maximumOccurrences: 1,
+      target: {
+        source: 'experiment',
+        kind: 'geometry',
+        minimumTargets: 1,
+        maximumTargets: 1,
+        minimumResolved: 1,
+        maximumResolved: 1,
+      },
+      parameters: {},
+      artifactType: 'example/cell-field@1',
+      data: { dtype: 'float64', quantityKind: 'PowerDensity', unit: 'W.m-3', tensorOrder: 0, axes: [{ name: 'cell' }] },
+    }
+    stubJson({
+      name: 'solver',
+      version: '1.0.0',
+      description: 'Solver',
+      descriptor: { ...descriptor, methods: { ...descriptor.methods, exports: [native] } },
+      materialRequirements: [],
+      quantityKindUsages: [],
+      producesArtifacts: [],
+      consumesArtifacts: [],
+    })
+    expect((await catalogApi.getSolver('solver', '1.0.0')).descriptor.methods.exports[0].data).toEqual(native.data)
+  })
+
   it('preserves extensible Solver descriptor fields after validating its usable shape', async () => {
     stubJson({
       name: 'solver',

@@ -9,8 +9,8 @@ import subprocess
 CAE_PREFIX = "app/slaves/cae/"
 PARTICLES = ("dem", "sph", "mpm")
 SOLVER_TESTS = {
-    "dc_current_density": ("test_actual_solver_chain", "test_solver_methods", "test_box_grid_outputs"),
-    "steady_state_heat": ("test_actual_solver_chain", "test_solver_methods", "test_coupling_projection", "test_box_grid_outputs"),
+    "dc_current_density": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_microheater", "test_box_grid_outputs"),
+    "heat_transfer": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_microheater", "test_box_grid_outputs"),
     "ray_tracing": ("test_ray_*", "test_spectrometer_example", "test_box_grid_outputs"),
     "fdtd": ("test_fdtd_*", "test_gold_fcc_example"),
     "structural_mechanics": ("test_structural_*", "test_hyperelastic", "test_mixed_*", "test_displacement_recording", "test_harmonic_*", "test_transient_*", "test_acoustic_transient_lifecycle"),
@@ -21,9 +21,13 @@ SOLVER_TESTS = {
     "mpm": ("test_particle_*",),
     "incompressible_flow": ("test_incompressible_*",),
 }
-# These new tetrahedral methods currently have only one consumer. Broad ownership
-# would select unrelated long FEM/particle validation for a CFD-only addition.
+# Specific method ownership takes precedence over a broad package rule.
 METHOD_FILE_CONSUMERS = {
+    "app/methods/finite_element/scalar.py": ("dc_current_density", "heat_transfer"),
+    "app/methods/mesh/subdomain.py": ("dc_current_density", "heat_transfer"),
+    "app/methods/geometry/layered.py": ("dc_current_density", "heat_transfer"),
+    "app/methods/coupling/assembly.py": ("dc_current_density", "heat_transfer"),
+    "app/methods/fields/tetrahedral.py": ("heat_transfer",),
     "app/methods/finite_volume/tetrahedral.py": ("incompressible_flow",),
     "app/methods/coupling/tetrahedral.py": ("incompressible_flow",),
     "app/methods/coupling/polygons.py": ("incompressible_flow",),
@@ -31,16 +35,16 @@ METHOD_FILE_CONSUMERS = {
 METHOD_CONSUMERS = {
     "particles": PARTICLES,
     "continuum": ("structural_mechanics", "mpm"),
-    "finite_element": ("structural_mechanics",),
+    "finite_element": ("structural_mechanics", "dc_current_density", "heat_transfer"),
     "rigid": ("structural_mechanics", "rigid_body", "dem"),
     "rays": ("ray_tracing",), "optics": ("ray_tracing",),
-    "finite_volume": ("dc_current_density", "steady_state_heat", "incompressible_flow"),
+    "finite_volume": ("incompressible_flow",),
     "finite_difference": ("fdtd", "pressure_acoustics"),
-    "mesh": ("structural_mechanics", "pressure_acoustics", "incompressible_flow"),
+    "mesh": ("structural_mechanics", "pressure_acoustics", "incompressible_flow", "dc_current_density", "heat_transfer"),
     "geometry": tuple(SOLVER_TESTS), "structured": tuple(SOLVER_TESTS),
     "fields": tuple(SOLVER_TESTS), "coupling": tuple(SOLVER_TESTS),
-    "assembly": ("structural_mechanics", "dc_current_density", "steady_state_heat"),
-    "linalg": ("structural_mechanics", "dc_current_density", "steady_state_heat", "pressure_acoustics", "incompressible_flow"),
+    "assembly": ("structural_mechanics",),
+    "linalg": ("structural_mechanics", "pressure_acoustics", "incompressible_flow"),
     "nonlinear": ("structural_mechanics",), "time": ("structural_mechanics", "rigid_body", *PARTICLES),
 }
 KERNEL_TESTS = (
@@ -118,8 +122,9 @@ def select_changes(paths: list[str]) -> Selection:
             elif local.startswith("app/kernel/"):
                 result.patterns.update(KERNEL_TESTS)
                 reason = "kernel contracts, ownership, transport and real child handoffs"
-            elif local.startswith("app/solvers/") and len(parts) > 3 and parts[2] in SOLVER_TESTS:
-                solver = parts[2]
+            elif local.startswith("app/solvers/") and len(parts) > 3 and parts[2] in {*SOLVER_TESTS, "steady_state_heat"}:
+                # Deleted voxel Heat files belong to their replacement's checks.
+                solver = "heat_transfer" if parts[2] == "steady_state_heat" else parts[2]
                 result.solvers.add(solver)
                 # Output/visualization edits do not change convergence or long-time physics.
                 if (solver in {"structural_mechanics", "pressure_acoustics", "incompressible_flow"}

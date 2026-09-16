@@ -15,28 +15,29 @@ from tests.test_actual_solver_chain import parameter, world, output_box
 
 @pytest.mark.asyncio
 async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
-    dc_version, heat_version = "2.0.0", "2.0.0"
+    dc_version, heat_version = "3.0.0", "1.0.0"
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
-            "parameters": {"relativeTolerance": {**parameter(1e-9), "unit": "{fraction}"}, "maxIterations": 500},
+            "parameters": {"relativeTolerance": {**parameter(1e-9), "unit": "{fraction}"}},
             "initializations": [
                 {
-                    "methodId": "dc.voxel-grid",
+                    "methodId": "dc.mesh",
                     "target": ["experiment.geometry.conductor"],
-                    "parameters": {"gridShape": parameter([6, 4, 4])},
-                }
+                    "parameters": {"maxElementSize": {"value": 0.15, "unit": "m"}},
+                },
+                {"methodId": "dc.conductor", "target": ["experiment.geometry.conductor"], "parameters": {}}
             ],
             "boundaryConditions": [
                 {
-                    "methodId": "dc.source-potential",
+                    "methodId": "dc.potential",
                     "target": ["experiment.surface.sourceTerminal"],
-                    "parameters": {"voltage": {**parameter(1.0), "unit": "V"}},
+                    "parameters": {"name": "source", "voltage": {**parameter(1.0), "unit": "V"}},
                 },
                 {
-                    "methodId": "dc.reference-potential",
+                    "methodId": "dc.potential",
                     "target": ["experiment.surface.referenceTerminal"],
-                    "parameters": {"voltage": {**parameter(0.0), "unit": "V"}},
+                    "parameters": {"name": "reference", "voltage": {**parameter(0.0), "unit": "V"}},
                 },
             ],
             "exports": [{"methodId": "dc.joule-heating", "key": "jouleHeating", "target": [], "parameters": {}}],
@@ -45,21 +46,22 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
                     "methodId": "dc.total-current",
                     "key": "totalCurrent", "boxGrid": output_box(),
                     "target": [],
-                    "parameters": {"gridShape": parameter([1, 1, 1]), "crossSectionPosition": {**parameter(0.5), "unit": "{fraction}"}},
+                    "parameters": {"gridShape": parameter([1, 1, 1]), "terminal": "source"},
                 },
             ],
         },
     }
     heat_task = {
-        "kernel": {"name": "steady-state-heat", "version": heat_version},
+        "kernel": {"name": "heat-transfer", "version": heat_version},
         "config": {
-            "parameters": {"relativeTolerance": {**parameter(1e-9), "unit": "{fraction}"}, "maxIterations": 500},
+            "parameters": {"relativeTolerance": {**parameter(1e-9), "unit": "{fraction}"}},
             "initializations": [
                 {
-                    "methodId": "heat.voxel-grid",
+                    "methodId": "heat.mesh",
                     "target": ["experiment.geometry.conductor"],
-                    "parameters": {"gridShape": parameter([6, 4, 4])},
-                }
+                    "parameters": {"maxElementSize": {"value": 0.15, "unit": "m"}},
+                },
+                {"methodId": "heat.body", "target": ["experiment.geometry.conductor"], "parameters": {}}
             ],
             "boundaryConditions": [
                 {
@@ -102,11 +104,12 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
 
     host = SimpleNamespace(plan=plan, run_id=f"dc-heat-{dc_version}", max_run_seconds=30, trace=[], progress=report)
     sim = SimulationApi(host)
+    empty_state_resources = sim._resources.stats()
     try:
         electric = await sim.run(plan.tasks["electric"])
         joule = sim._artifacts.materialize(electric["artifacts"]["jouleHeating"])
         assert isinstance(joule, FieldValue)
-        assert joule.domain.shape == (6, 4, 4)
+        assert joule.values.shape == (len(joule.domain.cells["tet4"]),)
         assert sim._artifacts.materialize(electric["artifacts"]["totalCurrent"])["value"] > 0
         thermal = await sim.run(
             plan.tasks["thermal"], state=electric["state"],
@@ -117,10 +120,13 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
         assert sim._artifacts.materialize(thermal["artifacts"]["maximumTemperature"])["value"] >= 300.0
         assert thermal["state"] is electric["state"]
         assert thermal["state"].revision == 0
-        assert len(FileResourceCache(sim._geometry_cache.name).entry_paths()) == 1
+        assert len(FileResourceCache(sim._geometry_cache.name).entry_paths()) == 2
         assert host.trace[1]["inputArtifacts"]["heatSource"]["id"] == electric["artifacts"]["jouleHeating"].artifact_id
-        assert any(value.get("stage") == "output" for value in progress)
+        assert any(value.get("stage") == "heat-fem" for value in progress)
         sim.release(electric["artifacts"])
         sim.release(thermal["artifacts"])
+        assert sim._resources.stats() == empty_state_resources
+        assert sim._buffers.files() == ()
     finally:
         sim.close()
+    assert sim._resources.stats().resource_count == 0

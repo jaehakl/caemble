@@ -1,4 +1,4 @@
-"""Electrical material regions and named equipotential terminals."""
+"""Thermal material domains, prescribed temperatures, fluxes and convection."""
 
 from dataclasses import dataclass
 
@@ -10,22 +10,22 @@ from app.methods.mesh.subdomain import build_volume_subdomain
 
 
 @dataclass(frozen=True)
-class DcDomain:
+class HeatDomain:
     mesh: object
     conductivity: np.ndarray
     fixed: dict
-    terminals: dict
+    boundaries: tuple
 
 
-async def build_dc_domain(invocation):
+async def build_heat_domain(invocation):
     scene = invocation.world["experiment"]
     rules = invocation.config["initializations"]
-    mesh_rule = next(rule for rule in rules if rule["methodId"] == "dc.mesh")
+    mesh_rule = next(rule for rule in rules if rule["methodId"] == "heat.mesh")
     assembly = {part["id"] for target in mesh_rule["target"] for part in geometry_parts(scene, target.split(".", 2)[2])}
     p = mesh_rule["parameters"]
     sizes, layers = {}, {}
     for rule in rules:
-        if rule["methodId"] == "dc.region-mesh":
+        if rule["methodId"] == "heat.region-mesh":
             for target in rule["target"]:
                 for part in geometry_parts(scene, target.split(".", 2)[2]):
                     if part["id"] in sizes:
@@ -38,36 +38,40 @@ async def build_dc_domain(invocation):
                                     layer_axis=axis, layer_subdivisions=tuple(layers.items()) if axis is not None else ())
     parts = {}
     for rule in rules:
-        if rule["methodId"] == "dc.conductor":
+        if rule["methodId"] == "heat.body":
             for target in rule["target"]:
                 for part in geometry_parts(scene, target.split(".", 2)[2]):
                     if part["id"] in parts:
-                        raise ValueError("conductor regions must be selected exactly once")
+                        raise ValueError("thermal regions must be selected exactly once")
                     parts[part["id"]] = part
     mesh = await build_volume_subdomain(invocation.geometry, scene, assembly, parts, profile, invocation.progress)
     tensors = {}
     for root, part in parts.items():
-        model = material_model(invocation.world, part, "conductor", "conduction")
-        if model is None or model["model"] != "electrical.ohmic-conduction@1":
-            raise ValueError("conductor requires electrical.ohmic-conduction@1")
-        tensor = np.asarray(model["parameters"]["sigma"]["value"], dtype=float).reshape(3, 3)
+        model = material_model(invocation.world, part, "thermalDomain", "conduction")
+        if model is None or model["model"] != "heat.fourier-conduction@1":
+            raise ValueError("thermalDomain requires heat.fourier-conduction@1")
+        tensor = np.asarray(model["parameters"]["k"]["value"], dtype=float).reshape(3, 3)
         value = float(np.trace(tensor) / 3)
         if not np.isfinite(value) or value <= 0 or not np.allclose(tensor, np.eye(3) * value, rtol=1e-10, atol=0):
-            raise ValueError("DC requires positive isotropic conductivity in each material region")
+            raise ValueError("Heat requires positive isotropic conductivity in each material region")
         tensors[root] = tensor
     conductivity = np.asarray([tensors[mesh.assembly.region_ids[r]] for r in mesh.field_domain.metadata["cellRegions"]])
-    fixed, terminals = {}, {}
+    fixed, boundaries, used_faces = {}, [], set()
     for rule in invocation.config["boundaryConditions"]:
         selectors = [s for target in rule["target"] for group in scene["surfaceGroups"] if group["name"] == target.split(".", 2)[2] for s in group["selectors"]]
-        nodes = np.unique(mesh.surface_faces(selectors))
-        if rule["methodId"] == "dc.insulation":
-            continue
-        name = rule["parameters"]["name"]
-        if name in terminals:
-            raise ValueError("terminal names must be unique")
-        voltage = scalar_parameter(rule["parameters"]["voltage"])
-        if any(int(node) in fixed for node in nodes):
-            raise ValueError("potential terminals must not share nodes")
-        terminals[name] = {"nodes": nodes, "voltage": voltage}
-        fixed.update((int(node), voltage) for node in nodes)
-    return DcDomain(mesh, conductivity, fixed, terminals)
+        faces = mesh.surface_faces(selectors)
+        keys = {tuple(sorted(face)) for face in faces}
+        if used_faces & keys:
+            raise ValueError("thermal boundary rules must not overlap faces")
+        used_faces.update(keys)
+        method = rule["methodId"]
+        p = {key: scalar_parameter(value) for key, value in rule["parameters"].items()}
+        if method == "heat.fixed-temperature":
+            for node in np.unique(faces):
+                if int(node) in fixed and fixed[int(node)] != p["temperature"]:
+                    raise ValueError("conflicting fixed temperatures meet at a node")
+                fixed[int(node)] = p["temperature"]
+        elif method == "heat.convection" and p["coefficient"] <= 0:
+            raise ValueError("Robin heat-transfer coefficient must be positive")
+        boundaries.append((method, faces, p))
+    return HeatDomain(mesh, conductivity, fixed, tuple(boundaries))

@@ -183,10 +183,10 @@ def test_applicable_geometry_requires_a_material_snapshot(reference):
 
 def test_groups_are_checked_for_each_material_and_require_explicit_ambiguity_selection(definitions):
     with open_catalog() as catalog:
-        descriptor = catalog.get_solver_manifest("dc-current-density", "2.0.0")["descriptor"]
+        descriptor = catalog.get_solver_manifest("dc-current-density", "3.0.0")["descriptor"]
     scene = {"roots": [{"id": name, "material": {"name": name}} for name in ("a", "b")],
              "geometryGroups": [{"name": "conductor", "rootIds": ["a", "b"]}]}
-    config = {"initializations": [{"methodId": "dc.voxel-grid", "target": ["experiment.geometry.conductor"]}]}
+    config = {"initializations": [{"methodId": "dc.conductor", "target": ["experiment.geometry.conductor"]}]}
     materials = normalize_material_snapshot({"materials": {"a": conductor(), "b": conductor()}}, definitions, "materials")
     del materials["b"]["models"]["electrical"]
     with pytest.raises(CaeError, match=r"conductor.b.conduction"):

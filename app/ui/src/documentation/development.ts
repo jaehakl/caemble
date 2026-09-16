@@ -4,6 +4,7 @@ import structuralMechanicsPage from '../../../../docs/development/structural-mec
 import rigidBodyPage from '../../../../docs/development/rigid-body.md?raw'
 import particlesPage from '../../../../docs/development/particles.md?raw'
 import incompressibleFlowPage from '../../../../docs/development/incompressible-flow.md?raw'
+import electrothermalPage from '../../../../docs/development/electrothermal.md?raw'
 import pressureAcousticsPage from '../../../../docs/development/pressure-acoustics.md?raw'
 import pressureAcousticsValidationPage from '../../../../docs/development/pressure-acoustics-validation.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
@@ -71,6 +72,14 @@ export const developmentDocuments: readonly DocumentPage[] = [
     sourcePath: 'docs/development/incompressible-flow.md',
     keywords: ['Stokes', 'Navier-Stokes', 'incompressible', 'flow', 'CSG', '유체', '압력', '시간창'],
     content: documentBody(incompressibleFlowPage),
+  },
+  {
+    id: 'development.electrothermal',
+    title: '정상 다재료 전기열 해석',
+    summary: '공통 tet4 assembly, 전력 보존 전달과 microheater 검증',
+    sourcePath: 'docs/development/electrothermal.md',
+    keywords: ['DC', 'Heat', 'FEM', 'microheater', '전기열', 'Joule'],
+    content: documentBody(electrothermalPage),
   },
   {
     id: 'development.pressure-acoustics',

@@ -70,7 +70,7 @@ def cylinder_segments(measurement):
 @pytest.mark.parametrize("key", [
     "fiber-bundle", "shell-cutaways", "random-curved-edge-cylinder-array",
     "random-curved-surface-sphere-hcp-array", "two-material-wheel-assembly",
-    "czerny-turner-spectrometer", "electro-thermal-notched-bar",
+    "czerny-turner-spectrometer", "electro-thermal-notched-bar", "steady-microheater",
     "fdtd-drude-slab", "folded-ray-tracing",
     "structural-element-basics", "structural-analysis-modes",
     "curved-tower-shell", "boolean-connection-solid",
@@ -137,6 +137,14 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                 assert packet["kind"] == "complete", packet
                 break
         await run.task
+        if key == "steady-microheater":
+            # simulate.py must retire all numeric/native artifacts before the
+            # host closes the run, leaving only its retained empty State root.
+            sim = run.simulation_api
+            assert dict(sim._states.empty) == {}
+            assert sim._resources.stats().resource_count == 1
+            assert sim._resources.stats().lease_count == 1
+            assert run.simulation_api._buffers.files() == ()
         assert set(run.recorded_names) == set(run.schemas)
         assert sequences == list(range(1, len(sequences) + 1))
         assert sorted(run.completed_sequences + run.visualization_sequences) == sequences
@@ -167,7 +175,12 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
         if "totalCurrent" in recorded:
             assert recorded["totalCurrent"].item() > 0
         if "maximumTemperature" in recorded:
-            assert recorded["maximumTemperature"].item() > measurement["experiment"]["variables"]["fixedTemperature"]
+            from app.kernel.api.world import scalar_parameter
+            fixed_temperatures = [scalar_parameter(rule["parameters"]["temperature"])
+                                  for task in program["tasks"].values()
+                                  for rule in task["config"]["boundaryConditions"]
+                                  if rule["methodId"] == "heat.fixed-temperature"]
+            assert recorded["maximumTemperature"].item() > min(fixed_temperatures)
         if key.startswith("mixed-mini-"):
             assert recorded["energy"].item() > 0
             assert 0 < recorded["equilibriumEnergy"].item() <= recorded["energy"].item() + 1e-7

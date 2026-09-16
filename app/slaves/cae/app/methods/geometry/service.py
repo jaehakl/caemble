@@ -34,7 +34,7 @@ from app.kernel.api.units import convert_ucum_value
 _BACKEND_VERSION = "manifold3d-3.5.1"
 _MESHING_PROFILE = "canonical-v1"
 _VOLUME_BACKEND_VERSION = "netgen-mesher-6.2.2606"
-_VOLUME_MESHING_PROFILE = "tetrahedral-v4"
+_VOLUME_MESHING_PROFILE = "tetrahedral-v5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +221,8 @@ class GeometryService:
         region_ids = tuple(root_ids)
         if not region_ids or len(set(region_ids)) != len(region_ids):
             raise ValueError("volume mesh root ids must be non-empty and unique")
+        if not set(dict(profile.region_max_element_sizes)).issubset(region_ids) or not set(dict(profile.layer_subdivisions)).issubset(region_ids):
+            raise ValueError("mesh profile refers to a root outside the assembly")
         key = (
             scene["geometryHash"],
             region_ids,
@@ -247,6 +249,16 @@ class GeometryService:
             await self.triangular_mesh(scene, root_id, reference_length_unit)
             for root_id in region_ids
         ]
+        if profile.layer_axis is not None:
+            from .layered import layered_volume_mesh
+            result = await asyncio.to_thread(layered_volume_mesh, surface_meshes, region_ids, profile)
+            if self._cache is not None:
+                result = self._cache.publish(cache_key, result)
+                _freeze_volume_mesh(result)
+            self._volume_meshes[key] = result
+            if progress is not None:
+                await progress({"stage": "volume-mesh", "completed": 1, "total": 1})
+            return result
         try:
             await asyncio.to_thread(
                 validate_volume_meshing_request,
@@ -272,6 +284,8 @@ class GeometryService:
             descriptors,
             len(region_ids),
             profile,
+            region_max_element_sizes=(tuple(dict(profile.region_max_element_sizes).get(root, profile.max_element_size) for root in region_ids)
+                                      if profile.region_max_element_sizes else None),
         )
         result = VolumeMesh(
             generated.points,

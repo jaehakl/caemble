@@ -38,8 +38,8 @@ class CatalogV3Tests(unittest.TestCase):
             artifact_types = catalog.artifact_types()
 
         self.assertTrue(all(item["abiVersion"] == 3 for item in manifests))
-        self.assertIn("caemble.dc/joule-heating@1", {item["name"] for item in artifact_types})
-        joule = next(item for item in artifact_types if item["name"] == "caemble.dc/joule-heating@1")
+        self.assertIn("caemble.dc/joule-heating@2", {item["name"] for item in artifact_types})
+        joule = next(item for item in artifact_types if item["name"] == "caemble.dc/joule-heating@2")
         self.assertEqual(joule["payloadKind"], "field")
         self.assertEqual(joule["data"]["quantityKind"], "PowerDensity")
 
@@ -59,7 +59,7 @@ class CatalogV3Tests(unittest.TestCase):
                 "electro-thermal-notched-bar",
                 namespace="caemble",
                 repository="verified",
-                version="5.0.0",
+                version="6.0.1",
             )
 
         self.assertEqual(total, len(experiments))
@@ -69,7 +69,7 @@ class CatalogV3Tests(unittest.TestCase):
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
             [(item["name"], item["version"]) for item in example["relatedSolvers"]],
-            [("dc-current-density", "2.0.0"), ("steady-state-heat", "2.0.0")],
+            [("dc-current-density", "3.0.0"), ("heat-transfer", "1.0.0")],
         )
         self.assertEqual(
             set(example["sourceBundle"]["files"]),
@@ -93,8 +93,9 @@ class CatalogV3Tests(unittest.TestCase):
             )
         )
         self.assertIn("methodId: 'dc.joule-heating'", electric_source)
-        self.assertIn("value: [40, 21, 21]", electric_source)
-        self.assertIn("value: [40, 21, 21]", thermal_source)
+        self.assertIn("methodId: 'dc.mesh'", electric_source)
+        self.assertIn("methodId: 'heat.mesh'", thermal_source)
+        self.assertNotIn("voxel-grid", electric_source + thermal_source)
         self.assertIn('inputs={"heatSource": electric["artifacts"]["jouleHeating"]}', simulation_source)
         self.assertIn('sim.release(electric["artifacts"]["jouleHeating"])', simulation_source)
 
@@ -114,7 +115,7 @@ class CatalogV3Tests(unittest.TestCase):
 
     def test_release_has_only_current_solvers_and_examples(self) -> None:
         expected = {
-            "dc-current-density": "2.0.0", "steady-state-heat": "2.0.0",
+            "dc-current-density": "3.0.0", "heat-transfer": "1.0.0",
             "ray-tracing": "2.0.0", "fdtd": "5.0.0",
             "structural-mechanics": "7.1.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
@@ -131,11 +132,12 @@ class CatalogV3Tests(unittest.TestCase):
             for name, version in [("structural-mechanics", "6.0.0"), ("structural-mechanics", "6.1.0"), ("structural-mechanics", "7.0.0"), ("mpm", "1.0.0"), ("pressure-acoustics", "1.0.0"), ("sph", "1.0.0"), ("incompressible-flow", "1.0.0"), ("incompressible-flow", "2.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
-            for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0"), ("structural-mechanics", "1.0.0"), ("structural-mechanics", "5.0.0"), ("aerodynamic-loading", "1.0.0"), ("hydrodynamic-loading", "1.0.0"), ("wind-turbine-control", "1.0.0")]:
+            for name, version in [("dc-current-density", "2.0.0"), ("steady-state-heat", "2.0.0"), ("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0"), ("structural-mechanics", "1.0.0"), ("structural-mechanics", "5.0.0"), ("aerodynamic-loading", "1.0.0"), ("hydrodynamic-loading", "1.0.0"), ("wind-turbine-control", "1.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
                 expected_version = "7.1.0" if example["repository"] == "fea" else {
+                    "fiber-bundle": "6.0.1", "electro-thermal-notched-bar": "6.0.1", "steady-microheater": "1.0.0",
                     "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.2",
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.2",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.2",

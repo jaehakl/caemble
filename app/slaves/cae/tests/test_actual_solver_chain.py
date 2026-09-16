@@ -108,12 +108,13 @@ def output_box(shape=(1, 1, 1)):
 
 
 @pytest.mark.asyncio
-async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
-    dc_version, heat_version = "2.0.0", "2.0.0"
+@pytest.mark.parametrize("use_cache", [True, False])
+async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path, use_cache: bool) -> None:
+    dc_version, heat_version = "3.0.0", "1.0.0"
     catalog = SolverCatalog.discover()
     executor = SpawnSolverExecutor()
     progress: list[Any] = []
-    resources = SolverResourceServices(geometry_cache_path=str(tmp_path))
+    resources = SolverResourceServices(geometry_cache_path=str(tmp_path) if use_cache else None)
 
     async def report(value: Any) -> None:
         progress.append(value)
@@ -121,24 +122,25 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
-            "parameters": {"relativeTolerance": parameter(1e-9), "maxIterations": 500},
+            "parameters": {"relativeTolerance": parameter(1e-9)},
             "initializations": [
                 {
-                    "methodId": "dc.voxel-grid",
+                    "methodId": "dc.mesh",
                     "target": ["experiment.geometry.conductor"],
-                    "parameters": {"gridShape": parameter([6, 4, 4])},
-                }
+                    "parameters": {"maxElementSize": {"value": 0.15, "unit": "m"}},
+                },
+                {"methodId": "dc.conductor", "target": ["experiment.geometry.conductor"], "parameters": {}}
             ],
             "boundaryConditions": [
                 {
-                    "methodId": "dc.source-potential",
+                    "methodId": "dc.potential",
                     "target": ["experiment.surface.sourceTerminal"],
-                    "parameters": {"voltage": parameter(1.0)},
+                    "parameters": {"name": "source", "voltage": parameter(1.0)},
                 },
                 {
-                    "methodId": "dc.reference-potential",
+                    "methodId": "dc.potential",
                     "target": ["experiment.surface.referenceTerminal"],
-                    "parameters": {"voltage": parameter(0.0)},
+                    "parameters": {"name": "reference", "voltage": parameter(0.0)},
                 },
             ],
             "exports": [{"methodId": "dc.joule-heating", "key": "jouleHeating", "target": [], "parameters": {}}],
@@ -147,7 +149,7 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
                     "methodId": "dc.total-current",
                     "key": "totalCurrent", "boxGrid": output_box(),
                     "target": [],
-                    "parameters": {"gridShape": parameter([1, 1, 1]), "crossSectionPosition": parameter(0.5)},
+                    "parameters": {"gridShape": parameter([1, 1, 1]), "terminal": "source"},
                 },
             ],
         },
@@ -170,19 +172,21 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     electric_transaction.commit()
     joule = electric.exports["jouleHeating"]
     assert isinstance(joule, FieldValue)
-    assert joule.domain.shape == (6, 4, 4)
+    assert joule.values.shape == (len(joule.domain.cells["tet4"]),)
     assert electric.artifacts["totalCurrent"]["value"] > 0
+    np.testing.assert_allclose(electric.artifacts["totalCurrent"]["value"], 5.8e7 * .2 * .2, rtol=1e-9)
 
     heat_task = {
-        "kernel": {"name": "steady-state-heat", "version": heat_version},
+        "kernel": {"name": "heat-transfer", "version": heat_version},
         "config": {
-            "parameters": {"relativeTolerance": parameter(1e-9), "maxIterations": 500},
+            "parameters": {"relativeTolerance": parameter(1e-9)},
             "initializations": [
                 {
-                    "methodId": "heat.voxel-grid",
+                    "methodId": "heat.mesh",
                     "target": ["experiment.geometry.conductor"],
-                    "parameters": {"gridShape": parameter([6, 4, 4])},
-                }
+                    "parameters": {"maxElementSize": {"value": 0.15, "unit": "m"}},
+                },
+                {"methodId": "heat.body", "target": ["experiment.geometry.conductor"], "parameters": {}}
             ],
             "boundaryConditions": [
                 {
@@ -209,7 +213,7 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     }
     source = InputArtifact(
         "joule",
-        "caemble.dc/joule-heating@1",
+        "caemble.dc/joule-heating@2",
         "electric",
         "dc-current-density",
         dc_version,
@@ -219,8 +223,8 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
         joule,
     )
     heat_spec = TaskSpec(
-        "thermal", heat_task, catalog.descriptor("steady-state-heat", heat_version),
-        catalog.locator("steady-state-heat", heat_version), 3, {}, {}, {},
+        "thermal", heat_task, catalog.descriptor("heat-transfer", heat_version),
+        catalog.locator("heat-transfer", heat_version), 3, {}, {}, {},
     )
     thermal_transaction = await execute_solver(
         heat_spec,
@@ -238,5 +242,8 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     assert temperature.shape == (6, 4, 4, 1, 1, 1, 1)
     assert thermal.artifacts["maximumTemperature"]["value"] >= 300.0
     assert electric.state_patch.is_empty and thermal.state_patch.is_empty
-    assert len(FileResourceCache(tmp_path).entry_paths()) == 1
-    assert any(value.get("stage") == "output" for value in progress if isinstance(value, dict))
+    # Canonical surface and shared volume, reused by the thermal child.
+    assert len(FileResourceCache(tmp_path).entry_paths()) == (2 if use_cache else 0)
+    assert thermal.observations["sourcePower"] == pytest.approx(electric.observations["inputPower"], rel=1e-6)
+    assert thermal.observations["outwardPower"] == pytest.approx(electric.observations["inputPower"], rel=1e-6)
+    assert any(value.get("stage") == "heat-fem" for value in progress if isinstance(value, dict))

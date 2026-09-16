@@ -6,10 +6,10 @@ from dataclasses import replace
 from typing import Any
 
 import numpy as np
-from app.kernel.api import BundleValue, FieldValue, StructuredGridValue
+from app.kernel.api import BundleValue
 import pytest
 
-from app.methods.structured import VoxelDomain, structured_grid_value
+from app.methods.geometry import GeometryService
 from app.kernel.api import InputArtifact, SolverInvocation, SolverResult
 from app.kernel.execution import SpawnSolverExecutor
 from app.kernel.resources import StateStore
@@ -18,7 +18,7 @@ from app.kernel.catalog import SolverCatalog
 from tests.test_box_grid_outputs import grid
 
 _DC_ENTRY = "app.solvers.dc_current_density.entry"
-_HEAT_ENTRY = "app.solvers.steady_state_heat.entry"
+_HEAT_ENTRY = "app.solvers.heat_transfer.entry"
 _RAY_ENTRY = "app.solvers.ray_tracing.entry"
 
 
@@ -37,12 +37,12 @@ async def test_solver_entries_run_only_in_spawn_children() -> None:
     assert isinstance(dc, SolverResult)
     assert dc.state_patch.is_empty
     assert dc.artifacts["totalCurrent"]["value"] >= 0
-    assert dc.observations["iterations"] >= 0
+    assert dc.observations["relativeResidual"] < 1e-8
 
     assert isinstance(heat, SolverResult)
     assert heat.state_patch.is_empty
     assert 300 <= heat.artifacts["maximumTemperature"]["value"] <= 400
-    assert heat.observations["iterations"] >= 0
+    assert heat.observations["relativeResidual"] < 1e-8
 
     assert isinstance(ray, SolverResult)
     assert not ray.state_patch.is_empty
@@ -77,86 +77,57 @@ def _dc_invocation() -> SolverInvocation:
         config={
             "parameters": {
                 "relativeTolerance": {"value": 1e-8},
-                "maxIterations": {"value": 100},
             },
             "initializations": [
                 {
-                    "methodId": "dc.voxel-grid",
+                    "methodId": "dc.mesh",
                     "target": ["experiment.geometry.domain"],
-                    "parameters": {"gridShape": {"value": [3, 2, 2]}},
-                }
+                    "parameters": {"maxElementSize": {"value": 0.15, "unit": "m"}},
+                },
+                {"methodId": "dc.conductor", "target": ["experiment.geometry.domain"], "parameters": {}}
             ],
             "boundaryConditions": [
                 {
-                    "methodId": "dc.source-potential",
+                    "methodId": "dc.potential",
                     "target": ["experiment.surface.source"],
-                    "parameters": {"voltage": {"value": 1.0}},
+                    "parameters": {"name": "source", "voltage": {"value": 1.0}},
                 },
                 {
-                    "methodId": "dc.reference-potential",
+                    "methodId": "dc.potential",
                     "target": ["experiment.surface.reference"],
-                    "parameters": {"voltage": {"value": 0.0}},
+                    "parameters": {"name": "reference", "voltage": {"value": 0.0}},
                 },
             ],
             "outputs": [
                 {
                     "methodId": "dc.total-current",
                     "key": "totalCurrent", "boxGrid": grid(shape=(1,1,1), origin=(-.5,-.5,-.5)).geometry,
-                    "parameters": {"crossSectionPosition": {"value": 0.5}},
+                    "parameters": {"terminal": "source"},
                 }
             ],
         },
         state={},
         inputs={},
         world=_world(),
-        geometry=CubeGeometry(),
+        geometry=GeometryService(),
         progress=None,
-        descriptor=SolverCatalog.discover().descriptor("dc-current-density", "2.0.0"),
+        descriptor=SolverCatalog.discover().descriptor("dc-current-density", "3.0.0"),
     )
 
 
 def _heat_invocation() -> SolverInvocation:
-    domain = VoxelDomain(
-        shape=(3, 2, 2),
-        axis=np.asarray([1.0, 0.0, 0.0]),
-        length=1.0,
-        minimum_u=-0.5,
-        minimum_v=-0.5,
-        axial_spacing=1 / 3,
-        u_spacing=0.5,
-        v_spacing=0.5,
-        occupancy=np.ones(12, dtype=np.uint8),
-        occupied_count=12,
-    )
-    domain_ref = structured_grid_value(
-        domain,
-        geometry_hashes=["abi3-cube"],
-        root_ids=["solid"],
-        reference_length_unit="m",
-    )
-    source = InputArtifact(
-        artifact_id="joule",
-        artifact_type="caemble.dc/joule-heating@1",
-        producer_task="electric",
-        solver_name="dc-current-density",
-        solver_version="0.3.0",
-        output_name="jouleHeating",
-        state_revision=1,
-        data=None,
-        value=FieldValue(domain=domain_ref, location="cell", values=np.zeros((3, 2, 2), dtype=np.float64), quantity_kind="PowerDensity", unit="W.m-3"),
-    )
     return SolverInvocation(
         config={
             "parameters": {
                 "relativeTolerance": {"value": 1e-8},
-                "maxIterations": {"value": 100},
             },
             "initializations": [
                 {
-                    "methodId": "heat.voxel-grid",
+                    "methodId": "heat.mesh",
                     "target": ["experiment.geometry.domain"],
-                    "parameters": {"gridShape": {"value": [3, 2, 2]}},
-                }
+                    "parameters": {"maxElementSize": {"value": 0.15, "unit": "m"}},
+                },
+                {"methodId": "heat.body", "target": ["experiment.geometry.domain"], "parameters": {}}
             ],
             "boundaryConditions": [
                 {
@@ -175,11 +146,11 @@ def _heat_invocation() -> SolverInvocation:
             ],
         },
         state={},
-        inputs={"heatSource": source},
+        inputs={},
         world=_world(),
-        geometry=CubeGeometry(),
+        geometry=GeometryService(),
         progress=None,
-        descriptor=SolverCatalog.discover().descriptor("steady-state-heat", "2.0.0"),
+        descriptor=SolverCatalog.discover().descriptor("heat-transfer", "1.0.0"),
     )
 
 

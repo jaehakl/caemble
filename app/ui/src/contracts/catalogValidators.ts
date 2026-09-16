@@ -253,7 +253,7 @@ const kernelOutputMethodSchema = kernelMethodSchema.extend({
   artifactType: z.string(),
   data: kernelArtifactDataSpecSchema.and(
     z.object({
-      visualization: resultVisualizationSchema,
+      visualization: resultVisualizationSchema.optional(),
       recording: z.enum(['mesh-field', 'mesh-series', 'structured-field']).optional(),
       mesh: z
         .object({ version: z.literal(1), cellType: z.enum(['tet4', 'tri3']) })

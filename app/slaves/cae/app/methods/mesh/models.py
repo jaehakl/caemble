@@ -35,6 +35,9 @@ class VolumeMeshingProfile:
     grading: float = 0.3
     optimization_steps: int = 3
     minimum_quality: float = 0.0
+    region_max_element_sizes: tuple[tuple[str, float], ...] = ()
+    layer_axis: int | None = None
+    layer_subdivisions: tuple[tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
         max_element_size = float(self.max_element_size)
@@ -63,6 +66,18 @@ class VolumeMeshingProfile:
         object.__setattr__(self, "boundary_max_element_size", boundary_max_element_size)
         object.__setattr__(self, "grading", grading)
         object.__setattr__(self, "minimum_quality", minimum_quality)
+        sizes = tuple(sorted((str(root), float(size)) for root, size in self.region_max_element_sizes))
+        layers = tuple(sorted(self.layer_subdivisions))
+        if len(dict(sizes)) != len(sizes) or any(not root or not np.isfinite(size) or size <= 0 for root, size in sizes):
+            raise ValueError("region mesh sizes require unique roots and positive finite sizes")
+        if isinstance(self.layer_axis, bool) or self.layer_axis not in (None, 0, 1, 2):
+            raise ValueError("layer_axis must be 0, 1, 2 or None")
+        if len(dict(layers)) != len(layers) or any(not root or isinstance(count, bool) or not isinstance(count, int) or count < 1 for root, count in layers):
+            raise ValueError("layer subdivisions require unique roots and positive integer counts")
+        if layers and self.layer_axis is None:
+            raise ValueError("layer subdivisions require an explicit layer_axis")
+        object.__setattr__(self, "region_max_element_sizes", sizes)
+        object.__setattr__(self, "layer_subdivisions", layers)
 
 
 @dataclass(frozen=True, slots=True)

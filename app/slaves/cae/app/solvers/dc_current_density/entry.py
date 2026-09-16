@@ -1,8 +1,6 @@
-"""Build the conductor domain, solve its potential, and publish electrical outputs."""
+"""ABI 3 multi-material DC finite-element solve."""
 
-from __future__ import annotations
-
-from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult
+from app.kernel.api import SolverImplementation, SolverResult
 from app.kernel.api.world import scalar_parameter
 
 from .domain import build_dc_domain
@@ -10,29 +8,18 @@ from .formulation import solve_dc
 from .outputs import build_dc_outputs
 
 
-async def run(invocation: SolverInvocation) -> SolverResult:
+async def run(invocation):
     setup = await build_dc_domain(invocation)
-    result = await solve_dc(
-        setup,
-        scalar_parameter(invocation.config["parameters"]["relativeTolerance"]),
-        int(scalar_parameter(invocation.config["parameters"]["maxIterations"])),
-        invocation.progress,
-    )
-    artifacts, exports = await build_dc_outputs(
-            invocation.config,
-            invocation.descriptor,
-            result,
-            invocation.progress,
-        )
-    return SolverResult(
-        artifacts=artifacts, exports=exports,
-        observations={
-            "iterations": result.iterations,
-            "relativeResidual": result.relative_residual,
-        },
-    )
+    result = solve_dc(setup, scalar_parameter(invocation.config["parameters"]["relativeTolerance"]), invocation.cancellation)
+    artifacts, exports = build_dc_outputs(invocation.config, invocation.descriptor, result)
+    if invocation.progress is not None:
+        await invocation.progress({"stage": "dc-fem", "completed": 1, "total": 1})
+    return SolverResult(artifacts=artifacts, exports=exports, observations={
+        "relativeResidual": result.relative_residual,
+        "inputPower": result.input_power, "dissipatedPower": result.dissipated_power,
+        "currentImbalance": float(sum(result.terminal_currents.values())),
+        "powerImbalance": result.input_power - result.dissipated_power,
+    })
 
 
 implementation = SolverImplementation(abi_version=3, run=run)
-
-__all__ = ["implementation"]

@@ -27,6 +27,7 @@ other manual pages by title, keywords, or body. `docs show experiment`,
 - [CSG rigid body dynamics](development/rigid-body.md)
 - [Pressure acoustics and surface motion transfer](development/pressure-acoustics.md)
 - [CSG steady and transient incompressible flow](development/incompressible-flow.md)
+- [Steady multi-material electrothermal FEM](development/electrothermal.md)
 - [CAD elements](development/cad-elements.md)
 - [Documentation maintenance](development/documentation.md)
 - [SDKs](../app/sdk/README.md): independently distributed SDK documentation stays with the packages.

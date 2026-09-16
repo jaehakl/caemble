@@ -8,16 +8,19 @@ import numpy as np
 from app.kernel.api import BundleValue, FieldValue, StructuredGridValue
 
 from app.methods.coupling import project_structured_scalar_cell_averages
-from app.methods.finite_volume import create_scalar_finite_volume_system
+from app.methods.coupling.assembly import transfer_assembly_cell_field
+from app.methods.geometry import GeometryService
+from app.methods.mesh.models import VolumeMeshingProfile
+from app.methods.mesh.subdomain import VolumeSubdomain
 from app.methods.structured import (
     VoxelDomain,
     structured_grid_value,
 )
 from app.solvers.dc_current_density.domain import DcDomain
-from app.solvers.dc_current_density.formulation import DcSolution
+from app.solvers.dc_current_density.formulation import solve_dc
 from app.solvers.dc_current_density.outputs import build_dc_outputs
 from app.solvers.ray_tracing.outputs import PathCollector
-from app.solvers.steady_state_heat.formulation import _volume_source
+from tests.test_scalar_fem import layered_scene
 
 
 def _domain(shape: tuple[int, int, int]) -> VoxelDomain:
@@ -82,34 +85,26 @@ class StructuredCouplingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "same region"):
             project_structured_scalar_cell_averages(field, target_ref, source_spacing=field.domain.metadata["spacings"], target_spacing=target_ref.metadata["spacings"]).values
 
-    def test_heat_source_consumes_canonical_field_and_projects_to_target(self) -> None:
+    def test_new_heat_source_rejects_legacy_structured_fields(self) -> None:
         domain = _domain((2, 1, 1))
         domain_ref = _domain_ref(domain)
         values = np.asarray([[[2.0]], [[4.0]]])
         typed = FieldValue(domain=domain_ref, location="cell", values=values, quantity_kind="PowerDensity", unit="W.m-3")
 
-        np.testing.assert_allclose(_volume_source(typed, domain, 2.0, domain_ref), [1.0, 2.0])
-        target = _domain((4, 1, 1))
-        np.testing.assert_allclose(
-            _volume_source(typed, target, 2.0, _domain_ref(target)),
-            [1.0, 1.0, 2.0, 2.0],
-        )
+        with self.assertRaises(ValueError):
+            transfer_assembly_cell_field(typed, domain_ref, quantity_kind="PowerDensity", unit="W.m-3")
 
 
 class SolverOutputTests(unittest.TestCase):
     def test_dc_joule_heating_retains_its_canonical_domain(self) -> None:
-        domain = _domain((3, 1, 1))
-        domain_ref = _domain_ref(domain)
-        setup = DcDomain(domain, domain_ref, 1.0, 0.0, 1.0, None, True)
-        system = create_scalar_finite_volume_system(domain, 0.0, 1.0)
-        solution = DcSolution(
-            setup,
-            system,
-            np.asarray([1 / 6, 1 / 2, 5 / 6]),
-            np.asarray([1 / 6, 1 / 2, 5 / 6]),
-            0,
-            0.0,
-        )
+        mesh = asyncio.run(GeometryService().volume_mesh(layered_scene(), ("base", "metal"), "m", VolumeMeshingProfile(.2, layer_axis=2)))
+        domain = VolumeSubdomain.create(mesh, "output-assembly", ["metal"])
+        x = domain.field_domain.points[:, 0]
+        left, right = np.flatnonzero(np.isclose(x, -.5)), np.flatnonzero(np.isclose(x, .5))
+        fixed = {int(i): 1. for i in left}
+        fixed.update((int(i), 0.) for i in right)
+        conductivity = np.broadcast_to(np.eye(3), (len(domain.cell_ids), 3, 3))
+        solution = solve_dc(DcDomain(domain, conductivity, fixed, {"source": {"nodes": left, "voltage": 1.}, "reference": {"nodes": right, "voltage": 0.}}), 1e-8)
         config = {"outputs": [], "exports": [{"methodId": "dc.joule-heating", "key": "jouleHeating"}]}
         descriptor = {
             "methods": {
@@ -122,16 +117,14 @@ class SolverOutputTests(unittest.TestCase):
             }
         }
 
-        async def progress(_event: object) -> None:
-            return None
-
-        artifacts, exports = asyncio.run(build_dc_outputs(config, descriptor, solution, progress))
+        artifacts, exports = build_dc_outputs(config, descriptor, solution)
         field = exports["jouleHeating"]
         self.assertEqual(artifacts, {})
         self.assertIsInstance(field, FieldValue)
-        self.assertEqual(field.domain.identity, domain_ref.identity)
+        self.assertEqual(field.domain.identity, domain.field_domain.identity)
         self.assertIsInstance(field.values, np.ndarray)
-        self.assertEqual(field.domain.shape, field.values.shape)
+        self.assertEqual((len(domain.cell_ids),), field.values.shape)
+        self.assertAlmostEqual(float(field.values @ domain.elements.volumes), solution.input_power)
 
     def test_empty_ray_path_visualization_is_available_without_output_request(self) -> None:
         bundle = PathCollector(0).bundle()

@@ -105,6 +105,8 @@ def triangulate_planar_domains(
     maximum_edge_length: float,
     grading: float,
     optimization_steps: int,
+    *,
+    domain_max_element_sizes: Sequence[float] | None = None,
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """Triangulate a conforming planar arrangement with one Netgen domain per atom."""
 
@@ -227,6 +229,11 @@ def triangulate_planar_domains(
         raise ValueError("planar arrangement has the same domain on both sides of an edge")
 
     geometry = SplineGeometry()
+    if domain_max_element_sizes is not None:
+        if len(domain_max_element_sizes) != len(domain_contours):
+            raise ValueError("each planar domain requires one mesh size")
+        for domain, size in enumerate(domain_max_element_sizes, start=1):
+            geometry.SetDomainMaxH(domain, float(size))
     geometry_points = [geometry.AppendPoint(*point) for point in point_rows]
     for (start, end), (left_domain, right_domain) in sorted(edge_domains.items()):
         geometry.Append(
@@ -502,6 +509,8 @@ def generate_tetrahedral_mesh(
     descriptors: tuple[SurfaceDescriptor, ...],
     region_count: int,
     profile: VolumeMeshingProfile,
+    *,
+    region_max_element_sizes: Sequence[float] | None = None,
 ) -> TetrahedralMesh:
     from netgen.meshing import (
         Element2D,
@@ -560,6 +569,10 @@ def generate_tetrahedral_mesh(
         mesh.Add(Element2D(descriptor_numbers[int(marker)], [point_ids[int(i)] for i in face]))
     for region in range(region_count):
         mesh.SetMaterial(region + 1, f"region-{region}")
+    if region_max_element_sizes is not None:
+        if len(region_max_element_sizes) != region_count:
+            raise ValueError("region element sizes must match the material region table")
+        mesh.SetMaxHDomain([float(size) for size in region_max_element_sizes])
 
     try:
         mesh.GenerateVolumeMesh(
