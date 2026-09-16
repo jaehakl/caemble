@@ -107,6 +107,10 @@ async def test_state_and_artifact_share_canonical_field_resources(monkeypatch: p
 
     monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
+    run.configure_task("producer", outputs={"field": {"data": {
+        "dtype": "float64", "axes": [{"name": "x"}],
+        "quantityKind": "Dimensionless", "unit": "1",
+    }}})
     sim = SimulationApi(run)
     result = await sim.run(run.producer)
 

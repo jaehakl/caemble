@@ -2,6 +2,9 @@
 
 Read `../../../docs/development/solver-development.md` completely before editing this subtree for a Solver task.
 
+- Default partial-change validation is `python -m tests.run affected` from this directory. Review `affected --list` when scope is uncertain; HEAD comparison includes staged, unstaged and untracked changes, and `--base` changes the comparison revision. Maintain the explicit ownership table in `tests/selection.py` when adding source areas or consumers; unknown CAE source ownership must fail selection.
+- Use focused tests during implementation. Use `quick` for broader CPU integration and `full` only for explicitly requested full validation or release checks, once the implementation is settled. After fixing a failure, rerun its affected checks unless a new unresolved concern justifies broader validation. Do not automatically run unrelated FEM convergence tests for SPH output changes.
+- The runner defaults to four workers, worksteal distribution and one numerical-library thread per worker. Use `--jobs 1` for serial comparisons. Preserve numerical conditions, refinement levels, time windows, tolerances, real child execution and resource lifecycle assertions. Share only run-local CLI-built inputs; never cache Solver results or prior test passes. Report selected/excluded counts, elapsed time, slowest tests and shared input builds from `.work/cae-tests/<run>`.
 - Query and modify Solver contracts through `catalogctl --database <draft>` and its Draft SQLite workflow. Never use raw SQL or create a Solver `manifest.json`.
 - Add physics implementation only under `app/solvers/<solver_package>/` and keep solver-specific calculations there.
 - Do not add central registry branches or import Solver modules eagerly. The SQLite implementation locator is the registration mechanism.
