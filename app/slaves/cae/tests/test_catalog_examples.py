@@ -18,34 +18,12 @@ from app.kernel.execution import (
 )
 from app.kernel.transport import RecordPacket
 from app.kernel.transport.tensor import dtype_for
-from caemble_catalog import open_catalog
 
 
 @pytest.fixture(scope="module")
-def catalog_measurements(tmp_path_factory, request):
-    repo = Path(__file__).resolve().parents[4]
-    output = tmp_path_factory.mktemp("catalog-measurements")
-    with open_catalog() as catalog:
-        examples, _ = catalog.list_experiments(limit=100)
-    required = {item.callspec.params["key"] for item in request.session.items
-                if hasattr(item, "callspec") and "key" in item.callspec.params}
-    if any(item.name.startswith("test_structural_child_") for item in request.session.items):
-        required.add("structural-analysis-modes")
-    measurements = {}
-    for example in examples:
-        if example["key"] not in required:
-            continue
-        artifact = output / example["key"]
-        subprocess.run([
-            "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
-            "experiment", "build", "--example", example["coordinate"],
-            "--vars-mode", "nominal", "--out", str(artifact),
-        ], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8")
-        manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
-        assert len(manifest["items"]) == 1
-        item = json.loads((artifact / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
-        measurements[example["key"]] = item["measurement"]
-    return measurements
+def catalog_measurements(catalog_builds):
+    """Build on first access, sharing immutable inputs across modules and workers."""
+    return catalog_builds
 
 
 def decode_tensor_tree(schema, value, attachments):
@@ -98,7 +76,8 @@ def cylinder_segments(measurement):
     "curved-tower-shell", "boolean-connection-solid",
     "structural-nonlinear-materials", "structural-optical-results",
     "matched-impedance-duct", "plate-driven-duct",
-    "transient-matched-impedance-duct", "transient-plate-driven-duct",
+    "transient-matched-impedance-duct",
+    pytest.param("transient-plate-driven-duct", marks=pytest.mark.validation),
     "asymmetric-rigid-bodies", "sliding-contact",
     "hyperelastic-compression", "hyperelastic-tension",
     "mixed-mini-compression", "mixed-mini-cylinder-inflation",

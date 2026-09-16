@@ -138,7 +138,7 @@ async def test_mpm_affine_compression_initialization_and_fixed_base():
 @pytest.mark.parametrize("prefix,implementation", [("sph", sph), ("mpm", mpm)])
 async def test_catalog_native_visuals_and_immutable_resource_checkpoint(prefix, implementation):
     case = invocation(prefix)
-    descriptor = solver_catalog.descriptor(prefix, "2.0.0" if prefix == "mpm" else "1.0.0")
+    descriptor = solver_catalog.descriptor(prefix, "2.0.0" if prefix == "mpm" else "1.1.0")
     case.config["exports"] = [{"methodId": f"{prefix}.particles", "key": "native", "parameters": {}}]
     case = replace(case, descriptor=descriptor)
     result = await implementation(case)

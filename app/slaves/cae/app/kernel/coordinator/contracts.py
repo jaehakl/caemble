@@ -54,16 +54,11 @@ def validate_artifact_payload(
     if require_spatial_field and not isinstance(value, FieldValue):
         raise ValueError(f"{path} must be a FieldValue")
     if isinstance(value, (FieldValue, QuantityArrayValue)):
-        if isinstance(value, QuantityArrayValue):
-            if value.quantity_kind != contract.get("quantityKind") or value.unit != contract.get("unit"):
-                raise ValueError(f"{path} quantity or unit differs from its artifact contract")
+        if value.quantity_kind != contract.get("quantityKind") or value.unit != contract.get("unit"):
+            raise ValueError(f"{path} quantity or unit differs from its artifact contract")
         if require_spatial_field:
-            if value.location.value not in {"node", "edge", "face", "cell"}:
+            if value.location.value not in {"node", "edge", "face", "cell", "particle"}:
                 raise ValueError(f"{path}.location is not spatial")
-            if value.quantity_kind != contract.get("quantityKind"):
-                raise ValueError(f"{path}.quantityKind does not match its artifact contract")
-            if value.unit != contract.get("unit"):
-                raise ValueError(f"{path}.unit does not match its artifact contract")
         raw = value.values
     elif isinstance(value, Mapping):
         if "value" not in value:

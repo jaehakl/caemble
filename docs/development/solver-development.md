@@ -423,6 +423,12 @@ domain 참조가 생기지 않습니다. Resource와 mmap 경로는 동일한 ba
 array를 공유하는 view도 보존합니다. 읽기 전용 Field 표현을 만들 때 원본 계산
 배열의 writeable 설정은 바꾸지 않습니다.
 
+이 Field는 `ParticleSetValue` domain과 `FieldLocation.PARTICLE`을 가진 독립적인
+native export로 전달할 수 있습니다. 생산 결과의 commit과 소비자 typed input에
+같은 QuantityKind·단위 계약 검사를 적용하며, basis·components·입자 수와
+domain–location 대응은 기존 Resource 검증을 따릅니다. 생산 state를 해제해도
+Field artifact의 lease가 남아 있으면 좌표·ID·재료와 값은 계속 유효합니다.
+
 Particle Solver는 Geometry와 Material 및 생성 설정으로 입자를 생성하고,
 배열 순서를 영구 identity로 사용하지 않습니다. 첫 입자 Solver들은 생성 후
 입자 수가 고정됩니다. 호출 경계의 Particle 상태에는 다음 계산에 필요한
@@ -437,6 +443,13 @@ continuation state를 직접 계승할 수 있다는 뜻은 아닙니다.
 Cell 질량을 전체 cell 체적으로 나눈 밀도, 운동량을 전체 cell 체적으로 나눈
 운동량 밀도, 운동량을 질량으로 나눈 속도를 기록하며 빈 cell은 0입니다.
 출력 Box·해상도·표본 간격은 물리 계산의 격자와 시간적분을 결정하지 않습니다.
+
+SPH 압력은 관측 시점의 입자 중심을 같은 Box cell에 귀속하고 현재 입자 체적
+`m / rho`로 가중 평균합니다. 여기서 `rho`는 입자 자체의 재료 밀도이며 위의
+전체 cell 체적당 질량밀도가 아닙니다. 빈 cell의 압력은 0이고 gauge pressure의
+음수는 보존합니다. 같은 Box·gridShape·scope·시간 표본의 질량밀도를 함께 기록하면
+`질량밀도 > 0`으로 유효한 압력 0과 빈 cell을 구분할 수 있습니다. 공간 배치와
+가중 의미는 기존 Box Grid의 `configuration`과 `weighting`으로 전달합니다.
 
 StatePatch와 여러 Artifact를 한 번에 ingest할 때 동일한 domain과 array의
 공유 관계를 보존합니다. mmap으로 전달된 배열은 backing buffer를 재사용하며,
@@ -688,7 +701,8 @@ Solver child, 수치 결과와 ACK를 검증합니다. pytest에서 CLI의
 
 ### Runtime과 수치 검사
 
-Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
+Solver나 Runtime 경계를 변경할 때 변경 영향에 해당하는 다음 항목을 확인합니다.
+부분 수정마다 모든 Solver의 장시간 수렴 검사를 다시 실행하지 않습니다.
 
 - 현재 DC, Heat, Ray, FDTD와 모든 Catalog 예제가 새 계약으로 컴파일·실행
 - 제거된 Solver 버전과 ABI 1/2 요청이 fallback 없이 오류로 종료
@@ -707,14 +721,53 @@ Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
 - 반복 호출 후 child PID, mmap, child workspace와 run cache 정리
 - import-boundary 검사에서 resident Runtime의 Solver/Method eager import 차단
 
-CAE directory에서 같은 pytest 진입점으로 단위·의존 방향·CPU 통합 검사를
-실행합니다. CUDA 검사는 별도로 선택하고 실제 device가 없을 때의 skip을
-성공적인 GPU 검증으로 보고하지 않습니다.
+### 변경 영향 검사와 전체 CPU 회귀
+
+CAE 디렉터리의 기본 진입점은 `python -m tests.run affected`입니다. HEAD와
+현재 staged·unstaged·untracked 파일을 비교합니다. 커밋 범위를 검사할 때는
+`--base <ref>`를 지정하고, 실행 전에 `--list`로 선택된 검사와 이유를 확인합니다.
+
+| 모드 | 실행 범위 |
+| --- | --- |
+| `affected` | 변경된 Solver와 소비자, 공통 방법의 소비자, kernel의 계약·자원·child 전달 검사 |
+| `quick` | `cuda`와 장시간 `validation` 검사를 제외한 전체 CPU 검사 |
+| `full` | 기존 `pytest tests -m "not cuda"`와 같은 전체 CPU 검사 |
+
+수치 구현 변경은 해당 수렴 검사도 선택합니다. Catalog 변경은 CPU quick,
+Catalog 검사, 공식 예제 빌드로 연결하고, 문서만 바뀌면 문서 검사만 실행합니다.
+새 CAE 소스 경로의 검사 소유권이 등록되지 않으면 선택 오류를 보고합니다.
+CAE 소유 범위 밖의 변경은 별도로 표시하므로 해당 애플리케이션의 검사도
+수행해야 합니다. 선택 규칙은 `tests/selection.py`의 작은 명시적 표가 소유합니다.
 
 ```powershell
-poetry run python -m pytest tests -m "not cuda"
+poetry run python -m tests.run affected --list
+poetry run python -m tests.run affected
+poetry run python -m tests.run affected --base HEAD~1
+poetry run python -m tests.run quick
+poetry run python -m tests.run full
+# 수정 중에는 명시한 관련 검사만 실행할 수도 있습니다.
+poetry run python -m tests.run quick --tests tests/test_particle_field_handoff.py tests/test_sph_outputs.py
+poetry run python -m tests.run full --jobs 1
 poetry run python -m pytest tests/test_fdtd_cuda.py -m cuda
 ```
+
+실행 진입점은 기본 4개 pytest worker와 `worksteal` 분배를 사용하고,
+worker와 Solver child가 상속하는 BLAS·OpenMP 스레드를 1개로 제한합니다.
+`--jobs 1`은 직렬 실행입니다. 물리 조건, 수렴 허용오차, 메시 정련 단계,
+시뮬레이션 시간창은 변경하지 않습니다. CUDA 검사는 별도로 선택하고 실제
+device가 없을 때의 skip을 GPU 검증 성공으로 보고하지 않습니다.
+
+공식 예제 입력은 요청할 때만 공개 CLI로 빌드합니다. 같은 실행의 worker들은
+Catalog revision·예제 버전·변수·CLI bundle hash가 같은 빌드를 파일 잠금으로
+공유하고, 테스트에는 독립 복사본을 줍니다. Solver 실행 결과나 이전 실행의
+테스트 통과 결과는 재사용하지 않습니다.
+
+각 실행은 `.work/cae-tests/<run>`에 선택 이유, `events.jsonl`, `status.json`,
+`summary.json`을 남깁니다. 이벤트는 시작과 setup·call·teardown 종료마다
+기록되며, 요약에는 검사 수, 미완료 항목, 단계별 시간, 느린 검사와 공유 예제
+빌드 횟수가 포함됩니다. `--report`로 새 빈 디렉터리를 지정할 수 있습니다.
+부분 수정 중에는 관련 검사를 실행하고, 실행 구조나 공통 기반을 통합 검증할
+시점에만 `full`을 명시적으로 실행합니다.
 
 반복 자원 검사에서는 revision metadata 수, ResourceStore node 수, mmap 파일
 수를 따로 확인합니다. 호출 준비 비용과 전달 시간은 같은 입력으로 비교하며,

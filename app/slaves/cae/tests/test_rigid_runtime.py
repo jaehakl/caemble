@@ -2,9 +2,7 @@
 
 import asyncio
 import gc
-import json
 import multiprocessing
-import subprocess
 from copy import deepcopy
 from pathlib import Path
 
@@ -23,19 +21,9 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture(scope="module")
-def rigid_measurement(tmp_path_factory):
-    """Build only this example, even when the complete Catalog suite is collected."""
-    repo = Path(__file__).resolve().parents[4]
-    artifact = tmp_path_factory.mktemp("rigid-built") / "measurement"
-    subprocess.run([
-        "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
-        "experiment", "build", "--example", "asymmetric-rigid-bodies",
-        "--vars-mode", "nominal", "--out", str(artifact),
-    ], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8")
-    manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
-    assert len(manifest["items"]) == 1
-    item = json.loads((artifact / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
-    return item["measurement"]
+def rigid_measurement(catalog_builds):
+    """Use the same run-local build as the official-example checks."""
+    return catalog_builds["asymmetric-rigid-bodies"]
 
 
 def short_measurement(measurement, *, segments=32, subdivisions=2, duration=.06, window=.02):

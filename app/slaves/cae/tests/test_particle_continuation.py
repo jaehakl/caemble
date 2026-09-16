@@ -75,6 +75,12 @@ async def test_all_physical_state_matches_two_windows_and_one_window(particle_me
                 assert quantity.basis is None
             else:
                 assert_scaled_absolute_difference(quantity.basis, target.basis, f"{name}.basis")
+        if prefix == "sph":
+            for name in ("pressure", "density"):
+                output = split._artifacts.materialize(second["artifacts"][name])
+                expected_output = whole._artifacts.materialize(single["artifacts"][name])
+                assert_scaled_absolute_difference(output["value"], expected_output["value"], name)
+                np.testing.assert_array_equal(output["axes"][3]["ticks"], expected_output["axes"][3]["ticks"])
         if prefix == "dem":
             assert actual["contactHistory"].keys() == reference["contactHistory"].keys()
             assert reference["contactHistory"]

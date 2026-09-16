@@ -4,7 +4,6 @@ import asyncio
 import gc
 import json
 import multiprocessing
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -24,17 +23,16 @@ from tests.test_catalog_examples import decode_tensor_tree
 
 
 @pytest.fixture(scope="module", params=["dem-floor-contact", "sph-hydrostatic-column", "mpm-affine-compression"])
-def particle_measurement(request, tmp_path_factory):
-    repo = Path(__file__).resolve().parents[4]
-    artifact = tmp_path_factory.mktemp(request.param) / "measurement"
-    subprocess.run([
-        "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
-        "experiment", "build", "--example", request.param,
-        "--vars-mode", "nominal", "--out", str(artifact),
-    ], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8")
-    manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
-    assert len(manifest["items"]) == 1
-    return json.loads((artifact / manifest["items"][0]["file"]).read_text(encoding="utf-8"))["measurement"]
+def particle_measurement(request, catalog_builds):
+    example, grid_shape = (request.param, None) if isinstance(request.param, str) else request.param
+    measurement = catalog_builds[example]
+    if grid_shape is not None:
+        # Only the observation density changes; the Catalog physical model is intact.
+        for output in measurement["experiment"]["simulationProgram"]["tasks"]["particles"]["config"]["outputs"]:
+            if output["methodId"] in ("sph.pressure", "sph.mass-density"):
+                output["parameters"]["gridShape"] = list(grid_shape)
+                output["boxGrid"]["gridShape"] = list(grid_shape)
+    return measurement
 
 
 @pytest.mark.asyncio
@@ -136,10 +134,14 @@ async def test_particle_children_branch_reject_changed_clock_and_release(particl
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("particle_measurement", [
+    "dem-floor-contact", "sph-hydrostatic-column", "mpm-affine-compression",
+    pytest.param(("sph-hydrostatic-column", (12, 12, 12)), id="sph-pressure-attachments"),
+], indirect=True)
 async def test_particle_records_and_visualizations_survive_wire_storage_and_requery(particle_measurement, tmp_path):
     run = CaeRun(measurement=particle_measurement, max_run_seconds=90, job_id="particle-recording")
     run.start()
-    records, displays, sequences = {}, {}, []
+    records, displays, sequences, record_geometry = {}, {}, [], {}
     try:
         while True:
             packet = await asyncio.wait_for(run.queue.get(), timeout=100)
@@ -158,6 +160,9 @@ async def test_particle_records_and_visualizations_survive_wire_storage_and_requ
             sequences.append(packet.sequence)
             if packet.kind == "record":
                 records[packet.name] = decode_tensor_tree(run.schemas[packet.name], queried["data"], attachment_map)[""]
+                record_geometry[packet.name] = queried["data"]["boxGrid"]
+                if packet.name == "pressure" and record_geometry[packet.name]["gridShape"] == [12, 12, 12]:
+                    assert queried["data"]["storage"]["kind"] == "attachments" and attachment_map
             else:
                 for name, entry in queried["data"].items():
                     displays[name] = decode_tensor_tree(entry["schema"], entry["data"], attachment_map)
@@ -169,6 +174,8 @@ async def test_particle_records_and_visualizations_survive_wire_storage_and_requ
         expected_records = {"density", "velocity", "momentum"}
         if run.plan.task_specs["particles"].task["kernel"]["name"] == "mpm":
             expected_records.update({"displacement", "stress", "volumeRatio", "referenceStress", "energy"})
+        elif run.plan.task_specs["particles"].task["kernel"]["name"] == "sph":
+            expected_records.add("pressure")
         assert set(records) == expected_records
         assert all(values.ndim == 7 for values in records.values())
         assert len(displays) == 1
@@ -183,5 +190,25 @@ async def test_particle_records_and_visualizations_survive_wire_storage_and_requ
         assert native["times"][-1] == pytest.approx(clock["duration"]["value"])
         assert len(native["materialIndices"]) == len(native["particleIds"])
         assert sequences == sorted(set(sequences))
+        if "pressure" in records:
+            grid = record_geometry["pressure"]
+            assert grid["configuration"] == "current" and grid["weighting"] == "material-volume"
+            assert run.schemas["pressure"]["unit"] == "Pa"
+            for key in ("origin", "size", "rotation", "gridShape", "lengthUnit", "source", "rootId"):
+                assert grid[key] == record_geometry["density"][key]
+            edges = [np.linspace(0, size, count + 1) for size, count in zip(grid["size"], grid["gridShape"])]
+            cell_volume = np.prod(np.asarray(grid["size"]) / grid["gridShape"])
+            expected = []
+            for index, positions in enumerate(native["positions"]):
+                local = (positions - grid["origin"]) @ np.asarray(grid["rotation"])
+                volume = native["mass"][index] / native["density"][index]
+                denominator = np.histogramdd(local, bins=edges, weights=volume)[0]
+                numerator = np.histogramdd(local, bins=edges, weights=volume * native["pressure"][index])[0]
+                expected.append(np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 0))
+                mass = np.histogramdd(local, bins=edges, weights=native["mass"][index])[0]
+                np.testing.assert_allclose(records["density"][:, :, :, index, 0, 0, 0], mass / cell_volume, rtol=1e-13)
+            np.testing.assert_allclose(records["pressure"][:, :, :, :, 0, 0, 0], np.stack(expected, axis=3), rtol=1e-13)
+            assert np.all(records["pressure"][records["density"] == 0] == 0)
+            assert np.any((records["density"] > 0) & (records["pressure"] == 0))
     finally:
         await run.close()

@@ -73,10 +73,23 @@ Calculation에서는 이 수치 Output을 사용합니다. 자동 입자 시각�
 particle export는 `sim.record`나 Calculation 입력이 아닙니다.
 자세한 구분은 [RecordedData와 Viewer](program-domain-recording.md)를 참고하세요.
 
+SPH 압력 Output은 cell 안 입자의 현재 체적 `질량 / 입자 밀도`를 가중치로
+사용한 평균입니다. 입자 밀도는 그 입자의 재료 밀도이며, 위의 전체 cell 체적당
+질량밀도와 다릅니다. 입자 중심이 포함된 cell에 값을 모으므로 유체 경계의
+정확한 형상이나 cell 전체의 압력 적분을 나타내지는 않습니다.
+
+빈 cell에는 압력 0을 저장합니다. 압력과 **같은 Box·gridShape·scope·시간 표본**의
+질량밀도를 함께 기록하고 `질량밀도 > 0`인 cell을 유효영역으로 사용하세요.
+그러면 물질이 있는 cell의 실제 압력 0과 빈 공간을 구분할 수 있습니다.
+압력은 기준 밀도에 대한 gauge pressure이며 음수도 그대로 기록합니다.
+두 SPH 공식 예제는 압력과 질량밀도를 함께 기록합니다.
+
 저장된 Measurement와 CLI 로컬 결과는 실행 당시의 계약·단위·ID·Material 및 시간
 표본으로 다시 엽니다. 다른 Solver가 native particle export를 받을 수 있는지는
 그 Solver의 입력 계약에 따릅니다. 서로 다른 Solver의 continuation state를
 그대로 이어 쓰지는 않습니다.
+입자 속성 하나를 독립 particle Field로 전달하는 경우에도 그 Field의 domain에
+좌표·ID·Material 대응이 유지되며 소비 Solver의 typed input 계약을 따라야 합니다.
 
 ## 현재 지원 범위
 
@@ -93,5 +106,8 @@ particle export는 `sim.record`나 Calculation 입력이 아닙니다.
   보간 영역을 벗어나면 오류가 발생하므로 변형할 여유를 두세요.
   압축 예제는 초기 속도 구배로 운동을 시작하며, 지정한 속도로 계속 움직이는
   압반 경계조건은 지원하지 않습니다.
+  Neo-Hookean 유한변형 상태에서 양의 체적비와 유효한 재료 응답이 필요합니다.
+  timestep 축소로도 유효한 후보를 얻지 못하면 오류가 발생합니다. 기준/현재
+  배치의 응력 Output은 각각 해당 재료 체적으로 가중한 world Cauchy 응력입니다.
 - 세 Solver 모두 생성 이후 입자 수가 고정됩니다. 지원하지 않는 설정은
   다른 물리 모델로 바꾸어 계산하지 않고 오류로 알려 줍니다.

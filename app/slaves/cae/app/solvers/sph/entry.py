@@ -3,11 +3,12 @@
 import numpy as np
 
 from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverResult, StatePatch
-from app.methods.particles.outputs import build_outputs, native_values
+from app.methods.particles.outputs import native_values
 from app.methods.particles.time import advance_window, history_values, initial_window, read_settings
 
 from .domain import build_model, model_request
 from .formulation import pressure, stable_timestep, step
+from .outputs import build_outputs
 
 
 async def run(invocation):

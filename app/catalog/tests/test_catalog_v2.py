@@ -118,7 +118,7 @@ class CatalogV3Tests(unittest.TestCase):
             "ray-tracing": "2.0.0", "fdtd": "5.0.0",
             "structural-mechanics": "7.1.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
-            "dem": "1.0.0", "sph": "1.0.0", "mpm": "2.0.0",
+            "dem": "1.0.0", "sph": "1.1.0", "mpm": "2.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -127,7 +127,7 @@ class CatalogV3Tests(unittest.TestCase):
             for manifest in manifests:
                 package = manifest["descriptor"]["name"].replace("-", "_")
                 self.assertEqual(manifest["implementation"], f"app.solvers.{package}.entry:implementation")
-            for name, version in [("structural-mechanics", "6.0.0"), ("structural-mechanics", "6.1.0"), ("structural-mechanics", "7.0.0"), ("mpm", "1.0.0"), ("pressure-acoustics", "1.0.0")]:
+            for name, version in [("structural-mechanics", "6.0.0"), ("structural-mechanics", "6.1.0"), ("structural-mechanics", "7.0.0"), ("mpm", "1.0.0"), ("pressure-acoustics", "1.0.0"), ("sph", "1.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0"), ("structural-mechanics", "1.0.0"), ("structural-mechanics", "5.0.0"), ("aerodynamic-loading", "1.0.0"), ("hydrodynamic-loading", "1.0.0"), ("wind-turbine-control", "1.0.0")]:
@@ -139,14 +139,16 @@ class CatalogV3Tests(unittest.TestCase):
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.2",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.2",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",
-                    "dem-floor-contact": "1.0.1", "sph-hydrostatic-column": "1.0.1",
+                    "dem-floor-contact": "1.0.1", "sph-hydrostatic-column": "1.1.0",
                     "mpm-affine-compression": "2.0.0", "dem-two-material-collision": "1.0.0",
-                    "dem-incline-rolling": "1.0.0", "sph-periodic-channel": "1.0.0",
+                    "dem-incline-rolling": "1.0.0", "sph-periodic-channel": "1.1.0",
                 }.get(example["key"], "5.0.0")
                 self.assertEqual(example["version"], expected_version)
                 previous = "3.0.0" if example["repository"] == "fea" else {"asymmetric-rigid-bodies": "1.0.0", "gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")
                 if example["key"] == "mpm-affine-compression":
                     previous = "1.0.1"
+                elif example["key"].startswith("sph-"):
+                    previous = "1.0.1" if example["key"] == "sph-hydrostatic-column" else "1.0.0"
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:

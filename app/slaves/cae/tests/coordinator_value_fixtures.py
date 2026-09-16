@@ -102,3 +102,69 @@ async def invalid_particle_trial(invocation: SolverInvocation) -> SolverResult:
 particle_producer = SolverImplementation(abi_version=3, run=produce_particles)
 particle_consumer = SolverImplementation(abi_version=3, run=consume_particles)
 particle_invalid_trial = SolverImplementation(abi_version=3, run=invalid_particle_trial)
+
+
+async def produce_particle_field(invocation: SolverInvocation) -> SolverResult:
+    from dataclasses import replace
+
+    count = invocation.config["count"]
+    ids = np.arange(count, dtype=np.int64)[::-1].copy()
+    positions = np.column_stack((ids, ids + 1, ids + 2)).astype(float)
+    velocity = np.column_stack((ids, -ids, ids + 1)).astype(float)
+    particles = ParticleSetValue(
+        positions, "m", {"velocity": QuantityArrayValue(
+            "kinematics.Velocity", "m.s-1", velocity, np.eye(3), ("x", "y", "z")),
+            "mass": QuantityArrayValue("Mass", "kg", ids.astype(float) + 1)},
+        identity="reordered-particles", particle_ids=ids, material_indices=(ids % 2).astype(np.int32),
+        materials=tuple({"source": "experiment", "task": None, "name": name, "definition": {}}
+                        for name in ("first", "second")),
+        metadata={"time": 0.5, "provenance": {"rootIds": tuple(f"root-{i % 2}" for i in ids)}},
+    )
+    field = particles.attribute_field("velocity")
+    assert velocity.flags.writeable and positions.flags.writeable
+    assert not field.values.flags.writeable and not field.domain.positions.flags.writeable
+    fault = invocation.config.get("fault")
+    if fault == "quantity":
+        field = replace(field, quantity_kind="kinematics.Acceleration")
+    elif fault == "unit":
+        field = replace(field, unit="cm.s-1")
+    elif fault == "basis":
+        field = replace(field, basis=np.ones((3, 3)))
+    elif fault == "components":
+        field = replace(field, components=("x", "y"))
+    elif fault == "length":
+        field = replace(field, values=field.values[:-1])
+    elif fault == "particle-node":
+        field = replace(field, location="node")
+    elif fault == "mesh-particle":
+        field = replace(field, domain=UnstructuredMeshValue(
+            positions, np.array([[0, 1, 2]], dtype=np.int32), "m"))
+    return SolverResult(
+        state_patch=StatePatch().put("particles", particles), exports={"velocity": field},
+        observations={"pid": os.getpid()},
+    )
+
+
+async def consume_particle_field(invocation: SolverInvocation) -> SolverResult:
+    field = invocation.inputs["velocity"].value
+    assert isinstance(field, FieldValue) and isinstance(field.domain, ParticleSetValue)
+    domain = field.domain
+    ids = domain.particle_ids
+    assert field.location == "particle" and field.quantity_kind == "kinematics.Velocity"
+    assert field.unit == "m.s-1" and field.components == ("x", "y", "z")
+    np.testing.assert_array_equal(field.basis, np.eye(3))
+    np.testing.assert_array_equal(ids, np.arange(len(ids))[::-1])
+    np.testing.assert_array_equal(field.values, np.column_stack((ids, -ids, ids + 1)))
+    np.testing.assert_array_equal(domain.positions, np.column_stack((ids, ids + 1, ids + 2)))
+    np.testing.assert_array_equal(domain.material_indices, ids % 2)
+    assert [material["name"] for material in domain.materials] == ["first", "second"]
+    assert tuple(domain.metadata["provenance"]["rootIds"]) == tuple(f"root-{i % 2}" for i in ids)
+    assert domain.identity == "reordered-particles" and domain.metadata["time"] == 0.5
+    assert not domain.attributes and not invocation.state
+    assert not field.values.flags.writeable and not domain.positions.flags.writeable
+    assert not domain.particle_ids.flags.writeable and not domain.material_indices.flags.writeable
+    return SolverResult(artifacts={"answer": float(field.values.sum())}, observations={"pid": os.getpid()})
+
+
+particle_field_producer = SolverImplementation(abi_version=3, run=produce_particle_field)
+particle_field_consumer = SolverImplementation(abi_version=3, run=consume_particle_field)

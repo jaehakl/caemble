@@ -12,6 +12,9 @@ from app.solvers.structural_mechanics.solid_fields import evaluate_solid
 from app.methods.finite_element.tetrahedron import tetrahedron_quadrature
 
 
+pytestmark = pytest.mark.validation
+
+
 SPLIT = np.array([[0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6], [0, 5, 1, 6]])
 
 
@@ -233,6 +236,6 @@ def test_follower_cylinder_converges_to_independent_radial_bvp(poisson, record_p
         assert energy_gaps[-1] >= -1e-10
         assert solution.residual < 1e-8
     record_property('fixed_mu_radial_errors', np.asarray(errors).tolist())
-    record_property('strain_minus_equilibrium_energy', energy_gaps)
+    record_property('strain_minus_equilibrium_energy', np.asarray(energy_gaps).tolist())
     assert errors[-1][0] < errors[1][0] < errors[0][0], errors
     assert np.all(np.asarray(errors[-1]) < [.02, .05, .05, .02, .02]), errors

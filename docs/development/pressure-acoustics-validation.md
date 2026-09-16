@@ -199,7 +199,9 @@ resource 수는 0이고 buffer 디렉토리는 제거됐다.
 .\caemble.cmd experiment test .local/e2-build --out .local/e2-result --timeout 1800
 ```
 
-CAE 디렉토리의 CPU 전체 진입점은 `poetry run python -m pytest tests -m "not cuda"`다.
+부분 수정의 기본 검사는 `poetry run python -m tests.run affected`다.
+전체 CPU 검증이 필요할 때는 `poetry run python -m tests.run full`을 명시적으로
+실행한다. 기존 `pytest tests -m "not cuda"`도 같은 전체 검사 집합을 유지한다.
 수렴 수치를 JUnit에 남길 때는 `-o junit_family=xunit1 --junitxml=<path>`를
 추가한다. E2 harness의 1800 s 제한은 32개 구조 창의 측정 실행 비용을
 반영하며 기존 예제의 시간 제한이나 수치 허용오차는 바꾸지 않았다.

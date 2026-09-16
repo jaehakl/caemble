@@ -106,3 +106,21 @@ def test_only_explicit_symmetric_quantities_allow_six_tensor_components():
             data["boxGrid"]["components"] = labels
             data["axes"][-1].update(length=9, ticks=labels)
             validate_output_contracts(catalog, descriptor)
+
+
+def test_sph_pressure_contract_distinguishes_material_average_and_full_cell_density():
+    with open_catalog() as catalog:
+        descriptor = catalog.get_solver_manifest("sph", "1.1.0")["descriptor"]
+        validate_output_contracts(catalog, descriptor)
+    outputs = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
+    pressure, density = outputs["sph.pressure"], outputs["sph.mass-density"]
+    data = pressure["data"]
+    assert pressure["artifactType"] == "caemble.box-grid/sph/pressure@1"
+    assert (data["quantityKind"], data["unit"], data["dtype"]) == ("Pressure", "Pa", "float64")
+    assert data["boxGrid"] == {"version": 1, "sampling": "cell-average", "components": ["value"],
+                               "channels": ["value"], "channelUnits": ["Pa"],
+                               "configuration": "current", "weighting": "material-volume"}
+    assert pressure["parameters"] == density["parameters"]
+    assert pressure["target"] == density["target"]
+    assert "weighting" not in density["data"]["boxGrid"]
+    assert "rho_i" in pressure["description"] and "mass-density > 0" in pressure["description"]

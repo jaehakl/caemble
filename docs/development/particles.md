@@ -17,6 +17,12 @@ Particle의 위치, ID, Material index와 생성 root의 대응은 별도로 보
 소유하고, 일괄 ingest에서 같은 backing array를 공유한다. 큰 배열의 mmap과
 작은 배열의 child 직렬화 모두 immutable 접근을 유지한다.
 
+독립 native Field export에도 `particle` 위치를 허용한다. typed input을 받는
+child는 Field domain의 좌표·ID·재료 대응과 값만으로 해석하며 원래 Geometry나
+생산 state를 조회하지 않는다. 잘못된 domain–location, 물리량·단위·성분과
+입자 수는 공통 검증에서 거부한다. state와 export는 각각 lease를 가지며
+마지막 소유자가 해제될 때 backing buffer를 정리한다.
+
 호출 사이에는 준비된 물리 모델과 승인된 상태만 저장한다. DEM 접촉 이력,
 SPH 밀도, MPM 변형구배와 affine 계수도 포함한다. 탐색 트리와 배경 격자
 workspace는 child에서 재구성한다. 매 timestep에 Quantity 객체를 만들지 않는다.
@@ -73,6 +79,17 @@ Symplectic Euler의 내부 간격은 법선·접선 유효질량, 강성·감쇠
 정련한다. 출력 cell 평균과 입자 자체의 밀도는 정의가 다르므로
 압축성 오차 평가는 Particle 밀도로 수행한다.
 
+압력 Box Grid는 현재 위치에서 같은 cell에 귀속된 유체 입자의
+`sum((m/rho)*p) / sum(m/rho)`이다. 관측 시점의 재료 밀도와 압력을 사용하며
+ghost는 제외한다. `configuration: current`, `weighting: material-volume`은
+물질이 있는 부분의 입자 체적 가중 평균을 뜻한다. 입자 중심의 cell 귀속에
+따른 이산 관측이며 kernel 보간이나 유체 경계면의 체적 재구성은 아니다.
+
+기존 질량밀도 `sum(m) / cellVolume`, 입자 자체의 재료 밀도 `rho`, 위의
+평균 압력은 서로 다른 값이다. 빈 cell은 압력 0을 저장하고 음의 gauge
+pressure도 그대로 기록한다. 같은 Box·gridShape·scope·시간 표본의 질량밀도
+`> 0`을 유효영역으로 사용한다. 관측 설정이 다른 밀도와 압력을 조합하지 않는다.
+
 ## MPM
 
 Quadratic B-spline의 27개 격자 절점으로 APIC 질량·운동량을 전달한다.
@@ -92,7 +109,15 @@ currentVolume = referenceVolume J
 
 격자 힘에는 기준 체적과 Kirchhoff 응력 `P F^T`를 사용한다.
 출력 응력은 Cauchy 응력이다. `J <= 0`은 재료 반전 오류이며 보정하여
-통과시키지 않는다. 구성식은 MPM 패키지에 있고 FEM의 J2 경로를 변경하지 않는다.
+통과시키지 않는다. 구성식은 `methods.continuum.hyperelastic`에서 FEM과 공유하며
+MPM은 접선을 요청하지 않는다. FEM의 작은 변형률 J2 경로는 별개다.
+
+현재 변형의 음향 tensor에서 최대 파속을 구해 timestep을 제한한다. 재료
+상태가 유효하지 않으면 마지막 승인 상태에서 timestep을 줄여 재시도하고,
+양의 J·유한한 응답·강한 타원성이 확인된 후보만 승인한다. 고정 계산 격자
+이탈은 즉시 오류다. 기준 위치는 ID에 대응하는 모델 데이터로 보존하며
+기준/현재 관측의 체적 가중치는 각각 V0와 J V0다. 관측 시점의 F는 회전과
+log-stretch를 보간하고 응력·밀도·에너지를 다시 계산한다.
 
 ## 검증 근거
 
@@ -107,6 +132,8 @@ currentVolume = referenceVolume J
 | `test_particle_mpm.py` | APIC 보존과 affine 재현, 구성식 에너지 미분, 회전, 고정 격자와 수렴 |
 | `test_particle_methods.py` | Boolean cavity, 보존적인 Box Grid, 출력 간격 독립성, 시간창 경계 |
 | `test_particle_quantities.py` | 단위·Tensor·ID·재료 오류와 Field view 공유 |
+| `test_particle_field_handoff.py` | 독립 particle Field의 실제 child 전달, 재정렬 ID, state 해제 이후 소비, 실패 rollback과 마지막 lease 정리 |
+| `test_sph_outputs.py` | 현재 체적 가중 압력, 질량밀도 유효영역, 음압·빈 cell·회전 Box·scope |
 | `test_particle_runtime.py` | 세 Solver 실제 child, checkpoint 분기, 실패·취소 rollback, 기록·재조회·ACK·해제 |
 | `test_particle_faults.py` | 실제 Particle checkpoint 전달 중 child crash, rollback과 정상 재시도 |
 | `test_particle_continuation.py` | 실제 실행 계약의 연속·분할 실행에서 모든 물리량과 DEM 접촉 이력·소산 비교 |
@@ -133,7 +160,9 @@ PostgreSQL 검증에서는 실제 CLI 결과를 기존 staging·완료 경로로
 이 시험은 명시적인 로컬 DB 설정이 있을 때만 실행하며, 검증 후 임시 DB와
 컨테이너를 제거했다.
 
-전체 CPU 회귀는 `python -m pytest -m "not cuda"`로 실행한다. Catalog의
+부분 수정은 `python -m tests.run affected`로 검증하고, 전체 CPU 회귀는
+필요한 시점에 `python -m tests.run full`로 명시적으로 실행한다.
+[검사 선택·병렬 실행·보고 규약](solver-development.md#변경-영향-검사와-전체-cpu-회귀)을 따른다. Catalog의
 Draft build와 canonical publish 후에는 같은 revision으로 다시 build한다.
 로컬 `experiment test` 결과는 `data inspect --result`로 재조회한다.
 운영 배포와 원격 실행은 이 검증 범위에 포함하지 않는다.

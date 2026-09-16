@@ -29,6 +29,8 @@ torch = { source = "pytorch-cu126" }
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 pytest-asyncio = "^1.4.0"
+pytest-xdist = "^3.8.0"
+filelock = "^3.32.7"
 
 [[tool.poetry.source]]
 name = "pytorch-cu126"
@@ -41,4 +43,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["cuda: numerical checks on a real CUDA device (select explicitly with -m cuda)"]
+markers = [
+    "cuda: numerical checks on a real CUDA device (select explicitly with -m cuda)",
+    "validation: long numerical convergence or full-duration validation (included in full CPU)",
+]

@@ -104,14 +104,18 @@ retry is an explicit server action, and the worker never restarts computation it
 Run from this directory after installing the project and pytest dependencies:
 
 ```powershell
-poetry run python -m pytest tests -m "not cuda"
+poetry run python -m tests.run affected
+poetry run python -m tests.run quick
+poetry run python -m tests.run full
 poetry run python -m pytest tests/test_fdtd_cuda.py -m cuda
 ```
 
-The first command includes import-boundary, unit, lifecycle, and CPU integration
-tests, including all official Catalog bundles compiled through the UI and run
-as nominal Measurements with real child execution and record ACKs. These tests
-require the UI npm dependencies. The second opts into an actual CUDA execution and skips when CUDA is
+Use `affected` for partial changes, `quick` for broad integration checks, and
+`full` explicitly for all CPU tests, including long convergence and nominal
+Catalog execution with real children and record ACKs. The runner uses four
+workers and shares CLI-built inputs within the run. See the
+[test selection and reporting contract](solver-development.md#변경-영향-검사와-전체-cpu-회귀).
+These tests require the UI npm dependencies. The final command opts into actual CUDA execution and skips when CUDA is
 unavailable; report that skip separately from a GPU pass. Retain existing
 numerical tolerances. Compare revision metadata, retained resource nodes and
 mmap files separately when checking repeated calls.

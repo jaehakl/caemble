@@ -79,4 +79,4 @@ def test_solid_pure_moment_cantilever_converges_to_exact_three_dimensional_elast
         np.testing.assert_allclose(result.reaction[:, :3].sum(axis=0), 0., atol=2e-9)
     assert errors[2] < errors[1] < errors[0], errors
     assert errors[-1] < .01, errors
-    record_property("relative_tip_errors", errors)
+    record_property("relative_tip_errors", np.asarray(errors).tolist())

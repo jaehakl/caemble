@@ -1,11 +1,14 @@
+import base64
 import copy
 import hashlib
+import json
 import struct
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
+from caemble_catalog import open_catalog
 
 from box_grid_fixtures import box_schema, box_tensor
 from cae.db import CaeBatch
@@ -51,6 +54,27 @@ class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
         changed["boxGrid"]["configuration"] = "current"
         with self.assertRaisesRegex(ValueError, "metadata differs"):
             validate_box_grid_tensor(schema, changed)
+
+    def test_sph_pressure_and_density_preserve_values_and_meaning_after_attachment_storage(self):
+        with open_catalog() as catalog:
+            outputs = catalog.get_solver_manifest("sph", "1.1.0")["descriptor"]["methods"]["outputs"]
+        restored = {}
+        for method, values in (("sph.pressure", (-20., 0., 0.)), ("sph.mass-density", (8., 3., 0.))):
+            values = values * 3000  # Keep persisted values above the inline threshold.
+            schema = next(item["data"] for item in outputs if item["methodId"] == method)
+            tensor = box_tensor((len(values), 1, 1, 1, 1, 1, 1))
+            tensor["boxGrid"] = {**tensor["boxGrid"], **schema["boxGrid"]}
+            tensor["axes"][-2:] = [{"ticks": ["value"]}, {"ticks": ["value"]}]
+            raw = struct.pack(f"<{len(values)}d", *values)
+            tensor["storage"] = {"kind": "attachments", "ids": ["values"], "byteLength": len(raw)}
+            saved = persist_record(schema, tensor, {"values": raw})
+            queried = json.loads(json.dumps(saved))
+            validate_box_grid_tensor(schema, queried)
+            restored[method] = struct.unpack(f"<{len(values)}d", base64.b64decode(queried["storage"]["data"]))
+            self.assertEqual(restored[method], values)
+            self.assertEqual(queried["boxGrid"], tensor["boxGrid"])
+            self.assertEqual(queried["axes"], tensor["axes"])
+        self.assertEqual([value > 0 for value in restored["sph.mass-density"][:3]], [True, True, False])
 
     def fixture(self):
         visual_schema = {"vertices": {"dtype": "float32", "axes": [{}, {"length": 3}]}}

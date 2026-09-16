@@ -113,7 +113,7 @@ async def test_geometry_vars_preserve_semantic_surface_and_actual_waveform_hando
             assert np.all(np.diff(recorded_times) > 0) and recorded_times[-1] <= times[-1]
             assert np.max(abs(pressure["value"])) > 0.
             identities.append((velocity.domain.identity, restart["gridIdentity"]))
-            mesh_sizes.append((len(saved_structure["velocity"]), len(points), len(faces), tuple(expected_shape)))
+            mesh_sizes.append((len(saved_structure["velocity"]), len(points), len(faces), tuple(map(int, expected_shape))))
             assert len(run.trace) == 3 and all(call["status"] == "succeeded" for call in run.trace)
             sim.release(sound["artifacts"])
             sim.release(structure["artifacts"])
