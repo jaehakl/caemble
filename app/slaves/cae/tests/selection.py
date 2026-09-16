@@ -19,6 +19,13 @@ SOLVER_TESTS = {
     "dem": ("test_dem_*", "test_particle_final_review", "test_particle_*"),
     "sph": ("test_sph_*", "test_particle_*"),
     "mpm": ("test_particle_*",),
+    "incompressible_flow": ("test_incompressible_*",),
+}
+# These new tetrahedral methods currently have only one consumer. Broad ownership
+# would select unrelated long FEM/particle validation for a CFD-only addition.
+METHOD_FILE_CONSUMERS = {
+    "app/methods/finite_volume/tetrahedral.py": ("incompressible_flow",),
+    "app/methods/coupling/tetrahedral.py": ("incompressible_flow",),
 }
 METHOD_CONSUMERS = {
     "particles": PARTICLES,
@@ -26,13 +33,13 @@ METHOD_CONSUMERS = {
     "finite_element": ("structural_mechanics",),
     "rigid": ("structural_mechanics", "rigid_body", "dem"),
     "rays": ("ray_tracing",), "optics": ("ray_tracing",),
-    "finite_volume": ("dc_current_density", "steady_state_heat"),
+    "finite_volume": ("dc_current_density", "steady_state_heat", "incompressible_flow"),
     "finite_difference": ("fdtd", "pressure_acoustics"),
-    "mesh": ("structural_mechanics", "pressure_acoustics"),
+    "mesh": ("structural_mechanics", "pressure_acoustics", "incompressible_flow"),
     "geometry": tuple(SOLVER_TESTS), "structured": tuple(SOLVER_TESTS),
     "fields": tuple(SOLVER_TESTS), "coupling": tuple(SOLVER_TESTS),
     "assembly": ("structural_mechanics", "dc_current_density", "steady_state_heat"),
-    "linalg": ("structural_mechanics", "dc_current_density", "steady_state_heat", "pressure_acoustics"),
+    "linalg": ("structural_mechanics", "dc_current_density", "steady_state_heat", "pressure_acoustics", "incompressible_flow"),
     "nonlinear": ("structural_mechanics",), "time": ("structural_mechanics", "rigid_body", *PARTICLES),
 }
 KERNEL_TESTS = (
@@ -42,6 +49,7 @@ KERNEL_TESTS = (
     "test_solver_entries", "test_actual_solver_chain", "test_particle_field_handoff",
     "test_particle_runtime", "test_particle_faults", "test_rigid_runtime",
     "test_acoustic_transient_lifecycle", "test_regression_*",
+    "test_incompressible_runtime",
 )
 COMMON_TESTS = ("test_architecture_boundaries", "test_solver_entries", "test_material_models", "test_material_interactions")
 
@@ -112,9 +120,15 @@ def select_changes(paths: list[str]) -> Selection:
                 solver = parts[2]
                 result.solvers.add(solver)
                 # Output/visualization edits do not change convergence or long-time physics.
-                if solver in {"structural_mechanics", "pressure_acoustics"} and "outputs" not in parts:
+                if (solver in {"structural_mechanics", "pressure_acoustics", "incompressible_flow"}
+                        and not any(part in {"outputs", "outputs.py"} for part in parts[3:])):
                     result.validation = True
                 reason = f"{solver} tests and consuming interfaces"
+            elif local in METHOD_FILE_CONSUMERS:
+                consumers = METHOD_FILE_CONSUMERS[local]
+                result.solvers.update(consumers)
+                result.validation = True
+                reason = f"tetrahedral method and actual consumers: {', '.join(consumers)}"
             elif local.startswith("app/methods/") and len(parts) > 3 and parts[2] in METHOD_CONSUMERS:
                 consumers = METHOD_CONSUMERS[parts[2]]
                 result.solvers.update(consumers)

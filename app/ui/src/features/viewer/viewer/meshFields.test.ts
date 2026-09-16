@@ -97,6 +97,55 @@ function fixture(stress = false) {
 }
 
 describe('recorded mesh fields', () => {
+  it.each(['pressure', 'velocity'] as const)('restores a %s cell snapshot with its singleton time axis', (kind) => {
+    const input = fixture(true)
+    const vector = kind === 'velocity'
+    const schema = {
+      dtype: 'float64',
+      quantityKind: vector ? 'kinematics.Velocity' : 'Pressure',
+      unit: vector ? 'm.s-1' : 'Pa',
+      tensorOrder: 0,
+      axes: [
+        { name: 'cell', length: 1 },
+        { name: 'time', unit: 's', quantityKind: 'Time', length: 1 },
+        ...(vector ? [{ name: 'component', length: 3 }] : []),
+      ],
+    } as DataSchema
+    const value = vector ? [[[1, -2, 3]]] : [[-4]]
+    const axes = [
+      { implicitOrdinal: true as const },
+      { name: 'time', unit: 's', ticks: [0.0375] },
+      ...(vector ? [{ implicitOrdinal: true as const }] : []),
+    ]
+    const tensor = createDataTensor(schema, { value, axes })
+    const rules = input.rules.map((rule) => (rule.label === 'field.values' ? { ...rule, result: schema } : rule))
+    const data = {
+      ...input.data,
+      'field.values': tensor,
+      'field.quantity': createDataTensor({ dtype: 'string' }, { value: schema.quantityKind! }),
+      'field.valueUnit': createDataTensor({ dtype: 'string' }, { value: schema.unit! }),
+    }
+    const contracts: RecordedResultContracts = {
+      field: {
+        ...input.contracts.field,
+        visualization: {
+          kind: 'mesh-field',
+          coordinateSpace: 'experiment',
+          sampling: 'cell-average',
+          configuration: 'current',
+          ...(vector ? { components: ['x', 'y', 'z'] } : { valueKind: 'scalar' }),
+        },
+      },
+    }
+    expect(tensor.axes?.[1]).toEqual(axes[1])
+    const parsed = parseRecordedMeshFields(rules, data, contracts)
+    expect(parsed.errors).toEqual([])
+    expect(parsed.fields[0].componentCount).toBe(vector ? 3 : 1)
+    expect(parsed.fields[0].values).toEqual(new Float64Array(vector ? [1, -2, 3] : [-4]))
+    expect(parsed.fields[0].times).toBeUndefined()
+    const rendered = createMeshFieldRenderData(parsed.fields[0], { ...view, overlays: false })
+    expect(rendered.maximum).toBe(vector ? Math.sqrt(14) : -4)
+  })
   it('retains cell averaging and the compression-positive convention on reread', () => {
     const input = fixture(true)
     const semantic = resultVisualizationSchema.parse({

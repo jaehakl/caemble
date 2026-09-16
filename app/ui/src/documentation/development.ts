@@ -3,6 +3,7 @@ import page1 from '../../../../docs/development/solver-development.md?raw'
 import structuralMechanicsPage from '../../../../docs/development/structural-mechanics.md?raw'
 import rigidBodyPage from '../../../../docs/development/rigid-body.md?raw'
 import particlesPage from '../../../../docs/development/particles.md?raw'
+import incompressibleFlowPage from '../../../../docs/development/incompressible-flow.md?raw'
 import pressureAcousticsPage from '../../../../docs/development/pressure-acoustics.md?raw'
 import pressureAcousticsValidationPage from '../../../../docs/development/pressure-acoustics-validation.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
@@ -62,6 +63,14 @@ export const developmentDocuments: readonly DocumentPage[] = [
     sourcePath: 'docs/development/particles.md',
     keywords: ['DEM', 'SPH', 'MPM', 'Particle', 'Quantity', '검증'],
     content: documentBody(particlesPage),
+  },
+  {
+    id: 'development.incompressible-flow',
+    title: 'CSG 비압축성 정상·시간 유동',
+    summary: 'Stokes·Navier–Stokes 유동, 시간창 상태와 독립적인 체적 평균 관측',
+    sourcePath: 'docs/development/incompressible-flow.md',
+    keywords: ['Stokes', 'Navier-Stokes', 'incompressible', 'flow', 'CSG', '유체', '압력', '시간창'],
+    content: documentBody(incompressibleFlowPage),
   },
   {
     id: 'development.pressure-acoustics',

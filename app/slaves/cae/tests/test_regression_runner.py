@@ -41,6 +41,26 @@ def test_shared_constitutive_method_selects_fem_mpm_and_validation():
     assert selected_item(item("tests/test_particle_mpm.py::test_gravity"), selection, {})
 
 
+@pytest.mark.parametrize("path", ["finite_volume/tetrahedral.py", "coupling/tetrahedral.py"])
+def test_tetrahedral_flow_methods_select_cfd_validation_without_unrelated_convergence(path):
+    selection = select_changes([CAE_PREFIX + "app/methods/" + path, "app/catalog/caemble_catalog/catalog.sqlite3"])
+    assert selection.solvers == {"incompressible_flow"} and selection.quick
+    assert selected_item(item("tests/test_incompressible_physics.py::test_duct_convergence", validation=True), selection, {})
+    assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
+    assert not selected_item(item("tests/test_pressure_acoustics.py::test_convergence", validation=True), selection, {})
+    shared = select_changes([CAE_PREFIX + "app/methods/coupling/surface.py"])
+    assert "structural_mechanics" in shared.solvers and shared.validation
+
+
+def test_transient_flow_selects_its_convergence_and_outputs_keep_quick_scope():
+    numerical = select_changes([CAE_PREFIX + "app/solvers/incompressible_flow/transient.py"])
+    output = select_changes([CAE_PREFIX + "app/solvers/incompressible_flow/outputs.py"])
+    convergence = item("tests/test_incompressible_transient_physics.py::test_time_convergence", validation=True)
+    assert selected_item(convergence, numerical, {})
+    assert not selected_item(convergence, output, {})
+    assert selected_item(item("tests/test_incompressible_runtime.py::test_checkpoint"), output, {})
+
+
 def test_kernel_change_covers_real_children_without_long_physics():
     selection = select_changes([CAE_PREFIX + "app/kernel/coordinator/contracts.py"])
     for filename in ("test_particle_field_handoff", "test_mmap_executor", "test_rigid_runtime", "test_acoustic_transient_lifecycle"):
@@ -217,7 +237,7 @@ def test_stop(tmp_path):
     asyncio.run(run())
 ''', encoding="utf-8")
     report = tmp_path / "interrupted"
-    result = subprocess.run([sys.executable, "-m", "tests.run", "full", "--jobs", "2", "--tests", str(probe),
+    result = subprocess.run([sys.executable, "-m", "tests.run", "quick", "--jobs", "2", "--tests", str(probe),
                              "--report", str(report)], cwd=CAE, capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode != 0, result.stdout + result.stderr
     assert json.loads((tmp_path / "cleanup.json").read_text()) == {
@@ -241,7 +261,7 @@ def test_full_collection_matches_original_cpu_and_quick_omits_only_validation(tm
         selections[suite] = set(json.loads((report / "selected.json").read_text()))
     assert selections["full"] == baseline
     excluded = selections["full"] - selections["quick"]
-    assert len(excluded) == 9
-    assert all("test_mixed_benchmarks.py::" in name or
-               name.endswith("test_official_catalog_measurement_runs_and_acknowledges_every_record[transient-plate-driven-duct]")
-               for name in excluded)
+    validation = subprocess.run([sys.executable, "-m", "pytest", "tests", "-m", "not cuda and validation", "--collect-only", "-q"],
+                                cwd=CAE, check=True, capture_output=True, text=True, encoding="utf-8")
+    expected = {line.strip() for line in validation.stdout.splitlines() if line.startswith("tests/") and "::" in line}
+    assert excluded == expected

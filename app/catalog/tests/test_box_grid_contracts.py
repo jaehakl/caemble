@@ -1,4 +1,9 @@
 from copy import deepcopy
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
 
 import pytest
 
@@ -124,3 +129,170 @@ def test_sph_pressure_contract_distinguishes_material_average_and_full_cell_dens
     assert pressure["target"] == density["target"]
     assert "weighting" not in density["data"]["boxGrid"]
     assert "rho_i" in pressure["description"] and "mass-density > 0" in pressure["description"]
+
+
+def test_incompressible_outputs_separate_physical_time_material_averages_and_full_cell_density():
+    with open_catalog() as catalog:
+        manifest = catalog.get_solver_manifest("incompressible-flow", "2.0.0")
+        descriptor = manifest["descriptor"]
+        validate_output_contracts(catalog, descriptor)
+        example = catalog.experiment("incompressible-stokes-duct")
+    assert manifest["abiVersion"] == 3
+    assert manifest["implementation"] == "app.solvers.incompressible_flow.entry:implementation"
+    assert descriptor["parameters"]["gravity"]["required"] is False
+    assert descriptor["parameters"]["spatialResolution"]["data"]["unit"] == "m"
+    analysis = descriptor["parameters"]["analysis"]
+    assert analysis.get("required", True)
+    assert analysis["data"]["values"] == ["steady-stokes", "transient-navier-stokes"]
+    assert descriptor["materials"][0]["modelGroups"] == [
+        {"key": "constitutive", "required": True, "oneOf": ["fluidDynamics.newtonian-fluid@1"]},
+    ]
+    outputs = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
+    assert set(outputs) == {"flow.pressure", "flow.velocity", "flow.mass-density"}
+    for output in outputs.values():
+        time_axis, frequency_axis = output["data"]["axes"][3:5]
+        assert time_axis == {"name": "time", "quantityKind": "Time", "unit": "s"}
+        assert frequency_axis["length"] == 1 and frequency_axis["ticks"] == [0]
+        assert output["data"]["boxGrid"]["configuration"] == "current"
+        assert set(output["parameters"]) == {"gridShape", "scope"}
+        assert output["parameters"]["scope"]["required"] is False
+        assert output["parameters"]["scope"]["data"]["values"] == ["cumulative", "final"]
+        assert output["artifactType"] == "caemble.box-grid/incompressible-flow/" + output["methodId"][5:] + "@2"
+    for name in ("flow.pressure", "flow.velocity"):
+        assert outputs[name]["data"]["boxGrid"]["weighting"] == "material-volume"
+    assert "weighting" not in outputs["flow.mass-density"]["data"]["boxGrid"]
+    assert descriptor["methods"]["exports"] == []
+    assert set(descriptor["visualizations"]) == {"pressure", "velocity"}
+    for name, visual in descriptor["visualizations"].items():
+        assert visual["data"]["axes"][:2] == [
+            {"name": "cell"}, {"name": "time", "quantityKind": "Time", "unit": "s", "length": 1},
+        ]
+        assert visual["data"]["tensorOrder"] == 0
+        assert visual["data"]["recording"] == "mesh-field"
+        assert visual["artifactType"] == f"caemble.incompressible-flow/{name}-field@2"
+    assert descriptor["visualizations"]["velocity"]["data"]["axes"][2] == {
+        "name": "component", "length": 3, "ticks": ["x", "y", "z"],
+    }
+    boundaries = {item["methodId"]: item for item in descriptor["methods"]["boundaryConditions"]}
+    assert set(boundaries) == {"flow.no-slip", "flow.velocity-inlet", "flow.pressure-open"}
+    assert "minimum" not in boundaries["flow.pressure-open"]["parameters"]["pressure"]["data"]
+    assert all(item["target"]["minimumResolved"] == 1 for item in boundaries.values())
+    assert "pressureReference" in descriptor["observations"]
+    assert example["relatedSolvers"][0]["name"] == "incompressible-flow"
+    assert 'sim.release(flow["state"])' in example["sourceBundle"]["files"]["simulate.py"]
+
+
+def test_incompressible_transient_time_and_startup_example_keep_continuation_explicit():
+    with open_catalog() as catalog:
+        descriptor = catalog.get_solver_manifest("incompressible-flow", "2.0.0")["descriptor"]
+        startup = catalog.experiment("incompressible-startup-channel")
+        steady = catalog.experiment("incompressible-stokes-duct")
+    time = next(item for item in descriptor["methods"]["initializations"] if item["methodId"] == "flow.time")
+    assert (time["minimumOccurrences"], time["maximumOccurrences"]) == (0, 1)
+    assert all(time["target"][name] == 0 for name in
+               ("minimumTargets", "maximumTargets", "minimumResolved", "maximumResolved"))
+    assert set(time["parameters"]) == {"dt", "duration", "windowSize", "outputInterval"}
+    for parameter in time["parameters"].values():
+        assert parameter.get("required", True)
+        assert parameter["data"]["dtype"] == "float64"
+        assert parameter["data"]["quantityKind"] == "Time" and parameter["data"]["unit"] == "s"
+        assert parameter["data"]["minimum"] == 0
+        assert parameter["data"]["exclusiveMinimum"] is True
+    assert {"analysis", "time", "stepCount", "retryCount", "lastDt", "maxCourant"} <= set(descriptor["observations"])
+    for name in ("maxCourant", "maxNonlinearIterations"):
+        assert descriptor["parameters"][name]["required"] is False
+    sources = startup["sourceBundle"]["files"]
+    assert "analysis: 'transient-navier-stokes'" in sources["tasks/flow.tsx"]
+    assert "methodId: 'flow.time'" in sources["tasks/flow.tsx"]
+    assert 'state=previous["state"]' in sources["simulate.py"]
+    assert 'sim.release(previous["state"], keep=flow["state"])' in sources["simulate.py"]
+    assert "analysis: 'steady-stokes'" in steady["sourceBundle"]["files"]["tasks/flow.tsx"]
+
+
+@pytest.fixture(scope="module")
+def incompressible_cli():
+    """Build-only integration uses the installed checkout CLI; Catalog alone needs no Node."""
+    repo = Path(__file__).resolve().parents[3]
+    cli = repo / "app/ui/dist-cli/caemble.cjs"
+    node = shutil.which("node")
+    if node is None or not cli.is_file():
+        pytest.skip("Public build regression requires Node and app/ui npm run build:cli")
+    with open_catalog() as catalog:
+        files = catalog.experiment("incompressible-startup-channel")["sourceBundle"]["files"]
+    return repo, [node, str(cli), "--repo", str(repo)], files
+
+
+@pytest.mark.parametrize("case", [
+    "missing-analysis", "invalid-analysis", "removed-solver", "time-target", "duplicate-time",
+    "invalid-scope",
+    *[f"{name}-{value}" for name in ("dt", "duration", "windowSize", "outputInterval")
+      for value in ("missing", "zero", "negative")],
+])
+def test_incompressible_public_build_rejects_invalid_contracts(case, incompressible_cli, tmp_path):
+    repo, cli, files = incompressible_cli
+    source = files["tasks/flow.tsx"]
+    if case == "missing-analysis":
+        changed = re.sub(r"^\s*analysis: 'transient-navier-stokes',\n", "", source, count=1, flags=re.MULTILINE)
+        expected = "analysis"
+    elif case == "invalid-analysis":
+        changed = source.replace("analysis: 'transient-navier-stokes'", "analysis: 'navier-stokes'")
+        expected = "analysis"
+    elif case == "removed-solver":
+        changed = source.replace("version: '2.0.0'", "version: '1.0.0'")
+        expected = "no semantic Catalog contract"
+    elif case == "time-target":
+        changed = source.replace("target: []", "target: ['experiment.geometry.fluid']", 1)
+        expected = "target must contain 0..0 targets"
+    elif case == "duplicate-time":
+        start = source.index("      {\n        methodId: 'flow.time'")
+        end = source.index("    ],\n    boundaryConditions:", start)
+        changed = source[:end] + source[start:end] + source[end:]
+        expected = "flow.time"
+    elif case == "invalid-scope":
+        changed = source.replace("parameters: { gridShape:", "parameters: { scope: 'invalid', gridShape:", 1)
+        expected = "scope"
+    else:
+        name, value = case.split("-")
+        line = re.search(rf"^.*\b{name}: \{{[^\n]*\n", source, flags=re.MULTILINE).group()
+        replacement = "" if value == "missing" else re.sub(r"value: [\d.]+", "value: " + ("0" if value == "zero" else "-1"), line)
+        changed = source.replace(line, replacement, 1)
+        expected = name
+    assert changed != source, case
+    for name, content in files.items():
+        path = tmp_path / "source" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(changed if name == "tasks/flow.tsx" else content, encoding="utf-8")
+    result = subprocess.run([*cli, "experiment", "build", str(tmp_path / "source"),
+                             "--out", str(tmp_path / "build"), "--vars-mode", "nominal"],
+                            cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    diagnostic = result.stdout + result.stderr
+    assert result.returncode != 0, diagnostic
+    assert expected in diagnostic, diagnostic
+    assert not (tmp_path / "build" / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("scope", [None, "cumulative", "final"])
+def test_incompressible_public_build_freezes_scope_and_new_artifact_versions(scope, incompressible_cli, tmp_path):
+    repo, cli, files = incompressible_cli
+    for name, content in files.items():
+        if name == "tasks/flow.tsx" and scope is not None:
+            content = content.replace("parameters: { gridShape:", f"parameters: {{ scope: '{scope}', gridShape:")
+        path = tmp_path / "source" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    result = subprocess.run([*cli, "experiment", "build", str(tmp_path / "source"),
+                             "--out", str(tmp_path / "build"), "--vars-mode", "nominal"],
+                            cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads((tmp_path / "build" / "manifest.json").read_text(encoding="utf-8"))
+    item = json.loads((tmp_path / "build" / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
+    program = item["measurement"]["experiment"]["simulationProgram"]
+    task = program["tasks"]["flow"]
+    assert task["kernel"] == {"name": "incompressible-flow", "version": "2.0.0"}
+    assert task["config"]["parameters"]["analysis"] == "transient-navier-stokes"
+    for output in task["config"]["outputs"]:
+        assert output["parameters"].get("scope") == scope
+    for name in ("pressure", "velocity", "density"):
+        assert program["resultContracts"][name]["artifactType"].endswith("@2")
+    for native in program["visualizationContracts"]["flow"].values():
+        assert native["artifactType"].endswith("@2")

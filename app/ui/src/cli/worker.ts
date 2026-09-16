@@ -16,6 +16,7 @@ let requestContext: {
   referenceId: string
 } = { stage: 'worker-request', language: 'data', referenceId: 'diagnostic.cli' }
 async function main() {
+  process.stdin.setEncoding('utf8')
   let input = ''
   for await (const chunk of process.stdin) input += String(chunk)
   const request = JSON.parse(input)
