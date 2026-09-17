@@ -1,4 +1,5 @@
 import type { RecordedResultContracts } from '@/contracts/results'
+import type { ResultVisualization } from '@/contracts/solver'
 import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, type DataTensorAccessor } from '@/lib/cad/model/dataTensor'
 import type { ResultMetadata } from '@/contracts/resultMetadata'
@@ -14,7 +15,7 @@ export type RecordedMeshField = Readonly<{
   coordinateSpace?: string
   configuration?: 'reference' | 'current'
   sampling?: 'cell-average'
-  weighting?: 'reference-volume'
+  weighting?: ResultVisualization['weighting']
   signConvention?: 'compression-positive'
   nodeIds?: Int32Array
   times?: Float64Array

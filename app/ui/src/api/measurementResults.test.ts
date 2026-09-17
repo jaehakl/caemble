@@ -2,6 +2,56 @@ import { expect, it, vi } from 'vitest'
 import type { CaembleClient } from './http'
 import { readMeasurementResults } from './measurementResults'
 
+it.each([false, true])('preserves saved field weightings with an invalid sibling: %s', async (includeInvalid) => {
+  const fields = [
+    { name: 'pressure', weighting: 'material-volume', values: [[12]] },
+    { name: 'velocity', weighting: 'material-volume', values: [[1, 2, 3]] },
+    { name: 'traction', weighting: 'surface-area', values: [[4, 5, 6]] },
+    { name: 'stress', weighting: 'reference-volume', values: [[7, 8, 9, 0, 0, 0]] },
+    { name: 'unweighted', values: [[10]] },
+    ...(includeInvalid ? [{ name: 'broken', weighting: 'unknown', values: [[0]] }] : []),
+  ]
+  const entries = Object.fromEntries(
+    fields.map(({ name, weighting, values }) => [
+      name,
+      {
+        contract: {
+          artifactType: 'fixture/field@1',
+          visualization: { kind: 'mesh-field', sampling: 'cell-average', ...(weighting ? { weighting } : {}) },
+        },
+        schema: { values: { dtype: 'float64', axes: [{ name: 'cell' }, { name: 'component' }] } },
+        data: { values: { shape: [1, values[0].length], storage: { kind: 'inline', value: values } } },
+        provenance: {
+          task: 'flow',
+          solver: { name: 'fixture', version: '1' },
+          stateRevision: 1,
+          invocation: 1,
+          catalogRevision: 'frozen',
+        },
+      },
+    ]),
+  )
+  // Reproduce the JSON boundary used when reading an already saved Measurement.
+  const saved = JSON.parse(JSON.stringify({ visualizations: { flow: entries } }))
+  const client = {
+    request: vi.fn(async (_method, url, _body, options) =>
+      options.validate(url.endsWith('/visualizations') ? saved : { recorded_data: {}, result_contracts: {} }),
+    ),
+  } as unknown as CaembleClient
+
+  const result = await readMeasurementResults(client, 3)
+
+  expect(result.visualizations?.flow).toEqual(
+    Object.fromEntries(Object.entries(entries).filter(([name]) => name !== 'broken')),
+  )
+  expect(Object.keys(result.result_errors!)).toEqual(includeInvalid ? ['@visualizations.flow.broken'] : [])
+  if (includeInvalid) {
+    expect(JSON.parse(result.result_errors!['@visualizations.flow.broken'])).toEqual([
+      expect.objectContaining({ code: 'invalid_value', path: ['contract', 'visualization', 'weighting'] }),
+    ])
+  }
+})
+
 it('keeps valid results and frozen metadata when one result cannot be read', async () => {
   const contract = {
     task: 't',
