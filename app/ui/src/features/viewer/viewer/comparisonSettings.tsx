@@ -1,3 +1,4 @@
+import type { createComparisonCamera } from './comparisonCamera'
 import {
   createContext,
   useCallback,
@@ -32,9 +33,7 @@ export function createComparisonSettings() {
 }
 
 export type ComparisonSettings = ReturnType<typeof createComparisonSettings>
-export type ComparisonCamera = {
-  current: { initialized: true; camera: Record<string, unknown>; controls: Record<string, unknown> } | null
-}
+export type ComparisonCamera = ReturnType<typeof createComparisonCamera>
 export type ViewerComparison = {
   settings: ComparisonSettings
   item: string
@@ -50,12 +49,16 @@ export function useViewerComparison() {
   return useContext(ViewerComparisonContext)
 }
 
-/** Standalone viewers keep their existing local state; comparison viewers share it by item. */
-export function useViewerSetting<T>(name: string, initial: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
+/** Standalone viewers keep local state; comparisons share result settings by item and toolbar settings by workspace. */
+export function useViewerSetting<T>(
+  name: string,
+  initial: T | (() => T),
+  scope: 'item' | 'workspace' = 'item',
+): [T, Dispatch<SetStateAction<T>>] {
   const comparison = useViewerComparison()
   const [local, setLocal] = useState(initial)
   const settings = comparison?.settings
-  const key = `${comparison?.item ?? ''}:${name}`
+  const key = `${scope === 'workspace' ? '@workspace' : (comparison?.item ?? '')}:${name}`
   const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
   const snapshot = useCallback(
     () => (settings?.values.has(key) ? (settings.values.get(key) as T) : local),

@@ -1,3 +1,6 @@
+import { CadViewer } from './CadViewer'
+import { ComparisonToolbar } from './ComparisonToolbar'
+import { createComparisonCamera } from './comparisonCamera'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { prepareRender } from '@jscad/regl-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -246,7 +249,7 @@ it('fits delayed small geometry instead of saving the empty initial camera, incl
     controlsHost: null,
     controlsOwner: true,
     suspended: false,
-    camera: { current: null },
+    camera: createComparisonCamera(),
   }
   const props = {
     layers: [],
@@ -296,7 +299,7 @@ it('fits delayed small geometry instead of saving the empty initial camera, incl
   expect(Array.from(camera.target)).toEqual([0.0045000000000000005, 0.0025, 0.0015])
   expect(Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))).toBeLessThan(0.01)
   view.unmount()
-  expect(comparison.camera.current?.initialized).toBe(true)
+  expect(comparison.camera.current).not.toBeNull()
   expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
@@ -393,29 +396,38 @@ it('uses the current content center and size when the user requests full fit', (
   expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
-it('restores each comparison camera independently after a result renderer remounts', () => {
+it('shares camera gestures and one toolbar, preserving the pose through late mount and result replacement', () => {
+  const resizeCallbacks: (() => void)[] = []
   vi.stubGlobal(
     'ResizeObserver',
     class {
+      constructor(callback: () => void) {
+        resizeCallbacks.push(callback)
+      }
       observe() {}
       disconnect() {}
     },
   )
-  const settings = createComparisonSettings()
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const camera = createComparisonCamera()
   const preview: ViewerComparison = {
-    settings,
+    settings: createComparisonSettings(),
     item: 'signal',
     side: 'preview',
     controlsHost: null,
     controlsOwner: false,
     suspended: false,
-    camera: { current: null },
+    camera,
   }
-  const actual: ViewerComparison = { ...preview, side: 'actual', camera: { current: null } }
+  const actual: ViewerComparison = { ...preview, side: 'actual' }
   const props = {
     layers: [],
     lengthUnit: 'm' as const,
-    meshIdentity: 'first',
     onRenderStart: vi.fn(),
     onRenderEnd: vi.fn(),
     onRenderError: vi.fn(),
@@ -427,39 +439,156 @@ it('restores each comparison camera independently after a result renderer remoun
       cut: Infinity,
     },
   }
-  const view = render(
-    <>
+  const content = (showActual: boolean, result = 'first') => (
+    <StrictMode>
+      <ComparisonToolbar camera={camera} />
       <ViewerComparisonContext.Provider value={preview}>
-        <JscadViewer {...props} />
+        <JscadViewer {...props} key={`preview:${result}`} meshIdentity={result} />
       </ViewerComparisonContext.Provider>
-      <ViewerComparisonContext.Provider value={actual}>
-        <JscadViewer {...props} />
-      </ViewerComparisonContext.Provider>
-    </>,
+      {showActual && (
+        <ViewerComparisonContext.Provider value={actual}>
+          <JscadViewer
+            {...props}
+            key={`actual:${result}`}
+            meshIdentity={result}
+            meshRenderData={{ ...props.meshRenderData, bounds: { min: [10, 0, 0], max: [12, 2, 2] } }}
+          />
+        </ViewerComparisonContext.Provider>
+      )}
+    </StrictMode>
   )
-  const cameras = vi
-    .mocked(prepareRender)
-    .mock.calls.map(([options]) => (options as unknown as { camera: { position: number[]; target: number[] } }).camera)
-  cameras[0].position = [7, 8, 9]
-  cameras[0].target = [1, 2, 3]
-  cameras[1].position = [12, 13, 14]
+  const view = render(content(false))
+  const canvas = view.container.querySelector('canvas')!
+  fireEvent.wheel(canvas, { deltaY: -1 })
+  const beforeLateMount = structuredClone(camera.current)
+  view.rerender(content(true))
+  expect(camera.current).toEqual(beforeLateMount)
+  expect(screen.getAllByRole('button', { name: 'Set x camera view' })).toHaveLength(1)
+  const cameraObjects = () =>
+    vi.mocked(prepareRender).mock.calls.map(
+      ([options]) =>
+        (
+          options as unknown as {
+            camera: { position: number[]; target: number[]; up: number[]; fov: number; aspect: number }
+          }
+        ).camera,
+    )
+  const activeCameras = [cameraObjects()[1], cameraObjects().slice(-1)[0]!]
+  const expectSynchronized = () => {
+    for (const current of activeCameras) {
+      current.position.forEach((value, axis) => expect(value).toBeCloseTo(camera.current!.position[axis], 5))
+      expect(Array.from(current.target)).toEqual(camera.current!.target)
+    }
+  }
+  expectSynchronized()
+  const canvases = Array.from(view.container.querySelectorAll('canvas'))
+  for (const target of canvases) {
+    Object.assign(target, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+    for (const button of [0, 2]) {
+      const before = structuredClone(camera.current)
+      fireEvent.pointerDown(target, { button, buttons: button === 2 ? 2 : 1, clientX: 100, clientY: 100 })
+      fireEvent.pointerMove(target, { buttons: button === 2 ? 2 : 1, clientX: 130, clientY: 120 })
+      fireEvent.pointerUp(target, { button, clientX: 130, clientY: 120 })
+      expect(camera.current).not.toEqual(before)
+      expectSynchronized()
+    }
+    fireEvent.wheel(target, { deltaY: -1 })
+    expectSynchronized()
+  }
+  for (const direction of ['x', 'y', 'z', 'default']) {
+    fireEvent.click(screen.getByRole('button', { name: `Set ${direction} camera view` }))
+    expectSynchronized()
+  }
+  expect(camera.current!.target).toEqual([6, 1, 1])
+  const beforeResize = structuredClone(camera.current)
+  vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(new DOMRect(0, 0, 250, 600))
+  act(() => resizeCallbacks.forEach((callback) => callback()))
+  expect(camera.current).toEqual(beforeResize)
+  fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
+  expectSynchronized()
+  const finalPose = structuredClone(camera.current)
+  view.rerender(content(true, 'updated'))
+  expect(camera.current).toEqual(finalPose)
+  expect(camera.getSnapshot()).toHaveLength(2)
+  expect(props.onRenderError).not.toHaveBeenCalled()
   view.unmount()
-  render(
-    <>
-      <ViewerComparisonContext.Provider value={preview}>
-        <JscadViewer {...props} meshIdentity="updated" />
-      </ViewerComparisonContext.Provider>
-      <ViewerComparisonContext.Provider value={actual}>
-        <JscadViewer {...props} meshIdentity="updated" />
-      </ViewerComparisonContext.Provider>
-    </>,
+  expect(camera.getSnapshot()).toHaveLength(0)
+  expect(camera.current).toEqual(finalPose)
+})
+
+it('shares X-ray, selection mode and source visibility while keeping selection focus local', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
   )
-  const restored = vi
+  const camera = createComparisonCamera()
+  const preview: ViewerComparison = {
+    settings: createComparisonSettings(),
+    item: '',
+    side: 'preview',
+    controlsHost: null,
+    controlsOwner: false,
+    suspended: false,
+    camera,
+  }
+  const actual: ViewerComparison = { ...preview, side: 'actual' }
+  const scene = {
+    lengthUnit: 'm' as const,
+    parts: [{ id: 'body', geometry: primitives.cuboid({ center: [3, 0, 0] }), materialRole: 'body', surfaces: [] }],
+    tree: { key: 'root', label: 'Geometry', children: [] },
+    geometryGroups: [],
+    surfaceGroups: [],
+  }
+  const props = { onRenderStart: vi.fn(), onRenderEnd: vi.fn(), onRenderError: vi.fn() }
+  const content = (item: string) => (
+    <>
+      <ComparisonToolbar camera={camera} />
+      <ViewerComparisonContext.Provider value={{ ...preview, item }}>
+        <CadViewer
+          {...props}
+          experiment={{ scene }}
+          selectionQuery={{
+            kind: 'geometry',
+            match: 'exact',
+            origin: 'code',
+            scope: { source: 'experiment' },
+            value: 'body',
+          }}
+        />
+      </ViewerComparisonContext.Provider>
+      <ViewerComparisonContext.Provider value={{ ...actual, item }}>
+        <CadViewer {...props} experiment={{ scene, taskScenes: { other: scene } }} />
+      </ViewerComparisonContext.Provider>
+    </>
+  )
+  const view = render(content(''))
+  expect(screen.getAllByRole('button', { name: 'Toggle X-ray' })).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle X-ray' }))
+  expect(screen.getByRole('button', { name: 'Toggle X-ray' })).toHaveAttribute('aria-pressed', 'true')
+  const canvases = view.container.querySelectorAll('canvas')
+  fireEvent.click(screen.getByRole('button', { name: 'Selection mode geometry' }))
+  for (const canvas of canvases) expect(canvas.className).toContain('cursor-crosshair')
+  expect(screen.getAllByRole('button', { name: 'Focus Viewer on body' })).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Focus Viewer on body' }))
+  const cameras = vi
     .mocked(prepareRender)
     .mock.calls.slice(-2)
     .map(([options]) => (options as unknown as { camera: { position: number[]; target: number[] } }).camera)
-  expect(Array.from(restored[0].position)).toEqual([7, 8, 9])
-  expect(Array.from(restored[0].target)).toEqual([1, 2, 3])
-  expect(Array.from(restored[1].position)).toEqual([12, 13, 14])
+  for (const current of cameras) {
+    expect(Array.from(current.target)).toEqual(camera.current!.target)
+    current.position.forEach((value, axis) => expect(value).toBeCloseTo(camera.current!.position[axis], 5))
+  }
+  // Task exists only in the second pane, but the common control must remain usable.
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle task' }))
+  expect(screen.getByRole('button', { name: 'Toggle task' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
+  expect(screen.getAllByText('All Experiment geometry layers are hidden.')).toHaveLength(2)
+  view.rerender(content('other-result'))
+  expect(screen.getAllByText('All Experiment geometry layers are hidden.')).toHaveLength(2)
+  expect(screen.getByRole('button', { name: 'Toggle X-ray' })).toHaveAttribute('aria-pressed', 'true')
+  for (const canvas of canvases) expect(canvas.className).toContain('cursor-crosshair')
   expect(props.onRenderError).not.toHaveBeenCalled()
 })

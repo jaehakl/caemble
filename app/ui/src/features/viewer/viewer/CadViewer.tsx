@@ -1,6 +1,7 @@
+import { useViewerSetting } from './comparisonSettings'
 import type { HeatmapRenderData } from './structuredField'
 import type { MeshRenderData } from './meshFields'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
@@ -53,8 +54,8 @@ export function CadViewer({
   selectionSourceStatus,
   viewerExpanded,
 }: CadViewerProps) {
-  const [experimentVisible, setExperimentVisible] = useState(true)
-  const [taskVisible, setTaskVisible] = useState(true)
+  const [experimentVisible, setExperimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
+  const [taskVisible, setTaskVisible] = useViewerSetting('taskVisible', true, 'workspace')
   const content = useMemo(
     () => resolveCadViewerContent(experiment, experimentVisible, taskVisible, activeExperimentTaskName),
     [activeExperimentTaskName, experiment, experimentVisible, taskVisible],

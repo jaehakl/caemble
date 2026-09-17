@@ -1,3 +1,5 @@
+import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
+import { ComparisonToolbar } from '@/features/viewer/viewer/ComparisonToolbar'
 import { WorkbenchRibbonGroup } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -6,11 +8,7 @@ import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { SavedMeasurement } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
-import {
-  createComparisonSettings,
-  type ComparisonCamera,
-  type ViewerComparison,
-} from '@/features/viewer/viewer/comparisonSettings'
+import { createComparisonSettings, type ViewerComparison } from '@/features/viewer/viewer/comparisonSettings'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
 import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
@@ -77,8 +75,7 @@ export function MeasurementWorkspace({
   const [selectedResult, setSelectedResult] = useState('')
   const [comparisonSettings] = useState(createComparisonSettings)
   const [controlsHost, setControlsHost] = useState<HTMLDivElement | null>(null)
-  const previewCamera = useRef<ComparisonCamera['current']>(null)
-  const actualCamera = useRef<ComparisonCamera['current']>(null)
+  const [camera] = useState(createComparisonCamera)
   const [pcaRevision, setPcaRevision] = useState(0)
   const [projection, setProjection] = useState<MeasurementProjection | null>(null)
   const [pcaError, setPcaError] = useState('')
@@ -177,17 +174,18 @@ export function MeasurementWorkspace({
         ...common,
         side: 'preview',
         controlsOwner: controlsSide === 'preview',
-        camera: previewCamera,
+        camera,
       } as ViewerComparison,
       actual: {
         ...common,
         side: 'actual',
         controlsOwner: controlsSide === 'actual',
-        camera: actualCamera,
+        camera,
       } as ViewerComparison,
     }
   }, [
     comparisonSettings,
+    camera,
     selectedResult,
     controlsHost,
     active,
@@ -770,6 +768,7 @@ export function MeasurementWorkspace({
                     ))}
                   </select>
                 </label>
+                <ComparisonToolbar camera={camera} />
                 <div ref={setControlsHost} />
               </div>
               <div className="min-h-0 flex-1">

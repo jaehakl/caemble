@@ -1,3 +1,4 @@
+import { createComparisonCamera } from './comparisonCamera'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useMemo, useState } from 'react'
@@ -119,7 +120,7 @@ function Pair({
         controlsHost: host,
         controlsOwner: side === 'actual',
         suspended,
-        camera: { current: null },
+        camera: createComparisonCamera(),
       })),
     [settings, name, host, suspended],
   )
@@ -425,7 +426,7 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
       controlsHost: screen.getByTestId('toolbar-host'),
       controlsOwner: true,
       suspended: false,
-      camera: { current: null },
+      camera: createComparisonCamera(),
     },
   }
   const view = render(<WorkbenchViewer {...props} />)
