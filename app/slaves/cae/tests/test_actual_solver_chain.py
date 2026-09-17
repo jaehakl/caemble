@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.solver_chain_fixtures import output_box, parameter, world
+
 from pathlib import Path
 from typing import Any
 
@@ -14,107 +16,13 @@ from app.kernel.api import FieldValue, InputArtifact, SolverResourceServices
 from app.kernel.resources import FileResourceCache
 
 
-def scene() -> dict[str, Any]:
-    root = {
-        "id": "conductor-root",
-        "materialRole": "body",
-        "material": {"name": "Copper"},
-        "node": {
-            "kind": "primitive",
-            "nodeId": "conductor-node",
-            "primitive": "box",
-            "parameters": {"size": [1.0, 0.2, 0.2]},
-        },
-    }
-    return {
-        "geometryHash": "integration-box-v1",
-        "lengthUnit": "m",
-        "roots": [root],
-        "geometryGroups": [
-            {
-                "id": "geometry-conductor",
-                "name": "conductor",
-                "kind": "geometry",
-                "memberIds": ["conductor-root"],
-                "rootIds": ["conductor-root"],
-                "missingMemberIds": [],
-            }
-        ],
-        "surfaceGroups": [
-            {
-                "id": "surface-source",
-                "name": "sourceTerminal",
-                "kind": "surface",
-                "memberIds": ["conductor-node/surface/0"],
-                "selectors": [
-                    {"rootId": "conductor-root", "sourceNodeId": "conductor-node", "surfaceIndex": 0}
-                ],
-                "missingMemberIds": [],
-            },
-            {
-                "id": "surface-reference",
-                "name": "referenceTerminal",
-                "kind": "surface",
-                "memberIds": ["conductor-node/surface/1"],
-                "selectors": [
-                    {"rootId": "conductor-root", "sourceNodeId": "conductor-node", "surfaceIndex": 1}
-                ],
-                "missingMemberIds": [],
-            },
-        ],
-    }
-
-
-def world() -> dict[str, Any]:
-    materials = {
-        "Copper": {"models": {
-            "electrical": {"model": "electrical.ohmic-conduction@1", "parameters": {
-                "sigma": {"dtype": "float64", "value": (np.eye(3) * 5.8e7).tolist(), "unit": "S.m-1"},
-            }},
-            "thermal": {"model": "heat.fourier-conduction@1", "parameters": {
-                "k": {"dtype": "float64", "value": (np.eye(3) * 400).tolist(), "unit": "W.m-1.K-1"},
-            }},
-        }},
-    }
-    empty_task_scene = {
-        "geometryHash": "empty-task",
-        "lengthUnit": "m",
-        "roots": [],
-        "geometryGroups": [],
-        "surfaceGroups": [],
-    }
-    return {
-        "experiment": scene(),
-        "task": empty_task_scene,
-        "materialSelections": {
-            "conductor": {"Copper": {"conduction": "electrical"}},
-            "thermalDomain": {"Copper": {"conduction": "thermal"}},
-        },
-        "materials": {
-            "experiment": materials,
-            "task": {},
-        },
-    }
-
-
-def parameter(value: Any) -> dict[str, Any]:
-    return {"value": value}
-
-
-def output_box(shape=(1, 1, 1)):
-    return {"origin": [-0.5, -0.1, -0.1], "size": [1., 0.2, 0.2],
-            "rotation": np.eye(3).tolist(), "lengthUnit": "m", "gridShape": list(shape),
-            "source": "experiment", "rootId": "conductor-root"}
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize("use_cache", [True, False])
-async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path, use_cache: bool) -> None:
+async def test_dc_to_heat_runs_in_distinct_uncached_children(tmp_path: Path) -> None:
     dc_version, heat_version = "3.1.0", "2.0.0"
     catalog = SolverCatalog.discover()
     executor = SpawnSolverExecutor()
     progress: list[Any] = []
-    resources = SolverResourceServices(geometry_cache_path=str(tmp_path) if use_cache else None)
+    resources = SolverResourceServices()
 
     async def report(value: Any) -> None:
         progress.append(value)
@@ -243,7 +151,7 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path, use_cache: b
     assert thermal.artifacts["maximumTemperature"]["value"] >= 300.0
     assert electric.state_patch.is_empty and thermal.state_patch.is_empty
     # Canonical surface and shared volume, reused by the thermal child.
-    assert len(FileResourceCache(tmp_path).entry_paths()) == (2 if use_cache else 0)
+    assert len(FileResourceCache(tmp_path).entry_paths()) == 0
     assert thermal.observations["sourcePower"] == pytest.approx(electric.observations["inputPower"], rel=1e-6)
     assert thermal.observations["outwardPower"] == pytest.approx(electric.observations["inputPower"], rel=1e-6)
     assert any(value.get("stage") == "heat-fem" for value in progress if isinstance(value, dict))

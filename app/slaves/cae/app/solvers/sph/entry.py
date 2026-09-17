@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverInvocation, SolverResult, StatePatch
 from app.methods.particles.outputs import native_values
 from app.methods.particles.time import advance_window, history_values, initial_window, read_settings
 
@@ -11,7 +11,7 @@ from .formulation import pressure, stable_timestep, step
 from .outputs import build_outputs
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     clock = read_settings(invocation.config, "sph")
     request = model_request(invocation)
     saved = invocation.state.get("sph", {}).get(invocation.task_name)

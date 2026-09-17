@@ -8,7 +8,7 @@ import pytest
 from app.kernel.api import ContentKey, ParticleSetValue
 from app.kernel.coordinator import SimulationApi
 from app.kernel.coordinator.run import CaeRun
-from tests.test_particle_runtime import particle_measurement
+from tests.particle_fixtures import particle_measurement
 
 
 def assert_scaled_absolute_difference(actual, reference, name):

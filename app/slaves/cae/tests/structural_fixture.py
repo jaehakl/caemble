@@ -1,15 +1,24 @@
 """Explicit numerical fixtures; never a public Solver input path."""
 
-import hashlib
-import numpy as np
+from app.kernel.api import BundleValue, SolverInvocation
 from app.kernel.api.world import geometry_parts
-from app.solvers.structural_mechanics.domain import parameter, selected_material, update_fingerprint
+from app.kernel.catalog import solver_catalog
+from app.methods.geometry import GeometryService
+from app.methods.rigid.rotations import rotation_exp
+from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
 from app.solvers.structural_mechanics.beam import beam_frame, isotropic_beam_section, physical_beam_mass
 from app.solvers.structural_mechanics.constraints import revolute_joints
-from app.solvers.structural_mechanics.materials import orient_elasticity
+from app.solvers.structural_mechanics.domain import parameter, selected_material, update_fingerprint
+from app.solvers.structural_mechanics.materials import isotropic_elasticity, orient_elasticity
 from app.solvers.structural_mechanics.meshing import brick_mesh, cylinder_mesh, line_mesh, plate_mesh
-from app.solvers.structural_mechanics.model import Element, StructuralModel
+from app.solvers.structural_mechanics.model import Element, HarmonicSolution, StructuralModel
+from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.shells import laminate_section
+from app.solvers.structural_mechanics.state import append_history, configure_history, encode_state, initial_solution
+from dataclasses import replace
+from tests.box_grid_fixtures import grid
+from types import SimpleNamespace
+import hashlib, json, numpy as np
 
 
 def build_model(invocation):
@@ -278,3 +287,137 @@ def build_model(invocation):
     update_fingerprint(fingerprint, (points, node_ids, config, model.provenance, [(e.kind, e.nodes, e.material, e.section, e.root_id) for e in model.elements]))
     model.identity = fingerprint.hexdigest()
     return model
+
+
+def solid_invocation(resolution=.3, second=False):
+    roots = []
+    surfaces = []
+    for name, center in (("body", .5), ("extension", 1.5))[:2 if second else 1]:
+        roots.append({"id": name, "material": {"name": "Steel"}, "node": {
+            "kind": "transform", "nodeId": name + "-placement",
+            "matrix": [1, 0, 0, center, 0, 1, 0, .2, 0, 0, 1, .2, 0, 0, 0, 1],
+            "child": {"kind": "primitive", "nodeId": name + "-box", "primitive": "box", "parameters": {"size": [1, .4, .4]}},
+        }})
+        for index, face in enumerate(("left", "right", "front", "back", "bottom", "top")):
+            surfaces.append({"name": name + "-" + face, "selectors": [{"rootId": name, "sourceNodeId": name + "-box", "surfaceIndex": index}]})
+    scene = {"lengthUnit": "m", "roots": roots, "geometryGroups": [{"name": "all", "rootIds": [r["id"] for r in roots]}, *[{"name": r["id"], "rootIds": [r["id"]]} for r in roots]], "surfaceGroups": surfaces}
+    scene["geometryHash"] = hashlib.sha256(json.dumps(scene, sort_keys=True).encode()).hexdigest()
+    world = {"experiment": scene, "materialSelections": {"bodyDomain": {"Steel": {"constitutive": "solid"}}},
+             "materials": {"experiment": {"Steel": {"models": {"solid": {"model": "mechanics.isotropic-elastic@1", "parameters": {"E": 210e9, "nu": .3, "density": 7850.}}}}}}}
+    config = {
+        "parameters": {"analysis": "static", "geometricNonlinear": False, "spatialResolution": resolution, "relativeTolerance": 1e-9, "maxIterations": 30},
+        "initializations": [{"methodId": "fea.body", "target": ["experiment.geometry.all"], "parameters": {}}],
+        "boundaryConditions": [
+            {"methodId": "fea.fixed", "target": ["experiment.surface.body-left"], "parameters": {"components": ["x", "y", "z"]}},
+            {"methodId": "fea.surface-load", "target": ["experiment.surface." + ("extension" if second else "body") + "-right"], "parameters": {"force": [10000., 0., 0.], "moment": [0., 0., 0.], "referencePoint": [2. if second else 1., .2, .2]}},
+        ], "outputs": [],
+    }
+    return SolverInvocation(config, {}, {}, world, GeometryService(), None, {}, task_name="solid")
+
+
+def spring_model(mass=2., stiffness=50., damping=0., force=0.):
+    model = StructuralModel(np.array([0]), np.zeros((1, 3)), [], np.array([0]), np.empty(0, dtype=int), np.array([[force, 0., 0., 0., 0., 0.]]))
+    model.masses.append((0, mass, np.zeros((3, 3))))
+    model.springs.append((0, -1, 1., stiffness, damping))
+    return model
+
+
+def tetrahedron_motion():
+    points = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.], [2., 2., 2.]])
+    material = {"model": "mechanics.isotropic-elastic@1", "C": isotropic_elasticity(1e6, .25), "density": 1000.}
+    model = StructuralModel(
+        np.array([21, 22, 23, 24, 99]), points,
+        [Element("tet4", np.arange(4), material, root_id="solid")],
+        (6 * np.arange(4)[:, None] + np.arange(3)).ravel(), np.array([], dtype=int), np.zeros((5, 6)),
+        physical_node_count=4, identity="source-solid",
+        boundary_regions={"experiment.surface.radiating": {"faces": np.array([[0, 2, 1]]), "nodes": np.array([0, 1, 2]), "rootIds": ["solid"]}},
+    )
+    frequencies = np.array([25., 50.])
+    displacement = np.zeros((2, 5, 6), dtype=np.complex128)
+    displacement[0, :, :3] = (1 + 2j) * (points + [1., 2., 3.])
+    displacement[1, :, :3] = (-3 + .5j) * (points + [2., 1., 4.])
+    return model, HarmonicSolution(frequencies, displacement, np.zeros(2))
+
+
+def translation_case():
+    model = StructuralModel(np.array([42]), np.zeros((1, 3)), [], np.array([0]), np.empty(0, dtype=int), np.zeros((1, 6)), identity="mass-test")
+    model.masses = [(0, 2., np.zeros((3, 3)))]
+    model.gravity = np.array([9., 0., 0.])
+    solution = initial_solution(model)
+    solution.time = 1.
+    solution.acceleration[0, 0] = 18. / 5.
+    append_history(model, solution)
+    settings = {"dt": .01, "windowSize": .02, "duration": 2., "outputInterval": .01, "dampingMass": 0., "dampingStiffness": 0., "couplingTolerance": 1e-4, "maxCouplingIterations": 12, "relaxation": .5}
+    times = np.array([1., 1.01, 1.02])
+    load = BundleValue("caemble.mechanics/loads@1", {"modelIdentity": model.identity, "nodeIds": model.node_ids.astype(np.int32), "times": times, "forces": np.zeros((3, 1, 3)), "moments": np.zeros((3, 1, 3)), "addedMass": np.array([np.diag([3., 0., 0.])]), "couplingIteration": np.asarray(0, dtype=np.int32)})
+    invocation = SimpleNamespace(inputs={"loads": (SimpleNamespace(value=load),)}, config={"parameters": {"relativeTolerance": 1e-10, "maxIterations": 10, "geometricNonlinear": False}}, cancellation=None)
+    return model, solution, settings, invocation
+
+
+def joint_model():
+    points = np.array([[0., 0., 0.], [.4, 0., 0.], [.4, 1., .2]])
+    model = StructuralModel(np.arange(3), points, [], np.arange(18), np.empty(0, dtype=int), np.zeros((3, 6)))
+    model.links = [(0, 1, np.array([0, 1, 2, 4, 5])), (1, 2, np.arange(6))]
+    return model
+
+
+def loaded_rotating_beam(damped):
+    points = np.array([[-1., 0., 0.], [0., 0., 0.], [1., 0., 0.]])
+    stiffness, inertia = isotropic_beam_section(200., .25, 2., .2, np.array([.05, .02, .03]), np.array([.15, .15]))
+    section = {"stiffness": stiffness, "mass": inertia, "frame": np.eye(3)}
+    if damped:
+        section["damping"] = .003 * stiffness
+    elements = [Element("beam2", np.array([i, i + 1]), {"model": "mechanics.isotropic-elastic@1"}, section) for i in range(2)]
+    model = StructuralModel(np.arange(3), points, elements, np.arange(18), np.empty(0, dtype=int), np.zeros((3, 6)))
+    solution = initial_solution(model)
+    local_positions = points.copy(); local_positions[1, 1:] = [.03, -.02]
+    rotation = rotation_exp([1.1, -.7, .4])
+    solution.displacement[:, :3] = local_positions @ rotation.T - points
+    solution.orientations[:] = rotation
+    solution.orientations[1] = rotation @ rotation_exp([.04, -.03, .02])
+    omega = rotation @ [.8, .5, .3]
+    solution.velocity[:, :3] = np.cross(omega, local_positions @ rotation.T)
+    solution.velocity[:, 3:] = omega
+    force = np.zeros((3, 6))
+    force[2, :3] = rotation @ [.03, .06, -.04]
+    force[0, :3] = -force[2, :3]
+    force[2, 3:] = rotation @ [.01, -.02, .03]
+    matrices = prepare_matrices(model)
+    prepared = matrices
+    K = prepared.stiffness
+    M = prepared.mass
+    C = prepared.damping
+    beta = .004 if damped else 0.
+    solution = initialize_acceleration(model, solution, prepared, K, M, C, force.ravel(), True, damping_stiffness=beta)
+    return model, solution, matrices, force, beta
+
+
+def clock_invocation(duration, time, dt=.005, window=.05):
+    settings = {"dt": dt, "windowSize": window, "duration": duration, "outputInterval": .005 if dt >= .0025 else dt,
+                "dampingMass": 0., "dampingStiffness": 0., "couplingTolerance": 1e-4, "maxCouplingIterations": 12, "relaxation": .5}
+    config = {
+        "parameters": {"analysis": "transient", "relativeTolerance": 1e-10, "maxIterations": 10, "geometricNonlinear": False},
+        "initializations": [
+            {"methodId": "fea.nodes", "parameters": {"nodeIds": [1], "positions": [[0., 0., 0.]]}},
+            {"methodId": "fea.mass", "parameters": {"nodeId": 1, "mass": 1., "inertia": np.zeros((3, 3))}},
+            {"methodId": "fea.time", "parameters": settings},
+        ],
+        "boundaryConditions": [],
+        "outputs": [{"methodId": "fea.pitch-history", "key": "history", "boxGrid": grid(shape=(1,1,1), origin=(-.5,-.5,-.5)).geometry, "parameters": {"scope": "cumulative"}}],
+        "exports": [{"methodId": "fea.motion", "key": "motion", "parameters": {}}],
+    }
+    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "8.0.0"), task_name="structure")
+    model = build_model(invocation)
+    model.boundary_regions["experiment.surface.clock"] = {
+        "faces": np.empty((0, 3), dtype=int), "nodes": np.array([0]),
+        "weights": np.array([1.]), "area": 1., "rootId": "clock",
+        "referencePoint": np.zeros(3),
+    }
+    configure_history(model)
+    solution = initial_solution(model)
+    append_history(model, solution)
+    solution.time = time
+    if time > 0:
+        append_history(model, solution)
+    saved = encode_state(model, solution)
+    return replace(invocation, state={"structural_mechanics": {"structure": saved}}), model, solution, settings

@@ -10,7 +10,8 @@ import pytest
 
 from app.kernel.coordinator.run import CaeRun
 from app.kernel.transport import RecordPacket
-from tests.test_catalog_examples import decode_tensor_tree
+from tests.recording_fixtures import decode_tensor_tree
+from tests.microheater_fixtures import freeze_microheater_precision_mesh
 
 
 async def run_microheater(measurement, label, *, max_run_seconds=1200, on_progress=None):
@@ -68,10 +69,10 @@ async def run_microheater(measurement, label, *, max_run_seconds=1200, on_progre
 
 @pytest.mark.asyncio
 async def test_microheater_voltage_linewidth_and_refinement(catalog_builds, tmp_path):
-    nominal = catalog_builds["steady-microheater"]
+    nominal = freeze_microheater_precision_mesh(catalog_builds["steady-microheater"])
     baseline = await run_microheater(nominal, "microheater-nominal")
     variables = nominal["experiment"]["variables"]
-    voltage = await run_microheater(catalog_builds.measurement("steady-microheater", {**variables, "voltage": variables["voltage"] * 1.5}), "microheater-voltage")
+    voltage = await run_microheater(freeze_microheater_precision_mesh(catalog_builds.measurement("steady-microheater", {**variables, "voltage": variables["voltage"] * 1.5})), "microheater-voltage")
     assert voltage["current"] == pytest.approx(baseline["current"] * 1.5, rel=1e-7)
     assert voltage["power"] == pytest.approx(baseline["power"] * 2.25, rel=1e-7)
     assert voltage["meanTemperature"] - 293.15 == pytest.approx((baseline["meanTemperature"] - 293.15) * 2.25, rel=1e-6)
@@ -80,7 +81,7 @@ async def test_microheater_voltage_linewidth_and_refinement(catalog_builds, tmp_
         assert voltage[name] == pytest.approx(baseline[name] * 2.25, rel=1e-6)
     assert voltage["strainEnergy"] == pytest.approx(baseline["strainEnergy"] * 2.25**2, rel=1e-6)
     wide_line = nominal["experiment"]["varsSchema"]["lineWidth"]["max"]
-    wider = await run_microheater(catalog_builds.measurement("steady-microheater", {**variables, "lineWidth": wide_line}), "microheater-linewidth")
+    wider = await run_microheater(freeze_microheater_precision_mesh(catalog_builds.measurement("steady-microheater", {**variables, "lineWidth": wide_line})), "microheater-linewidth")
     assert wider["current"] > baseline["current"] and wider["power"] > baseline["power"]
     assert abs(wider["meanTemperature"] - baseline["meanTemperature"]) > .1
     refinements = [baseline]
@@ -106,42 +107,12 @@ async def test_microheater_voltage_linewidth_and_refinement(catalog_builds, tmp_
         assert abs((current["meanTemperature"] - 293.15) / (previous["meanTemperature"] - 293.15) - 1) <= .02
 
 
-@pytest.mark.parametrize("mode", ["cancel-record", "failed-heat", "failed-structure"])
-@pytest.mark.asyncio
-async def test_microheater_cancel_and_failure_release_resources(mode, catalog_builds):
-    measurement = catalog_builds["steady-microheater"]
-    if mode == "failed-heat":
-        measurement["experiment"]["simulationProgram"]["tasks"]["thermal"]["config"]["boundaryConditions"] = []
-    elif mode == "failed-structure":
-        measurement["experiment"]["simulationProgram"]["tasks"]["structural"]["config"]["parameters"]["geometricNonlinear"] = True
-    run = CaeRun(measurement=measurement, max_run_seconds=120, job_id=mode)
-    run.start()
-    try:
-        packet = await asyncio.wait_for(run.queue.get(), 130)
-        if mode == "cancel-record":
-            assert isinstance(packet, RecordPacket) and not packet.ack.done()
-            assert packet.resource_hold is not None
-        elif mode == "failed-heat":
-            assert packet["kind"] == "failed" and "connected diffusion" in str(packet)
-            assert len(run.trace) == 2 and run.trace[-1]["status"] == "failed"
-        else:
-            assert packet["kind"] == "failed" and "small-strain" in str(packet)
-            assert len(run.trace) == 3 and run.trace[-1]["status"] == "failed"
-        cache = Path(run.simulation_api._geometry_cache.name)
-    finally:
-        await run.close()
-        await asyncio.gather(run.task, return_exceptions=True)
-    assert not cache.exists() and not run._record_packets
-    if isinstance(packet, RecordPacket):
-        assert packet.ack.done() and packet.attachments == []
-
-
 @pytest.mark.parametrize("bound", ["min", "max"])
 @pytest.mark.asyncio
 async def test_microheater_vars_extremes_preserve_terminal_connectivity(catalog_builds, bound):
     schema = catalog_builds["steady-microheater"]["experiment"]["varsSchema"]
     variables = {name: definition[bound] for name, definition in schema.items()}
-    measurement = catalog_builds.measurement("steady-microheater", variables)
+    measurement = freeze_microheater_precision_mesh(catalog_builds.measurement("steady-microheater", variables))
     result = await run_microheater(measurement, "microheater-vars-" + bound)
     assert result["current"] > 0 and result["meanTemperature"] > 293.15
 

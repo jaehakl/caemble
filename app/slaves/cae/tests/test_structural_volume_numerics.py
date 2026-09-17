@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from scipy import sparse
-from tests.test_box_grid_outputs import grid
+from tests.box_grid_fixtures import grid
 from app.kernel.catalog import solver_catalog
 
 from app.kernel.resources import ResourceStore
@@ -316,7 +316,6 @@ def test_physical_field_excludes_reference_nodes_and_section_integrates_tet_trac
     np.testing.assert_allclose(artifacts["moment"]["value"].reshape(3), [0.,12.8/15,-12.8/15])
 
 
-
 def test_box_stress_samples_one_volume_and_visualization_preserves_both_volumes():
     points = np.vstack((TETRAHEDRON, TETRAHEDRON + [2., 0., 0.]))
     material = {"model": "mechanics.isotropic-elastic@1", "C": isotropic_elasticity(1., .2), "density": 1.}
@@ -437,7 +436,6 @@ def test_attachment_support_wrench_is_conserved_on_physical_field_and_history():
             assert restored.metadata["regionReferences"] == {target: 4}
     finally:
         resources.close()
-
 
 
 def test_box_plastic_strain_uses_tensor_shear_without_mutating_native_history():

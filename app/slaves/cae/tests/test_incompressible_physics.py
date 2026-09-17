@@ -1,5 +1,7 @@
 """Independent steady Stokes references on skew tetrahedral control volumes."""
 
+from tests.flow_fixtures import pressure_duct_boundaries
+
 import asyncio
 from itertools import combinations
 from types import SimpleNamespace
@@ -14,19 +16,7 @@ from app.methods.geometry import GeometryService
 from app.methods.finite_volume.tetrahedral import create_fv_mesh
 from app.solvers.incompressible_flow.domain import build_domain
 from app.solvers.incompressible_flow.formulation import solve_stokes
-from tests.test_incompressible_methods import tetrahedral_box
-
-
-def pressure_duct_boundaries(mesh, pressure_drop=1.):
-    boundary = mesh.neighbour < 0
-    lower, upper = mesh.points[:, 0].min(), mesh.points[:, 0].max()
-    inlet = boundary & np.isclose(mesh.face_centers[:, 0], lower)
-    outlet = boundary & np.isclose(mesh.face_centers[:, 0], upper)
-    velocity = np.full((len(mesh.faces), 3), np.nan)
-    pressure = np.full(len(mesh.faces), np.nan)
-    velocity[boundary & ~inlet & ~outlet] = 0
-    pressure[inlet], pressure[outlet] = pressure_drop, 0
-    return velocity, pressure, inlet, outlet
+from tests.flow_fixtures import tetrahedral_box
 
 
 def rectangular_duct_reference(points, pressure_gradient=.5, viscosity=1., width=1., height=1.):

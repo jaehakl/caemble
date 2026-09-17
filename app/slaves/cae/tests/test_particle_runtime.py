@@ -1,5 +1,7 @@
 """CLI-built DEM, SPH and MPM through child transactions and ACK-owned records."""
 
+from tests.particle_fixtures import particle_measurement
+
 import asyncio
 import gc
 import json
@@ -19,20 +21,7 @@ from app.kernel.coordinator.run import CaeRun
 from app.kernel.execution import MmapPayloadCodec, RemoteSolverError, SpawnSolverExecutor
 from app.kernel.transport import RecordPacket
 from sdk.protocol.packets import receive_packet, send_packet
-from tests.test_catalog_examples import decode_tensor_tree
-
-
-@pytest.fixture(scope="module", params=["dem-floor-contact", "sph-hydrostatic-column", "mpm-affine-compression"])
-def particle_measurement(request, catalog_builds):
-    example, grid_shape = (request.param, None) if isinstance(request.param, str) else request.param
-    measurement = catalog_builds[example]
-    if grid_shape is not None:
-        # Only the observation density changes; the Catalog physical model is intact.
-        for output in measurement["experiment"]["simulationProgram"]["tasks"]["particles"]["config"]["outputs"]:
-            if output["methodId"] in ("sph.pressure", "sph.mass-density"):
-                output["parameters"]["gridShape"] = list(grid_shape)
-                output["boxGrid"]["gridShape"] = list(grid_shape)
-    return measurement
+from tests.recording_fixtures import decode_tensor_tree
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 """선택 절점 이력의 좌표, 불변 checkpoint, 출력 범위를 검증합니다."""
 
 from types import SimpleNamespace
-from tests.test_box_grid_outputs import grid
+from tests.box_grid_fixtures import grid
 
 import numpy as np
 import pytest

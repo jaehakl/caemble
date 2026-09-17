@@ -20,7 +20,7 @@ from app.solvers.dc_current_density.domain import DcDomain
 from app.solvers.dc_current_density.formulation import solve_dc
 from app.solvers.dc_current_density.outputs import build_dc_outputs
 from app.solvers.ray_tracing.outputs import PathCollector
-from tests.test_scalar_fem import layered_scene
+from tests.scalar_fixtures import layered_scene
 
 
 def _domain(shape: tuple[int, int, int]) -> VoxelDomain:

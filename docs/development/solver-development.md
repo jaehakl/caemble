@@ -657,9 +657,9 @@ Output이나 `recordedData` 선언은 필요하지 않습니다. Path bundle의
 
 Solver 개발에서는 모노레포의 Node CLI와 기존 CAE Python 환경을 함께 사용합니다.
 UI의 npm 의존성과 CLI를 먼저 빌드하고, CAE의 Poetry 환경을 설치합니다.
-`app/slaves/cae`에서 `poetry install --with dev`로 pytest와 pytest-asyncio를
-포함한 개발 환경을 구성합니다. `doctor`는 이 테스트 도구와 필수 수치·전송
-패키지의 버전 및 모듈 위치도 출력하고 누락된 의존성을 표시합니다.
+`app/slaves/cae`에서 `poetry install --with dev`로 pytest, Ruff, Pyright 등 개발 검사 도구를
+포함한 개발 환경을 구성합니다. `doctor`는 Python 실행 환경, pytest와 필수 수치·전송
+패키지의 버전 및 모듈 위치를 출력하고 누락된 의존성을 표시합니다.
 CLI는 `--repo`로 지정한 checkout의 CAE 작업 디렉토리에서 Python을 실행합니다.
 `doctor`가 출력하는 Python, CAE/SDK/Catalog 모듈 경로와 Catalog revision이
 개발 중인 checkout을 가리키는지 확인합니다. CLI 배포 파일만으로 Python
@@ -701,10 +701,10 @@ Solver child, 수치 결과와 ACK를 검증합니다. pytest에서 CLI의
 
 ### Runtime과 수치 검사
 
-Solver나 Runtime 경계를 변경할 때 변경 영향에 해당하는 다음 항목을 확인합니다.
-부분 수정마다 모든 Solver의 장시간 수렴 검사를 다시 실행하지 않습니다.
+Solver나 Runtime 경계를 변경할 때 변경 영향과 아래 비용 분류에 맞춰 다음 항목을 확인합니다.
+기본 검사는 정적 분석과 저비용 검사이며, 실제 연결·예제·정밀 검증은 명시적으로 선택합니다.
 
-- 현재 DC, Heat, Ray, FDTD와 모든 Catalog 예제가 새 계약으로 컴파일·실행
+- 관련 Solver와 Catalog 예제가 새 계약으로 컴파일되며, 선택한 실행 범위에서 수치·연결 검증 통과
 - 제거된 Solver 버전과 ABI 1/2 요청이 fallback 없이 오류로 종료
 - `sim.run()` state의 nested read, unchanged patch와 branch
 - state/checkpoint 명시적 해제, busy-state 거부와 과거 handle 보관 시 buffer 수
@@ -721,57 +721,102 @@ Solver나 Runtime 경계를 변경할 때 변경 영향에 해당하는 다음 �
 - 반복 호출 후 child PID, mmap, child workspace와 run cache 정리
 - import-boundary 검사에서 resident Runtime의 Solver/Method eager import 차단
 
-### 변경 영향 검사와 전체 CPU 회귀
+### 변경 영향 검사와 명시적 Solver 실행
 
 CAE 디렉터리의 기본 진입점은 `python -m tests.run affected`입니다. HEAD와
-현재 staged·unstaged·untracked 파일을 비교합니다. 커밋 범위를 검사할 때는
-`--base <ref>`를 지정하고, 실행 전에 `--list`로 선택된 검사와 이유를 확인합니다.
+현재 staged·unstaged·untracked 파일을 비교합니다. `--base <ref>`로 비교
+커밋을 바꾸고, `--list`로 실행 없이 선택 이유와 제외된 검사를 확인합니다.
 
-| 모드 | 실행 범위 |
+| 명령 | 실행 범위 |
 | --- | --- |
-| `affected` | 변경된 Solver와 소비자, 공통 방법의 소비자, kernel의 계약·자원·child 전달 검사 |
-| `quick` | `cuda`와 장시간 `validation` 검사를 제외한 전체 CPU 검사 |
-| `full` | 기존 `pytest tests -m "not cuda"`와 같은 전체 CPU 검사 |
+| `affected` | 변경 관련 정적 분석과 작은 함수·계약 검사. 제품 Solver 실행 없음 |
+| `quick` | CAE 전체 정적 분석과 저비용 검사. 제품 Solver 실행 없음 |
+| `affected --smoke` | 관련 최소 연결·실제 child 검사 추가 |
+| `affected --validation` | 관련 수렴·보존량 등 정밀 검사 추가 |
+| `examples --key <key>` | 지정 공식 예제의 새 nominal 입력 빌드·실행·ACK·정리와 180초 예산 측정 |
+| `full` | 모든 CPU 검사·공식 예제·정밀 검증. 명시적 전체 검증 또는 release 검사에만 사용 |
 
-수치 구현 변경은 해당 수렴 검사도 선택합니다. Catalog 변경은 CPU quick,
-Catalog 검사, 공식 예제 빌드로 연결하고, 문서만 바뀌면 문서 검사만 실행합니다.
-새 CAE 소스 경로의 검사 소유권이 등록되지 않으면 선택 오류를 보고합니다.
-CAE 소유 범위 밖의 변경은 별도로 표시하므로 해당 애플리케이션의 검사도
-수행해야 합니다. 선택 규칙은 `tests/selection.py`의 작은 명시적 표가 소유합니다.
+`lowcost`, `smoke`, `validation`, `example`은 비용 분류이며, `cuda`는 별도
+환경 표시입니다. `--smoke`와 `--validation`은 독립적으로 추가할 수 있습니다.
+선택은 변경 영향과 허용 비용 분류의 교집합입니다. 정밀 테스트 파일을
+수정해도 기본 검사에서 실행하지 않습니다. `--tests` 역시 비용 제한을
+지키며, 지정한 등록 파일·node만 검사하고 무관한 UI·Catalog 작업을 실행하지
+않습니다. 범위를 벗어난 명시 대상에는 필요한 옵션을 안내합니다.
+
+선택 소유권은 `tests/selection.py`, 파일·함수의 비용 분류는 `tests/tiers.py`가
+소유합니다. 새 소스·지원 fixture·테스트의 소유권을 함께 등록합니다. 미분류
+대상과 오래된 분류는 선택 오류이며 전체 검사로 확대하지 않습니다. 허용되지
+않는 테스트 파일은 pytest collection 전에 제외합니다. 공용 fixture는 지원
+모듈에 두고 다른 `test_*.py`에서 가져오지 않습니다. 테스트 전용 계측은
+제품 entry의 직접 호출과 실제 child 호출을 집계하며, 기본 검사 및 collection
+중 제품 entry 진입은 계산 전에 실패합니다. 작은 테스트용 child는 허용합니다.
+
+기본 Python 정적 검사는 Ruff `E9`, `F63`, `F7`, `F82`와 Pyright `basic`입니다.
+Pyright 범위는 ABI 모델·서비스·상태·값과 11개 Solver entry에 명시합니다.
+입출력 타입을 실제 계약에 맞게 보완하며 일괄 `Any`·`cast`·`ignore`로 넘기지
+않습니다. 기존 AST 의존성 경계 검사도 저비용 경로에서 실행합니다.
+
+UI 일반 변경은 UI `check:static`으로 연결합니다. `check`는 정적 검사와 unit
+test를 모두 실행합니다. Catalog·공통 authoring 변경은 기존 builder와 Python
+`validate_and_load_simulate`로 공식 예제를 검사하며 Solver를 실행하지 않습니다.
+문서만 변경하면 문서 검사만 실행하고 CAE collection도 생략합니다. CAE 소유
+범위 밖의 변경은 해당 애플리케이션의 검사 대상임을 별도로 표시합니다.
 
 ```powershell
 poetry run python -m tests.run affected --list
 poetry run python -m tests.run affected
-poetry run python -m tests.run affected --base HEAD~1
+poetry run python -m tests.run affected --base HEAD~1 --smoke
+poetry run python -m tests.run affected --validation
 poetry run python -m tests.run quick
+poetry run python -m tests.run affected --tests tests/test_sph_outputs.py
+poetry run python -m tests.run affected --smoke --tests tests/test_incompressible_handoff.py
+poetry run python -m tests.run examples --key pulsed-microheater
+poetry run python -m tests.run examples --key '*'
+# 명시적으로 요청한 전체 CPU 검증에서만 실행합니다.
 poetry run python -m tests.run full
-# 수정 중에는 명시한 관련 검사만 실행할 수도 있습니다.
-poetry run python -m tests.run quick --tests tests/test_particle_field_handoff.py tests/test_sph_outputs.py
-poetry run python -m tests.run full --jobs 1
+# CUDA는 실제 장치가 있는 환경에서 별도로 검사합니다.
 poetry run python -m pytest tests/test_fdtd_cuda.py -m cuda
 ```
 
-실행 진입점은 기본 4개 pytest worker와 `worksteal` 분배를 사용하고,
-worker와 Solver child가 상속하는 BLAS·OpenMP 스레드를 1개로 제한합니다.
-`--jobs 1`은 직렬 실행입니다. 물리 조건, 수렴 허용오차, 메시 정련 단계,
-시뮬레이션 시간창은 변경하지 않습니다. CUDA 검사는 별도로 선택하고 실제
-device가 없을 때의 skip을 GPU 검증 성공으로 보고하지 않습니다.
+`app/ui`에서는 `npm run test:catalog-examples -- --key <key>`로 지정 예제의
+입력·프로그램 계약만 검사할 수 있습니다. `--key`를 반복해 여러 예제를 고르거나,
+생략해 전체를 검사합니다. `--report <path>`는 입력 빌드 횟수와 Catalog revision을 기록합니다.
+
+일반 pytest 실행은 기존 명시적 검사 경로이며 저비용 기본 선택을 적용하지
+않습니다. 일상 검증에는 `tests.run`을 사용합니다. 이 실행기는 기본 4개 pytest
+worker와 `worksteal` 분배를 사용하고 수치 라이브러리 스레드는 1개로 제한합니다.
+`--jobs 1`은 직렬 실행입니다. 공식 예제 예산 측정은 항상 한 예제씩 직렬로
+실행하며, 입력 빌드부터 기록·ACK·child·자원 정리까지 180초 이내여야 합니다.
+예산 측정과 nominal pytest는 같은 실행 함수를 사용하므로 물리 결과·provenance·
+native mesh와 버퍼·캐시·ResourceStore·child 정리도 한 번의 실행에서 검증합니다.
+예산 제한은 개발용 측정 harness에만 적용하며 Solver ABI와 사용자 해석 timeout을
+바꾸지 않습니다. 초과하면 실패와 실제 정리 시간을 보고하고 자동으로 생략하지
+않습니다. 대표 `affected` 약 1분, 전체 저비용 `quick` 3분 이내를 목표로 합니다.
 
 공식 예제 입력은 요청할 때만 공개 CLI로 빌드합니다. 같은 실행의 worker들은
 Catalog revision·예제 버전·변수·CLI bundle hash가 같은 빌드를 파일 잠금으로
-공유하고, 테스트에는 독립 복사본을 줍니다. Solver 실행 결과나 이전 실행의
-테스트 통과 결과는 재사용하지 않습니다.
+공유하고 테스트에는 독립 복사본을 줍니다. Solver 결과와 이전 실행의 테스트
+통과 결과는 재사용하지 않습니다. 예제의 nominal 규모를 줄이더라도 고유 기능을
+유지하고, 공간·시간 해상도를 바꾸면 추가 정련과 대표 출력 비교를 남깁니다.
+기존 정밀 검증의 물리 조건·정련 단계·시간창·허용오차는 별도로 고정합니다.
+CUDA 장치가 없어 skip한 검사는 GPU 검증 성공으로 보고하지 않습니다.
 
-각 실행은 `.work/cae-tests/<run>`에 선택 이유, `events.jsonl`, `status.json`,
-`summary.json`을 남깁니다. 이벤트는 시작과 setup·call·teardown 종료마다
-기록되며, 요약에는 검사 수, 미완료 항목, 단계별 시간, 느린 검사와 공유 예제
-빌드 횟수가 포함됩니다. `--report`로 새 빈 디렉터리를 지정할 수 있습니다.
-부분 수정 중에는 관련 검사를 실행하고, 실행 구조나 공통 기반을 통합 검증할
-시점에만 `full`을 명시적으로 실행합니다.
+각 실행은 `.work/cae-tests/<run>`에 실행 옵션과 `summary.json`을 남깁니다.
+pytest 경로는 선택 이유, 제외된 관련 검사, `events.jsonl`, `status.json`도
+기록합니다. 요약에는 검사 수,
+미완료 항목, setup·call·teardown 및 외부 정적 검사 시간, 제품 Solver 호출 수와
+시간, 공유 입력 빌드 수, 실제 CLI 빌드 시도·성공·실패·미완료와 별도 authoring
+빌드 횟수가 포함됩니다. 공유 입력과 실제 CLI 호출은 중복 합산하지 않습니다. 예제 경로는
+`examples.json`, `environment.json`, `solver-events/`에 입력 빌드·실행과 기록·
+정리 시간, 환경·코드·Catalog 식별자를 함께 기록합니다.
+`--report`에는 새 빈 디렉터리를 지정합니다. 파일 분리와 parametrization 변경은
+검사 수 감축으로 계산하지 않습니다.
 
-반복 자원 검사에서는 revision metadata 수, ResourceStore node 수, mmap 파일
-수를 따로 확인합니다. 호출 준비 비용과 전달 시간은 같은 입력으로 비교하며,
-측정 없이 성능 개선을 주장하거나 기존 수치 허용오차를 넓히지 않습니다.
+수정 중에는 필요한 focused 검사와 선택한 smoke·정밀 비교를 실행합니다.
+통합 후 `quick`을 사용하고 `full`은 명시적 요청이 있을 때만 실행합니다.
+반복 자원 검사에서는 revision metadata, ResourceStore node, mmap 파일 수를
+각각 확인합니다. 측정 없이 성능 개선을 주장하거나 수치 허용오차를 넓히지
+않습니다.
 
 새 Solver에는 실제로 실행 가능한 Experiment 예제를 Catalog에 함께 둡니다.
 예제는 literal Solver name/SemVer와 method IDs, Geometry/material 연결,

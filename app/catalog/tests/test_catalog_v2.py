@@ -52,6 +52,9 @@ class CatalogV3Tests(unittest.TestCase):
             "dc-notched-current-density",
             "electro-thermal-uniform-bar",
             "nrel5mw-oc3-operating",
+            "hyperelastic-tension",
+            "hyperelastic-compression",
+            "sph-periodic-channel",
         }
         with open_catalog() as catalog:
             experiments, total = catalog.list_experiments(limit=100)
@@ -136,18 +139,18 @@ class CatalogV3Tests(unittest.TestCase):
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                expected_version = "7.1.2" if example["repository"] == "fea" else {
+                expected_version = "1.0.0" if example["key"] == "hyperelastic-uniaxial" else "7.1.2" if example["repository"] == "fea" else {
                     "fiber-bundle": "6.0.2", "electro-thermal-notched-bar": "6.0.2", "steady-microheater": "1.2.0",
-                    "feedback-microheater": "1.0.0", "pulsed-microheater": "1.0.0",
-                    "fdtd-drude-slab": "6.0.0", "structural-optical-results": "4.1.4",
+                    "feedback-microheater": "1.0.0", "pulsed-microheater": "1.1.0",
+                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "6.0.0", "structural-optical-results": "4.1.4",
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.4",
-                    "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.0.4",
+                    "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.1.0",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",
                     "dem-floor-contact": "1.0.1", "sph-hydrostatic-column": "1.1.0",
                     "mpm-affine-compression": "2.0.0", "dem-two-material-collision": "1.0.0",
-                    "dem-incline-rolling": "1.0.0", "sph-periodic-channel": "1.1.0",
+                    "dem-incline-rolling": "1.0.0",
                     "incompressible-stokes-duct": "3.0.0", "incompressible-startup-channel": "2.0.0",
-                    "incompressible-boolean-channel": "1.0.0", "incompressible-sph-periodic-channel": "1.1.0",
+                    "incompressible-boolean-channel": "1.1.0", "incompressible-sph-periodic-channel": "1.1.0",
                 }.get(example["key"], "5.0.0")
                 self.assertEqual(example["version"], expected_version)
                 previous = "3.0.0" if example["repository"] == "fea" else {"asymmetric-rigid-bodies": "1.0.0", "gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")
@@ -241,15 +244,14 @@ class CatalogV3Tests(unittest.TestCase):
             for method in history:
                 self.assertNotIn("length", method["data"]["axes"][3])
                 self.assertEqual(method["data"]["axes"][3]["unit"], "s")
-        self.assertEqual(len(pulse["calculations"]), 1)
-        self.assertIn("steadyMeanTemperature", pulse["calculations"][0]["source_code"])
+        self.assertEqual(pulse["calculations"], [])
 
     def test_structural_examples_define_csg_instead_of_task_mesh_arrays(self) -> None:
         with open_catalog() as catalog:
             examples = [item for item in catalog.list_experiments(limit=100)[0] if item["repository"] == "fea"]
             self.assertEqual({item["key"] for item in examples}, {
                 "boolean-connection-solid", "curved-tower-shell", "structural-analysis-modes",
-                "structural-element-basics", "structural-nonlinear-materials", "hyperelastic-compression", "hyperelastic-tension",
+                "structural-element-basics", "structural-nonlinear-materials", "hyperelastic-uniaxial",
                 "mixed-mini-compression", "mixed-mini-cylinder-inflation",
             })
             for item in examples:

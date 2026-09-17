@@ -57,6 +57,7 @@ def pure_bending_solid(kind, refinement):
     return model, moment * length**2 / (2 * young * inertia), moment
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("kind", ["tet4", "hex8"])
 def test_solid_pure_moment_cantilever_converges_to_exact_three_dimensional_elasticity(kind, record_property):
     errors = []

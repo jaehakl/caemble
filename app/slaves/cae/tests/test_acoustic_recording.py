@@ -9,7 +9,7 @@ import pytest
 from app.kernel.catalog import solver_catalog
 from app.solvers.pressure_acoustics.transient_fdtd.domain import CartesianAcousticGrid
 from app.solvers.pressure_acoustics.transient_fdtd.run import run_transient
-from tests.test_box_grid_outputs import grid
+from tests.box_grid_fixtures import grid
 
 
 @pytest.fixture

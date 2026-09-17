@@ -19,8 +19,8 @@ from app.solvers.rigid_body.domain import build_model, model_request
 from app.solvers.rigid_body.entry import implementation
 from app.solvers.rigid_body.evolution import advance_window, history_values, time_settings
 from app.solvers.rigid_body.outputs import native_members
-from tests.test_box_grid_outputs import grid
-from tests.test_geometry_solids import boolean, box, box_inertia, transformed
+from tests.box_grid_fixtures import grid
+from tests.geometry_fixtures import boolean, box, box_inertia, transformed
 
 
 def invocation(node=None, *, dt=.01, window=.03, duration=.09, output=.017, outputs=False):

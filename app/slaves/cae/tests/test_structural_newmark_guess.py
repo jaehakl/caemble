@@ -23,9 +23,9 @@ from app.methods.rigid.rotations import (
     rotation_exp_many,
     rotation_log,
 )
-from tests.test_structural_coupling import translation_case
-from tests.test_structural_joints import joint_model
-from tests.test_structural_rotation_dynamics import loaded_rotating_beam
+from tests.structural_fixture import translation_case
+from tests.structural_fixture import joint_model
+from tests.structural_fixture import loaded_rotating_beam
 
 
 @pytest.mark.parametrize("dt", [.1, .02, .005])

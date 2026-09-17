@@ -1,5 +1,7 @@
 """Independent differentiation, condensation and equilibrium checks for MINI."""
 
+from tests.mixed_hyperelastic_fixtures import MATERIAL, POINTS, stretch_model
+
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -9,12 +11,7 @@ from app.methods.finite_element.tetrahedron import tetrahedron_quadrature
 from app.solvers.structural_mechanics.mixed_solid import prepare_mini, mini_response, condense_bubble
 from app.solvers.structural_mechanics.analyses.mixed_static import mixed_static_analysis
 from app.solvers.structural_mechanics.loads import follower_pressure
-from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.solid_fields import evaluate_solid, inverse_solid, solid_cell_average
-
-
-POINTS = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
-MATERIAL = {"model": "mechanics.compressible-neo-hookean@1", "density": 1., "shear": 80., "lame": 110.}
 
 
 @pytest.mark.parametrize("q", [-35., 125.])
@@ -77,18 +74,6 @@ def test_positive_quadrature_refinement_and_rigid_motion():
     np.testing.assert_allclose(residual, 0, atol=2e-13)
     np.testing.assert_allclose(stress, 0, atol=2e-13)
     np.testing.assert_allclose(energy, 0, atol=2e-13)
-
-
-def stretch_model(stretch=.8, lame=110.):
-    material = {**MATERIAL, "lame": lame}
-    fixed = np.array([0, 1, 2, 6, 7, 8, 12, 14, 18, 19])
-    model = StructuralModel(np.arange(4), POINTS.copy(), [Element("tet4", np.arange(4), material)],
-                            (6*np.arange(4)[:, None]+np.arange(3)).ravel(), fixed, np.zeros((4, 6)))
-    model.prescribed = {int(dof): 0. for dof in fixed}
-    model.prescribed[6] = stretch-1
-    model.solid_formulation = "mixed-mini"
-    model.identity = "mini-test-solid"
-    return model
 
 
 @pytest.mark.parametrize("lame", [110., 4e5])
@@ -233,55 +218,13 @@ def test_failed_mixed_trials_leave_all_accepted_unknowns_unchanged(monkeypatch):
     np.testing.assert_array_equal(model.points, POINTS)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('change,match', [('zero-lambda', '0 < nu'), ('multiple-materials', 'one frozen'), ('modal', 'static'), ('linear', 'geometricNonlinear')])
-async def test_mixed_public_support_matrix_rejects_invalid_settings(monkeypatch, change, match):
-    from app.solvers.structural_mechanics import entry
-    from tests.test_structural_csg import solid_invocation
-    case = solid_invocation()
-    case.config['parameters'].update(solidFormulation='mixed-mini', geometricNonlinear=change != 'linear', analysis='modal' if change == 'modal' else 'static')
-    model = stretch_model()
-    model.elements[0].material['identity'] = ('experiment', 'one')
-    if change == 'zero-lambda':
-        model.elements[0].material['lame'] = 0
-    if change == 'multiple-materials':
-        model.elements.append(Element('tet4', np.arange(4), {**model.elements[0].material, 'identity': ('experiment', 'two')}))
-
-    async def geometry(_invocation):
-        return model
-
-    monkeypatch.setattr(entry, 'build_geometry_model', geometry)
-    with pytest.raises(ValueError, match=match):
-        await entry.run(case)
-
-
-@pytest.mark.asyncio
-async def test_two_geometry_roots_can_share_one_frozen_mixed_material():
-    from dataclasses import replace
-    from app.kernel.catalog import solver_catalog
-    from app.solvers.structural_mechanics import entry
-    from tests.test_structural_csg import solid_invocation
-    case = solid_invocation(resolution=.8, second=True)
-    case = replace(case, descriptor=solver_catalog.descriptor('structural-mechanics', '8.0.0'))
-    case.config['parameters'].update(solidFormulation='mixed-mini', geometricNonlinear=True)
-    case.config['initializations'].append({'methodId': 'fea.bonded', 'target': ['experiment.geometry.all'], 'parameters': {}})
-    selected = case.world['materials']['experiment']['Steel']['models']['solid']
-    selected['model'] = 'mechanics.compressible-neo-hookean@1'
-    selected['parameters'].update(E=2980., nu=.49, density=1000.)
-    case.config['boundaryConditions'][1]['parameters']['force'] = [1., 0., 0.]
-    result = await entry.run(case)
-    assert result.observations['strainEnergy'] > 0
-    assert result.observations['relativeResidual'] < 1e-9
-    assert result.observations['time'] == 0
-
-
 @pytest.mark.parametrize('count', [2, 10000])
 def test_mixed_box_observations_and_inline_attachment_roundtrip(count):
     from app.kernel.catalog import solver_catalog
     from app.kernel.transport.tensor import encode_tensor
     from app.solvers.structural_mechanics.outputs.box_grid import build_box_outputs
-    from tests.test_catalog_examples import decode_tensor_tree
-    from tests.test_box_grid_outputs import grid
+    from tests.recording_fixtures import decode_tensor_tree
+    from tests.box_grid_fixtures import grid
 
     model = stretch_model()
     solution = mixed_static_analysis(model)
@@ -306,7 +249,7 @@ def test_mixed_box_observations_and_inline_attachment_roundtrip(count):
 def test_mini_section_uses_variable_piola_and_deformed_moment_arm():
     from numpy.polynomial.legendre import leggauss
     from app.solvers.structural_mechanics.outputs.box_grid import _box_section_resultant
-    from tests.test_box_grid_outputs import grid
+    from tests.box_grid_fixtures import grid
 
     model = stretch_model()
     solution = mixed_static_analysis(model)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import struct
 import os
 import pickle
 import time
@@ -8,7 +10,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
-from app.kernel.api import SolverInvocation
+from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult
 from app.kernel.execution.messages import ChildMessage, ChildMessageKind
 
 
@@ -82,3 +84,51 @@ def never_starts(
         pass
     request_connection.close()
     result_connection.close()
+
+
+async def _flooding(context):
+    workspace = Path(context.resources.workspace_path)
+    (workspace / "numerical-scratch").write_bytes(b"temporary")
+    await context.progress({"stage": "ready", "workspace": str(workspace)})
+    try:
+        # The parent deliberately pauses its progress callback while this frame
+        # exceeds the pipe buffer. Cancellation must continue consuming frames.
+        await context.progress({"stage": "bulk", "payload": b"x" * (4 * 1024 * 1024)})
+        context.cancellation.raise_if_cancelled()
+    except asyncio.CancelledError:
+        Path(context.config["observed"]).write_text("cooperative cancellation", encoding="utf-8")
+        raise
+    return SolverResult()
+
+
+async def _forced_exit(context):
+    workspace = Path(context.resources.workspace_path)
+    (workspace / "numerical-scratch").write_bytes(b"temporary")
+    await context.progress({"stage": "ready", "workspace": str(workspace)})
+    time.sleep(30)
+    return SolverResult()
+
+
+async def _crashes(context):
+    import os
+    workspace = Path(context.resources.workspace_path)
+    (workspace / "numerical-scratch").write_bytes(b"temporary")
+    await context.progress({"stage": "ready", "workspace": str(workspace)})
+    os._exit(17)
+
+
+flooding = SolverImplementation(3, _flooding)
+
+
+forced_exit = SolverImplementation(3, _forced_exit)
+
+
+crashes = SolverImplementation(3, _crashes)
+
+
+def _partial_frame(connection, ready):
+    # Socket-based Connection uses this framing on every platform, including
+    # Windows. The advertised payload never finishes until the child exits.
+    connection._send(struct.pack("!i", 4096) + b"partial")
+    ready.set()
+    time.sleep(30)

@@ -96,7 +96,7 @@ def layered_volume_mesh(meshes, region_ids, profile):
     points = np.asarray(points)[:, np.argsort(axes)]
     cells = np.asarray(cells, dtype=np.int64)
     cell_regions = np.asarray(cell_regions, dtype=np.int64)
-    del node_map
+    node_map.clear()
     volumes, ratios = np.empty(len(cells)), np.empty(len(cells))
     for start in range(0, len(cells), 65536):
         selected = slice(start, start + 65536)

@@ -144,6 +144,7 @@ def test_mixed_centered_batch_and_eccentric_scalar_match_all_scalar_inertia():
         np.testing.assert_allclose(left, right, rtol=1e-11, atol=1e-12)
 
 
+@pytest.mark.validation
 def test_eccentric_elastic_motion_under_gravity_converges_in_energy_and_momentum():
     model, initial, length, density, center, _, reference = eccentric_model()
     model.gravity = np.array([.4, -.7, -9.])

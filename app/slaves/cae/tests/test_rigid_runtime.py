@@ -14,7 +14,7 @@ from app.kernel.coordinator import SimulationApi
 from app.kernel.coordinator.run import CaeRun
 from app.kernel.execution import MmapPayloadCodec, RemoteSolverError, SpawnSolverExecutor
 from app.kernel.transport import RecordPacket
-from tests.test_catalog_examples import catalog_measurements, decode_tensor_tree
+from tests.recording_fixtures import decode_tensor_tree
 
 
 pytestmark = pytest.mark.asyncio
@@ -62,9 +62,9 @@ async def acknowledge_visualization(run, sim):
 
 @pytest.mark.parametrize("key", ["sliding-contact"])
 async def test_contact_history_survives_real_child_checkpoint_branches_and_release(
-    key, catalog_measurements, tmp_path, monkeypatch,
+    key, catalog_builds, tmp_path, monkeypatch,
 ):
-    run, sim, child_temp = runtime(catalog_measurements[key], tmp_path, monkeypatch)
+    run, sim, child_temp = runtime(catalog_builds[key], tmp_path, monkeypatch)
     baseline = sim._resources.stats().resource_count
     buffers = sim._buffers.root
     try:

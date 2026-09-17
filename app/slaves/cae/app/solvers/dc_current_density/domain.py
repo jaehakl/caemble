@@ -6,13 +6,13 @@ import numpy as np
 
 from app.kernel.api.world import geometry_parts, material_model, scalar_parameter
 from app.methods.mesh.models import VolumeMeshingProfile
-from app.methods.mesh.subdomain import build_volume_subdomain
+from app.methods.mesh.subdomain import VolumeSubdomain, build_volume_subdomain
 from .materials import evaluate_conductivity
 
 
 @dataclass(frozen=True)
 class DcDomain:
-    mesh: object
+    mesh: VolumeSubdomain
     conductivity: np.ndarray
     fixed: dict
     terminals: dict

@@ -16,7 +16,7 @@ from app.solvers.pressure_acoustics.harmonic_fem.harmonic import solve_harmonic
 from app.solvers.pressure_acoustics.transient_fdtd.domain import CartesianAcousticGrid
 from app.solvers.pressure_acoustics.transient_fdtd.sources import AcousticFaceRule, tone_burst_average
 from app.solvers.pressure_acoustics.transient_fdtd.stepping import advance_step, initial_fields
-from tests.test_pressure_acoustics import driven_boundaries, tube
+from tests.acoustic_fixtures import driven_boundaries, tube
 
 
 def run_pulse_duct(divisions, dt=1e-5):

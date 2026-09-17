@@ -9,19 +9,32 @@ import pytest
 from app.kernel.coordinator import SimulationApi
 from app.kernel.execution import MmapPayloadCodec, RemoteSolverError, SpawnSolverExecutor
 from app.kernel.coordinator.run import CaeRun
-from tests.test_catalog_examples import catalog_measurements
 
 
 @pytest.mark.parametrize("key", ["transient-plate-driven-duct"])
 @pytest.mark.asyncio
-async def test_actual_surface_child_rejection_retry_and_checkpoint_branch(key, catalog_measurements):
-    measurement = deepcopy(catalog_measurements[key])
+async def test_actual_surface_child_rejection_retry_and_checkpoint_branch(key, catalog_builds):
+    measurement = deepcopy(catalog_builds[key])
     program = measurement["experiment"]["simulationProgram"]
     structure_name = next(name for name, task in program["tasks"].items()
                           if task["kernel"]["name"] == "structural-mechanics")
     sound_name = next(name for name, task in program["tasks"].items()
                       if task["kernel"]["name"] == "pressure-acoustics")
     structure_config = program["tasks"][structure_name]["config"]
+    # Two short accepted windows retain rejection, retry and continuation
+    # boundaries independently of the interactive example's window batching.
+    dt = 1 / 65536
+    structure_clock = next(rule["parameters"] for rule in structure_config["initializations"]
+                           if rule["methodId"] == "fea.time")
+    for name, value in {"dt": dt, "windowSize": 2 * dt, "duration": 4 * dt, "outputInterval": dt}.items():
+        structure_clock[name].update(value=value, unit="s")
+    sound_config = program["tasks"][sound_name]["config"]
+    sound_clock = next(rule["parameters"] for rule in sound_config["initializations"]
+                       if rule["methodId"] == "acoustics.time")
+    sound_clock["dt"].update(value=dt, unit="s")
+    sound_clock.update(totalSteps=4, windowSteps=2)
+    for output in sound_config["outputs"]:
+        output["parameters"]["sampleEvery"] = 1
     motion_key = next(item["key"] for item in structure_config["exports"]
                       if item["methodId"] == "fea.transient-surface-motion")
     pressure_key = program["tasks"][sound_name]["config"]["outputs"][0]["key"]
@@ -118,8 +131,8 @@ async def test_actual_surface_child_rejection_retry_and_checkpoint_branch(key, c
 
 @pytest.mark.parametrize("key", ["transient-matched-impedance-duct"])
 @pytest.mark.asyncio
-async def test_acoustic_child_cancellation_preserves_live_restart(key, catalog_measurements, monkeypatch):
-    measurement = deepcopy(catalog_measurements[key])
+async def test_acoustic_child_cancellation_preserves_live_restart(key, catalog_builds, monkeypatch):
+    measurement = deepcopy(catalog_builds[key])
     run = CaeRun(measurement=measurement, max_run_seconds=90, job_id="acoustic-cancel")
     sim = SimulationApi(run)
     run.simulation_api = sim

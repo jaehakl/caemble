@@ -113,6 +113,7 @@ def test_mpm_transfer_and_step_are_independent_of_particle_row_order():
         np.testing.assert_allclose(actual[reverse], expected, atol=1e-12, rtol=1e-12)
 
 
+@pytest.mark.validation
 def test_elastic_compression_converges_with_timestep_refinement():
     positions = np.stack(np.meshgrid(*[np.arange(.325, .7, .05)] * 3, indexing="ij"), axis=-1).reshape(-1, 3)
     mass = np.full(len(positions), 1000 * .05**3)

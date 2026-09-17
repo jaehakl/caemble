@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
 import gc
 import os
 import tempfile
@@ -317,6 +318,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(task, return_exceptions=True)
 
     async def test_request_send_failure_rolls_back_all_invocation_files(self) -> None:
+        baseline = {child.pid for child in multiprocessing.active_children()}
         store, executor = self._executor()
         executor._child_target = closes_request_after_bootstrap
 
@@ -328,7 +330,10 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(store.files(), ())
 
+        self.assertEqual({child.pid for child in multiprocessing.active_children()}, baseline)
+
     async def test_startup_timeout_rolls_back_all_invocation_files(self) -> None:
+        baseline = {child.pid for child in multiprocessing.active_children()}
         store, executor = self._executor()
         executor.CHILD_STARTUP_TIMEOUT_SECONDS = 0.1
         executor._child_target = never_starts
@@ -337,11 +342,15 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
             await executor.execute(
                 "unused:solver",
                 invocation({"values": np.arange(1024, dtype=np.float64)}),
+                timeout=10,
             )
 
         self.assertEqual(store.files(), ())
 
+        self.assertEqual({child.pid for child in multiprocessing.active_children()}, baseline)
+
     async def test_startup_cancel_rolls_back_all_invocation_files(self) -> None:
+        baseline = {child.pid for child in multiprocessing.active_children()}
         store, executor = self._executor()
         executor._child_target = never_starts
         cancellation = asyncio.Event()
@@ -359,6 +368,8 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
             await task
 
         self.assertEqual(store.files(), ())
+
+        self.assertEqual({child.pid for child in multiprocessing.active_children()}, baseline)
 
     async def test_repeated_children_leave_only_run_scoped_files(self) -> None:
         store, executor = self._executor()

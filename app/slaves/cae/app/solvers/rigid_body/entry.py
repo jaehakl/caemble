@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.kernel.api import SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult, StatePatch
 from app.methods.rigid import angular_velocity
 
 from .domain import build_model, model_request
@@ -10,7 +10,7 @@ from .evolution import advance_window, append_history, time_settings
 from .outputs import build_native, build_outputs
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     settings = time_settings(invocation.config)
     request = model_request(invocation)
     saved = invocation.state.get("rigid_body", {}).get(invocation.task_name)

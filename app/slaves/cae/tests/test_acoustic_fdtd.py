@@ -50,6 +50,7 @@ def test_direct_velocity_first_step_uses_interval_average_and_fluid_outward_sign
     np.testing.assert_array_equal(pressure, 0.)
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("ratio", [None, .01, 1., 100.])
 def test_three_dimensional_energy_balance_including_impedance_edges_and_corners(ratio):
     model = grid((6, 4, 3))
@@ -89,6 +90,7 @@ def test_three_dimensional_energy_balance_including_impedance_edges_and_corners(
         assert energy < initial_energy
 
 
+@pytest.mark.validation
 def test_prescribed_flux_energy_work_and_passive_decay_after_source_ends():
     model = grid((10, 1, 1))
     dt = 2**-16
@@ -118,6 +120,7 @@ def test_prescribed_flux_energy_work_and_passive_decay_after_source_ends():
     assert energy < peak * 1e-4
 
 
+@pytest.mark.validation
 def test_first_resistive_reflection_has_correct_delay_sign_and_point_eight_ratio(record_property):
     # A pulse shorter than the round-trip separates incident and first reflected
     # arrivals. Stop before the inlet can send a second reflection to the probe.
@@ -217,6 +220,7 @@ def test_time_grid_cfl_and_restart_identity_exclude_window_partition():
             time_settings(changed, model)
 
 
+@pytest.mark.validation
 def test_time_refinement_is_second_order_against_the_same_spatial_model(record_property):
     model = grid((20, 2, 2))
     wavenumber = np.pi / model.size[0]

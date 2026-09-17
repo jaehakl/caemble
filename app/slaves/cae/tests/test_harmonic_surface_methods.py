@@ -1,6 +1,7 @@
 """Independent polynomial and conservation references for shared numerical tools."""
 
-from itertools import product
+from tests.surface_fixtures import rectangle
+
 
 import numpy as np
 import pytest
@@ -10,16 +11,6 @@ from app.methods.coupling.surface import planar_surface_operator
 from app.methods.finite_element.integration import integration_points
 from app.methods.geometry.surfaces import select_boundary_region
 from app.methods.linalg.direct import solve_sparse
-
-
-def rectangle(nx, ny, alternate=False):
-    points = np.asarray([[x, y, 0.] for y in np.linspace(0, 1, ny + 1) for x in np.linspace(0, 2, nx + 1)])
-    faces = []
-    for y, x in product(range(ny), range(nx)):
-        a = y * (nx + 1) + x
-        b, c, d = a + 1, a + nx + 2, a + nx + 1
-        faces.extend(([a, b, d], [b, c, d]) if alternate else ([a, b, c], [a, c, d]))
-    return points, np.asarray(faces)
 
 
 def test_tet_and_triangle_quadratic_mass_are_exact_and_full_rank():

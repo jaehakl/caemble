@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 
-def experiment_scene(world: dict[str, Any]) -> dict[str, Any]:
+def experiment_scene(world: Mapping[str, Any]) -> dict[str, Any]:
     return world["experiment"]
 
 
@@ -12,7 +13,7 @@ def task_scene(world: dict[str, Any]) -> dict[str, Any]:
     return world["task"]
 
 
-def single_method(config: dict[str, Any], category: str, method: str) -> dict[str, Any]:
+def single_method(config: Mapping[str, Any], category: str, method: str) -> dict[str, Any]:
     return next(item for item in config[category] if item["methodId"] == method)
 
 

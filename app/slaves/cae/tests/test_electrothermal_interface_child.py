@@ -10,8 +10,8 @@ from app.kernel.coordinator.plan import TaskSpec
 from app.kernel.execution import SpawnSolverExecutor
 from app.solvers.structural_mechanics.continuum import integration_points
 from app.solvers.structural_mechanics.materials import isotropic_elasticity
-from tests.test_actual_solver_chain import world
-from tests.test_scalar_fem import layered_scene
+from tests.solver_chain_fixtures import world
+from tests.scalar_fixtures import layered_scene
 
 
 @pytest.mark.asyncio

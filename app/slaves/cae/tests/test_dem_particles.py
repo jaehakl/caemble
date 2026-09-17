@@ -1,24 +1,13 @@
 """Independent mechanics checks for the spherical, rotational DEM formulation."""
 
+from tests.particle_fixtures import setup_particles
+
 import numpy as np
 import pytest
 
 from app.methods.geometry import TriangularMesh
 from app.methods.particles.sampling import SurfaceQuery
 from app.solvers.dem.formulation import DemStepper, contact_force
-
-
-def setup_particles(positions, velocity, *, mass=None, radius=None, damping=0, friction=(0, 0), gravity=(0, 0, 0)):
-    count = len(positions)
-    mass = np.ones(count) if mass is None else np.asarray(mass, dtype=float)
-    radius = np.ones(count) if radius is None else np.asarray(radius, dtype=float)
-    model = {"mass": mass, "radius": radius, "inertia": .4 * mass * radius**2,
-             "particleIds": np.arange(count, dtype=np.int32), "materialIndices": np.zeros(count, dtype=np.int32),
-             "coefficients": {"0:0": np.array([1e4, 2500, damping, damping / 2, *friction])},
-             "gravity": np.asarray(gravity, dtype=float)}
-    state = {"positions": np.array(positions, dtype=float), "velocity": np.array(velocity, dtype=float),
-             "angularVelocity": np.zeros((count, 3)), "contactHistory": {}, "frictionDissipation": 0.0}
-    return model, state
 
 
 def evolve(stepper, state, duration, dt):
@@ -29,6 +18,7 @@ def evolve(stepper, state, duration, dt):
     return state
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("dt", [2e-4, 1e-4])
 def test_different_mass_collision_matches_elastic_solution(dt):
     model, state = setup_particles([[-1.01, 0, 0], [1.01, 0, 0]], [[1, 0, 0], [-1, 0, 0]], mass=[1, 2])
@@ -37,6 +27,7 @@ def test_different_mass_collision_matches_elastic_solution(dt):
     np.testing.assert_allclose(np.sum(model["mass"][:, None] * result["velocity"], axis=0), [-1, 0, 0], atol=1e-12)
 
 
+@pytest.mark.validation
 def test_contact_damping_dissipates_energy_and_refines():
     model, state = setup_particles([[-1.01, 0, 0], [1.01, 0, 0]], [[1, 0, 0], [-1, 0, 0]], damping=15)
     results = [evolve(DemStepper(model, []), state, .065, dt) for dt in (4e-4, 2e-4, 1e-4)]
@@ -65,6 +56,7 @@ def floor_wall(normal=(0, 0, 1)):
     return {"id": "floor", "materialIndex": 0, "query": SurfaceQuery(mesh)}
 
 
+@pytest.mark.validation
 def test_gravity_floor_rebound_and_triangle_seam_contact():
     model, state = setup_particles([[0, 0, .2]], [[0, 0, 0]], radius=[.1], gravity=[0, 0, -9.81], damping=5)
     stepper = DemStepper(model, [floor_wall()])
@@ -95,6 +87,7 @@ def test_reordering_preserves_contact_history_and_pair_response():
         np.testing.assert_allclose(actual["contactHistory"][key]["displacement"], expected["contactHistory"][key]["displacement"])
 
 
+@pytest.mark.validation
 def test_incline_stick_means_rolling_not_a_stationary_sphere():
     angle = .25
     normal = np.array([np.sin(angle), 0, np.cos(angle)])
@@ -111,6 +104,7 @@ def test_incline_stick_means_rolling_not_a_stationary_sphere():
     assert abs(np.dot(contact_speed, tangent)) < .005
 
 
+@pytest.mark.validation
 def test_incline_above_static_limit_slips():
     angle = .5
     normal = np.array([np.sin(angle), 0, np.cos(angle)])

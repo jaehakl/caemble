@@ -1,5 +1,5 @@
 from __future__ import annotations
-from tests.test_box_grid_outputs import grid, data
+from tests.box_grid_fixtures import grid, data
 from app.methods.fields.box_grid import RectilinearSampler
 
 import math

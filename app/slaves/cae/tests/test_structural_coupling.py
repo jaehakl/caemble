@@ -1,5 +1,7 @@
 """힘/모멘트 전달, 부가질량, checkpoint 재계산의 물리적 계약을 검증한다."""
 
+from tests.structural_fixture import translation_case
+
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -18,21 +20,6 @@ from app.methods.rigid.rotations import rotation_exp
 from app.solvers.structural_mechanics.state import append_history
 from app.solvers.structural_mechanics.state import encode_state
 from app.solvers.structural_mechanics.state import read_state
-
-
-def translation_case():
-    model = StructuralModel(np.array([42]), np.zeros((1, 3)), [], np.array([0]), np.empty(0, dtype=int), np.zeros((1, 6)), identity="mass-test")
-    model.masses = [(0, 2., np.zeros((3, 3)))]
-    model.gravity = np.array([9., 0., 0.])
-    solution = initial_solution(model)
-    solution.time = 1.
-    solution.acceleration[0, 0] = 18. / 5.
-    append_history(model, solution)
-    settings = {"dt": .01, "windowSize": .02, "duration": 2., "outputInterval": .01, "dampingMass": 0., "dampingStiffness": 0., "couplingTolerance": 1e-4, "maxCouplingIterations": 12, "relaxation": .5}
-    times = np.array([1., 1.01, 1.02])
-    load = BundleValue("caemble.mechanics/loads@1", {"modelIdentity": model.identity, "nodeIds": model.node_ids.astype(np.int32), "times": times, "forces": np.zeros((3, 1, 3)), "moments": np.zeros((3, 1, 3)), "addedMass": np.array([np.diag([3., 0., 0.])]), "couplingIteration": np.asarray(0, dtype=np.int32)})
-    invocation = SimpleNamespace(inputs={"loads": (SimpleNamespace(value=load),)}, config={"parameters": {"relativeTolerance": 1e-10, "maxIterations": 10, "geometricNonlinear": False}}, cancellation=None)
-    return model, solution, settings, invocation
 
 
 def test_added_mass_is_assembled_once_and_does_not_add_gravity_weight():

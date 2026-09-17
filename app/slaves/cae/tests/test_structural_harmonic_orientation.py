@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app.solvers.structural_mechanics.interfaces.harmonic_surface import harmonic_surface_motion
-from tests.test_structural_harmonic import tetrahedron_motion
+from tests.structural_fixture import tetrahedron_motion
 
 
 @pytest.mark.parametrize("within_group", [False, True])

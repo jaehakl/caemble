@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.geometry_fixtures import _box_node, _scene, _translated_box
+
 import asyncio
 from itertools import combinations
 
@@ -38,47 +40,6 @@ def test_material_boundary_rejects_three_tetrahedra_at_one_face(regions):
     cells = np.array([[0, 1, 2, 3], [0, 2, 1, 4], [0, 1, 2, 5]])
     with pytest.raises(ValueError, match="nonmanifold"):
         material_boundary_owners(cells, np.asarray(regions))
-
-
-def _box_node(node_id: str, size: float = 1.0) -> dict[str, object]:
-    return {
-        "kind": "primitive",
-        "nodeId": node_id,
-        "primitive": "box",
-        "parameters": {"size": [size, size, size]},
-    }
-
-
-def _translated_box(
-    root_id: str,
-    translation_x: float,
-    translation_y: float = 0.0,
-    translation_z: float = 0.0,
-) -> dict[str, object]:
-    return {
-        "id": root_id,
-        "node": {
-            "kind": "transform",
-            "nodeId": f"{root_id}-transform",
-            "matrix": [
-                1, 0, 0, translation_x,
-                0, 1, 0, translation_y,
-                0, 0, 1, translation_z,
-                0, 0, 0, 1,
-            ],
-            "child": _box_node(f"{root_id}-box"),
-        },
-    }
-
-
-def _scene(geometry_hash: str, roots: list[dict[str, object]]) -> dict[str, object]:
-    return {
-        "geometryHash": geometry_hash,
-        "lengthUnit": "m",
-        "roots": roots,
-        "geometryGroups": [],
-        "surfaceGroups": [],
-    }
 
 
 @pytest.mark.parametrize(

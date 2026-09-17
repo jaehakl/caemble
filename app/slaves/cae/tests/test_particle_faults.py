@@ -13,7 +13,7 @@ from app.kernel.coordinator import SimulationApi
 from app.kernel.coordinator.invocation import execute_solver
 from app.kernel.coordinator.run import CaeRun
 from app.kernel.execution import MmapPayloadCodec, SolverProcessExitedError, SpawnSolverExecutor
-from tests.test_particle_runtime import particle_measurement
+from tests.particle_fixtures import particle_measurement
 
 
 @pytest.mark.asyncio

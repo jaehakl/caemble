@@ -7,8 +7,8 @@ import pytest
 from app.methods.geometry import GeometryService, TriangularMesh
 from app.methods.particles.sampling import SurfaceQuery
 from app.solvers.dem.formulation import DemStepper
-from tests.test_dem_particles import setup_particles
-from tests.test_geometry_solids import boolean, box, scene, transformed
+from tests.particle_fixtures import setup_particles
+from tests.geometry_fixtures import boolean, box, scene, transformed
 
 
 def test_dem_outside_convex_edge_is_not_misclassified_as_inside_wall():

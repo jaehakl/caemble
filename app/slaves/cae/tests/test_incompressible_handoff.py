@@ -24,14 +24,20 @@ class IsolatedConsumerPlan(RunPlan):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("attached", [False, True])
-async def test_native_traction_without_producer_state_geometry_or_live_child(catalog_builds, tmp_path, monkeypatch, attached):
+async def test_native_traction_without_producer_state_geometry_or_live_child(catalog_builds, tmp_path, monkeypatch):
     child_temp = tmp_path / "children"
     child_temp.mkdir()
     for name in ("TMPDIR", "TEMP", "TMP"):
         monkeypatch.setenv(name, str(child_temp))
-    run = CaeRun(measurement=catalog_builds["incompressible-boolean-channel"],
-                 max_run_seconds=1200, job_id=f"traction-handoff-{attached}")
+    measurement = catalog_builds["incompressible-boolean-channel"]
+    config = measurement["experiment"]["simulationProgram"]["tasks"]["flow"]["config"]
+    # One accepted step on the same Boolean boundary is enough to check native
+    # traction ownership. Physical convergence has separate validation tests.
+    config["parameters"]["spatialResolution"]["value"] = .004
+    clock = next(rule["parameters"] for rule in config["initializations"] if rule["methodId"] == "flow.time")
+    for name in ("dt", "duration", "windowSize", "outputInterval"):
+        clock[name].update(value=.001, unit="s")
+    run = CaeRun(measurement=measurement, max_run_seconds=1200, job_id="traction-handoff")
     flow = run.plan.task_specs["flow"]
     descriptor = detached(flow.descriptor)
     descriptor["observations"]["pid"] = {"type": "number"}
@@ -53,7 +59,7 @@ async def test_native_traction_without_producer_state_geometry_or_live_child(cat
                                     plan.schemas, plan.result_contracts, plan.visualization_contracts)
     sim = SimulationApi(run)
     run.simulation_api = sim
-    sim._executor = SpawnSolverExecutor(codec=MmapPayloadCodec(sim._buffers, array_threshold=64 if attached else 2**30))
+    sim._executor = SpawnSolverExecutor(codec=MmapPayloadCodec(sim._buffers, array_threshold=64))
     baseline = sim._resources.stats().resource_count
     children = {child.pid for child in multiprocessing.active_children()}
     buffers, cache = sim._buffers.root, Path(sim._geometry_cache.name)
@@ -64,7 +70,7 @@ async def test_native_traction_without_producer_state_geometry_or_live_child(cat
         assert saved["time"] == endpoint
         field = sim._artifacts.resolve(produced["artifacts"]["obstacleTraction"])
         assert len(field.domain.cells["tri3"]) > 0
-        assert bool(sim._buffers.files()) is attached
+        assert sim._buffers.files()
         expected = np.concatenate([sim._artifacts.materialize(produced["artifacts"][key])["value"][0, 0, 0, -1, 0, 0]
                                    for key in ("obstacleForce", "obstacleMoment")])
         del field, saved

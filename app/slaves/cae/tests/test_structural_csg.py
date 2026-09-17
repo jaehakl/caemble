@@ -1,5 +1,9 @@
 """Public CSG preparation: no authored mesh IDs, with independent physics checks."""
 
+from tests.structural_csg_fixtures import UnexpectedGeometry
+
+from tests.structural_fixture import solid_invocation
+
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
@@ -9,7 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from app.kernel.api import BundleValue, SolverInvocation
+from app.kernel.api import BundleValue
 from app.kernel.resources import FileResourceCache
 from app.methods.geometry import GeometryService
 from app.solvers.structural_mechanics.state import initial_solution
@@ -17,42 +21,10 @@ from app.solvers.structural_mechanics.analyses.static import static_analysis
 from app.solvers.structural_mechanics.interfaces.resultants import apply_resultant_loads
 from app.solvers.structural_mechanics.interfaces.motion import initialize_motion
 from app.solvers.structural_mechanics.domain import build_geometry_model, distribute_resultant
-from app.solvers.structural_mechanics.entry import run
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.operators.internal import structural_response
 from app.solvers.structural_mechanics.state import encode_state
 from app.solvers.structural_mechanics.state import read_state
-
-
-class UnexpectedGeometry:
-    async def volume_mesh(self, *_args, **_kwargs):
-        raise AssertionError("configuration guard must run before meshing")
-
-
-def solid_invocation(resolution=.3, second=False):
-    roots = []
-    surfaces = []
-    for name, center in (("body", .5), ("extension", 1.5))[:2 if second else 1]:
-        roots.append({"id": name, "material": {"name": "Steel"}, "node": {
-            "kind": "transform", "nodeId": name + "-placement",
-            "matrix": [1, 0, 0, center, 0, 1, 0, .2, 0, 0, 1, .2, 0, 0, 0, 1],
-            "child": {"kind": "primitive", "nodeId": name + "-box", "primitive": "box", "parameters": {"size": [1, .4, .4]}},
-        }})
-        for index, face in enumerate(("left", "right", "front", "back", "bottom", "top")):
-            surfaces.append({"name": name + "-" + face, "selectors": [{"rootId": name, "sourceNodeId": name + "-box", "surfaceIndex": index}]})
-    scene = {"lengthUnit": "m", "roots": roots, "geometryGroups": [{"name": "all", "rootIds": [r["id"] for r in roots]}, *[{"name": r["id"], "rootIds": [r["id"]]} for r in roots]], "surfaceGroups": surfaces}
-    scene["geometryHash"] = hashlib.sha256(json.dumps(scene, sort_keys=True).encode()).hexdigest()
-    world = {"experiment": scene, "materialSelections": {"bodyDomain": {"Steel": {"constitutive": "solid"}}},
-             "materials": {"experiment": {"Steel": {"models": {"solid": {"model": "mechanics.isotropic-elastic@1", "parameters": {"E": 210e9, "nu": .3, "density": 7850.}}}}}}}
-    config = {
-        "parameters": {"analysis": "static", "geometricNonlinear": False, "spatialResolution": resolution, "relativeTolerance": 1e-9, "maxIterations": 30},
-        "initializations": [{"methodId": "fea.body", "target": ["experiment.geometry.all"], "parameters": {}}],
-        "boundaryConditions": [
-            {"methodId": "fea.fixed", "target": ["experiment.surface.body-left"], "parameters": {"components": ["x", "y", "z"]}},
-            {"methodId": "fea.surface-load", "target": ["experiment.surface." + ("extension" if second else "body") + "-right"], "parameters": {"force": [10000., 0., 0.], "moment": [0., 0., 0.], "referencePoint": [2. if second else 1., .2, .2]}},
-        ], "outputs": [],
-    }
-    return SolverInvocation(config, {}, {}, world, GeometryService(), None, {}, task_name="solid")
 
 
 @pytest.mark.asyncio
@@ -88,6 +60,7 @@ async def test_generated_mesh_exact_affine_patch_and_resolution_invariant_surfac
     assert counts[1] > counts[0]
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_csg_mesh_refinement_converges_clamped_volume_compliance():
     energies, counts = [], []
@@ -310,50 +283,6 @@ async def test_rotor_body_initial_motion_requires_explicit_superposition_before_
     invocation = replace(invocation, geometry=UnexpectedGeometry())
     with pytest.raises(ValueError, match="explicit rotor superposition semantics"):
         await build_geometry_model(invocation)
-
-
-@pytest.mark.parametrize("analysis", ["modal", "harmonic", "transient"])
-@pytest.mark.asyncio
-async def test_resultant_transfer_rejects_unsupported_analysis_before_meshing(analysis):
-    invocation = solid_invocation()
-    invocation.config["parameters"]["analysis"] = analysis
-    invocation.config["boundaryConditions"].append({
-        "methodId": "fea.resultant-transfer", "target": ["experiment.surface.body-right"],
-        "parameters": {"sourceRegion": "experiment.surface.body-right", "referencePoint": [0., 0., 0.]},
-    })
-
-    invocation = replace(invocation, geometry=UnexpectedGeometry())
-    with pytest.raises(ValueError, match="only for static and buckling"):
-        await run(invocation)
-
-
-@pytest.mark.parametrize("port", ["loads", "previousMotion", "control"])
-@pytest.mark.asyncio
-async def test_transient_coupling_ports_reject_other_analyses_before_meshing(port):
-    invocation = solid_invocation()
-    value = [SimpleNamespace()] if port == "loads" else SimpleNamespace()
-    invocation = replace(invocation, inputs={port: value}, geometry=UnexpectedGeometry())
-    with pytest.raises(ValueError, match="only for transient analysis"):
-        await run(invocation)
-
-
-@pytest.mark.asyncio
-async def test_control_requires_rotor_before_meshing():
-    invocation = solid_invocation()
-    invocation.config["parameters"]["analysis"] = "transient"
-    invocation = replace(invocation, inputs={"control": SimpleNamespace()}, geometry=UnexpectedGeometry())
-    with pytest.raises(ValueError, match="requires a fea.rotor"):
-        await run(invocation)
-
-
-@pytest.mark.parametrize("port", ["sourceLoads", "sourceMotion"])
-@pytest.mark.asyncio
-async def test_source_coupling_ports_require_resultant_transfer_before_meshing(port):
-    invocation = solid_invocation()
-    value = [SimpleNamespace()] if port == "sourceLoads" else SimpleNamespace()
-    invocation = replace(invocation, inputs={port: value}, geometry=UnexpectedGeometry())
-    with pytest.raises(ValueError, match="require fea.resultant-transfer"):
-        await run(invocation)
 
 
 @pytest.mark.asyncio

@@ -68,4 +68,3 @@ def cube_mesh(root_id: str = "solid") -> TriangularMesh:
         for _ in range(2)
     )
     return TriangularMesh(vertices, triangles, provenance)
-

@@ -1,6 +1,6 @@
 """ABI 3 assembly for steady Stokes or accepted Navier--Stokes time windows."""
 
-from app.kernel.api import SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult, StatePatch
 
 from .domain import build_domain, domain_request, parameter
 from .formulation import solve_stokes
@@ -8,7 +8,7 @@ from .outputs import build_outputs
 from .state import history_values, initial_state, read_checkpoint, read_settings
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     analysis = parameter(invocation.config["parameters"]["analysis"])
     controls, clock = read_settings(invocation.config, analysis)
     saved = invocation.state.get("incompressible_flow", {}).get(invocation.task_name)

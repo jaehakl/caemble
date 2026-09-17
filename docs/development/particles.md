@@ -160,9 +160,10 @@ PostgreSQL 검증에서는 실제 CLI 결과를 기존 staging·완료 경로로
 이 시험은 명시적인 로컬 DB 설정이 있을 때만 실행하며, 검증 후 임시 DB와
 컨테이너를 제거했다.
 
-부분 수정은 `python -m tests.run affected`로 검증하고, 전체 CPU 회귀는
-필요한 시점에 `python -m tests.run full`로 명시적으로 실행한다.
-[검사 선택·병렬 실행·보고 규약](solver-development.md#변경-영향-검사와-전체-cpu-회귀)을 따른다. Catalog의
+부분 수정은 `python -m tests.run affected`의 정적·저비용 검사로 검증한다.
+실제 연결은 `--smoke`, 정밀 검증은 `--validation`으로 각각 추가한다.
+전체 CPU 회귀는 명시적으로 요청된 경우에만 `python -m tests.run full`로 실행한다.
+[검사 선택·병렬 실행·보고 규약](solver-development.md#변경-영향-검사와-명시적-solver-실행)을 따른다. Catalog의
 Draft build와 canonical publish 후에는 같은 revision으로 다시 build한다.
 로컬 `experiment test` 결과는 `data inspect --result`로 재조회한다.
 운영 배포와 원격 실행은 이 검증 범위에 포함하지 않는다.

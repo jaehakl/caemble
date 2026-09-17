@@ -1,5 +1,7 @@
 """기울어진 축의 회전 조인트: 자세, 속도, 가상일과 실제 시간 적분."""
 
+from tests.structural_fixture import joint_model
+
 from copy import deepcopy
 
 import numpy as np
@@ -21,13 +23,6 @@ from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.operators.internal import structural_response
 from app.solvers.structural_mechanics.model import StructuralModel
 from app.methods.rigid.rotations import rotation_exp, rotation_log
-
-
-def joint_model():
-    points = np.array([[0., 0., 0.], [.4, 0., 0.], [.4, 1., .2]])
-    model = StructuralModel(np.arange(3), points, [], np.arange(18), np.empty(0, dtype=int), np.zeros((3, 6)))
-    model.links = [(0, 1, np.array([0, 1, 2, 4, 5])), (1, 2, np.arange(6))]
-    return model
 
 
 def test_tilted_revolute_pose_and_virtual_increment_follow_master_axis():
@@ -123,6 +118,7 @@ def test_tilted_revolute_rotor_keeps_unwrapped_spin_and_energy():
     np.testing.assert_allclose(solution.kinetic_energy, energy, rtol=2e-12)
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("torque", [0., .05])
 def test_free_tilting_base_and_spinning_rotor_conserve_energy_and_angular_momentum(torque):
     model = joint_model()

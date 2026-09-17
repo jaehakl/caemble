@@ -1,5 +1,7 @@
 """Canonical solid decomposition and exact polyhedral mass integration."""
 
+from tests.geometry_fixtures import boolean, box, box_inertia, scene, transformed
+
 import asyncio
 from copy import deepcopy
 
@@ -16,33 +18,8 @@ from app.methods.geometry import (
 )
 
 
-def box(name, size):
-    return {"kind": "primitive", "nodeId": name, "primitive": "box", "parameters": {"size": size}}
-
-
-def transformed(node, position=(0, 0, 0), rotation=None):
-    matrix = np.eye(4)
-    matrix[:3, 3] = position
-    if rotation is not None:
-        matrix[:3, :3] = rotation
-    return {"kind": "transform", "nodeId": node["nodeId"] + "-transform", "matrix": matrix.ravel().tolist(), "child": node}
-
-
-def boolean(name, operation, *children):
-    return {"kind": "boolean", "nodeId": name, "operation": operation, "children": list(children)}
-
-
-def scene(node, unit="m"):
-    return {"geometryHash": repr(node), "lengthUnit": unit, "roots": [{"id": "body", "node": node}]}
-
-
 def components(node, segments=256, unit="m"):
     return asyncio.run(GeometryService().solid_components(scene(node, unit), "body", "m", TriangleMeshingProfile(segments)))
-
-
-def box_inertia(size, mass):
-    squared = np.square(size)
-    return mass * np.diag(squared.sum() - squared) / 12
 
 
 def test_box_mass_center_full_rotated_inertia_and_frozen_arrays():

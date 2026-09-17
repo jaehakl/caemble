@@ -13,7 +13,7 @@ from app.kernel.resources import ArtifactStore, ResourceStore, StateStore
 from app.kernel.transport.recording import materialize_record_value
 from app.kernel.transport.tensor import decode_attachment_tensors, encode_recorded_data
 from app.solvers.fdtd.detectors import DetectorRegion, SpectralDetector, TimeDetector
-from tests.test_box_grid_outputs import grid
+from tests.box_grid_fixtures import grid
 from app.methods.fields.box_grid import RectilinearSampler
 
 

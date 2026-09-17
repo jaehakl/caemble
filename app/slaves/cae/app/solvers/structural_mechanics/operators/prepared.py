@@ -14,7 +14,7 @@ class PreparedStructuralOperators:
 
     # The thermal CG path stores only its constrained stiffness in thermal_batch.
     stiffness: sparse.spmatrix | None
-    mass: sparse.spmatrix
+    mass: sparse.csr_matrix | sparse.coo_matrix
     damping: sparse.spmatrix
     element_data: list[dict[str, Any]]
     beam_batch: dict[str, Any] | None = None

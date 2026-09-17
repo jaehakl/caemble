@@ -1,68 +1,25 @@
 """Backpressured IPC and forced-exit workspace cleanup use the normal child ABI."""
 
+from tests.executor_transport_fixtures import _partial_frame
+
 import asyncio
 from dataclasses import replace
 import multiprocessing
 from multiprocessing.connection import Connection
 from pathlib import Path
 import socket
-import struct
 import threading
 import time
 
 import numpy as np
 import pytest
 
-from app.kernel.api import SolverImplementation, SolverResourceServices, SolverResult
+from app.kernel.api import SolverResourceServices
 from app.kernel.execution import (
     MmapPayloadCodec, SolverExecutionCancelled, SolverProcessExitedError, SpawnSolverExecutor,
 )
 from app.kernel.resources import BufferStore
 from tests.solver_test_support import invocation
-
-
-async def _flooding(context):
-    workspace = Path(context.resources.workspace_path)
-    (workspace / "numerical-scratch").write_bytes(b"temporary")
-    await context.progress({"stage": "ready", "workspace": str(workspace)})
-    try:
-        # The parent deliberately pauses its progress callback while this frame
-        # exceeds the pipe buffer. Cancellation must continue consuming frames.
-        await context.progress({"stage": "bulk", "payload": b"x" * (4 * 1024 * 1024)})
-        context.cancellation.raise_if_cancelled()
-    except asyncio.CancelledError:
-        Path(context.config["observed"]).write_text("cooperative cancellation", encoding="utf-8")
-        raise
-    return SolverResult()
-
-
-async def _forced_exit(context):
-    workspace = Path(context.resources.workspace_path)
-    (workspace / "numerical-scratch").write_bytes(b"temporary")
-    await context.progress({"stage": "ready", "workspace": str(workspace)})
-    time.sleep(30)
-    return SolverResult()
-
-
-async def _crashes(context):
-    import os
-    workspace = Path(context.resources.workspace_path)
-    (workspace / "numerical-scratch").write_bytes(b"temporary")
-    await context.progress({"stage": "ready", "workspace": str(workspace)})
-    os._exit(17)
-
-
-flooding = SolverImplementation(3, _flooding)
-forced_exit = SolverImplementation(3, _forced_exit)
-crashes = SolverImplementation(3, _crashes)
-
-
-def _partial_frame(connection, ready):
-    # Socket-based Connection uses this framing on every platform, including
-    # Windows. The advertised payload never finishes until the child exits.
-    connection._send(struct.pack("!i", 4096) + b"partial")
-    ready.set()
-    time.sleep(30)
 
 
 @pytest.mark.asyncio
@@ -132,7 +89,7 @@ async def test_cancellation_drains_blocked_progress_and_preserves_caller_directo
                 task.cancel()
 
     try:
-        task = asyncio.create_task(executor.execute("tests.test_executor_shutdown:flooding", context,
+        task = asyncio.create_task(executor.execute("tests.executor_transport_fixtures:flooding", context,
                                                     progress=progress, cancellation=cancellation))
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=15)
@@ -167,7 +124,7 @@ async def test_parent_removes_exact_workspace_after_noncooperative_exit(tmp_path
     try:
         error = SolverExecutionCancelled if failure == "forced_exit" else SolverProcessExitedError
         with pytest.raises(error):
-            await executor.execute(f"tests.test_executor_shutdown:{failure}", invocation({"values": np.arange(4096)}),
+            await executor.execute(f"tests.executor_transport_fixtures:{failure}", invocation({"values": np.arange(4096)}),
                                    progress=progress, cancellation=cancellation, timeout=10)
         await executor.wait_for_cleanup()
         assert len(workspaces) == 1 and not workspaces[0].exists()

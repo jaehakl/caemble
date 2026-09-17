@@ -1,5 +1,7 @@
 """Finite-volume observations use actual tetrahedron/Box intersection volumes."""
 
+from tests.flow_fixtures import observation
+
 import asyncio
 from copy import deepcopy
 from itertools import permutations
@@ -15,18 +17,11 @@ from app.kernel.resources import ArtifactStore, ResourceStore
 from app.kernel.transport.recording import materialize_record_value
 from app.kernel.transport.tensor import encode_recorded_data, encode_tensor
 from app.methods.coupling.tetrahedral import TetrahedralBoxOverlap
-from app.methods.fields.box_grid import BoxGrid
 from app.solvers.incompressible_flow.outputs import build_outputs
-from tests.test_catalog_examples import decode_tensor_tree
+from tests.recording_fixtures import decode_tensor_tree
 
 
 TETRAHEDRON = np.array([[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
-
-
-def observation(shape=(2, 2, 2), origin=(0, 0, 0), size=(1, 1, 1), rotation=None, unit="m"):
-    return BoxGrid({"origin": list(origin), "size": list(size), "gridShape": list(shape),
-                    "rotation": np.eye(3) if rotation is None else rotation,
-                    "lengthUnit": unit, "source": "experiment", "rootId": "probe"})
 
 
 def output_problem(grid, pressure=(0., -4.)):

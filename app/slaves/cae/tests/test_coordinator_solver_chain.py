@@ -10,7 +10,7 @@ from app.kernel.coordinator import SimulationApi
 from app.kernel.api import FieldValue
 from app.kernel.coordinator.plan import RunPlan
 from app.kernel.resources import FileResourceCache
-from tests.test_actual_solver_chain import parameter, world, output_box
+from tests.solver_chain_fixtures import parameter, world, output_box
 
 
 @pytest.mark.asyncio
@@ -111,7 +111,8 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
         joule = sim._artifacts.materialize(electric["artifacts"]["jouleHeating"])
         assert isinstance(joule, FieldValue)
         assert joule.values.shape == (len(joule.domain.cells["tet4"]),)
-        assert sim._artifacts.materialize(electric["artifacts"]["totalCurrent"])["value"] > 0
+        np.testing.assert_allclose(sim._artifacts.materialize(electric["artifacts"]["totalCurrent"])["value"],
+                                   5.8e7 * .2 * .2, rtol=1e-9)
         thermal = await sim.run(
             plan.tasks["thermal"], state=electric["state"],
             inputs={"heatSource": electric["artifacts"]["jouleHeating"]},
@@ -121,6 +122,9 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
         assert sim._artifacts.materialize(thermal["artifacts"]["maximumTemperature"])["value"] >= 300.0
         assert thermal["state"] is electric["state"]
         assert thermal["state"].revision == 0
+        electric_observations, heat_observations = [event["observations"] for event in host.trace]
+        for name in ("sourcePower", "outwardPower"):
+            assert heat_observations[name] == pytest.approx(electric_observations["inputPower"], rel=1e-6)
         assert len(FileResourceCache(sim._geometry_cache.name).entry_paths()) == 2
         assert host.trace[1]["inputArtifacts"]["heatSource"]["id"] == electric["artifacts"]["jouleHeating"].artifact_id
         assert any(value.get("stage") == "heat-fem" for value in progress)

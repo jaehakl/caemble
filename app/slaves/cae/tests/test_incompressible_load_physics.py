@@ -12,9 +12,9 @@ from app.solvers.incompressible_flow.formulation import solve_stokes
 from app.solvers.incompressible_flow.periodic import boundary_patches, split_gravity
 from app.solvers.incompressible_flow.surface_loads import SurfaceBoxOverlap, SurfaceRecovery
 from app.solvers.incompressible_flow.transient import PreparedTransientFlow
-from tests.test_incompressible_domain import fluid_invocation
-from tests.test_incompressible_outputs import observation
-from tests.test_incompressible_periodic import closed_boundaries, periodic_box
+from tests.flow_fixtures import fluid_invocation
+from tests.flow_fixtures import observation
+from tests.flow_fixtures import closed_boundaries, periodic_box
 
 
 def channel_domain(resolution):
@@ -32,6 +32,7 @@ def channel_domain(resolution):
             "hydrostaticGravity": hydro, "drivingAcceleration": drive})
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_channel_wall_force_moment_and_traction_converge_independently():
     errors = []
@@ -69,6 +70,7 @@ async def test_channel_wall_force_moment_and_traction_converge_independently():
     assert errors[-1, 2] < .006
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_startup_global_momentum_budget_separates_residual_and_surface_error():
     dt, count = .002, 20
@@ -123,6 +125,7 @@ async def test_startup_global_momentum_budget_separates_residual_and_surface_err
     assert errors[-1, 1] < .002
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_boolean_closed_obstacle_buoyancy_gauge_cancellation_and_surface_refinement():
     size = np.array([.35, .26, .22])

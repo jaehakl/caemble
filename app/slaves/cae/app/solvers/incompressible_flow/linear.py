@@ -133,6 +133,7 @@ class LinearFlowSystem:
             pressure.fill(0)
         iteration, restart = 0, min(200, max(1, len(self.free)))
         local, evaluate = 0, True
+        preconditioned = raw_hessenberg = None
         mass_residual = momentum_residual = pressure_residual = float("inf")
         while iteration <= max_iterations:
             if cancellation is not None:

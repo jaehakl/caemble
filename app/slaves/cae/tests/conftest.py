@@ -5,11 +5,10 @@ import os
 
 import pytest
 
-from tests.catalog_build import CatalogBuilds
-
-
 @pytest.fixture(scope="session")
 def catalog_builds(tmp_path_factory, request):
+    from tests.catalog_build import CatalogBuilds
+
     configured = os.environ.get("CAEMBLE_TEST_RUN_DIR")
     if configured:
         shared = Path(configured) / "builds"

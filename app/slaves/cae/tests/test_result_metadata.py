@@ -11,7 +11,7 @@ from app.kernel.resources import ArtifactStore, ResourceStore
 from app.kernel.transport.recording import materialize_record_value
 from app.kernel.transport.tensor import encode_recorded_data, encode_tensor
 from caemble_catalog.result_metadata import validate_result_metadata
-from tests.test_box_grid_outputs import data, grid
+from tests.box_grid_fixtures import data, grid
 from app.methods.fields.box_grid import pack_box_grid
 
 

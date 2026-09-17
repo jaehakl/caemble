@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.local_transport_fixtures import transport_plan, record_fixture_artifact
+
 import asyncio
 import hashlib
 import json
@@ -19,27 +21,18 @@ from app.kernel.transport import local
 
 
 CAE = Path(__file__).resolve().parents[1]
-ORIGINAL_RECORD = SimulationApi.record
 
 
-def transport_plan(measurement, tasks, schemas):
-    # Transport tests isolate serialization and ACKs from Catalog compilation.
-    contracts = {name: {"task": "fixture", "output": name, "solver": {"name": "fixture", "version": "1"},
-                        "artifactType": "fixture/" + name} for name in schemas}
-    return RunPlan({}, {}, {}, schemas, contracts)
+FIXTURE_BRIDGE = """
+from app.kernel.coordinator.plan import RunPlan
+from app.kernel.coordinator.simulation import SimulationApi
+from app.kernel.transport import local
+from tests.local_transport_fixtures import transport_plan, record_fixture_artifact
 
-
-async def record_fixture_artifact(self, name, value):
-    handle = self._artifacts.publish(value, producer_task="fixture", output_name=name,
-        solver_name="fixture", solver_version="1", artifact_type="fixture/" + name, state_revision=0)
-    try:
-        return await ORIGINAL_RECORD(self, name, handle)
-    finally:
-        self.release(handle)
-
-
-FIXTURE_BRIDGE = "from tests.test_local_transport import *; RunPlan.prepare = staticmethod(transport_plan); SimulationApi.record = record_fixture_artifact; raise SystemExit(local.main())"
-
+RunPlan.prepare = staticmethod(transport_plan)
+SimulationApi.record = record_fixture_artifact
+raise SystemExit(local.main())
+"""
 
 
 @pytest.fixture
@@ -209,7 +202,12 @@ async def test_record_write_failure_does_not_ack_and_closes_the_run(local_input,
 
     async def close(run):
         pending = run.pending
+        sim = run.simulation_api
+        buffers = sim._buffers.root
+        cache = Path(sim._geometry_cache.name)
         await original_close(run)
+        assert not buffers.exists() and not cache.exists()
+        assert sim._resources.stats().resource_count == 0
         closed.append(run)
         assert pending.ack.cancelled()
         assert pending.attachments == []

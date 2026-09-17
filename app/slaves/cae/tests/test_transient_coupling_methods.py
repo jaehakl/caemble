@@ -6,7 +6,7 @@ from scipy.spatial.transform import Rotation
 
 from app.methods.coupling.surface import planar_face_flux_operator
 from app.methods.time.integration import integrate_piecewise_linear
-from tests.test_harmonic_surface_methods import rectangle
+from tests.surface_fixtures import rectangle
 
 
 def target_quads(nx=4, ny=3):

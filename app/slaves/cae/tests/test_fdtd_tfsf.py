@@ -19,6 +19,7 @@ def single_threaded_torch():
     torch.set_num_threads(previous)
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("axis", [0, 1, 2])
 @pytest.mark.parametrize("direction", [-1, 1])
 def test_tfsf_matches_auxiliary_plane_wave_and_cancels_all_exterior_faces(axis, direction):
@@ -70,6 +71,7 @@ def test_tfsf_rejects_longitudinal_polarization():
                    np.array([0., 0., 1.]), 3e14, 2e14, 0, 1e-14, 100)
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("direction", [-1, 1])
 def test_broadband_auxiliary_line_reverse_wave_at_grid_transitions(direction):
     # Match the example's 10 nm main grid and 50 nm buffer/PML spacing.

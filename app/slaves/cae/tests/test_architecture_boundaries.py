@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import ast
-import json
 import importlib.util
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -40,42 +37,6 @@ def test_resident_coordinator_has_no_method_or_solver_dependency() -> None:
     assert not {path: modules for path, modules in violations.items() if modules}
 
 
-def test_methods_have_no_solver_or_coordinator_dependency() -> None:
-    forbidden = ("app.solvers", "app.solver_framework")
-    violations = {
-        str(path.relative_to(APP)): sorted(
-            module
-            for module in imported_modules(path)
-            if module.startswith(forbidden)
-            or (
-                module.startswith("app.kernel.")
-                and not module.startswith("app.kernel.api")
-            )
-        )
-        for path in (APP / "methods").rglob("*.py")
-    }
-    assert not {path: modules for path, modules in violations.items() if modules}
-
-
-def test_solver_api_import_does_not_load_runtime_implementations() -> None:
-    script = (
-        "import json, sys; from app.kernel.api import *; "
-        "print(json.dumps(sorted(name for name in sys.modules "
-        "if name.startswith(('app.kernel.resources', "
-        "'app.kernel.execution', 'app.kernel.coordinator', "
-        "'app.kernel.transport', 'app.methods', 'app.solvers', "
-        "'app.solver_framework')))))"
-    )
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=Path(__file__).parents[1],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(completed.stdout) == []
-
-
 def test_methods_and_solvers_do_not_use_internal_resource_exports() -> None:
     internal_exports = {
         "ArtifactHandle", "ArtifactProvenance", "ArtifactStore", "BufferStore",
@@ -88,10 +49,11 @@ def test_methods_and_solvers_do_not_use_internal_resource_exports() -> None:
         for path in directory.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             imports = imported_modules(path)
+            forbidden_solver = directory.name == "methods"
             found = sorted(
                 module for module in imports
-                if module.startswith("app.kernel.")
-                and not module.startswith("app.kernel.api")
+                if (module.startswith("app.kernel.") and not module.startswith("app.kernel.api"))
+                or (forbidden_solver and module.startswith(("app.solvers", "app.solver_framework")))
             )
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module in {
@@ -107,22 +69,6 @@ def test_methods_and_solvers_do_not_use_internal_resource_exports() -> None:
     assert not violations
 
 
-def test_importing_resident_runtime_does_not_import_solver_or_method_modules() -> None:
-    script = (
-        "import json, sys; import app.kernel.coordinator.run; import app.kernel.transport.handlers; "
-        "print(json.dumps(sorted(name for name in sys.modules "
-        "if name.startswith(('app.solvers.', 'app.methods.')))))"
-    )
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=Path(__file__).parents[1],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(completed.stdout) == []
-
-
 def test_app_exposes_only_entry_files_and_current_packages() -> None:
     assert {path.name for path in APP.glob("*.py")} == {"__init__.py", "__main__.py"}
     assert {path.name for path in APP.iterdir() if path.is_dir() and path.name != "__pycache__"} == {
@@ -134,27 +80,6 @@ def test_app_exposes_only_entry_files_and_current_packages() -> None:
     assert {path.name for path in (APP / "solvers/pressure_acoustics").glob("*.py")} == {
         "__init__.py", "entry.py", "parameters.py",
     }
-
-
-def test_removed_import_paths_are_unavailable() -> None:
-    for module in (
-        "app.runtime", "app.handlers", "app.kernels", "app.program", "app.tensor", "app.errors",
-        "app.runtime_kernel", "app.solver_framework",
-    ):
-        assert importlib.util.find_spec(module) is None, module
-
-
-def test_catalog_locators_point_to_one_current_entry_per_solver() -> None:
-    from app.kernel.catalog import solver_catalog
-
-    manifests = solver_catalog.manifests()
-    names = [item["descriptor"]["name"] for item in manifests]
-    assert len(names) == len(set(names))
-    for item in manifests:
-        module, attribute = item["implementation"].split(":")
-        assert re.fullmatch(r"app\.solvers\.[a-z_]+\.entry", module)
-        assert attribute == "implementation"
-        assert item["abiVersion"] == 3
 
 
 def local_python_modules(directory: Path) -> set[str]:

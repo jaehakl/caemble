@@ -142,8 +142,10 @@ peak의 1e-4 미만이다. 이 검사는 문서의 cross-time 수정 에너지�
 비용을 고려해 구조 목표 간격을 0.02 m로 설정했다. 이 성긴 solid mesh는
 연결 시연용이며 구조 주파수·진폭의 정밀 평가에는 별도의 mesh 수렴이 필요하다.
 
-공개 CLI의 candidate build에 형상 변수만 달리 입력하고, 변경하지 않은
-공식 소스에서 구조 초기화·실제 창·음향 child를 실행했다. 두 경우 모두
+아래 표는 기본 예제 축소 이전의 검증 기록이다. 원래 형상과 첫 32-step 창은
+`test_acoustic_geometry_variants.py`의 명시적 검증 조건으로 유지한다.
+공개 CLI의 candidate build에 형상 변수만 달리 입력하고, 당시 공식 소스에서
+구조 초기화·실제 창·음향 child를 실행했다. 두 경우 모두
 표면 면적·외향 법선·primitive provenance, 실제 시간 구간, 압력의 일곱 축,
 해제 뒤 mmap/resource 정리를 확인했다. 아래 시간은 전체 예제 실행과
 동시에 측정한 초기화 및 첫 창의 wall time이다.
@@ -196,15 +198,17 @@ resource 수는 0이고 buffer 디렉토리는 제거됐다.
 .\caemble.cmd experiment build --example transient-matched-impedance-duct --vars-mode nominal --out .local/e1-build
 .\caemble.cmd experiment test .local/e1-build --out .local/e1-result
 .\caemble.cmd experiment build --example transient-plate-driven-duct --vars-mode nominal --out .local/e2-build
-.\caemble.cmd experiment test .local/e2-build --out .local/e2-result --timeout 1800
+.\caemble.cmd experiment test .local/e2-build --out .local/e2-result
 ```
 
 부분 수정의 기본 검사는 `poetry run python -m tests.run affected`다.
 전체 CPU 검증이 필요할 때는 `poetry run python -m tests.run full`을 명시적으로
 실행한다. 기존 `pytest tests -m "not cuda"`도 같은 전체 검사 집합을 유지한다.
 수렴 수치를 JUnit에 남길 때는 `-o junit_family=xunit1 --junitxml=<path>`를
-추가한다. E2 harness의 1800 s 제한은 32개 구조 창의 측정 실행 비용을
-반영하며 기존 예제의 시간 제한이나 수치 허용오차는 바꾸지 않았다.
+추가한다. 현재 기본 예제의 형상과 실행 조건은 Catalog를 따른다.
+CAE 디렉터리의 `python -m tests.run examples --key transient-plate-driven-duct`는
+명목 실행을 입력 빌드부터 자원 정리까지 180 s 예산으로 측정한다. 이 개발용 예산은
+사용자 해석의 timeout과 독립적이다. 이전 형상·창 분할·수렴 조건은 별도 검증에서 유지한다.
 
 표면 전달은 기준 형상의 동일 평면 패치와 작은 변형만 지원한다. 영구
 checkpoint 복구, acoustic 반력, 임의 곡면, PML, 열점성 손실, 오디오

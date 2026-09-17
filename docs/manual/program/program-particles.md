@@ -17,7 +17,7 @@
 | dem-two-material-collision | 서로 다른 Material 입자의 충돌과 명시적 접촉 모델 선택 |
 | dem-incline-rolling | 경사면 위에서 마찰에 의해 발생하는 이동과 회전 |
 | sph-hydrostatic-column | 닫힌 유체 기둥의 초기 침강 과정; 짧은 실행의 최종값은 정수압 평형이 아님 |
-| sph-periodic-channel | 주기 방향으로 흐르는 점성 유체의 속도 분포 |
+| incompressible-sph-periodic-channel | 같은 주기 유로에서 CFD와 SPH의 점성 유체 속도 분포 비교 |
 | mpm-affine-compression | 바닥이 고정된 고체의 초기 압축과 뒤이은 탄성 반등의 변형·응력 |
 
 Workbench의 Experiment 탭에서 예제를 열고 Vars 준비 후 **실행**을 누릅니다.

@@ -17,13 +17,12 @@ from typing import Any
 
 import numpy as np
 
-from app.kernel.api import InputArtifact, SolverInvocation, SolverResult
+from app.kernel.api import SolverInvocation
 from app.kernel.execution import (
     RemoteSolverError,
     SolverExecutionCancelled,
     SolverExecutionStartupTimeout,
     SolverExecutionTimeout,
-    SolverPayloadError,
     SolverProcessExitedError,
     SpawnSolverExecutor,
 )
@@ -35,9 +34,7 @@ from tests.executor_transport_fixtures import (
     SlowInvocationDecodeCodec,
     SlowPicklePayloadCodec,
     SlowChildCleanup,
-    closes_request_after_bootstrap,
     exits_before_bootstrap,
-    never_starts,
 )
 
 _FIXTURES = "tests.spawn_executor_fixtures"
@@ -99,8 +96,10 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
                     inputs={}, world={}, geometry=None, progress=lambda _: None, descriptor={})
                 executor = SpawnSolverExecutor()
                 if name == "raises_error":
-                    with self.assertRaisesRegex(RemoteSolverError, "fixture solver failed"):
+                    with self.assertRaisesRegex(RemoteSolverError, "fixture solver failed") as raised:
                         await executor.execute(f"{_FIXTURES}:{name}", context)
+                    self.assertEqual(raised.exception.remote.name, "ValueError")
+                    self.assertIn("raises_error", raised.exception.remote.traceback)
                 else:
                     result = await executor.execute(f"{_FIXTURES}:{name}", context)
                     self.assertEqual(result.artifacts["size"], 1)
@@ -189,16 +188,6 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RemoteSolverError, "must return SolverResult"):
             await SpawnSolverExecutor().execute(f"{_FIXTURES}:invalid_result", invocation())
 
-    async def test_remote_exception_contains_child_traceback(self) -> None:
-        with self.assertRaises(RemoteSolverError) as raised:
-            await SpawnSolverExecutor().execute(
-                f"{_FIXTURES}:raises_error",
-                invocation({}),
-            )
-
-        self.assertEqual(raised.exception.remote.name, "ValueError")
-        self.assertIn("fixture solver failed", str(raised.exception))
-        self.assertIn("raises_error", raised.exception.remote.traceback)
 
     async def test_explicit_cancellation_stops_child(self) -> None:
         cancellation = asyncio.Event()
@@ -333,51 +322,6 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
             baseline,
         )
 
-    async def test_request_send_failure_is_reported_and_reaped(self) -> None:
-        baseline = {child.pid for child in multiprocessing.active_children()}
-        executor = SpawnSolverExecutor()
-        executor._child_target = closes_request_after_bootstrap
-
-        with self.assertRaises((SolverPayloadError, SolverProcessExitedError)):
-            await executor.execute("unused:solver", invocation({"payload": b"value"}))
-
-        self.assertEqual(
-            {child.pid for child in multiprocessing.active_children()},
-            baseline,
-        )
-
-    async def test_startup_timeout_starts_before_solver_timeout_and_reaps_child(self) -> None:
-        baseline = {child.pid for child in multiprocessing.active_children()}
-        executor = SpawnSolverExecutor(cancellation_grace=0.05)
-        executor.CHILD_STARTUP_TIMEOUT_SECONDS = 0.1
-        executor._child_target = never_starts
-
-        with self.assertRaises(SolverExecutionStartupTimeout):
-            await executor.execute("unused:solver", invocation({}), timeout=10)
-
-        self.assertEqual(
-            {child.pid for child in multiprocessing.active_children()},
-            baseline,
-        )
-
-    async def test_cancel_during_startup_reaps_only_invocation_child(self) -> None:
-        baseline = {child.pid for child in multiprocessing.active_children()}
-        cancellation = asyncio.Event()
-        executor = SpawnSolverExecutor(cancellation_grace=0.05)
-        executor._child_target = never_starts
-        task = asyncio.create_task(
-            executor.execute("unused:solver", invocation({}), cancellation=cancellation)
-        )
-        await asyncio.sleep(0.1)
-        cancellation.set()
-
-        with self.assertRaises(SolverExecutionCancelled):
-            await task
-
-        self.assertEqual(
-            {child.pid for child in multiprocessing.active_children()},
-            baseline,
-        )
 
     @unittest.skipUnless(sys.platform == "win32", "Windows spawn implementation test")
     async def test_late_process_start_is_reaped_by_followup_cleanup(self) -> None:

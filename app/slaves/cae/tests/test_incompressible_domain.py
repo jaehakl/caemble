@@ -1,39 +1,14 @@
 """Actual CSG tetrahedra, provenance selection, and physical boundary preparation."""
 
+from tests.flow_fixtures import fluid_invocation
+
 from copy import deepcopy
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from app.kernel.api import ContentKey
-from app.methods.geometry import GeometryService
 from app.solvers.incompressible_flow.domain import build_domain, domain_request, prepare_boundaries
 from app.solvers.incompressible_flow.state import read_checkpoint, read_settings, save_domain
-
-
-def fluid_invocation(*, boolean=None, length_unit="m"):
-    outer = {"kind": "primitive", "nodeId": "outer", "primitive": "box", "parameters": {"size": [1., 1., 1.]}}
-    node = outer
-    if boolean == "hole":
-        node = {"kind": "boolean", "nodeId": "cut", "operation": "subtract", "children": [outer,
-            {"kind": "primitive", "nodeId": "hole", "primitive": "box", "parameters": {"size": [.2, .2, 1.2]}}]}
-    elif boolean == "disconnected":
-        node = {"kind": "boolean", "nodeId": "cut", "operation": "subtract", "children": [outer,
-            {"kind": "primitive", "nodeId": "gap", "primitive": "box", "parameters": {"size": [.2, 1.2, 1.2]}}]}
-    scene = {"geometryHash": str(ContentKey.from_parts("flow-domain-test", node, length_unit)), "lengthUnit": length_unit,
-        "roots": [{"id": "fluid", "node": node, "material": {"name": "fluid"}}],
-        "geometryGroups": [{"name": "fluid", "rootIds": ["fluid"]}],
-        "surfaceGroups": [{"name": "ends", "selectors": [
-            {"rootId": "fluid", "sourceNodeId": "outer", "surfaceIndex": side} for side in [0, 1]]}]}
-    world = {"experiment": scene,
-        "materials": {"experiment": {"fluid": {"models": {"newtonian": {
-            "model": "fluidDynamics.newtonian-fluid@1", "parameters": {"density": 1000., "dynamicViscosity": 1.}}}}}},
-        "materialSelections": {"fluidDomain": {"fluid": {"constitutive": "newtonian"}}}}
-    return SimpleNamespace(world=world, geometry=GeometryService(), progress=None, cancellation=None,
-        config={"parameters": {"spatialResolution": .3 if length_unit == "m" else .0003},
-            "initializations": [{"methodId": "flow.fluid", "target": ["experiment.geometry.fluid"]}],
-            "boundaryConditions": []})
 
 
 @pytest.mark.asyncio

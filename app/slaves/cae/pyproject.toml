@@ -32,6 +32,8 @@ pytest = "^9.1.1"
 pytest-asyncio = "^1.4.0"
 pytest-xdist = "^3.8.0"
 filelock = "^3.32.7"
+ruff = "^0.16.8"
+pyright = "^1.1.414"
 
 [[tool.poetry.source]]
 name = "pytorch-cu126"
@@ -46,5 +48,38 @@ build-backend = "poetry.core.masonry.api"
 testpaths = ["tests"]
 markers = [
     "cuda: numerical checks on a real CUDA device (select explicitly with -m cuda)",
+    "lowcost: static, small function and contract checks without product Solver entry calls",
+    "smoke: selected product Solver connections or process lifecycle integration",
     "validation: long numerical convergence or full-duration validation (included in full CPU)",
+    "example: complete nominal Catalog example and its execution budget",
+]
+addopts = "--strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+include = [
+    "app/kernel/api/models.py",
+    "app/kernel/api/services.py",
+    "app/kernel/api/state.py",
+    "app/kernel/api/values.py",
+    "app/solvers/dc_current_density/entry.py",
+    "app/solvers/heat_transfer/entry.py",
+    "app/solvers/fdtd/entry.py",
+    "app/solvers/ray_tracing/entry.py",
+    "app/solvers/structural_mechanics/entry.py",
+    "app/solvers/pressure_acoustics/entry.py",
+    "app/solvers/rigid_body/entry.py",
+    "app/solvers/dem/entry.py",
+    "app/solvers/sph/entry.py",
+    "app/solvers/mpm/entry.py",
+    "app/solvers/incompressible_flow/entry.py",
 ]

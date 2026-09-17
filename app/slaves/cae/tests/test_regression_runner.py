@@ -1,7 +1,6 @@
-"""Selection, real shared CLI builds and reporting without running the full suite."""
+"""Cost-aware selection and reporting without collecting unrelated solver tests."""
 
 import json
-import multiprocessing
 from pathlib import Path
 import subprocess
 import sys
@@ -9,9 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.catalog_build import CatalogBuilds
 from tests.reporting import ProgressReport
-from tests.selection import CAE_PREFIX, changed_paths, select_changes, selected_item
+from tests.selection import CAE_PREFIX, changed_paths, collection_targets, excluded_function_targets, select_changes, selected_item
 
 
 REPO = Path(__file__).resolve().parents[4]
@@ -27,44 +25,54 @@ def item(nodeid, *, validation=False, **parameters):
 def test_sph_output_selects_particle_consumers_without_fem_convergence():
     selection = select_changes([CAE_PREFIX + "app/solvers/sph/outputs.py"])
     assert selected_item(item("tests/test_sph_outputs.py::test_pressure"), selection, {})
-    assert selected_item(item("tests/test_particle_runtime.py::test_record[sph]", particle_measurement="sph-hydrostatic-column"), selection, {})
+    assert selected_item(item("tests/test_particle_runtime.py::test_record[sph]", particle_measurement="sph-hydrostatic-column"), selection, {}, {"lowcost", "smoke"})
     assert not selected_item(item("tests/test_particle_runtime.py::test_record[mpm]", particle_measurement="mpm-affine-compression"), selection, {})
     assert not selected_item(item("tests/test_particle_mpm.py::test_gravity"), selection, {})
     assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
-    assert not selection.actions
+    sph_validation = item("tests/test_particle_sph_validation.py::test_periodic_channel_reaches_analytic_steady_profile_under_refinement")
+    assert not selected_item(sph_validation, selection, {})
+    assert selected_item(sph_validation, selection, {}, {"validation"})
+    for owner in ("dem", "mpm"):
+        other = select_changes([CAE_PREFIX + f"app/solvers/{owner}/outputs.py"])
+        assert not selected_item(sph_validation, other, {}, {"validation"})
+    assert selection.actions == {"python-static"}
 
 
 def test_shared_constitutive_method_selects_fem_mpm_and_validation():
     selection = select_changes([CAE_PREFIX + "app/methods/continuum/hyperelastic.py"])
     assert selection.solvers == {"structural_mechanics", "mpm"}
-    assert selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
+    assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
+    assert selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {}, {"validation"})
     assert selected_item(item("tests/test_particle_mpm.py::test_gravity"), selection, {})
 
 
 @pytest.mark.parametrize("path", ["finite_volume/tetrahedral.py", "coupling/tetrahedral.py"])
 def test_tetrahedral_flow_methods_select_cfd_validation_without_unrelated_convergence(path):
     selection = select_changes([CAE_PREFIX + "app/methods/" + path, "app/catalog/caemble_catalog/catalog.sqlite3"])
-    assert selection.solvers == {"incompressible_flow"} and selection.quick
-    assert selected_item(item("tests/test_incompressible_physics.py::test_duct_convergence", validation=True), selection, {})
-    assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
-    assert not selected_item(item("tests/test_pressure_acoustics.py::test_convergence", validation=True), selection, {})
+    assert selection.solvers == {"incompressible_flow"} and selection.all_components
+    assert not selected_item(item("tests/test_incompressible_physics.py::test_duct_convergence", validation=True), selection, {})
+    focused = select_changes([CAE_PREFIX + "app/methods/" + path])
+    assert selected_item(item("tests/test_incompressible_physics.py::test_duct_convergence", validation=True), focused, {}, {"validation"}, tier="validation")
+    assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), focused, {}, {"validation"})
+    assert not selected_item(item("tests/test_pressure_acoustics.py::test_convergence", validation=True), focused, {}, {"validation"})
     shared = select_changes([CAE_PREFIX + "app/methods/coupling/surface.py"])
-    assert "structural_mechanics" in shared.solvers and shared.validation
+    assert "structural_mechanics" in shared.solvers
 
 
 def test_transient_flow_selects_its_convergence_and_outputs_keep_quick_scope():
     numerical = select_changes([CAE_PREFIX + "app/solvers/incompressible_flow/transient.py"])
     output = select_changes([CAE_PREFIX + "app/solvers/incompressible_flow/outputs.py"])
     convergence = item("tests/test_incompressible_transient_physics.py::test_time_convergence", validation=True)
-    assert selected_item(convergence, numerical, {})
+    assert not selected_item(convergence, numerical, {})
+    assert selected_item(convergence, numerical, {}, {"validation"}, tier="validation")
     assert not selected_item(convergence, output, {})
-    assert selected_item(item("tests/test_incompressible_runtime.py::test_checkpoint"), output, {})
+    assert selected_item(item("tests/test_incompressible_runtime.py::test_checkpoint"), output, {}, {"smoke"})
 
 
 def test_kernel_change_covers_real_children_without_long_physics():
     selection = select_changes([CAE_PREFIX + "app/kernel/coordinator/contracts.py"])
     for filename in ("test_particle_field_handoff", "test_mmap_executor", "test_rigid_runtime", "test_acoustic_transient_lifecycle"):
-        assert selected_item(item(f"tests/{filename}.py::test_case"), selection, {})
+        assert selected_item(item(f"tests/{filename}.py::test_case"), selection, {}, {"lowcost", "smoke"})
     assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
 
 
@@ -72,15 +80,113 @@ def test_changed_test_does_not_enable_unrelated_validation():
     selection = select_changes([CAE_PREFIX + "app/methods/fields/box_grid.py", CAE_PREFIX + "tests/test_sph_outputs.py"])
     assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), selection, {})
     direct = select_changes([CAE_PREFIX + "tests/test_mixed_benchmarks.py"])
-    assert selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), direct, {})
+    assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), direct, {})
+    assert selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), direct, {}, {"validation"})
 
 
 def test_catalog_and_docs_have_explicit_external_checks():
     catalog = select_changes(["app/catalog/caemble_catalog/catalog.sqlite3"])
-    assert catalog.quick and catalog.actions == {"catalog", "examples"}
+    assert catalog.all_components and catalog.actions == {"catalog", "examples", "python-static"}
     assert not selected_item(item("tests/test_mixed_benchmarks.py::test_bending", validation=True), catalog, {})
     docs = select_changes(["docs/development/particles.md"])
-    assert docs.actions == {"docs"} and not docs.quick and not docs.patterns
+    assert docs.actions == {"docs"} and not docs.all_components and not docs.patterns
+
+
+def test_ui_layout_does_not_select_cae_or_rebuild_catalog_examples():
+    layout = select_changes(["app/ui/src/features/viewer/ViewerLayout.tsx"])
+    assert not layout.all_components and not layout.solvers and not layout.patterns
+    assert layout.actions == {"ui-static"}
+    authoring = select_changes(["app/ui/src/lib/cad/compiler/buildMeasurement.ts"])
+    assert authoring.actions == {"ui-static", "examples"} and not authoring.all_components
+
+
+def test_lowcost_preselection_excludes_heavy_modules_and_preserves_explicit_tiers():
+    selection = select_changes([CAE_PREFIX + "tests/test_mixed_benchmarks.py"])
+    targets, excluded = collection_targets(selection, {"lowcost"})
+    assert targets == [] and "tests/test_mixed_benchmarks.py" in excluded
+    targets, excluded = collection_targets(selection, {"lowcost", "validation"})
+    assert targets == ["tests/test_mixed_benchmarks.py"] and not excluded
+
+
+def test_missing_and_stale_cost_ownership_fail_without_collecting(monkeypatch):
+    from tests.tiers import MODULE_TIERS
+
+    monkeypatch.delitem(MODULE_TIERS, "tests/test_regression_runner.py")
+    with pytest.raises(ValueError, match="Missing test cost ownership: tests/test_regression_runner.py"):
+        collection_targets(None, {"lowcost"})
+    monkeypatch.setitem(MODULE_TIERS, "tests/test_regression_runner.py", "lowcost")
+    monkeypatch.setitem(MODULE_TIERS, "tests/test_removed.py", "smoke")
+    with pytest.raises(ValueError, match="Stale test cost ownership: tests/test_removed.py"):
+        collection_targets(None, {"lowcost"})
+
+
+def test_unrun_mixed_validation_is_reported_only_for_affected_owners():
+    flow = select_changes([CAE_PREFIX + "app/solvers/incompressible_flow/outputs.py"])
+    targets, _ = collection_targets(flow, {"lowcost"})
+    excluded = excluded_function_targets(targets, flow, {"lowcost"})
+    assert "tests/test_incompressible_physics.py::test_irregular_pressure_duct_converges_to_square_duct_reference" in excluded
+    sph = select_changes([CAE_PREFIX + "app/solvers/sph/outputs.py"])
+    targets, _ = collection_targets(sph, {"lowcost"})
+    assert not any("test_particle_mpm" in key for key in excluded_function_targets(targets, sph, {"lowcost"}))
+    heat = select_changes([CAE_PREFIX + "app/solvers/heat_transfer/entry.py"])
+    allowed = {"lowcost", "smoke"}
+    targets, _ = collection_targets(heat, allowed)
+    assert "tests/test_microheater.py::test_microheater_voltage_linewidth_and_refinement" in excluded_function_targets(targets, heat, allowed)
+
+
+def test_unknown_example_key_reports_a_selection_error_without_running(tmp_path):
+    result = subprocess.run([sys.executable, "-m", "tests.run", "examples", "--key", "no-such-catalog-example",
+                             "--list", "--report", str(tmp_path / "report")],
+                            cwd=CAE, capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 2 and "no-such-catalog-example" in result.stderr
+    assert "Traceback" not in result.stderr and not (tmp_path / "report").exists()
+
+
+def test_explicit_absolute_validation_target_requires_opt_in_before_collection(tmp_path):
+    result = subprocess.run([sys.executable, "-m", "tests.run", "affected", "--list", "--tests",
+                             str(CAE / "tests/test_mixed_benchmarks.py"), "--report", str(tmp_path / "report")],
+                            cwd=CAE, capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 2 and "requires --validation" in result.stderr
+    assert not (tmp_path / "report").exists()
+
+
+def test_explicit_target_skips_diff_actions_and_unselected_module_imports(tmp_path):
+    report = tmp_path / "report"
+    target = "tests/test_regression_runner.py::test_ui_layout_does_not_select_cae_or_rebuild_catalog_examples"
+    script = ("import sys\nfrom unittest.mock import patch\nfrom tests.run import main\n"
+              "with patch('tests.run.changed_paths', side_effect=AssertionError('must not inspect unrelated changes')):\n"
+              f"    status = main(['affected', '--jobs', '1', '--tests', {target!r}, '--report', {str(report)!r}])\n"
+              "assert 'tests.test_catalog_examples' not in sys.modules\nraise SystemExit(status)\n")
+    result = subprocess.run([sys.executable, "-c", script], cwd=CAE, capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = json.loads((report / "summary.json").read_text(encoding="utf-8"))
+    assert summary["outcomes"]["passed"] == 1 and summary["productSolvers"]["count"] == 0
+    assert json.loads((report / "invocation.json").read_text(encoding="utf-8"))["actions"] == []
+
+
+@pytest.mark.parametrize("target", [".", "../", "tests", "tests/solver_fixtures.py"])
+def test_explicit_targets_cannot_expand_to_directories_or_unregistered_files(tmp_path, target):
+    result = subprocess.run([sys.executable, "-m", "tests.run", "quick", "--list", "--tests", target,
+                             "--report", str(tmp_path / "report")], cwd=CAE, capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 2 and "requires a registered CAE test file" in result.stderr
+    assert not (tmp_path / "report").exists()
+
+
+def test_collection_only_rejects_import_time_product_entry(tmp_path):
+    probe = tmp_path / "test_import_time.py"
+    probe.write_text('import asyncio\nimport pytest\nfrom app.kernel.api import SolverImplementation, SolverResult\n'
+                     'pytestmark = pytest.mark.smoke\nasync def entry(invocation):\n    return SolverResult()\n'
+                     'entry.__module__ = "app.solvers.synthetic.entry"\n'
+                     'asyncio.run(SolverImplementation(3, entry)(None))\n'
+                     'def test_unreachable():\n    pass\n', encoding="utf-8")
+    report = tmp_path / "report"
+    result = subprocess.run([sys.executable, "-m", "pytest", str(probe), "--collect-only", "-q", "-n", "0",
+                             "-c", str(CAE / "pyproject.toml"), "-p", "tests.reporting", "--cae-suite=quick",
+                             "--cae-tiers=lowcost,smoke", f"--cae-report={report}"],
+                            cwd=CAE, capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 2 and "collection checks must not invoke product Solver" in result.stdout
+    summary = json.loads((report / "summary.json").read_text(encoding="utf-8"))
+    assert summary["productSolvers"]["count"] == 0 and len(summary["productSolvers"]["blocked"]) == 1
 
 
 def test_unknown_cae_code_fails_and_current_source_ownership_is_complete():
@@ -88,6 +194,32 @@ def test_unknown_cae_code_fails_and_current_source_ownership_is_complete():
         select_changes([CAE_PREFIX + "app/solvers/new_physics/entry.py"])
     paths = [path.relative_to(REPO).as_posix() for path in (CAE / "app").rglob("*.py")]
     assert set(select_changes(paths).reasons) == set(paths)
+
+
+def test_fixture_changes_select_only_their_consumers_even_with_validation_enabled():
+    selection = select_changes([CAE_PREFIX + "tests/microheater_fixtures.py"])
+    targets, _ = collection_targets(selection, {"lowcost", "smoke", "validation"})
+    assert not selection.all_components
+    assert "tests/test_microheater_contracts.py" in targets
+    assert "tests/test_microheater_validation.py" in targets
+    assert not any("mixed_benchmarks" in name or "incompressible" in name for name in targets)
+    flow = select_changes([CAE_PREFIX + "tests/flow_fixtures.py"])
+    targets, _ = collection_targets(flow, {"lowcost", "smoke", "validation"})
+    assert targets and all("incompressible" in name for name in targets)
+    catalog = select_changes([CAE_PREFIX + "tests/catalog_example_fixtures.py"])
+    consumer = item("tests/test_catalog_examples.py::test_boolean_vars_rebuild_mesh_and_preserve_semantic_boundaries")
+    assert selected_item(consumer, catalog, {}, {"lowcost", "smoke"})
+    assert not selected_item(consumer, catalog, {}, {"lowcost"})
+    sph = select_changes([CAE_PREFIX + "tests/sph_fixtures.py"])
+    targets, _ = collection_targets(sph, {"lowcost", "validation"})
+    assert targets == ["tests/test_particle_sph.py", "tests/test_particle_sph_validation.py"]
+
+
+def test_support_ownership_is_explicit_and_covers_imported_helpers():
+    paths = [path.relative_to(REPO).as_posix() for path in (CAE / "tests").rglob("*.py")]
+    assert set(select_changes(paths).reasons) == set(paths)
+    with pytest.raises(ValueError, match="No CAE test ownership"):
+        select_changes([CAE_PREFIX + "tests/new_unowned_fixture.py"])
 
 
 def test_git_selection_includes_staged_unstaged_untracked_and_deleted(tmp_path):
@@ -128,66 +260,31 @@ def test_runner_lists_docs_without_cpu_execution_and_rejects_unknown_sources(tmp
         assert not report.exists()
 
 
-def build_in_process(root, queue):
-    try:
-        measurement = CatalogBuilds(Path(root), REPO)["shell-cutaways"]
-        queue.put(("ok", len(measurement["experiment"]["scene"]["roots"])))
-    except BaseException as error:
-        queue.put(("error", repr(error)))
+def test_progress_report_retains_interrupted_test_without_claiming_a_pass(tmp_path, monkeypatch):
+    from tests import cli_build_observer
 
+    build_events = tmp_path / "cli-build-events"
+    monkeypatch.setenv("CAEMBLE_CLI_BUILD_EVENTS_DIR", str(build_events))
+    cli_build_observer.install()
 
-def test_concurrent_real_cli_build_happens_once_and_returns_isolated_inputs(tmp_path):
-    context = multiprocessing.get_context("spawn")
-    queue = context.Queue()
-    workers = [context.Process(target=build_in_process, args=(str(tmp_path), queue)) for _ in range(3)]
-    try:
-        for worker in workers:
-            worker.start()
-        answers = [queue.get(timeout=90) for _ in workers]
-        assert all(answer[0] == "ok" for answer in answers), answers
-        assert len(set(answers)) == 1
-        for worker in workers:
-            worker.join(10)
-            assert worker.exitcode == 0
-        assert len(list(tmp_path.glob("*/complete.json"))) == 1
-        builds = CatalogBuilds(tmp_path, REPO)
-        first = builds["shell-cutaways"]
-        first["experiment"]["scene"]["roots"].clear()
-        assert builds["shell-cutaways"]["experiment"]["scene"]["roots"]
-        builds.cli_hash = "different-cli-bundle"
-        assert builds["shell-cutaways"]["experiment"]["scene"]["roots"]
-        assert len(list(tmp_path.glob("*/complete.json"))) == 2
-    finally:
-        for worker in workers:
-            if worker.is_alive():
-                worker.terminate()
-            if worker.pid is not None:
-                worker.join(10)
-        queue.close()
-        queue.join_thread()
+    def fake_cli(arguments, **kwargs):
+        code = 0 if arguments[-1] == "success" else 2
+        if kwargs.get("check") and code:
+            raise subprocess.CalledProcessError(code, arguments)
+        return subprocess.CompletedProcess(arguments, code)
 
-
-def test_failed_build_is_not_reused_and_retry_has_a_fresh_destination(tmp_path, monkeypatch):
-    builds = CatalogBuilds(tmp_path, REPO)
-    original = subprocess.run
-    attempted = []
-
-    def fail_first(arguments, **kwargs):
-        attempted.append(arguments[arguments.index("--out") + 1])
-        if len(attempted) == 1:
-            Path(attempted[-1]).mkdir()
-            return subprocess.CompletedProcess(arguments, 1, "partial", "intentional failure")
-        return original(arguments, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", fail_first)
-    with pytest.raises(RuntimeError, match="intentional failure"):
-        builds["shell-cutaways"]
-    assert not list(tmp_path.glob("*/complete.json"))
-    assert builds["shell-cutaways"]["experiment"]["scene"]["roots"]
-    assert len(set(attempted)) == 2
-
-
-def test_progress_report_retains_interrupted_test_without_claiming_a_pass(tmp_path):
+    monkeypatch.setattr(cli_build_observer, "_original_run", fake_cli)
+    command = ["node", "caemble.cjs", "experiment", "build"]
+    subprocess.run([*command, "success"])
+    subprocess.run([*command, "invalid-input"])
+    with pytest.raises(subprocess.CalledProcessError):
+        subprocess.run([*command, "invalid-input"], check=True)
+    subprocess.run(["node", "caemble.cjs", "calculation", "run", "success"])
+    (build_events / "unfinished.jsonl").write_text(
+        '{"event":"started","attempt":"interrupted"}\n', encoding="utf-8")
+    shared = tmp_path / "builds" / "shared"
+    shared.mkdir(parents=True)
+    (shared / "complete.json").write_text('{"duration":0.1}', encoding="utf-8")
     report = ProgressReport(tmp_path, "quick")
     report.collect({"a": "selected", "b": "selected"})
     report.active["b"] = "started"
@@ -199,69 +296,7 @@ def test_progress_report_retains_interrupted_test_without_claiming_a_pass(tmp_pa
     summary = json.loads((tmp_path / "summary.json").read_text())
     assert summary["outcomes"]["passed"] == 1
     assert summary["unfinished"] == {"b": "started"} and summary["exitStatus"] == 2
-
-
-def test_interrupted_worker_cleans_real_solver_child_mmap_and_workspace(tmp_path):
-    probe = tmp_path / "test_interruption.py"
-    probe.write_text('''
-import asyncio
-import json
-import multiprocessing
-from pathlib import Path
-import numpy as np
-import pytest
-from app.kernel.execution import MmapPayloadCodec, SpawnSolverExecutor
-from app.kernel.resources import BufferStore
-from tests.solver_test_support import invocation
-
-def test_stop(tmp_path):
-    async def run():
-        children = {child.pid for child in multiprocessing.active_children()}
-        store = BufferStore(tmp_path / "buffers")
-        executor = SpawnSolverExecutor(codec=MmapPayloadCodec(store, array_threshold=128), cancellation_grace=.05)
-        workspaces = []
-        async def progress(value):
-            if value.get("stage") == "ready":
-                workspaces.append(Path(value["workspace"]))
-                pytest.exit("controlled worker interruption", returncode=2)
-        try:
-            await executor.execute("tests.test_executor_shutdown:forced_exit",
-                                   invocation({"values": np.arange(4096)}), progress=progress)
-        finally:
-            await executor.wait_for_cleanup()
-            result = {"childrenClean": children == {child.pid for child in multiprocessing.active_children()},
-                      "buffersClean": not store.files(),
-                      "workspacesClean": bool(workspaces) and all(not path.exists() for path in workspaces)}
-            store.close()
-            Path(__file__).with_name("cleanup.json").write_text(json.dumps(result))
-    asyncio.run(run())
-''', encoding="utf-8")
-    report = tmp_path / "interrupted"
-    result = subprocess.run([sys.executable, "-m", "tests.run", "quick", "--jobs", "2", "--tests", str(probe),
-                             "--report", str(report)], cwd=CAE, capture_output=True, text=True, encoding="utf-8", timeout=60)
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert json.loads((tmp_path / "cleanup.json").read_text()) == {
-        "childrenClean": True, "buffersClean": True, "workspacesClean": True,
-    }
-    summary = json.loads((report / "summary.json").read_text())
-    assert summary["exitStatus"] != 0 and summary["outcomes"]["passed"] == 0
-    assert summary["unfinished"]
-
-
-def test_full_collection_matches_original_cpu_and_quick_omits_only_validation(tmp_path):
-    original = subprocess.run([sys.executable, "-m", "pytest", "tests", "-m", "not cuda", "--collect-only", "-q"],
-                              cwd=CAE, check=True, capture_output=True, text=True, encoding="utf-8")
-    baseline = {line.strip() for line in original.stdout.splitlines() if line.startswith("tests/") and "::" in line}
-    selections = {}
-    for suite in ("full", "quick"):
-        report = tmp_path / suite
-        result = subprocess.run([sys.executable, "-m", "tests.run", suite, "--list", "--report", str(report)],
-                                cwd=CAE, capture_output=True, text=True, encoding="utf-8")
-        assert result.returncode == 0, result.stdout + result.stderr
-        selections[suite] = set(json.loads((report / "selected.json").read_text()))
-    assert selections["full"] == baseline
-    excluded = selections["full"] - selections["quick"]
-    validation = subprocess.run([sys.executable, "-m", "pytest", "tests", "-m", "not cuda and validation", "--collect-only", "-q"],
-                                cwd=CAE, check=True, capture_output=True, text=True, encoding="utf-8")
-    expected = {line.strip() for line in validation.stdout.splitlines() if line.startswith("tests/") and "::" in line}
-    assert excluded == expected
+    assert summary["sharedInputBuildCount"] == summary["buildCount"] == 1
+    assert summary["cliBuilds"]["attempts"] == 4
+    assert summary["cliBuilds"]["succeeded"] == 1 and summary["cliBuilds"]["failed"] == 2
+    assert len(summary["cliBuilds"]["unfinished"]) == 1

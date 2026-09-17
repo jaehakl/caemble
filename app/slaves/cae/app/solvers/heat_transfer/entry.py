@@ -1,6 +1,6 @@
 """ABI 3 steady/transient heat and native electrothermal iteration artifacts."""
 
-from app.kernel.api import SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult, StatePatch
 from app.methods.fields.history import append_box_history
 
 from .domain import build_heat_domain
@@ -8,7 +8,7 @@ from .evolution import evaluate_heat_invocation
 from .outputs import build_heat_outputs
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     setup = await build_heat_domain(invocation)
     result, temperature, estimate, control, state, previous, accepted, status = evaluate_heat_invocation(invocation, setup)
     config = {**invocation.config, "exports": [], "outputs": [

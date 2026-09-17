@@ -14,7 +14,7 @@ from app.methods.geometry import GeometryService
 from app.solvers.sph.entry import implementation as sph
 from app.solvers.sph.domain import wall_faces
 from app.solvers.mpm.entry import implementation as mpm
-from tests.test_geometry_solids import boolean, box, scene, transformed
+from tests.geometry_fixtures import boolean, box, scene, transformed
 
 
 def invocation(prefix, *, window=0.002, duration=0.004, output=0.003):

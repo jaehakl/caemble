@@ -12,7 +12,7 @@ from app.solvers.fdtd.setup import detector_indices
 @pytest.mark.asyncio
 async def test_box_without_cell_centers_interpolates_requested_coordinates(scale):
     import torch
-    from tests.test_box_grid_outputs import data, grid
+    from tests.box_grid_fixtures import data, grid
     core = ((0., 4 * scale),) * 3
     ticks = (np.array([-1., 1., 3., 5.]) * scale,) * 3
     domain = SimpleNamespace(core_bounds=core, cell_ticks=ticks)

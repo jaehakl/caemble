@@ -1,3 +1,5 @@
+
+from tests.box_grid_fixtures import data, grid
 import asyncio
 
 import numpy as np
@@ -7,21 +9,8 @@ from app.kernel.coordinator.contracts import validate_artifact_payload
 from app.kernel.coordinator.run import CaeRun
 from app.kernel.transport.records import RecordResourceHold
 from app.kernel.transport.tensor import encode_tensor
-from app.methods.fields.box_grid import BoxGrid, RectilinearSampler, TetrahedralSampler, pack_box_grid
+from app.methods.fields.box_grid import RectilinearSampler, TetrahedralSampler, pack_box_grid
 from app.solvers.ray_tracing.outputs import PathCollector, VolumeTally
-
-
-def grid(shape=(2, 2, 2), origin=(0, 0, 0), size=(1, 1, 1), rotation=None):
-    return BoxGrid({"origin": list(origin), "size": list(size),
-                    "rotation": np.eye(3).tolist() if rotation is None else rotation,
-                    "lengthUnit": "m", "gridShape": list(shape), "source": "task", "rootId": "probe"})
-
-
-def data(components=("scalar",), polar=False, sampling="point"):
-    channels = ["amplitude", "phase"] if polar else ["value"]
-    return {"dtype": "float64", "tensorOrder": 0, "axes": [{}] * 7,
-            "boxGrid": {"version": 1, "sampling": sampling, "components": list(components),
-                        "channels": channels, "channelUnits": ["1", "rad"] if polar else ["1"]}}
 
 
 def test_rotated_probe_preserves_linear_field_and_outside_zero():
@@ -123,7 +112,7 @@ def test_polar_storage_keeps_pi_boundaries_and_underflow_canonical(dtype):
 @pytest.mark.asyncio
 async def test_recording_old_artifact_after_second_call_retains_original_provenance(monkeypatch):
     from dataclasses import replace
-    from tests.test_simulation_coordinator import FakeRun
+    from tests.coordinator_fixtures import FakeRun
     from app.kernel.api import SolverResult, StatePatch
     from app.kernel.catalog import solver_catalog
     from app.kernel.coordinator import SimulationApi
@@ -157,7 +146,7 @@ async def test_recording_old_artifact_after_second_call_retains_original_provena
 @pytest.mark.parametrize("empty_latest", [False, True])
 async def test_visualization_final_flush_releases_superseded_and_preserves_latest_success(monkeypatch, empty_latest):
     from dataclasses import replace
-    from tests.test_simulation_coordinator import FakeRun
+    from tests.coordinator_fixtures import FakeRun
     from app.kernel.api import SolverResult, StatePatch
     from app.kernel.coordinator import SimulationApi
     from app.kernel.execution import SolverExecutionTransaction
@@ -209,7 +198,7 @@ async def test_visualization_final_flush_releases_superseded_and_preserves_lates
 @pytest.mark.asyncio
 async def test_closing_unfinished_simulation_releases_unpublished_visualizations(monkeypatch):
     from dataclasses import replace
-    from tests.test_simulation_coordinator import FakeRun
+    from tests.coordinator_fixtures import FakeRun
     from app.kernel.api import SolverResult, StatePatch
     from app.kernel.coordinator import SimulationApi
     from app.kernel.execution import SolverExecutionTransaction

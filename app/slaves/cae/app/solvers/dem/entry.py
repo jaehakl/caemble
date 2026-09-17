@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverInvocation, SolverResult, StatePatch
 from app.methods.particles.outputs import build_outputs, native_values
 from app.methods.particles.time import read_settings, initial_window, advance_window, history_values
 
@@ -14,7 +14,7 @@ def observe(state):
     return {name: state[name] for name in ("positions", "velocity", "angularVelocity")}
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     settings = read_settings(invocation.config, "dem")
     request = model_request(invocation)
     saved = invocation.state.get("dem", {}).get(invocation.task_name)

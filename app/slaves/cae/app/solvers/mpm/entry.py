@@ -4,7 +4,7 @@ from functools import partial
 
 import numpy as np
 
-from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import ParticleSetValue, QuantityArrayValue, SolverImplementation, SolverInvocation, SolverResult, StatePatch
 from app.methods.particles.outputs import native_values
 from app.methods.particles.time import advance_window, history_values, initial_window, read_settings
 from app.methods.continuum.hyperelastic import InvalidDeformationError
@@ -15,7 +15,7 @@ from .observation import observe as material_observation, interpolate
 from .outputs import build_outputs
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     clock = read_settings(invocation.config, "mpm")
     request = model_request(invocation)
     saved = invocation.state.get("mpm", {}).get(invocation.task_name)

@@ -44,7 +44,7 @@ def test_cuda_fdtd_with_cpml_matches_cpu(model: int) -> None:
 @pytest.mark.cuda
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device is unavailable")
 def test_cuda_rotated_box_interpolation_and_polar_output_match_cpu():
-    from tests.test_box_grid_outputs import grid, data
+    from tests.box_grid_fixtures import grid, data
     from app.methods.fields.box_grid import RectilinearSampler
     from app.solvers.fdtd.detectors import DetectorRegion, SpectralDetector
     from app.kernel.coordinator.contracts import validate_artifact_payload

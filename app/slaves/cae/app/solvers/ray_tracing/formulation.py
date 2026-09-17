@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -516,7 +517,7 @@ def _set_reflection(
 
 async def launch_sources(
     context: SolverInvocation,
-    config: dict[str, Any],
+    config: Mapping[str, Any],
     scene: dict[str, Any],
     meshes: dict[str, TriangularMesh],
     seed: int,

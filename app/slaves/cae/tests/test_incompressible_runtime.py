@@ -19,7 +19,7 @@ from app.kernel.coordinator.run import CaeRun
 from app.kernel.execution import MmapPayloadCodec, RemoteSolverError, SolverProcessExitedError, SpawnSolverExecutor
 from app.kernel.transport import RecordPacket
 from sdk.protocol.packets import receive_packet, send_packet
-from tests.test_catalog_examples import decode_tensor_tree
+from tests.recording_fixtures import decode_tensor_tree
 
 
 @pytest.mark.asyncio

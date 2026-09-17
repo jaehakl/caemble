@@ -13,6 +13,9 @@ from filelock import FileLock
 
 class CatalogBuilds:
     def __init__(self, root: Path, repo: Path):
+        from tests.cli_build_observer import install
+
+        install()  # Spawned input-sharing helpers inherit the test event directory.
         self.root, self.repo = root, repo
         self.root.mkdir(parents=True, exist_ok=True)
         self.cli = repo / "app/ui/dist-cli/caemble.cjs"
@@ -56,5 +59,5 @@ class CatalogBuilds:
             return json.loads((directory / "measurement.json").read_text(encoding="utf-8"))
 
     def __getitem__(self, example: str) -> dict:
-        """Keep existing catalog_measurements[key] tests lazy and independently owned."""
+        """Keep existing catalog_builds[key] tests lazy and independently owned."""
         return self.measurement(example)

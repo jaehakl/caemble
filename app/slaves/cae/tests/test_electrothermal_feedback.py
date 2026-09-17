@@ -21,7 +21,7 @@ from app.solvers.dc_current_density.time import pulse_voltage
 from app.solvers.heat_transfer.domain import HeatDomain
 from app.solvers.heat_transfer.formulation import solve_heat
 from app.solvers.heat_transfer.evolution import evaluate_heat_invocation
-from tests.test_scalar_fem import layered_scene
+from tests.scalar_fixtures import layered_scene
 
 
 def interface_domain():
@@ -214,6 +214,7 @@ def regular_tetrahedron():
         {"coefficient": 20., "ambientTemperature": 300.}),), volumetric_capacity=np.array([1200.]))
 
 
+@pytest.mark.validation
 def test_consistent_capacity_robin_rc_heating_cooling_and_first_order_time_convergence():
     setup = regular_tetrahedron()
     volume = setup.mesh.elements.volumes.sum()

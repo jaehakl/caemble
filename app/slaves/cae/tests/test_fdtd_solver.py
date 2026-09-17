@@ -5,7 +5,7 @@ import copy
 from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
-from tests.test_box_grid_outputs import grid
+from tests.box_grid_fixtures import grid
 
 import numpy as np
 import pytest

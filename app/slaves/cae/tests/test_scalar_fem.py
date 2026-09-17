@@ -1,5 +1,7 @@
 """Analytic conservation and canonical thin-layer correspondence."""
 
+from tests.scalar_fixtures import layered_scene
+
 import asyncio
 from dataclasses import replace
 
@@ -20,15 +22,6 @@ from app.solvers.dc_current_density.domain import DcDomain
 from app.solvers.dc_current_density.formulation import solve_dc
 from app.solvers.heat_transfer.domain import HeatDomain
 from app.solvers.heat_transfer.formulation import solve_heat
-
-
-def layered_scene():
-    roots = []
-    for name, thickness, height in (("base", .1, 0), ("metal", .001, .0505)):
-        roots.append({"id": name, "node": {"kind": "transform", "nodeId": name + "-move",
-            "matrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, height, 0, 0, 0, 1],
-            "child": {"kind": "primitive", "nodeId": name + "-box", "primitive": "box", "parameters": {"size": [1, .2, thickness]}}}})
-    return {"geometryHash": "scalar-layers", "lengthUnit": "m", "roots": roots, "geometryGroups": [], "surfaceGroups": []}
 
 
 def test_tet_affine_gradient_and_diffusion_energy():
@@ -178,6 +171,9 @@ def test_zero_voltage_and_zero_heat_use_absolute_power_tolerance():
     assert electric.input_power == electric.dissipated_power == 0
     source = FieldValue(domain.field_domain, "cell", "PowerDensity", "W.m-3", electric.joule_heating)
     thermal = solve_heat(HeatDomain(domain, tensors, {int(i): 293.15 for i in nodes}, ()), source, 1e-8)
+    # Even a zero source must reject globally unanchored diffusion.
+    with pytest.raises(ValueError, match="connected diffusion"):
+        solve_heat(HeatDomain(domain, tensors, {}, ()), source, 1e-8)
     np.testing.assert_allclose(thermal.temperature, 293.15, atol=1e-7, rtol=0)
     # Unit-conductance reference power is 1 W; use its 1e-10 absolute scale.
     assert abs(thermal.outward_power) < 1e-10
@@ -186,7 +182,7 @@ def test_zero_voltage_and_zero_heat_use_absolute_power_tolerance():
 @pytest.mark.parametrize("solver", ["dc", "heat"])
 @pytest.mark.asyncio
 async def test_material_tensor_contract_rejects_anisotropy(solver):
-    from tests.test_solver_entries import _dc_invocation, _heat_invocation
+    from tests.scalar_fixtures import _dc_invocation, _heat_invocation
     from app.solvers.dc_current_density.domain import build_dc_domain
     from app.solvers.heat_transfer.domain import build_heat_domain
     invocation = _dc_invocation() if solver == "dc" else _heat_invocation()
@@ -213,7 +209,7 @@ def test_rotated_clipped_box_aggregates_integrate_the_native_linear_field():
 
 @pytest.mark.asyncio
 async def test_named_terminals_follow_rotated_canonical_surfaces():
-    from tests.test_solver_entries import _dc_invocation
+    from tests.scalar_fixtures import _dc_invocation
     from app.solvers.dc_current_density.domain import build_dc_domain
     invocation = _dc_invocation()
     angle = .61
@@ -245,7 +241,7 @@ def test_layer_direction_preserves_physical_slabs_on_each_axis(axis):
 
 
 def test_general_volume_mesher_honors_region_specific_sizes():
-    from tests.test_geometry_volume_mesh import _scene, _translated_box
+    from tests.geometry_fixtures import _scene, _translated_box
     scene = _scene("regional-volume-sizes", [_translated_box("fine", -.6), _translated_box("coarse", .6)])
     profile = VolumeMeshingProfile(.4, region_max_element_sizes=(("fine", .15),))
     mesh = asyncio.run(GeometryService().volume_mesh(scene, ("fine", "coarse"), "m", profile))

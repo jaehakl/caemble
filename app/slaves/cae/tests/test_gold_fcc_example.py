@@ -38,7 +38,7 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
     assert set(experiment["simulationProgram"]["recordedData"]) == {
         "scattered", "referenceScattered", "incident",
     }
-    for layer, size in (("lower", 5), ("upper", 4)):
+    for layer, size in (("lower", 3), ("upper", 2)):
         np.testing.assert_array_equal(experiment["variables"][layer + "DiameterNm"], np.full((size, size), diameter_nm))
         assert experiment["varsSchema"][layer + "DiameterNm"]["shape"] == [size, size]
         assert experiment["varsSchema"][layer + "PositionOffsetNm"]["shape"] == [size, size, 3]
@@ -46,7 +46,7 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
             for field in ("Amplitude", "Phase"):
                 assert experiment["varsSchema"][layer + axis + field]["shape"] == [size, size, 2]
     roots = experiment["scene"]["roots"]
-    assert len(roots) == 41
+    assert len(roots) == 13
     centers = []
     for root in roots:
         node = root["node"]
@@ -62,10 +62,10 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
         assert radius * 2000 == pytest.approx(diameter_nm)
     centers = np.array(centers)
     z, counts = np.unique(centers[:,2], return_counts=True)
-    np.testing.assert_array_equal(counts, [25,16])
+    np.testing.assert_array_equal(counts, [9,4])
     np.testing.assert_allclose(z, [-0.25/(2*np.sqrt(2)), 0.25/(2*np.sqrt(2))])
     distances = np.linalg.norm(centers[:,None,:] - centers[None,:,:], axis=2)
-    distances[np.diag_indices(41)] = np.inf
+    distances[np.diag_indices(13)] = np.inf
     assert distances.min() == pytest.approx(0.25)
     assert distances.min() > diameter_nm * 1e-3
 
@@ -75,28 +75,28 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
 async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
     repo = Path(__file__).resolve().parents[4]
     variables = {}
-    for layer, n in (("lower", 5), ("upper", 4)):
+    for layer, n in (("lower", 3), ("upper", 2)):
         variables[layer + "DiameterNm"] = np.full((n, n), 150.).tolist()
         variables[layer + "PositionOffsetNm"] = np.zeros((n, n, 3)).tolist()
         for axis in ("Azimuthal", "Polar"):
             for field in ("Amplitude", "Phase"):
                 variables[layer + axis + field] = np.zeros((n, n, 2)).tolist()
     if scenario == "max_offsets":
-        for layer, n in (("lower", 5), ("upper", 4)):
+        for layer, n in (("lower", 3), ("upper", 2)):
             variables[layer+"DiameterNm"] = np.full((n, n), 200.).tolist()
             variables[layer+"PositionOffsetNm"] = np.full((n, n, 3), 50.).tolist()
             for axis in ("Azimuthal", "Polar"):
                 variables[layer+axis+"Amplitude"] = np.full((n, n, 2), .04).tolist()
                 variables[layer+axis+"Phase"] = np.full((n, n, 2), 1.).tolist()
     elif scenario == "single":
-        variables["upperDiameterNm"][1][2] = 180
-        variables["upperPositionOffsetNm"][1][2] = [50, -50, 50]
-        variables["upperAzimuthalAmplitude"][1][2] = [.04, -.04]
-        variables["upperPolarAmplitude"][1][2] = [-.04, .04]
-        variables["upperAzimuthalPhase"][1][2] = [1.2, -.8]
-        variables["upperPolarPhase"][1][2] = [-1.8, .3]
+        variables["upperDiameterNm"][1][1] = 180
+        variables["upperPositionOffsetNm"][1][1] = [50, -50, 50]
+        variables["upperAzimuthalAmplitude"][1][1] = [.04, -.04]
+        variables["upperPolarAmplitude"][1][1] = [-.04, .04]
+        variables["upperAzimuthalPhase"][1][1] = [1.2, -.8]
+        variables["upperPolarPhase"][1][1] = [-1.8, .3]
     elif scenario == "varied":
-        for layer, n in (("lower", 5), ("upper", 4)):
+        for layer, n in (("lower", 3), ("upper", 2)):
             for x in range(n):
                 for y in range(n):
                     i = x*n+y
@@ -122,10 +122,10 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
     assert result.returncode == 0, result.stdout + result.stderr
     measurement = json.loads((build / "items/1.json").read_text(encoding="utf-8"))["measurement"]
     scene = measurement["experiment"]["scene"]
-    assert len(scene["roots"]) == 41
+    assert len(scene["roots"]) == 13
     service = GeometryService()
     index = 0
-    for layer, n, z in (("lower", 5, -.25/(2*np.sqrt(2))), ("upper", 4, .25/(2*np.sqrt(2)))):
+    for layer, n, z in (("lower", 3, -.25/(2*np.sqrt(2))), ("upper", 2, .25/(2*np.sqrt(2)))):
         for x in range(n):
             for y in range(n):
                 center = np.array([(x-(n-1)/2)*.25, (y-(n-1)/2)*.25, z])
@@ -137,7 +137,7 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
                     node = node["child"]
                 np.testing.assert_allclose(transform[:3, 3], center, atol=1e-12)
                 mesh = await service.triangular_mesh(scene, scene["roots"][index]["id"], "um")
-                assert np.all(np.abs(mesh.vertices) < np.array([.75, .75, .30]) - .01)
+                assert np.all(np.abs(mesh.vertices) < np.array([.46, .46, .30]) - .01)
                 radius = np.linalg.norm(mesh.vertices-center, axis=1).max()
                 parameters = node["parameters"]
                 maxima = []
@@ -162,10 +162,10 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
                 index += 1
 
     if scenario in ("collision", "interlayer"):
-        ticks = np.arange(-.65, .01, .01) + .005
+        ticks = np.arange(-.4, .11, .01) + .005
         z_ticks = np.arange(-.25, .26, .01) + .005
         masks = []
-        for particle in (0, 5 if scenario == "collision" else 25):
+        for particle in (0, 3 if scenario == "collision" else 9):
             mesh = await service.triangular_mesh(scene, scene["roots"][particle]["id"], "um")
             masks.append(await rasterize_mesh_cell_centers(mesh, ticks, ticks, z_ticks))
         assert np.any(masks[0] & masks[1])

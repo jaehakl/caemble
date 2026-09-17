@@ -16,7 +16,7 @@ from app.solvers.structural_mechanics.meshing import brick_mesh
 from app.solvers.structural_mechanics.model import Element, StructuralModel
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.thermal import prepare_thermal_force, thermal_element_response, thermal_stress_at
-from tests.test_scalar_fem import layered_scene
+from tests.scalar_fixtures import layered_scene
 from app.methods.fields.box_grid import BoxGrid
 from app.solvers.structural_mechanics.outputs.thermal import surface_displacement_metrics, rms_von_mises_stress, thermal_section_resultant
 
@@ -284,7 +284,7 @@ async def test_thermal_configuration_requires_paired_explicit_supported_inputs()
     from types import SimpleNamespace
     from app.solvers.structural_mechanics.domain import build_geometry_model
     from app.solvers.structural_mechanics.thermal import configure_thermal_expansion
-    from tests.test_structural_csg import solid_invocation
+    from tests.structural_fixture import solid_invocation
 
     invocation = solid_invocation()
     target = ["experiment.geometry.all"]
@@ -325,6 +325,7 @@ async def test_thermal_configuration_requires_paired_explicit_supported_inputs()
         configure_thermal_expansion(invocation, model)
 
 
+@pytest.mark.validation
 def test_bimaterial_strip_bending_converges_to_independent_laminate_section(record_property):
     length, width, thickness = 2., .04, .2
     young, strain = [1e9, 2e9], [2e-4, 4e-4]

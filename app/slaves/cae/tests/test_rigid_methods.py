@@ -140,6 +140,7 @@ def test_attached_force_uses_rotated_midpoint_arm_and_adds_translation():
     np.testing.assert_allclose(result["position"], [[0., .5 * dt**2, 0.]], atol=1e-15)
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("loaded", [False, True])
 def test_asymmetric_rotation_and_dense_output_converge_at_second_order(loaded):
     original, inertia = initial_state()

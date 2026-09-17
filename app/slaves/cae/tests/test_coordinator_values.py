@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from app.kernel.coordinator import SimulationApi
+from app.kernel.execution import MmapPayloadCodec, SpawnSolverExecutor
 from app.kernel.coordinator.plan import RunPlan, TaskSpec, detached
 
 
@@ -38,7 +39,8 @@ def test_task_snapshot_and_each_invocation_isolate_nested_numpy_arrays():
 
 
 @pytest.mark.asyncio
-async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contracts():
+@pytest.mark.parametrize("array_threshold", [1, 2**30], ids=["mmap", "inline"])
+async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contracts(array_threshold):
     field_data = {"dtype": "float64", "axes": [{"name": "node"}], "quantityKind": "thermodynamics.Temperature", "unit": "K"}
     sample_data = {"resourceKind": "structuredBundle", "members": {
         "temperature": {"dtype": "float64", "axes": [{"name": "particle"}], "quantityKind": "thermodynamics.Temperature", "unit": "K"},
@@ -71,8 +73,11 @@ async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contra
 
     host = SimpleNamespace(plan=plan, run_id="value-chain", max_run_seconds=30, trace=[], progress=report)
     sim = SimulationApi(host)
+    sim._executor = SpawnSolverExecutor(codec=MmapPayloadCodec(sim._buffers, array_threshold=array_threshold))
+    buffers = sim._buffers.root
     try:
         produced = await sim.run(plan.tasks["producer"])
+        assert bool(sim._buffers.files()) is (array_threshold == 1)
         consumed = await sim.run(plan.tasks["consumer"], state=produced["state"], inputs=produced["artifacts"])
         assert consumed["state"] is produced["state"]
         assert sim._artifacts.materialize(consumed["artifacts"]["answer"]) == 1836.0
@@ -88,3 +93,4 @@ async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contra
         sim.release(consumed["artifacts"])
     finally:
         sim.close()
+    assert not buffers.exists()

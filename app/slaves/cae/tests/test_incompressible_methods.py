@@ -1,37 +1,12 @@
 """Topology and consistency checks independent of the Stokes iteration."""
 
-from itertools import combinations, permutations
+from tests.flow_fixtures import tetrahedral_box
+
 
 import numpy as np
 import pytest
 
 from app.methods.finite_volume.tetrahedral import _gradient_extensions, cell_operators, create_fv_mesh, upwind_convection
-
-
-def tetrahedral_box(shape=(3, 3, 3), size=(1., 1., 1.), *, irregular=True):
-    shape, size = np.asarray(shape), np.asarray(size)
-    coordinates = np.asarray(list(np.ndindex(tuple(shape + 1))), dtype=float) / shape
-    if irregular:
-        amplitude = np.prod(np.sin(np.pi * coordinates), axis=1)
-        coordinates += amplitude[:, None] * np.array([.17, -.13, .11]) / shape
-    points = coordinates * size
-    indices = np.arange(len(points)).reshape(tuple(shape + 1))
-    cells = []
-    for origin in np.ndindex(tuple(shape)):
-        for ordering in permutations(range(3)):
-            current = np.array(origin)
-            cell = [indices[tuple(current)]]
-            for axis in ordering:
-                current[axis] += 1
-                cell.append(indices[tuple(current)])
-            cells.append(cell)
-    faces = {}
-    for cell in cells:
-        for face in combinations(cell, 3):
-            key = tuple(sorted(face))
-            faces[key] = faces.get(key, 0) + 1
-    boundary = np.asarray([face for face, count in faces.items() if count == 1])
-    return create_fv_mesh(points, np.asarray(cells), boundary)
 
 
 def test_tetrahedral_face_geometry_and_conservation():

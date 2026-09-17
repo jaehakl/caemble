@@ -1,5 +1,7 @@
 """Independent periodic geometry, conservation and driven-channel references."""
 
+from tests.flow_fixtures import closed_boundaries, periodic_box
+
 import numpy as np
 import pytest
 from scipy import sparse
@@ -15,35 +17,6 @@ from app.solvers.incompressible_flow.formulation import solve_stokes
 from app.solvers.incompressible_flow.linear import LinearFlowSystem
 from app.solvers.incompressible_flow.periodic import apply_periodic, boundary_patches, freeze_periodic, restore_periodic, split_gravity
 from app.solvers.incompressible_flow.transient import PreparedTransientFlow
-from tests.test_incompressible_methods import tetrahedral_box
-
-
-def periodic_box(shape=(4, 3, 3), axes=(0, 1), *, nonmatching=True):
-    base = tetrahedral_box(shape, (2., 1., 1.))
-    if nonmatching:
-        points = base.points.copy()
-        normalized = points / [2., 1., 1.]
-        selected = np.isclose(normalized[:, 0], 1)
-        amplitude = np.sin(np.pi*normalized[:, 1]) * np.sin(np.pi*normalized[:, 2])
-        points[selected, 1] += .13/shape[1] * amplitude[selected]
-        points[selected, 2] -= .11/shape[2] * amplitude[selected]
-        base = create_fv_mesh(points, base.cells, base.faces[base.boundary_face_map])
-    pairs = []
-    for axis in axes:
-        lower, upper = base.points[:, axis].min(), base.points[:, axis].max()
-        exterior = base.neighbour < 0
-        source = np.flatnonzero(exterior & np.isclose(base.face_centers[:, axis], lower))
-        target = np.flatnonzero(exterior & np.isclose(base.face_centers[:, axis], upper))
-        translation = np.zeros(3)
-        translation[axis] = upper-lower
-        pairs.append({"sourceFaces": source, "targetFaces": target, "translation": translation})
-    return base, pairs, apply_periodic(base, pairs)
-
-
-def closed_boundaries(mesh):
-    velocity = np.full((mesh.face_count, 3), np.nan)
-    velocity[mesh.neighbour < 0] = 0
-    return velocity, np.full(mesh.face_count, np.nan)
 
 
 def channel_reference(z, time=None, acceleration=1., viscosity=1., density=1.):
@@ -226,6 +199,7 @@ def test_periodic_topology_roundtrip_and_gravity_span_are_exact():
     np.testing.assert_allclose(rotated_drive, drive @ rotation.T, atol=4e-15)
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_periodic_channel_stokes_converges_without_pressure_jump():
     errors = []

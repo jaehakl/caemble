@@ -16,8 +16,8 @@ from app.methods.geometry import GeometryService
 from app.solvers.incompressible_flow.domain import build_domain
 from app.solvers.incompressible_flow.linear import LinearFlowSystem, TransientPressureInverse
 from app.solvers.incompressible_flow.transient import PreparedTransientFlow, TransientStepFailure
-from tests.test_incompressible_methods import tetrahedral_box
-from tests.test_incompressible_physics import pressure_duct_boundaries
+from tests.flow_fixtures import tetrahedral_box
+from tests.flow_fixtures import pressure_duct_boundaries
 
 
 def startup_reference(points, time, viscosity=1., density=1.):
@@ -96,6 +96,7 @@ async def test_nonzero_inlet_initialization_projects_velocity_and_flux_together(
     assert initial.mass_residual < 1e-12
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_startup_duct_time_convergence_and_independent_series():
     mesh = tetrahedral_box((8, 4, 4), (2., 1., 1.))
@@ -114,6 +115,7 @@ async def test_startup_duct_time_convergence_and_independent_series():
     assert abs(finest.face_volume_flux[inlet].sum()+finest.face_volume_flux[outlet].sum()) < 1e-12
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 async def test_traveling_shear_advects_phase_and_converges_in_time():
     solver, reference, initial = shear_problem(4)

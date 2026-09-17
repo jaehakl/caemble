@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import numpy as np
 import torch
 
@@ -62,6 +63,7 @@ def test_vacuum_pulse_propagates_at_the_grid_light_speed() -> None:
     assert torch.argmax(torch.abs(engine.electric[2, 0, 0])).item() == 80
 
 
+@pytest.mark.validation
 def test_cpml_reduces_returned_pulse_energy_by_three_orders_of_magnitude() -> None:
     reflected = _vacuum_engine(120)
     absorbed = _vacuum_engine(120, pml_cells=15)

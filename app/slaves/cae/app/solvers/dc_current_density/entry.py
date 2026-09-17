@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from app.kernel.api import ContentKey, SolverImplementation, SolverResult, StatePatch
+from app.kernel.api import ContentKey, SolverImplementation, SolverInvocation, SolverResult, StatePatch
 from app.kernel.api.world import scalar_parameter
 from app.methods.coupling.clock import read_step_control
 from app.methods.fields.history import append_box_history
@@ -12,7 +12,7 @@ from .formulation import solve_dc
 from .outputs import build_dc_outputs
 
 
-async def run(invocation):
+async def run(invocation: SolverInvocation) -> SolverResult:
     setup = await build_dc_domain(invocation)
     step = None
     if "stepControl" in invocation.inputs:

@@ -13,8 +13,8 @@ from app.methods.finite_volume.tetrahedral import create_fv_mesh
 from app.solvers.incompressible_flow.surface_loads import (
     SurfaceBoxOverlap, SurfaceRecovery, load_settings, select_surfaces, surface_observers,
 )
-from tests.test_incompressible_methods import tetrahedral_box
-from tests.test_incompressible_outputs import observation
+from tests.flow_fixtures import tetrahedral_box
+from tests.flow_fixtures import observation
 
 
 def wall_domain(shape=(3, 3, 3), *, rotation=None, gravity=(0., 0., 0.)):

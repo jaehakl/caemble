@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import time
 
@@ -20,6 +21,19 @@ def geometry_variants(tmp_path_factory):
     output = tmp_path_factory.mktemp("acoustic-geometry-variants")
     with open_catalog() as catalog:
         example = catalog.experiment("transient-plate-driven-duct")
+    source = output / "source"
+    for name, content in example["sourceBundle"]["files"].items():
+        if name == "experiment.tsx":
+            # Preserve the original geometry variants independently of the
+            # interactive example's narrower current authoring range.
+            for field, low, high in (("width", .06, .1), ("height", .05, .09)):
+                content, replacements = re.subn(
+                    rf"\b{field}:\s*\{{\s*min:\s*[^,]+,\s*max:\s*[^}}]+\}}",
+                    f"{field}: {{ min: {low}, max: {high} }}", content)
+                assert replacements == 1
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
     candidates = [
         {"width": .08, "height": .07, "thickness": .008, "length": .5},
         {"width": .09, "height": .08, "thickness": .008, "length": .5},
@@ -31,14 +45,31 @@ def geometry_variants(tmp_path_factory):
         artifact = output / f"candidate-{index}"
         completed = subprocess.run([
             "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
-            "experiment", "build", "--example", example["coordinate"],
+            "experiment", "build", str(source),
             "--mode", "candidate", "--vars", str(variables), "--out", str(artifact),
         ], cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=90)
         assert completed.returncode == 0, completed.stdout + completed.stderr
         manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
         assert manifest["mode"] == "candidate" and len(manifest["items"]) == 1
         item = json.loads((artifact / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
-        built.append((values, item["measurement"]))
+        measurement = item["measurement"]
+        for task in measurement["experiment"]["simulationProgram"]["tasks"].values():
+            config = task["config"]
+            config["parameters"]["spatialResolution"].update(value=.02, unit="m")
+            if task["kernel"]["name"] == "structural-mechanics":
+                config["parameters"]["relativeTolerance"]["value"] = 1e-8
+                config["parameters"]["maxIterations"] = 40
+                clock = next(rule["parameters"] for rule in config["initializations"] if rule["methodId"] == "fea.time")
+                for name, value in {"dt": 1 / 65536, "windowSize": 1 / 2048,
+                                    "duration": 1 / 64, "outputInterval": 1 / 65536}.items():
+                    clock[name].update(value=value, unit="s")
+            else:
+                clock = next(rule["parameters"] for rule in config["initializations"] if rule["methodId"] == "acoustics.time")
+                clock["dt"].update(value=1 / 65536, unit="s")
+                clock.update(totalSteps=1024, windowSteps=32)
+                for item in config["outputs"]:
+                    item["parameters"]["sampleEvery"] = 1 if item["boxGrid"]["gridShape"] == [1, 1, 1] else 20
+        built.append((values, measurement))
     assert built[0][1]["varsHash"] != built[1][1]["varsHash"]
     return built
 
@@ -55,7 +86,7 @@ async def test_geometry_vars_preserve_semantic_surface_and_actual_waveform_hando
         sound_config = program["tasks"][sound_name]["config"]
         export = next(item for item in structure_config["exports"] if item["methodId"] == "fea.transient-surface-motion")
         pressure_key = next(item["key"] for item in sound_config["outputs"] if item["boxGrid"]["gridShape"] != [1, 1, 1])
-        # Each candidate is compiled from the unchanged primitive example; no
+        # Each candidate retains the canonical primitive geometry; no
         # nodal IDs, connectivity or transfer matrices are supplied to a task.
         assert {rule["methodId"] for rule in structure_config["initializations"]} == {"fea.body", "fea.initial-motion", "fea.time"}
         assert export["target"] == ["experiment.surface.plateFront"]

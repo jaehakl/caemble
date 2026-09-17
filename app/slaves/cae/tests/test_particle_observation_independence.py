@@ -10,7 +10,7 @@ from app.kernel.api import SolverInvocation
 from app.kernel.coordinator.plan import detached
 from app.kernel.coordinator.run import CaeRun
 from app.methods.geometry import GeometryService
-from tests.test_particle_runtime import particle_measurement  # noqa: F401
+from tests.particle_fixtures import particle_measurement  # noqa: F401
 
 
 @pytest.mark.asyncio

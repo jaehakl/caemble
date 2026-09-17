@@ -1,3 +1,5 @@
+
+from tests.structural_fixture import spring_model
 from app.solvers.structural_mechanics.constraints import constraint_transform
 """조립부터 정적·고유치·시간 적분까지 이어지는 수치 검증입니다."""
 
@@ -42,13 +44,6 @@ def beam_model(segments=12, force=1.):
     return model
 
 
-def spring_model(mass=2., stiffness=50., damping=0., force=0.):
-    model = StructuralModel(np.array([0]), np.zeros((1, 3)), [], np.array([0]), np.empty(0, dtype=int), np.array([[force, 0., 0., 0., 0., 0.]]))
-    model.masses.append((0, mass, np.zeros((3, 3))))
-    model.springs.append((0, -1, 1., stiffness, damping))
-    return model
-
-
 def test_linear_solver_handles_invertible_zero_diagonal_and_rejects_mechanism():
     matrix = sparse.csr_matrix([[0., 2.], [2., 0.]])
     np.testing.assert_allclose(solve_linear(matrix, np.array([4., 6.])), [3., 2.])
@@ -71,6 +66,7 @@ def test_static_truss_displacement_and_support_reaction():
     assert result.residual < 1e-12
 
 
+@pytest.mark.validation
 def test_cantilever_beam_mesh_convergence_and_reaction_balance():
     errors = []
     exact = 2**3 / (3 * 2e7 * 1e-6) + 2 / (2e7 / 2.6 * .008)
@@ -179,6 +175,7 @@ def test_damping_does_not_brake_a_rigidly_spinning_beam():
         assert abs(velocity.ravel() @ current @ velocity.ravel()) < 1e-11
 
 
+@pytest.mark.validation
 def test_stiffness_damping_matches_underdamped_oscillator():
     model = spring_model(mass=2., stiffness=50.)
     prepared = prepare_matrices(model)
@@ -357,6 +354,7 @@ def test_fixed_axis_rigid_rotor_preserves_continuous_spin_and_energy():
     np.testing.assert_allclose(current.kinetic_energy, initial_energy, rtol=1e-13)
 
 
+@pytest.mark.validation
 def test_free_asymmetric_rotor_euler_acceleration_and_conservation_refine_with_dt():
     model = StructuralModel(np.array([0]), np.zeros((1, 3)), [], np.array([3, 4, 5]), np.empty(0, dtype=int), np.zeros((1, 6)))
     body = np.diag([2., 3., 4.]); model.masses = [(0, 1., body)]

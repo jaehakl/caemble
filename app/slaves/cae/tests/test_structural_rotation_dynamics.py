@@ -1,3 +1,5 @@
+
+from tests.structural_fixture import loaded_rotating_beam
 from dataclasses import replace
 """다축 회전과 탄성 변형이 동시에 있는 보의 에너지·운동량·시간 수렴."""
 
@@ -7,47 +9,10 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
-from app.solvers.structural_mechanics.state import initial_solution
-from app.solvers.structural_mechanics.analyses.transient import initialize_acceleration
 from app.solvers.structural_mechanics.analyses.transient import transient_step
-from app.solvers.structural_mechanics.beam import isotropic_beam_section
 from app.solvers.structural_mechanics.operators.inertia import inertial_response
-from app.solvers.structural_mechanics.operators.linear import prepare_matrices
 from app.solvers.structural_mechanics.operators.damping import strain_rate_damping
 from app.solvers.structural_mechanics.operators.internal import structural_response
-from app.solvers.structural_mechanics.model import Element, StructuralModel
-from app.methods.rigid.rotations import rotation_exp
-
-
-def loaded_rotating_beam(damped):
-    points = np.array([[-1., 0., 0.], [0., 0., 0.], [1., 0., 0.]])
-    stiffness, inertia = isotropic_beam_section(200., .25, 2., .2, np.array([.05, .02, .03]), np.array([.15, .15]))
-    section = {"stiffness": stiffness, "mass": inertia, "frame": np.eye(3)}
-    if damped:
-        section["damping"] = .003 * stiffness
-    elements = [Element("beam2", np.array([i, i + 1]), {"model": "mechanics.isotropic-elastic@1"}, section) for i in range(2)]
-    model = StructuralModel(np.arange(3), points, elements, np.arange(18), np.empty(0, dtype=int), np.zeros((3, 6)))
-    solution = initial_solution(model)
-    local_positions = points.copy(); local_positions[1, 1:] = [.03, -.02]
-    rotation = rotation_exp([1.1, -.7, .4])
-    solution.displacement[:, :3] = local_positions @ rotation.T - points
-    solution.orientations[:] = rotation
-    solution.orientations[1] = rotation @ rotation_exp([.04, -.03, .02])
-    omega = rotation @ [.8, .5, .3]
-    solution.velocity[:, :3] = np.cross(omega, local_positions @ rotation.T)
-    solution.velocity[:, 3:] = omega
-    force = np.zeros((3, 6))
-    force[2, :3] = rotation @ [.03, .06, -.04]
-    force[0, :3] = -force[2, :3]
-    force[2, 3:] = rotation @ [.01, -.02, .03]
-    matrices = prepare_matrices(model)
-    prepared = matrices
-    K = prepared.stiffness
-    M = prepared.mass
-    C = prepared.damping
-    beta = .004 if damped else 0.
-    solution = initialize_acceleration(model, solution, prepared, K, M, C, force.ravel(), True, damping_stiffness=beta)
-    return model, solution, matrices, force, beta
 
 
 def mechanical_totals(model, solution, matrices, beta):
@@ -86,6 +51,7 @@ def test_batched_beams_match_scalar_force_tangent_mass_gyro_and_damping():
     np.testing.assert_allclose(batch_damping.toarray(), scalar_damping.toarray(), rtol=1e-10, atol=1e-11)
 
 
+@pytest.mark.validation
 @pytest.mark.parametrize("damped", [False, True])
 def test_loaded_multiaxis_beam_time_refinement_and_energy_work_balance(damped):
     model, initial, matrices, force, beta = loaded_rotating_beam(damped)

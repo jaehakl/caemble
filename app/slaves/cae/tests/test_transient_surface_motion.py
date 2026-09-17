@@ -15,9 +15,9 @@ from app.solvers.structural_mechanics.analyses.window import advance_window
 from app.solvers.structural_mechanics.entry import run
 from app.solvers.structural_mechanics.interfaces.transient_surface import TransientSurfaceSamples
 from app.solvers.structural_mechanics.operators.linear import prepare_matrices
-from tests.test_box_grid_outputs import grid
-from tests.test_structural_clock import clock_invocation
-from tests.test_structural_harmonic import tetrahedron_motion
+from tests.box_grid_fixtures import grid
+from tests.structural_fixture import clock_invocation
+from tests.structural_fixture import tetrahedron_motion
 
 
 @pytest.fixture

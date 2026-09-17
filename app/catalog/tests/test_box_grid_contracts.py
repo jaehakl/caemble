@@ -374,7 +374,7 @@ def test_b3_examples_package_only_two_new_experiments_and_executable_calculation
         "incompressible-stokes-duct", "incompressible-startup-channel",
         "incompressible-boolean-channel", "incompressible-sph-periodic-channel",
     }
-    assert boolean["version"] == "1.0.0"
+    assert boolean["version"] == "1.1.0"
     assert comparison["version"] == "1.1.0"
     assert "<subtract>" in boolean["sourceBundle"]["files"]["geometry.tsx"]
     assert "methodId: 'flow.traction'" in boolean["sourceBundle"]["files"]["tasks/flow.tsx"]

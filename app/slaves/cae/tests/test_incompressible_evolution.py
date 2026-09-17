@@ -13,8 +13,8 @@ from app.solvers.incompressible_flow.domain import FlowDomain
 from app.solvers.incompressible_flow.evolution import advance_window
 from app.solvers.incompressible_flow.state import history_values, initial_state
 from app.solvers.incompressible_flow.transient import PreparedTransientFlow, TransientStepFailure
-from tests.test_incompressible_methods import tetrahedral_box
-from tests.test_incompressible_physics import pressure_duct_boundaries
+from tests.flow_fixtures import tetrahedral_box
+from tests.flow_fixtures import pressure_duct_boundaries
 
 
 class ClockStepper:
@@ -233,6 +233,7 @@ async def test_short_window_keeps_growth_proposal_and_has_actual_endpoint():
         await advance_window(invocation, domain, result, clock, controls, stepper)
 
 
+@pytest.mark.validation
 @pytest.mark.asyncio
 @pytest.mark.parametrize("window", [.08, .03])
 async def test_partial_window_steps_retain_first_order_temporal_convergence(window):
