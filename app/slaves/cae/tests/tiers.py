@@ -7,6 +7,10 @@ or validation request, even when their own test source changed.
 from __future__ import annotations
 
 MODULE_TIERS = {
+    "tests/test_fdtd_parallel_smoke.py": "smoke",
+    "tests/test_ray_batches.py": "lowcost",
+    "tests/test_ray_parallel_smoke.py": "smoke",
+    "tests/test_cpu_executor.py": "lowcost",
     "tests/test_ray_analytic.py": "lowcost",
     "tests/test_ray_analytic_smoke.py": "smoke",
     "tests/test_continuous_geometry.py": "lowcost",

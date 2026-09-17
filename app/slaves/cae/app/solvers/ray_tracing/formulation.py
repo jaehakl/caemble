@@ -42,7 +42,7 @@ from .domain import (
 from .grating import diffracted_direction
 from .thin_film import surface_films, film_layers
 from .materials import optical_material
-from .outputs import Detector, PathCollector
+from .outputs import Detector, PathCollector, VolumeTally
 
 EVENT_REFLECTION = 0
 EVENT_REFRACTION = 1
@@ -100,17 +100,24 @@ class Ray:
         )
 
 
-async def trace_rays(
-    context: SolverInvocation,
-    scene: dict[str, Any],
-    collision_scene: AnalyticScene,
-    solids: dict[str, AnalyticSolid],
-    launched: list[Ray],
-    detectors: list[Detector],
-    seed: int,
-    tallies: list[Any] | None = None,
-) -> PathCollector:
-    """Trace queued rays and their physical branches in deterministic order."""
+@dataclass(slots=True)
+class PreparedTrace:
+    collision_scene: AnalyticScene
+    world: Any
+    descriptor: Any
+    detectors: dict
+    surface_scatter: dict
+    bulk_scatter: dict
+    gratings: dict
+    maximum_interactions: int
+    maximum_paths: int
+    minimum_power_fraction: float
+    seed: int
+    films: dict
+    tally_definitions: list
+
+
+def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies):
     config = context.config
     maximum_interactions = _integer(config["parameters"]["maxInteractions"])
     maximum_paths = _integer(config["parameters"]["maxPaths"])
@@ -129,35 +136,99 @@ async def trace_rays(
 
     films = surface_films(context, scene, solids, set(gratings) | set(detector_by_surface))
 
-    await context.progress({"stage": "trace", "completed": 0, "total": len(launched)})
-    collector = PathCollector(maximum_paths, tallies=[] if tallies is None else tallies)
-    queue = deque(launched)
-    processed = 0
-    scheduled = len(launched)
-    while queue:
-        ray = queue.popleft()
-        threshold = ray.source_power * minimum_power_fraction
-        branches = _trace_one(
-            ray,
-            collision_scene,
-            context.world,
-            context.descriptor,
-            detector_by_surface,
-            surface_scatter,
-            bulk_scatter,
-            gratings,
-            maximum_interactions,
-            threshold,
-            seed,
-            collector,
-            films,
-        )
-        queue.extend(branches)
-        processed += 1
-        scheduled += len(branches)
-        if processed % 128 == 0 or not queue:
-            await context.progress({"stage": "trace", "completed": processed, "total": scheduled})
+    return PreparedTrace(collision_scene, context.world, context.descriptor, detector_by_surface,
+                         surface_scatter, bulk_scatter, gratings, maximum_interactions,
+                         maximum_paths, minimum_power_fraction, seed, films,
+                         [(t.key, t.grid, t.data, t.frequencies) for t in tallies])
 
+
+def initialize_trace(prepared):
+    # Prepared analytic solids and optical rules are reused for every batch.
+    for solid in prepared.collision_scene.solids:
+        solid.minimum.flags.writeable = False
+        solid.maximum.flags.writeable = False
+    for _, _, _, frequencies in prepared.tally_definitions:
+        frequencies.flags.writeable = False
+    return prepared
+
+
+def trace_batch(prepared: PreparedTrace, batch, cancellation=None) -> PathCollector:
+    offset, launched = batch
+    collector = PathCollector(prepared.maximum_paths,
+                              tallies=[VolumeTally(*definition) for definition in prepared.tally_definitions])
+    queue = deque((ray, 0, offset + index, ()) for index, ray in enumerate(launched))
+    while queue:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
+        ray, depth, root, ancestry = queue.popleft()
+        # Queue depth is deliberately independent of physical interactions:
+        # a tangent requeue, for example, does not increment interactions.
+        collector.current_order = (depth, root, ancestry)
+        collector.finish_index = 0
+        branches = _trace_one(
+            ray, prepared.collision_scene, prepared.world, prepared.descriptor,
+            prepared.detectors, prepared.surface_scatter, prepared.bulk_scatter,
+            prepared.gratings, prepared.maximum_interactions,
+            ray.source_power * prepared.minimum_power_fraction, prepared.seed,
+            collector, prepared.films,
+        )
+        queue.extend((branch, depth + 1, root, (*ancestry, index))
+                     for index, branch in enumerate(branches))
+    return collector
+
+
+async def trace_rays(
+    context: SolverInvocation,
+    scene: dict[str, Any],
+    collision_scene: AnalyticScene,
+    solids: dict[str, AnalyticSolid],
+    launched: list[Ray],
+    detectors: list[Detector],
+    seed: int,
+    tallies: list[Any] | None = None,
+) -> PathCollector:
+    from contextlib import aclosing
+    from time import perf_counter
+
+    started = perf_counter()
+    tallies = [] if tallies is None else tallies
+    prepared = prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies)
+    collector = PathCollector(prepared.maximum_paths, tallies=tallies)
+    batches = ((offset, launched[offset:offset + 128]) for offset in range(0, len(launched), 128))
+    workers = 1
+    if context.execution is not None and len(launched) >= 512:
+        # Per-worker tally plus up to two outstanding transfer/result arrays.
+        private_bytes = 3 * sum(t.values.nbytes for t in tallies)
+        workers = context.execution.batch_workers((len(launched) + 127) // 128, private_bytes)
+    preparation_seconds = perf_counter() - started
+    completed = 0
+    merge_seconds = 0.0
+    if context.progress is not None:
+        await context.progress({"stage": "trace", "completed": 0, "total": len(launched)})
+    if workers > 1:
+        results = context.execution.map_batches(
+            __name__ + ":initialize_trace", __name__ + ":trace_batch", prepared, batches, workers)
+        async with aclosing(results):
+            async for result in results:
+                merge_started = perf_counter()
+                collector.merge(result)
+                merge_seconds += perf_counter() - merge_started
+                completed = min(len(launched), completed + 128)
+                if context.progress is not None:
+                    await context.progress({"stage": "trace", "completed": completed, "total": len(launched)})
+    else:
+        for batch in batches:
+            result = trace_batch(prepared, batch, context.cancellation)
+            merge_started = perf_counter()
+            collector.merge(result)
+            merge_seconds += perf_counter() - merge_started
+            completed += len(batch[1])
+            if context.progress is not None:
+                await context.progress({"stage": "trace", "completed": completed, "total": len(launched)})
+    if context.progress is not None:
+        await context.progress({"stage": "trace", "completed": completed, "total": len(launched),
+                                "workers": workers, "prepareSeconds": preparation_seconds,
+                                "mergeSeconds": merge_seconds, "seconds": perf_counter() - started})
     return collector
 
 

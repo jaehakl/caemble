@@ -23,6 +23,9 @@ class PathCollector:
     paths: list[Any] = field(default_factory=list)
     detected_power: float = 0.0
     tallies: list[Any] = field(default_factory=list)
+    path_orders: list[tuple] = field(default_factory=list)
+    current_order: tuple = ()
+    finish_index: int = 0
 
     def score(self, origin, direction, length, power, absorption, wavelength):
         for tally in self.tallies:
@@ -31,6 +34,21 @@ class PathCollector:
     def finish(self, ray: Any) -> None:
         if len(self.paths) < self.maximum_paths and len(ray.vertices) >= 2:
             self.paths.append(ray)
+            self.path_orders.append((*self.current_order, self.finish_index))
+        self.finish_index += 1
+
+    def merge(self, other: PathCollector) -> None:
+        from copy import deepcopy
+
+        self.detected_power += other.detected_power
+        for target, source in zip(self.tallies, other.tallies, strict=True):
+            target.values += source.values
+        selected = sorted(zip(self.path_orders + other.path_orders, self.paths + other.paths),
+                          key=lambda item: item[0])[:self.maximum_paths]
+        owned = {id(path) for path in self.paths}
+        self.path_orders = [order for order, _ in selected]
+        # Batch values are borrowed from the execution service until next yield.
+        self.paths = [path if id(path) in owned else deepcopy(path) for _, path in selected]
 
     def bundle(self) -> BundleValue:
         vertices: list[np.ndarray[Any, Any]] = []

@@ -24,6 +24,7 @@ class LauncherSettings(BaseSettings):
     api_url: str = Field(
         validation_alias=AliasChoices("CAEMBLE_API_URL", "GPSTATION_V1_API_URL"),
     )
+    cae_cpu_budget: int | None = Field(default=None, gt=0, validation_alias="CAEMBLE_CAE_CPU_BUDGET")
     access_token: str = Field(
         validation_alias=AliasChoices("CAEMBLE_ACCESS_TOKEN", "GPSTATION_V1_ACCESS_TOKEN"),
     )

@@ -70,6 +70,10 @@ COMMON_TESTS = ("test_architecture_*", "test_solver_entries", "test_material_mod
 # Support ownership follows direct imports and child locators, including the
 # transitive structural/scalar consumers of the shared geometry and grid fixtures.
 TEST_SUPPORT_TESTS = {
+    "cpu_benchmark.py": ("test_cpu_executor", "test_ray_parallel_smoke", "test_fdtd_parallel_smoke"),
+    "ray_parallel_fixtures.py": ("test_ray_parallel_smoke",),
+    "fdtd_fixtures.py": ("test_fdtd_*",),
+    "batch_fixtures.py": ("test_cpu_executor",),
     "fixtures/continuous-geometry.json": ("test_continuous_geometry",),
     "acoustic_fixtures.py": ("test_acoustic_fdtd_accuracy", "test_pressure_acoustics"),
     "box_grid_fixtures.py": ("test_*outputs", "test_*recording", "test_fdtd_*", "test_structural_*",

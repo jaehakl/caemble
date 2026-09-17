@@ -13,6 +13,8 @@ from typing import Any, Awaitable, Callable, Generic, Protocol, TypeVar
 
 from app.kernel.api import SolverInvocation, SolverResult
 from app.kernel.execution.child import child_main
+from app.kernel.execution.batches import ResidentBatchRuntime
+from app.kernel.execution.cpu import cpu_allocation
 from app.kernel.execution.errors import (
     RemoteSolverError,
     SolverExecutionCancelled,
@@ -107,12 +109,14 @@ class SpawnSolverExecutor:
         poll_interval: float = 0.01,
         cancellation_grace: float = 0.5,
         exit_grace: float = 1.0,
+        cpu_budget: int | None = None,
     ) -> None:
         if poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
         if cancellation_grace < 0 or exit_grace < 0:
             raise ValueError("process grace periods cannot be negative")
         self._codec = codec or PicklePayloadCodec()
+        self.cpu = cpu_allocation(cpu_budget)
         self._poll_interval = poll_interval
         self._cancellation_grace = cancellation_grace
         self._exit_grace = exit_grace
@@ -204,7 +208,7 @@ class SpawnSolverExecutor:
         # exit. Never clean up a workspace path supplied by a caller.
         with tempfile.TemporaryDirectory(prefix="caemble-cae-solver-workspace-") as workspace:
             resources = dataclasses.replace(context.resources, workspace_path=workspace)
-            return await self._execute_child(locator, dataclasses.replace(context, resources=resources), codec, **options)
+            return await self._execute_child(locator, dataclasses.replace(context, resources=resources, cpu=self.cpu), codec, **options)
 
     async def _execute_child(
         self,
@@ -220,7 +224,7 @@ class SpawnSolverExecutor:
         try:
             encoded_context = await asyncio.to_thread(
                 codec.encode,
-                dataclasses.replace(context, progress=None, cancellation=None, geometry=None),
+                dataclasses.replace(context, progress=None, cancellation=None, geometry=None, execution=None),
             )
         except Exception as exc:
             raise SolverPayloadError(
@@ -231,12 +235,17 @@ class SpawnSolverExecutor:
         result_receive, result_send = self._multiprocessing.Pipe(duplex=False)
         receive_lock = threading.Lock()
         cancellation_event = self._multiprocessing.Event()
+        service_parent, service_child = self._multiprocessing.Pipe()
+        batches = ResidentBatchRuntime(service_parent, cancellation_event, context.resources.workspace_path,
+                                       self.cpu.budget, _start_process,
+                                       self._cancellation_grace, self._exit_grace)
+        batch_task = None
         process = self._multiprocessing.Process(
             target=self._child_target,
             args=(request_receive, result_send, cancellation_event),
             name=f"caemble-solver:{locator}",
         )
-        request = SolverChildRequest(locator, abi_version, encoded_context, codec)
+        request = SolverChildRequest(locator, abi_version, encoded_context, codec, service_child)
         request_bytes = (
             len(encoded_context)
             if isinstance(encoded_context, (bytes, bytearray, memoryview))
@@ -324,6 +333,8 @@ class SpawnSolverExecutor:
                     f"could not send invocation to solver {locator}: {exc}"
                 ) from exc
             request_send.close()
+            service_child.close()
+            batch_task = asyncio.create_task(batches.serve())
             log(
                 "solver child request sent "
                 f"locator={locator} pid={child_pid} request_bytes={request_bytes} "
@@ -342,6 +353,7 @@ class SpawnSolverExecutor:
                 startup_deadline,
                 request_sent_at,
                 receive_lock,
+                batch_task,
             )
         except (
             asyncio.CancelledError,
@@ -354,6 +366,7 @@ class SpawnSolverExecutor:
             await asyncio.shield(self._stop_process(process, self._cancellation_grace, result_receive, receive_lock))
             raise
         except BaseException:
+            cancellation_event.set()
             if process_started:
                 await self._stop_process(process, 0)
             raise
@@ -388,6 +401,14 @@ class SpawnSolverExecutor:
                         "solver child cleanup complete "
                         f"locator={locator} pid={child_pid} exit_code={exit_code}"
                     )
+            service_child.close()
+            batches.stopping = True
+            if batch_task is not None:
+                # The solver has exited, so any pending control recv/send is
+                # released. Do not cancel an in-flight process.start thread.
+                await asyncio.gather(batch_task, return_exceptions=True)
+            await batches.close()
+            service_parent.close()
 
     async def _await_bootstrap(
         self,
@@ -457,10 +478,13 @@ class SpawnSolverExecutor:
         startup_deadline: float,
         request_sent_at: float,
         receive_lock: Any,
+        batch_task: asyncio.Task | None = None,
     ) -> Any:
         started_at: float | None = None
 
         while True:
+            if batch_task is not None and batch_task.done():
+                batch_task.result()
             processed_message = False
             if cancellation is not None and cancellation.is_set():
                 raise SolverExecutionCancelled(locator)

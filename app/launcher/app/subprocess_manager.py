@@ -443,6 +443,8 @@ def subprocess_env(settings: LauncherSettings) -> dict[str, str]:
     env = {name: os.environ[name] for name in inherited_names if name in os.environ}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    if settings.cae_cpu_budget is not None:
+        env["CAEMBLE_CAE_CPU_BUDGET"] = str(settings.cae_cpu_budget)
     env["GPSTATION_V1_RTC_ICE_SERVERS_JSON"] = settings.rtc_ice_servers_json
     if settings.rtc_ice_gather_timeout_seconds:
         env["GPSTATION_V1_RTC_ICE_GATHER_TIMEOUT_SECONDS"] = settings.rtc_ice_gather_timeout_seconds

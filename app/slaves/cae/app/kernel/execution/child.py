@@ -31,6 +31,9 @@ class ProcessCancellationToken:
     def is_set(self) -> bool:
         return self._event.is_set()
 
+    def cancel(self) -> None:
+        self._event.set()
+
     def raise_if_cancelled(self) -> None:
         if self._event.is_set():
             raise asyncio.CancelledError("solver invocation was cancelled")
@@ -85,11 +88,16 @@ def _execute_request(request: SolverChildRequest, result_connection: Connection,
 
     if not isinstance(context, SolverInvocation):
         raise TypeError("solver input must be a SolverInvocation")
+    from app.kernel.execution.batches import ChildExecutionService
+
+    execution = ChildExecutionService(request.execution_connection,
+                                      ProcessCancellationToken(cancellation_event), context.cpu)
     resources = context.resources
     cache = (FileResourceCache(resources.geometry_cache_path)
              if resources.geometry_cache_path is not None else None)
     context = dataclasses.replace(context, progress=progress,
-        cancellation=ProcessCancellationToken(cancellation_event), geometry=GeometryService(cache=cache))
+        cancellation=ProcessCancellationToken(cancellation_event), geometry=GeometryService(cache=cache),
+        execution=execution)
     result = asyncio.run(_invoke(request.locator, context, request.expected_abi_version))
     return ChildMessage(ChildMessageKind.RESULT, request.codec.encode(result))
 

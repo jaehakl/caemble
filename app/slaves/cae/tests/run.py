@@ -97,6 +97,7 @@ def main(argv=None):
     temporary.mkdir()
     for name in THREAD_LIMITS:
         os.environ[name] = "1"
+    os.environ["CAEMBLE_CAE_CPU_BUDGET"] = "1"
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = str(temporary)
     os.environ["CAEMBLE_TEST_RUN_DIR"] = str(root)

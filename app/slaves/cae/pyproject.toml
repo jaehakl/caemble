@@ -15,6 +15,8 @@ dependencies = [
     "ucumvert==0.3.1",
     "scipy (>=1.14,<2.0)",
     "pyamg==5.3.0",
+    "psutil>=7,<8",
+    "threadpoolctl>=3.6,<4",
     "netgen-mesher (==6.2.2606)",
 ]
 

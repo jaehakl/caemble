@@ -40,6 +40,32 @@ Pop-Location
 The launcher advertises only workers with a runnable project-local interpreter.
 It owns one worker and one job at a time; use another launcher for concurrency.
 
+## CAE CPU allocation
+
+CAE uses half the available logical CPUs by default, rounded down with a minimum
+of one. The available count respects process CPU affinity. Set
+`CAEMBLE_CAE_CPU_BUDGET=3` in the launcher's `.env` to override this default;
+the value must be a positive integer and is clamped to the available CPU count.
+Restart the worker after changing the setting. Local CLI executions read the
+same variable from their process environment:
+
+```powershell
+$env:CAEMBLE_CAE_CPU_BUDGET = '3'
+```
+
+This is a computation budget, not a percentage CPU usage throttle. Ray tracing
+uses up to that many single-threaded computation processes; fewer than 512
+initial rays run inside the Solver process. CPU FDTD uses the budget for Torch
+intra-op threads and one inter-op thread. CUDA selection is unchanged.
+Large Ray tallies can reduce the worker count to keep estimated additional tally
+and transfer buffers within half the currently available memory. This estimate
+is not a total memory limit; geometry and Python object memory are additional.
+
+Configure each launcher separately when sharing a machine. There is no global
+budget allocator across launchers or simultaneous local CLI processes. Runtime
+logs show the requested/effective CPU budget, pool process IDs and Torch thread
+counts. CPU configuration is not an Experiment or Solver physical parameter.
+
 ## AI configuration
 
 `ai/models.toml` is ignored machine state. Configure the LLM, SDXL, and embedding

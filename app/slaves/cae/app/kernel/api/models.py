@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeAlias
 
-from app.kernel.api.services import GeometryService
+from app.kernel.api.services import ExecutionService, GeometryService
 from app.kernel.api.state import StatePatch
 
 ProgressReporter: TypeAlias = Callable[[Any], Awaitable[None]]
@@ -43,6 +43,12 @@ class SolverResourceServices:
 
 
 @dataclass(frozen=True, slots=True)
+class CpuAllocation:
+    available: int = 1
+    budget: int = 1
+
+
+@dataclass(frozen=True, slots=True)
 class SolverInvocation:
     config: Mapping[str, Any]
     state: Mapping[Any, Any]
@@ -55,6 +61,8 @@ class SolverInvocation:
     cancellation: CancellationToken | None = None
     resources: SolverResourceServices = field(default_factory=SolverResourceServices)
     task_name: str | None = None
+    cpu: CpuAllocation = field(default_factory=CpuAllocation)
+    execution: ExecutionService | None = None
 
 
 @dataclass(frozen=True, slots=True)

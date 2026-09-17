@@ -1,7 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any, Protocol
+
+
+class ExecutionService(Protocol):
+    """Child-bound computation services; batch results live until the next yield."""
+
+    def configure_torch(self) -> None: ...
+
+    def batch_workers(self, requested: int, private_bytes: int) -> int: ...
+
+    def map_batches(self, initializer: str, function: str, prepared: Any,
+                    batches: Iterable[Any], workers: int) -> AsyncGenerator[Any, None]: ...
 
 
 class GeometryService(Protocol):

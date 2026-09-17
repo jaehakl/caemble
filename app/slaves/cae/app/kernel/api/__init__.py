@@ -3,6 +3,7 @@
 from app.kernel.api.cache import ContentKey, ValueCache
 from app.kernel.api.models import (
     CancellationToken,
+    CpuAllocation,
     InputArtifact,
     MaterialView,
     ProgressReporter,
@@ -31,6 +32,7 @@ from app.kernel.api.values import (
 __all__ = [
     "BundleValue",
     "CancellationToken",
+    "CpuAllocation",
     "ContentKey",
     "DomainValue",
     "FieldLocation",

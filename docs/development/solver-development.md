@@ -255,6 +255,7 @@ implementation = SolverImplementation(abi_version=3, run=run)
 - Catalog input port 검증을 마친 `InputArtifact`
 - child에서 바인딩한 canonical `GeometryService`
 - progress callback과 cooperative cancellation token
+- `cpu`의 가용 CPU·계산 예산과 child에서 연결하는 `execution` 서비스
 - Solver descriptor
 - run-scoped geometry cache 경로와 child-local workspace 같은 resource service
 
@@ -569,9 +570,47 @@ resident coordinator
 base state와 input artifact는 호출별 독립 lease로 commit/rollback까지 유지합니다.
 Child crash, timeout, validation failure나 cancellation이면 provisional buffer와
 결과를 rollback합니다. 먼저 cancellation token으로 cooperative cancel을
-요청하고 grace period에도 종료하지 않으면 그 child만 terminate합니다.
+요청하고 grace period에도 종료하지 않으면 해당 호출의 계산 프로세스들을 terminate합니다.
 CPU-bound Solver 실패나 취소 때문에 resident worker 전체가 종료되어서는 안
 됩니다.
+
+### CPU 예산과 batch 실행
+
+`CAEMBLE_CAE_CPU_BUDGET`은 양의 정수 실행 설정입니다. 기본은 affinity를
+반영한 가용 논리 CPU 수의 절반(내림, 최소 1)이고 명시값은 가용 수로
+제한합니다. launcher와 로컬 CLI가 같은 정책을 사용합니다. 예산은 invocation에
+고정하며 물리 config, Catalog와 `simulate.py`의 옵션에는 추가하지 않습니다.
+
+`invocation.execution.map_batches(initializer, function, prepared, batches, workers)`는
+모듈 locator 두 개와 준비 데이터, batch iterable을 받습니다. 초기화 함수는
+준비 데이터를 받아 worker-local 값을 반환하고 계산 함수는 이 값, batch,
+cancellation token을 받습니다. 결과는 제출 순서로 제공하며 다음 yield까지
+유효한 borrowed 값입니다. 유지할 배열은 복사하거나 최종 누적 배열로 합칩니다.
+준비 데이터는 worker마다 한 번 전달하며, 수행 중·미병합 작업은 합쳐 최대
+worker 수의 두 배입니다. 중첩 pool은 지원하지 않습니다.
+
+Resident executor는 Solver와 batch worker를 모두 직접 소유합니다. 계산용
+pipe는 Solver와 worker를 직접 연결하고 resident는 Solver payload를 해석하지
+않습니다. 준비 데이터와 batch별 mmap transaction을 분리하고 병합 후 batch
+transaction을 해제합니다. 취소·오류 시 신규 제출을 중지하고 cooperative
+cancel, terminate/kill, join을 거쳐 모든 독자를 종료한 다음 buffer와 workspace를
+정리합니다. 기존 launcher의 전체 worker 종료 경로도 유지합니다.
+
+Native thread 제어는 실행 서비스가 소유합니다. batch worker는 1스레드이며
+`configure_torch()`는 새 Solver child에서 intra-op을 예산으로, inter-op을
+최초 한 번 1로 설정합니다. Runtime은 Torch를 공통으로 eager import하지 않습니다.
+Ray는 128개 초기 광선 단위로 같은 추적 함수를 직렬·병렬 실행하고, 512개 미만은
+pool을 생략합니다. 큐 깊이·초기 순번·재삽입 이력·종료 순번으로 기존 경로 저장
+순서를 복원하며 전역 `maxPaths`가 수치 누적을 중단하지 않게 합니다.
+
+기본 검사 실행기는 CPU 예산을 1로 고정합니다. 별도 병렬 검사는 executor에
+명시적 예산을 전달하고 실제 CPU 수가 부족하면 그 비교를 skip으로 기록합니다.
+
+별도 성능 측정은 CAE에서 `python -m tests.cpu_benchmark --report <새 경로>`로
+실행합니다. 가용 범위의 1/2/4/8 예산마다 새 Ray·CPU FDTD 실행을 수행하며
+단계별 시간, 전체 시간, 25 ms 간격의 전체 프로세스 RSS 합 최대 표본값과
+잔류 child를 기록합니다. 일반 회귀 검사에 포함하지 않으며 작은 FDTD의 결과는
+실제 큰 격자의 확장 성능을 대표하지 않습니다.
 
 각 child에는 임시 workspace가 하나씩 제공됩니다. Geometry triangulation과
 mesh는 process-local singleton이 아니라 Measurement run의 file-backed

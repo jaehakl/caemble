@@ -12,6 +12,8 @@ from .sources import prepare_sources
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
+    if invocation.execution is not None:
+        invocation.execution.configure_torch()
     prepared = await prepare_domain(invocation)
     parameters = invocation.config["parameters"]
     simulation_time = _positive_float(parameters["simulationTime"], "simulationTime")

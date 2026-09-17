@@ -12,6 +12,21 @@ from app.slave_registry import SlaveApp, SlaveAppRegistry, load_manifest
 from app.subprocess_manager import WorkerManager
 
 
+def test_cae_cpu_budget_forwarding(monkeypatch):
+    from app.settings import LauncherSettings
+    from app.subprocess_manager import subprocess_env
+
+    monkeypatch.delenv("CAEMBLE_CAE_CPU_BUDGET", raising=False)
+    settings = LauncherSettings(_env_file=None, api_url="http://localhost", access_token="test")
+    assert "CAEMBLE_CAE_CPU_BUDGET" not in subprocess_env(settings)
+    monkeypatch.setenv("CAEMBLE_CAE_CPU_BUDGET", "3")
+    settings = LauncherSettings(_env_file=None, api_url="http://localhost", access_token="test")
+    assert subprocess_env(settings)["CAEMBLE_CAE_CPU_BUDGET"] == "3"
+    monkeypatch.setenv("CAEMBLE_CAE_CPU_BUDGET", "0")
+    with pytest.raises(ValueError):
+        LauncherSettings(_env_file=None, api_url="http://localhost", access_token="test")
+
+
 def test_manifest_defaults_to_webrtc_and_hello_advertises_modes(tmp_path) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"id": "ai", "module": "app"}), encoding="utf-8")

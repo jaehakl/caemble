@@ -35,3 +35,4 @@ class SolverChildRequest:
     expected_abi_version: int
     encoded_context: Any
     codec: Any
+    execution_connection: Any = None
