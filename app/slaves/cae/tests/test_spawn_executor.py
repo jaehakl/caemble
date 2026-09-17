@@ -28,6 +28,7 @@ from app.kernel.execution import (
     SpawnSolverExecutor,
 )
 from app.kernel.execution.errors import SolverProtocolError
+from app.kernel.execution.messages import ChildMessage, ChildMessageKind
 from app.kernel.execution.serialization import PicklePayloadCodec
 from tests.solver_test_support import invocation
 from tests.executor_transport_fixtures import (
@@ -43,6 +44,52 @@ _FIXTURES = "tests.spawn_executor_fixtures"
 
 
 class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ready_progress_frames_yield_without_poll_delays_and_preserve_order(self):
+        codec = PicklePayloadCodec()
+        process = Mock(pid=123)
+        process.is_alive.return_value = True
+        connection = Mock()
+        connection.poll.side_effect = [True, True, False, True, True]
+        frames = [ChildMessage(ChildMessageKind.STARTED, 123),
+                  ChildMessage(ChildMessageKind.PROGRESS, codec.encode({"step": 1})),
+                  ChildMessage(ChildMessageKind.PROGRESS, codec.encode({"step": 2})),
+                  ChildMessage(ChildMessageKind.RESULT, codec.encode("done"))]
+        executor = SpawnSolverExecutor(poll_interval=.25)
+        progress = []
+        with (patch('app.kernel.execution.executor._receive_message', side_effect=frames),
+              patch.object(executor, '_require_clean_exit', new_callable=AsyncMock),
+              patch('app.kernel.execution.executor.asyncio.sleep', new_callable=AsyncMock) as pause):
+            result = await executor._monitor('fixture', process, connection, progress.append, None, 10.,
+                                             codec, 123, time.monotonic()+10, time.monotonic(), threading.Lock())
+        self.assertEqual(result, "done")
+        self.assertEqual(progress, [{"step": 1}, {"step": 2}])
+        self.assertEqual([call.args[0] for call in pause.await_args_list], [0, 0, .25, 0])
+
+    async def test_progress_backlog_still_checks_cancellation_and_deadlines(self):
+        for mode in ("cancel", "timeout"):
+            with self.subTest(mode=mode):
+                codec = PicklePayloadCodec()
+                process = Mock(pid=123)
+                process.is_alive.return_value = True
+                connection = Mock()
+                connection.poll.return_value = True
+                cancellation = threading.Event()
+                frames = [ChildMessage(ChildMessageKind.STARTED, 123),
+                          ChildMessage(ChildMessageKind.PROGRESS, codec.encode({"step": 1}))]
+                executor = SpawnSolverExecutor()
+                def report(value):
+                    self.assertEqual(value, {"step": 1})
+                    if mode == "cancel":
+                        cancellation.set()
+                with (patch('app.kernel.execution.executor._receive_message', side_effect=frames) as receive,
+                      patch('app.kernel.execution.executor.time', Mock(monotonic=Mock(side_effect=[0., 0., 0., 2.]))),
+                      patch('app.kernel.execution.executor.asyncio.sleep', new_callable=AsyncMock)):
+                    expected = SolverExecutionCancelled if mode == "cancel" else SolverExecutionTimeout
+                    with self.assertRaises(expected):
+                        await executor._monitor('fixture', process, connection, report, cancellation, 1.,
+                                                codec, 123, 10., 0., threading.Lock())
+                self.assertEqual(receive.call_count, 2)
+
     async def test_invocation_cleanup_precedes_terminal_result_and_error(self):
         with tempfile.TemporaryDirectory() as folder:
             for name in ("payload_size", "raises_error"):

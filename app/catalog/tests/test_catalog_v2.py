@@ -147,7 +147,7 @@ class CatalogV3Tests(unittest.TestCase):
                     "mpm-affine-compression": "2.0.0", "dem-two-material-collision": "1.0.0",
                     "dem-incline-rolling": "1.0.0", "sph-periodic-channel": "1.1.0",
                     "incompressible-stokes-duct": "3.0.0", "incompressible-startup-channel": "2.0.0",
-                    "incompressible-boolean-channel": "1.0.0", "incompressible-sph-periodic-channel": "1.0.0",
+                    "incompressible-boolean-channel": "1.0.0", "incompressible-sph-periodic-channel": "1.1.0",
                 }.get(example["key"], "5.0.0")
                 self.assertEqual(example["version"], expected_version)
                 previous = "3.0.0" if example["repository"] == "fea" else {"asymmetric-rigid-bodies": "1.0.0", "gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0", "structural-optical-results": "1.0.0"}.get(example["key"], "2.0.0")
@@ -155,7 +155,7 @@ class CatalogV3Tests(unittest.TestCase):
                     previous = "1.0.1"
                 elif example["key"] == "incompressible-stokes-duct":
                     previous = "2.0.0"
-                elif example["key"] == "incompressible-startup-channel":
+                elif example["key"] in {"incompressible-startup-channel", "incompressible-sph-periodic-channel"}:
                     previous = "1.0.0"
                 elif example["key"].startswith("sph-"):
                     previous = "1.0.1" if example["key"] == "sph-hydrostatic-column" else "1.0.0"

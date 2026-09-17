@@ -26,6 +26,13 @@ async def advance_window(invocation, domain, saved, clock, controls, stepper):
     absolute_divergence, volumes = abs(domain.mesh.divergence), domain.mesh.cell_volumes
     samples = []
     diagnostics = {"retryCount": 0, "iterationCount": 0, "lastDt": 0., "maxCourant": 0.}
+
+    async def report(event):
+        if invocation.progress is not None:
+            await invocation.progress({**event, "physicalTime": {
+                "completed": current, "total": clock["duration"], "dt": used,
+            }})
+
     while current < end:
         if invocation.cancellation is not None:
             invocation.cancellation.raise_if_cancelled()
@@ -55,7 +62,7 @@ async def advance_window(invocation, domain, saved, clock, controls, stepper):
                     max_iterations=controls["maxIterations"],
                     max_nonlinear_iterations=controls["maxNonlinearIterations"],
                     tolerance=controls["tolerance"], cancellation=invocation.cancellation,
-                    progress=invocation.progress,
+                    progress=report if invocation.progress is not None else None,
                 )
                 diagnostics["iterationCount"] += candidate.iterations
                 candidate_rates = (absolute_divergence @ np.abs(candidate.face_volume_flux)) / (2 * volumes)
@@ -74,8 +81,8 @@ async def advance_window(invocation, domain, saved, clock, controls, stepper):
                                f"dt={used:g} s; {rejection}")
             diagnostics["retryCount"] += 1
             if invocation.progress is not None:
-                await invocation.progress({"stage": "flow-retry", "completed": current,
-                                           "total": clock["duration"], "message": rejection})
+                await report({"stage": "flow-retry", "completed": current,
+                              "total": clock["duration"], "message": rejection})
             used *= .5
         accepted = current + used
         if abs(accepted - min(lattice, end)) <= tolerance:
@@ -98,7 +105,7 @@ async def advance_window(invocation, domain, saved, clock, controls, stepper):
         diagnostics["lastDt"] = used
         diagnostics["maxCourant"] = max(diagnostics["maxCourant"], courant)
         if invocation.progress is not None:
-            await invocation.progress({"stage": "flow-time", "completed": current, "total": clock["duration"]})
+            await report({"stage": "flow-time", "completed": current, "total": clock["duration"]})
         await asyncio.sleep(0)
     history = dict(saved["history"])
     if samples:

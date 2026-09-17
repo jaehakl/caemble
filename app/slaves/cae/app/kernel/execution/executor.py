@@ -461,6 +461,7 @@ class SpawnSolverExecutor:
         started_at: float | None = None
 
         while True:
+            processed_message = False
             if cancellation is not None and cancellation.is_set():
                 raise SolverExecutionCancelled(locator)
             now = time.monotonic()
@@ -548,6 +549,7 @@ class SpawnSolverExecutor:
                         raise SolverProtocolError(
                             f"solver {locator} child sent unknown message kind {message.kind!r}"
                         )
+                    processed_message = True
 
             if not process.is_alive():
                 await _join_process(process, 0)
@@ -560,7 +562,9 @@ class SpawnSolverExecutor:
                     continue
                 raise SolverProcessExitedError(locator, process.exitcode, child_pid)
 
-            await asyncio.sleep(self._poll_interval)
+            # Drain ready frames without charging every progress message a poll
+            # interval, while yielding and checking cancellation/deadlines again.
+            await asyncio.sleep(0 if processed_message else self._poll_interval)
 
     async def _require_clean_exit(self, locator: str, process: BaseProcess) -> None:
         deadline = time.monotonic() + self._exit_grace

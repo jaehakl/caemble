@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
@@ -49,6 +49,36 @@ def window_fixture(*, dt=.1, duration=.4, window=.2, interval=.07):
     controls = {"maxIterations": 1000, "maxNonlinearIterations": 30, "tolerance": 1e-8, "maxCourant": .5}
     invocation = SimpleNamespace(cancellation=None, progress=None)
     return invocation, domain, initial_state(domain, solution, clock), clock, controls
+
+
+@pytest.mark.asyncio
+async def test_nested_progress_carries_accepted_time_through_retries_and_continuation():
+    invocation, domain, saved, clock, controls = window_fixture()
+    events = []
+    invocation.progress = AsyncMock(side_effect=events.append)
+
+    class ReportingStepper(ClockStepper):
+        async def step(self, **kwargs):
+            await kwargs["progress"]({"stage": "flow-nonlinear-iteration", "completed": 0,
+                                      "total": 30, "time": kwargs["time"] + kwargs["dt"]})
+            await kwargs["progress"]({"stage": "flow-pressure-iteration", "completed": 15, "total": 1000})
+            return await super().step(**kwargs)
+
+    stepper = ReportingStepper(domain.mesh, fail_dt_above=.03)
+    first, _, _ = await advance_window(invocation, domain, saved, clock, controls, stepper)
+    split = len(events)
+    await advance_window(invocation, domain, first, clock, controls, stepper)
+    trials = [event for event in events if event["stage"] == "flow-pressure-iteration"]
+    assert [event["physicalTime"] for event in trials[:3]] == [
+        {"completed": 0., "total": .4, "dt": dt} for dt in (.1, .05, .025)]
+    assert events[0]["time"] == .1 and events[0]["physicalTime"]["completed"] == 0.
+    assert events[split]["physicalTime"]["completed"] == .2
+    assert events[-1]["physicalTime"]["completed"] == .4
+    assert all(event["physicalTime"]["total"] == .4 for event in events)
+    assert np.all(np.diff([event["physicalTime"]["completed"] for event in events]) >= 0)
+    for event in events:
+        if event["stage"] in {"flow-retry", "flow-time"}:
+            assert event["completed"] == event["physicalTime"]["completed"]
 
 
 @pytest.mark.asyncio

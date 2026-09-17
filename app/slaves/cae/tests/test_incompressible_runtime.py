@@ -195,6 +195,14 @@ async def test_flow_records_survive_wire_storage_requery_and_ack(catalog_builds,
             assert records["pressure"][0].mean() > records["pressure"][-1].mean()
             assert records["velocity"][..., 0].mean() > 0
         if transient:
+            progress_events = [json.loads(line) for line in (tmp_path / "progress.jsonl").read_text(encoding="utf-8").splitlines()]
+            physical = [event["physicalTime"] for event in progress_events if "physicalTime" in event]
+            assert physical
+            assert all(value["total"] == endpoint and 0 <= value["completed"] <= endpoint and value["dt"] > 0
+                       for value in physical)
+            assert np.all(np.diff([value["completed"] for value in physical]) >= 0)
+            assert all("physicalTime" in event for event in progress_events
+                       if event.get("stage") in {"flow-pressure-iteration", "flow-nonlinear-iteration", "flow-time", "flow-retry"})
             np.testing.assert_array_equal(records["velocity"][:, :, :, 0], 0.)
             assert records["velocity"][:, :, :, -1, 0, 0, 0].mean() > records["velocity"][:, :, :, 1, 0, 0, 0].mean()
             # Integrate the double odd sine series over the complete rectangular

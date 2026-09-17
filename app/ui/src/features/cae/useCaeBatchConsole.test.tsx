@@ -37,6 +37,27 @@ function event(
   }
 }
 
+it('uses physical task time while pressure and nonlinear counters alternate', () => {
+  const store = createRuntimeConsoleStore()
+  const view = renderHook(() => useCaeBatchConsole(store, false))
+  for (const [index, stage] of ['flow-pressure-iteration', 'flow-nonlinear-iteration'].entries()) {
+    mocks.events = [
+      event(index + 1, 'job.progress', 'one', 1, {
+        task: 'flow',
+        stage,
+        completed: index === 0 ? 15 : 0,
+        total: index === 0 ? 1000 : 30,
+        physicalTime: { completed: 0.3, total: 6, dt: 0.02 },
+      }),
+    ]
+    view.rerender()
+    const rows = store.getSnapshot().events
+    expect(rows).toHaveLength(1)
+    expect(rows[0].progress).toBeCloseTo(0.05)
+    expect(rows[0].message).toContain('시간 0.3/6 s')
+  }
+})
+
 it('updates one row through numeric and message-only progress, preserving parallel runs and retries', () => {
   const store = createRuntimeConsoleStore()
   const view = renderHook(() => useCaeBatchConsole(store, false))

@@ -83,7 +83,8 @@ class LinearFlowSystem:
         # the old corrected face flux and a conservative pressure increment.
         self.interpolator = velocity_operators.face_value
         try:
-            self.momentum_factor = splu(self.momentum_matrix.tocsc())
+            self.momentum_factor = splu(self.momentum_matrix.tocsc(), permc_spec="MMD_AT_PLUS_A",
+                                        options={"SymmetricMode": True})
             self.pressure_factor = pressure_factor
             if pressure_factor is None and len(self.free):
                 approximate_mobility = volume / (diagonal if preconditioner_diagonal is None else preconditioner_diagonal)
