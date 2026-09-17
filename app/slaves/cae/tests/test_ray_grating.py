@@ -59,7 +59,7 @@ def test_multiple_orders_preserve_medium_and_scale_polarization_without_renormal
         'orders': {'value': [-1, 0, 1, 9]}, 'efficiencies': {'value': [0.1, 0.1, 0.7, 0.1]},
     }
     collector = PathCollector(100)
-    branches = _diffract(ray, hit, parameters, 1.5, 1e-10, 1e-9, collector)
+    branches = _diffract(ray, hit, parameters, 1.5, 1e-10, collector)
     assert len(branches) == 3
     assert sum(branch.stokes[0] for branch in branches) == pytest.approx(1.8)
     assert len({branch.path_key for branch in branches}) == 3
@@ -75,7 +75,7 @@ def test_multiple_orders_preserve_medium_and_scale_polarization_without_renormal
         assert branch.interactions == 1
         assert branch.events == [EVENT_DIFFRACTION]
         assert np.dot(branch.basis, branch.direction) == pytest.approx(0, abs=1e-14)
-    repeated = _diffract(branches[1], hit, parameters, 1.5, 1e-10, 1e-9, collector)
+    repeated = _diffract(branches[1], hit, parameters, 1.5, 1e-10, collector)
     assert len(repeated) == 3
     assert all(branch.interactions == 2 for branch in repeated)
     assert sum(branch.stokes[0] for branch in repeated) == pytest.approx(0.18)
@@ -94,6 +94,6 @@ def test_nonpropagating_zero_efficiency_and_cutoff_finish_paths(orders, efficien
     branches = _diffract(ray, SimpleNamespace(normal=np.array([0., 1., 0.]), position=np.zeros(3)), {
         'spacing': {'value': 1e-6}, 'grooveDirection': {'value': [0, 0, -1]},
         'orders': {'value': orders}, 'efficiencies': {'value': efficiencies},
-    }, 1., threshold, 1e-9, collector)
+    }, 1., threshold, collector)
     assert not branches
     assert collector.paths[0].events[-1] == event

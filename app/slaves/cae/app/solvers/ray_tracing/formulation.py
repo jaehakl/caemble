@@ -9,7 +9,8 @@ from typing import Any
 import numpy as np
 
 from app.kernel.api.errors import CaeError
-from app.methods.geometry import TriangularMesh
+from app.methods.geometry.analytic import AnalyticSolid, SurfaceRef
+from app.methods.geometry.extrema import solid_bounds
 from app.methods.optics import (
     abg_direction,
     cone_direction,
@@ -23,7 +24,8 @@ from app.methods.optics import (
     refract,
     unit_vector,
 )
-from app.methods.rays import TriangleScene, counter_random, vector_parameter
+from app.methods.rays import counter_random, vector_parameter
+from app.methods.rays.analytic import AnalyticScene, AnalyticHit
 from app.kernel.api import SolverInvocation
 from app.kernel.api.world import (
     geometry_part,
@@ -35,7 +37,7 @@ from app.kernel.api.world import (
 from .domain import (
     selectors,
     surface_sampler,
-    surface_triangle_keys,
+    surface_keys,
 )
 from .grating import diffracted_direction
 from .thin_film import surface_films, film_layers
@@ -71,6 +73,7 @@ class Ray:
     path_key: int = 0
     interactions: int = 0
     split_done: bool = False
+    last_hit: AnalyticHit | None = None
     vertices: list[np.ndarray[Any, Any]] = field(default_factory=list)
     powers: list[float] = field(default_factory=list)
     events: list[int] = field(default_factory=list)
@@ -90,6 +93,7 @@ class Ray:
             path_key=self.path_key,
             interactions=self.interactions,
             split_done=self.split_done,
+            last_hit=self.last_hit,
             vertices=[point.copy() for point in self.vertices],
             powers=list(self.powers),
             events=list(self.events),
@@ -99,12 +103,11 @@ class Ray:
 async def trace_rays(
     context: SolverInvocation,
     scene: dict[str, Any],
-    collision_scene: TriangleScene,
-    meshes: dict[str, TriangularMesh],
+    collision_scene: AnalyticScene,
+    solids: dict[str, AnalyticSolid],
     launched: list[Ray],
     detectors: list[Detector],
     seed: int,
-    epsilon: float,
     tallies: list[Any] | None = None,
 ) -> PathCollector:
     """Trace queued rays and their physical branches in deterministic order."""
@@ -112,19 +115,19 @@ async def trace_rays(
     maximum_interactions = _integer(config["parameters"]["maxInteractions"])
     maximum_paths = _integer(config["parameters"]["maxPaths"])
     minimum_power_fraction = scalar_parameter(config["parameters"]["minPowerFraction"])
-    surface_scatter = _surface_scatter(config, scene, meshes)
+    surface_scatter = _surface_scatter(config, scene, solids)
     bulk_scatter = _bulk_scatter(config, scene)
     gratings = {}
     for rule in config["boundaryConditions"]:
         if rule["methodId"] == "ray.reflection-grating":
-            for key in surface_triangle_keys(scene, target_group(rule, "surface"), meshes):
+            for key in surface_keys(scene, target_group(rule, "surface"), solids):
                 gratings[key] = rule["parameters"]
-    detector_by_triangle: dict[tuple[str, int], list[Detector]] = {}
+    detector_by_surface: dict[SurfaceRef, list[Detector]] = {}
     for detector in detectors:
-        for triangle_key in detector.triangle_keys:
-            detector_by_triangle.setdefault(triangle_key, []).append(detector)
+        for surface_key in detector.surface_keys:
+            detector_by_surface.setdefault(surface_key, []).append(detector)
 
-    films = surface_films(context, scene, meshes, set(gratings) | set(detector_by_triangle))
+    films = surface_films(context, scene, solids, set(gratings) | set(detector_by_surface))
 
     await context.progress({"stage": "trace", "completed": 0, "total": len(launched)})
     collector = PathCollector(maximum_paths, tallies=[] if tallies is None else tallies)
@@ -139,13 +142,12 @@ async def trace_rays(
             collision_scene,
             context.world,
             context.descriptor,
-            detector_by_triangle,
+            detector_by_surface,
             surface_scatter,
             bulk_scatter,
             gratings,
             maximum_interactions,
             threshold,
-            epsilon,
             seed,
             collector,
             films,
@@ -161,24 +163,23 @@ async def trace_rays(
 
 def _trace_one(
     ray: Ray,
-    scene: TriangleScene,
+    scene: AnalyticScene,
     world: dict[str, Any],
     descriptor: dict[str, Any],
-    detectors: dict[tuple[str, int], list[Detector]],
-    surface_scatter: dict[tuple[str, int], tuple[str, dict[str, Any]]],
+    detectors: dict[SurfaceRef, list[Detector]],
+    surface_scatter: dict[SurfaceRef, tuple[str, dict[str, Any]]],
     bulk_scatter: dict[str, float],
-    gratings: dict[tuple[str, int], dict[str, Any]],
+    gratings: dict[SurfaceRef, dict[str, Any]],
     maximum_interactions: int,
     threshold: float,
-    epsilon: float,
     seed: int,
     collector: PathCollector,
     films: dict | None = None,
 ) -> list[Ray]:
     if not ray.vertices:
         ray.vertices.append(ray.origin.copy())
-    hit = scene.intersect(ray.origin, ray.direction, epsilon)
-    escape_distance = max(scene.diagonal, epsilon * 100)
+    hit = scene.intersect(ray.origin, ray.direction, 0.0, previous=ray.last_hit)
+    escape_distance = scene.diagonal
     if hit is None:
         medium = optical_material(world, ray.medium_name, ray.wavelength)
         score_distance = escape_distance
@@ -213,10 +214,11 @@ def _trace_one(
             )
             ray.basis = perpendicular(ray.direction)
             ray.stokes[1:] = 0
-            ray.origin = position + ray.direction * epsilon
+            ray.origin = position
+            ray.last_hit = None
             ray.interactions += 1
             if ray.interactions >= maximum_interactions:
-                _segment(ray, ray.origin + ray.direction * epsilon, EVENT_MAX_BOUNCES)
+                _segment(ray, ray.origin, EVENT_MAX_BOUNCES)
                 collector.finish(ray)
                 return []
             return [ray]
@@ -226,7 +228,8 @@ def _trace_one(
         _segment(ray, hit.position, EVENT_POWER_CUTOFF)
         collector.finish(ray)
         return []
-    detector_hits = detectors.get((hit.metadata.root_id, hit.local_triangle_index), [])
+    ray.last_hit = hit
+    detector_hits = detectors.get(hit.surface_ref, [])
     if detector_hits:
         _segment(ray, hit.position, EVENT_DETECTOR)
         collector.detected_power += float(ray.stokes[0])
@@ -237,11 +240,15 @@ def _trace_one(
         collector.finish(ray)
         return []
 
-    grating = gratings.get((hit.metadata.root_id, hit.local_triangle_index))
-    if grating is not None:
-        return _diffract(ray, hit, grating, medium.refractive_index.real, threshold, epsilon, collector)
+    if hit.crossing_kind == "touch":
+        ray.origin = hit.position.copy()
+        return [ray]
 
-    entering = float(np.dot(ray.direction, hit.normal)) < 0
+    grating = gratings.get(hit.surface_ref)
+    if grating is not None:
+        return _diffract(ray, hit, grating, medium.refractive_index.real, threshold, collector)
+
+    entering = hit.crossing_kind == "enter"
     normal = hit.normal if entering else -hit.normal
     target_stack = _cross_medium(
         ray.medium_stack, None if entering else hit.metadata.root_id,
@@ -251,7 +258,7 @@ def _trace_one(
     target_name = target_stack[-1][1] if target_stack else None
     incident = optical_material(world, ray.medium_name, ray.wavelength)
     target = optical_material(world, target_name, ray.wavelength)
-    film = (films or {}).get((hit.metadata.root_id, hit.local_triangle_index))
+    film = (films or {}).get(hit.surface_ref)
     if film is None:
         reflected, transmitted, s_axis = interface_stokes(
             ray.stokes, ray.basis, ray.direction, normal, incident.refractive_index, target.refractive_index,
@@ -266,7 +273,7 @@ def _trace_one(
     transmitted_direction = refract(ray.direction, normal, max(1e-12, incident.refractive_index.real), max(1e-12, target.refractive_index.real))
     transmission_position = hit.position
     reflected_direction = reflect(ray.direction, hit.normal)
-    scatter = surface_scatter.get((hit.metadata.root_id, hit.local_triangle_index))
+    scatter = surface_scatter.get(hit.surface_ref)
     return _continue_interface(
         ray,
         hit.position,
@@ -283,7 +290,6 @@ def _trace_one(
         scatter,
         maximum_interactions,
         threshold,
-        epsilon,
         seed,
         collector,
     )
@@ -305,7 +311,6 @@ def _continue_interface(
     scatter: tuple[str, dict[str, Any]] | None,
     maximum_interactions: int,
     threshold: float,
-    epsilon: float,
     seed: int,
     collector: PathCollector,
 ) -> list[Ray]:
@@ -326,7 +331,7 @@ def _continue_interface(
             if is_split:
                 reflected_ray.path_key = _branch_key(ray.path_key, 0)
             _segment(reflected_ray, position, EVENT_REFLECTION)
-            _set_reflection(reflected_ray, reflected, reflected_direction, s_axis, normal, scatter, epsilon, seed)
+            _set_reflection(reflected_ray, reflected, reflected_direction, s_axis, normal, scatter, seed)
             result.append(reflected_ray)
         if retains_transmission and transmitted_direction is not None:
             transmitted_ray = ray.branch()
@@ -339,7 +344,7 @@ def _continue_interface(
             transmitted_ray.medium_name = target_name
             transmitted_ray.medium_root = target_root
             transmitted_ray.medium_stack = list(target_stack)
-            transmitted_ray.origin = transmission_position + transmitted_direction * epsilon
+            transmitted_ray.origin = transmission_position.copy()
             result.append(transmitted_ray)
         if len(result) > 1:
             for branch in result:
@@ -359,7 +364,7 @@ def _continue_interface(
     _segment(ray, position, EVENT_ROULETTE)
     if choose_reflection:
         ray.stokes = reflected * (total / reflected_power)
-        _set_reflection(ray, ray.stokes, reflected_direction, s_axis, normal, scatter, epsilon, seed)
+        _set_reflection(ray, ray.stokes, reflected_direction, s_axis, normal, scatter, seed)
         ray.events[-1] = EVENT_REFLECTION if scatter is None else ray.events[-1]
     else:
         ray.stokes = transmitted * (total / transmitted_power)
@@ -368,7 +373,7 @@ def _continue_interface(
         ray.medium_name = target_name
         ray.medium_root = target_root
         ray.medium_stack = list(target_stack)
-        ray.origin = transmission_position + ray.direction * epsilon
+        ray.origin = transmission_position.copy()
         ray.events[-1] = EVENT_REFRACTION
     if ray.interactions >= maximum_interactions:
         collector.finish(ray)
@@ -383,7 +388,6 @@ def _set_reflection(
     s_axis: np.ndarray[Any, Any],
     normal: np.ndarray[Any, Any],
     scatter: tuple[str, dict[str, Any]] | None,
-    epsilon: float,
     seed: int,
 ) -> None:
     ray.stokes = stokes
@@ -415,16 +419,15 @@ def _set_reflection(
             event = EVENT_SURFACE_SCATTER
     if ray.events:
         ray.events[-1] = event
-    ray.origin = ray.vertices[-1] + ray.direction * epsilon
+    ray.origin = ray.vertices[-1].copy()
 
 
 async def launch_sources(
     context: SolverInvocation,
     config: Mapping[str, Any],
     scene: dict[str, Any],
-    meshes: dict[str, TriangularMesh],
+    solids: dict[str, AnalyticSolid],
     seed: int,
-    epsilon: float,
 ) -> tuple[list[Ray], float]:
     rules = [
         rule
@@ -437,7 +440,7 @@ async def launch_sources(
         }
     ]
     rays: list[Ray] = []
-    source_meshes = dict(meshes)
+    source_solids = dict(solids)
     total_power = 0.0
     source_index = 0
     for rule_index, rule in enumerate(rules):
@@ -451,34 +454,25 @@ async def launch_sources(
         center = None
         if method == "ray.point-source":
             part = geometry_part(scene, target_group(rule, "geometry"))
-            mesh = await context.geometry.triangular_mesh(
-                scene,
-                part["id"],
-                context.descriptor["referenceLengthUnit"],
-                context.progress,
+            solid = await context.geometry.continuous_solid(
+                scene, part["id"], context.descriptor["referenceLengthUnit"], context.progress,
             )
-            vertices = mesh.vertices
-            center = (np.min(vertices, axis=0) + np.max(vertices, axis=0)) / 2
+            minimum, maximum = solid_bounds(solid)
+            center = (minimum + maximum) / 2
         else:
             group_name = target_group(rule, "surface")
-            selected_surfaces = selectors(scene, group_name)
-            root_id = selected_surfaces[0]["rootId"]
-            source_meshes[root_id] = await context.geometry.triangular_mesh(
-                scene,
-                root_id,
-                context.descriptor["referenceLengthUnit"],
-                context.progress,
-            )
-            sampler = surface_sampler(scene, group_name, source_meshes)
+            for selector in selectors(scene, group_name):
+                root_id = selector["rootId"]
+                if root_id not in source_solids:
+                    source_solids[root_id] = await context.geometry.continuous_solid(
+                        scene, root_id, context.descriptor["referenceLengthUnit"], context.progress,
+                    )
+            sampler = surface_sampler(scene, group_name, source_solids)
         for local_index in range(count):
             if center is not None:
                 origin = center.copy()
             else:
-                origin, sampled_normal = sampler.sample(
-                    counter_random(seed, rule_index, local_index, 0),
-                    counter_random(seed, rule_index, local_index, 1),
-                    counter_random(seed, rule_index, local_index, 2),
-                )
+                origin, sampled_normal = sampler.sample(seed, rule_index, local_index)
             if method in {"ray.point-source", "ray.area-source"}:
                 direction = cone_direction(
                     vector_parameter(parameters["direction"], "source direction"),
@@ -495,8 +489,6 @@ async def launch_sources(
                     counter_random(seed, rule_index, local_index, 3),
                     counter_random(seed, rule_index, local_index, 4),
                 )
-            if sampler is not None:
-                origin = origin + direction * epsilon
             rays.append(
                 Ray(
                     origin,
@@ -517,15 +509,15 @@ async def launch_sources(
 def _surface_scatter(
     config: dict[str, Any],
     scene: dict[str, Any],
-    meshes: dict[str, TriangularMesh],
-) -> dict[tuple[str, int], tuple[str, dict[str, Any]]]:
-    result: dict[tuple[str, int], tuple[str, dict[str, Any]]] = {}
+    solids: dict[str, AnalyticSolid],
+) -> dict[SurfaceRef, tuple[str, dict[str, Any]]]:
+    result: dict[SurfaceRef, tuple[str, dict[str, Any]]] = {}
     for rule in config["boundaryConditions"]:
         method = rule["methodId"]
         if method not in {"ray.abg-scatter", "ray.lambertian-scatter"}:
             continue
         parameters = rule["parameters"]
-        for key in surface_triangle_keys(scene, target_group(rule, "surface"), meshes):
+        for key in surface_keys(scene, target_group(rule, "surface"), solids):
             result[key] = ("abg" if method == "ray.abg-scatter" else "lambertian", parameters)
     return result
 
@@ -605,7 +597,6 @@ def _diffract(
     parameters: dict[str, Any],
     refractive_index: float,
     threshold: float,
-    epsilon: float,
     collector: PathCollector,
 ) -> list[Ray]:
     normal = hit.normal
@@ -627,7 +618,7 @@ def _diffract(
         branch.stokes = local_stokes * efficiency
         branch.direction = direction
         branch.basis = unit_vector(groove - np.dot(groove, direction) * direction)
-        branch.origin = hit.position + direction * epsilon
+        branch.origin = hit.position.copy()
         branch.interactions += 1
         if branch.stokes[0] <= threshold:
             _segment(branch, branch.origin, EVENT_POWER_CUTOFF)

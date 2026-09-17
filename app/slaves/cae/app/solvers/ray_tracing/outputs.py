@@ -9,11 +9,12 @@ import numpy as np
 from app.kernel.api import BundleValue
 from app.kernel.api.world import target_group
 
-from .domain import surface_triangle_keys
+from .domain import surface_keys
+from app.methods.geometry.analytic import SurfaceRef
 
 @dataclass(slots=True)
 class Detector:
-    triangle_keys: set[tuple[str, int]]
+    surface_keys: set[SurfaceRef]
 
 
 @dataclass(slots=True)
@@ -67,8 +68,8 @@ class PathCollector:
         })
 
 
-def build_detectors(config, scene, meshes):
-    return [Detector(surface_triangle_keys(scene, target_group(rule, "surface"), meshes))
+def build_detectors(config, scene, solids):
+    return [Detector(surface_keys(scene, target_group(rule, "surface"), solids))
             for rule in config["boundaryConditions"] if rule["methodId"] == "ray.absorbing-detector"]
 
 

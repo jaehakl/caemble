@@ -4,20 +4,32 @@ from __future__ import annotations
 
 import math
 import numpy as np
+from .interval import Dual, Interval, sqrt
+
+
+def sag_squared(face, radius_squared):
+    """Sag in squared radial coordinates, regular on the optical axis."""
+    c, k = face["curvature"], face["conic"]
+    value = (
+        c * radius_squared / (1 + sqrt(1 - (1 + k) * c * c * radius_squared))
+        if c
+        else 0.0
+    )
+    for term in face["coefficients"]:
+        value = value + term["value"] * radius_squared ** (term["order"] // 2)
+    return value
 
 
 def sag(face, radius):
     c, k = face["curvature"], face["conic"]
-    q = np.sqrt(1 - (1 + k) * c * c * np.asarray(radius) ** 2)
+    radius = radius if isinstance(radius, (Interval, Dual)) else np.asarray(radius)
+    q = sqrt(1 - (1 + k) * c * c * radius**2)
     value, derivative = (
-        c * np.asarray(radius) ** 2 / (1 + q),
-        c * np.asarray(radius) / q,
+        sag_squared(face, radius**2),
+        c * radius / q,
     )
     for term in face["coefficients"]:
-        value += term["value"] * np.asarray(radius) ** term["order"]
-        derivative += (
-            term["order"] * term["value"] * np.asarray(radius) ** (term["order"] - 1)
-        )
+        derivative += term["order"] * term["value"] * radius ** (term["order"] - 1)
     return value, derivative
 
 

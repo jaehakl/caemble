@@ -585,8 +585,9 @@ publish하며, 손상되거나 없는 entry는 miss로 다시 계산합니다. C
 
 Solver 입력은 authoring JSX나 preview mesh가 아니라 built Measurement의
 canonical Geometry scene입니다. 공통 장면은 `experiment`, task별 장면은
-`task` scope로 전달됩니다. Solver는 child에 주입된 Geometry service에
-root의 triangular mesh를 요청합니다.
+`task` scope로 전달됩니다. Solver는 child에 주입된 Geometry service에서
+필요한 표현을 요청합니다. Ray tracing은 `continuous_solid`를 사용하고
+mesh 기반 Solver는 root의 triangular mesh를 사용합니다.
 
 두 scene은 별도로 평가·빌드·렌더링됩니다. 서로 겹친다는 이유로 CSG나 mesh를
 변경하지 않습니다. Task의 source/domain/PML 같은 물리적 역할과 Experiment
@@ -629,13 +630,32 @@ domain에서는 dtype을 바꾸거나 배열을 복사하지 않고 값을 공�
 
 ## Non-sequential ray tracing
 
+연속 형상 평가는 `methods.geometry`, 광선 교차와 최종 Boolean 사건 판정은
+`methods.rays`, 광학 경계조건과 매질 전이는 `solvers.ray_tracing`이 소유합니다.
+`SurfaceRef`는 root/source-node/surface-slot이며 occurrence는 canonical 배치
+경로입니다. 내부 계산 patch나 표시용 tessellation은 표면 identity를 바꾸지 않습니다.
+교차는 모든 사건을 제공하고 `hit/miss/unresolved`를 구분합니다. 판정 불능을
+miss나 mesh fallback으로 숨기지 않습니다. 위치 오차 범위와 이전 사건 identity로
+재출발 시 자기 충돌만 제외하며 전체 장면 크기의 epsilon을 사용하지 않습니다.
+기본 연산은 float64입니다. 접선 근처에서 상쇄로 부호가 불분명해지는 작은
+구간은 별도 mpmath context의 80자리 연산으로 확인합니다. 전역 정밀도 설정을
+바꾸지 않으며, 여전히 해결하지 못한 후보는 `unresolved`로 남깁니다.
+
+연속 Geometry 캐시는 geometryHash/root/reference unit을 사용하고 meshHash와
+분할 설정을 읽지 않습니다. Bounds·표면 면적은 연속식의 구간 경계로 계산합니다.
+표면 광원은 변환된 미분의 면적 요소로 rejection sampling하며 난수 counter에
+표본별 재시도 번호를 포함합니다. 공간 탐색 bounds와 점광원용 최종 형상 극값은
+별개입니다. 극값 계산은 국소 형상 크기의 1e-9와 부동소수점 오차 범위까지
+정련하며 판정 불능은 오류입니다. 수치 반복 중 cancellation은 기존 child 종료
+계약을 따르고 교차 임시 자료를 Solver state에 저장하지 않습니다.
+
 `ray-tracing` Solver는 미리 정한 surface sequence 대신 다음 실제 충돌을
 따릅니다. Source는 point, area, directional, Lambertian 형태로 구성할 수
 있습니다. 수치 Output은 ray power의 체적 경로 적분으로 구한 Box Grid
 fluence rate와 방향별 radiant flux density입니다. 검출기 표면의 흡수·종료는
 명시적인 경계조건이며 Output 요청 여부와 무관합니다.
 
-`ray-tracing 3.0.0`의 박막은 표면 경계조건으로 명시합니다.
+`ray-tracing 4.0.0`의 박막은 표면 경계조건으로 명시합니다.
 
 - `ray.thin-film-stack`의 대상 Material에서 `optics.thin-film-stack@1` 모델을 선택합니다.
 - 층 순서는 외부에서 내부이며 내부 입사 시 역순입니다. 실제 medium stack의 양쪽 매질을 사용합니다.

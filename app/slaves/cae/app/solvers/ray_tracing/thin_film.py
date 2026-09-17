@@ -6,17 +6,17 @@ import numpy as np
 from app.kernel.api.world import material_model, target_group
 from app.kernel.api.units import convert_ucum_value
 from app.methods.optics import VACUUM_LIGHT_SPEED
-from .domain import THIN_LAYER_LIMIT, surface_triangle_keys
+from .domain import THIN_LAYER_LIMIT, surface_keys
 
 
-def surface_films(context, scene, meshes, excluded):
+def surface_films(context, scene, solids, excluded):
     films = {}
     parts = {part["id"]: part for part in scene["roots"]}
     stacks = {}
     for rule in context.config["boundaryConditions"]:
         if rule["methodId"] != "ray.thin-film-stack":
             continue
-        keys = surface_triangle_keys(scene, target_group(rule, "surface"), meshes)
+        keys = surface_keys(scene, target_group(rule, "surface"), solids)
         if not keys:
             raise ValueError(
                 "Thin-film target must resolve to a boundary in ray.domain"
@@ -26,9 +26,9 @@ def surface_films(context, scene, meshes, excluded):
                 raise ValueError(
                     "Thin-film surfaces cannot have duplicate stacks, detectors or gratings"
                 )
-            if key[0] not in stacks:
+            if key.root_id not in stacks:
                 model = material_model(
-                    context.world, parts[key[0]], "thinFilm", "stack"
+                    context.world, parts[key.root_id], "thinFilm", "stack"
                 )
                 if model is None or model["model"] != "optics.thin-film-stack@1":
                     raise ValueError(
@@ -66,8 +66,8 @@ def surface_films(context, scene, meshes, excluded):
                                 "Thin-film samples require increasing positive frequencies, n > 0 and k >= 0"
                             )
                         previous = frequency
-                stacks[key[0]] = layers
-            layers = stacks[key[0]]
+                stacks[key.root_id] = layers
+            layers = stacks[key.root_id]
             films[key] = layers
     return films
 

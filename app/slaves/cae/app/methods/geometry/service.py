@@ -20,6 +20,8 @@ from app.methods.geometry.models import (
 from app.methods.geometry.solids import components_from_shells
 from .continuous import tessellate_primitive
 from .fiber import tessellate_fiber
+from .curved import curved_radius
+from .analytic import AnalyticSolid
 from app.methods.mesh.models import VolumeMeshingProfile
 from app.methods.mesh.tetrahedral import (
     SurfaceDescriptor,
@@ -67,6 +69,15 @@ class GeometryService:
         self._volume_meshes: dict[tuple[Any, ...], VolumeMesh] = {}
         self._solid_components: dict[tuple[Any, ...], tuple[SolidComponent, ...]] = {}
         self._cache = cache
+        self._continuous: dict[tuple[str, str, str, str], AnalyticSolid] = {}
+
+    async def continuous_solid(self, scene, root_id, reference_length_unit, progress=None):
+        key = (scene["geometryHash"], root_id, reference_length_unit, "continuous-v1")
+        if key not in self._continuous:
+            root = next(root for root in scene["roots"] if root["id"] == root_id)
+            self._continuous[key] = AnalyticSolid(root, _length_scale(scene["lengthUnit"], reference_length_unit))
+            await asyncio.sleep(0)
+        return self._continuous[key]
 
     @property
     def cached_mesh_count(self) -> int:
@@ -1300,17 +1311,9 @@ def _curved_edge_cylinder(
     vertices: list[list[float]] = []
     for vertical_index in range(vertical_segments + 1):
         z = -height / 2 + height * vertical_index / vertical_segments
-        offset = z - parameters["verticalCurve"]["origin"]
-        vertical_radius = 0.0
-        for coefficient in reversed(parameters["verticalCurve"]["coefficients"]):
-            vertical_radius = vertical_radius * offset + coefficient
         for azimuthal_index in range(azimuthal_segments):
             theta = 2 * math.pi * azimuthal_index / azimuthal_segments
-            azimuthal_radius = sum(
-                mode["amplitude"] * math.cos(mode_index * theta + mode["phase"])
-                for mode_index, mode in enumerate(parameters["azimuthalCurve"])
-            )
-            radius = azimuthal_radius * vertical_radius
+            radius = curved_radius(parameters, z, theta)[0]
             vertices.append([radius * math.cos(theta), radius * math.sin(theta), z])
     bottom_center = len(vertices)
     vertices.append([0.0, 0.0, -height / 2])

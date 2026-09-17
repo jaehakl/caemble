@@ -13,14 +13,13 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     scene = experiment_scene(invocation.world)
     domain_rule = single_method(config, "initializations", "ray.domain")
     parts = geometry_parts(scene, target_group(domain_rule, "geometry"))
-    collision_scene, meshes = await build_collision_scene(invocation, scene, parts)
-    epsilon = max(1e-12, collision_scene.diagonal * 1e-10)
+    collision_scene, solids = await build_collision_scene(invocation, scene, parts)
     seed = int(scalar_parameter(config["parameters"]["seed"]))
 
-    detectors = build_detectors(config, scene, meshes)
-    launched, _ = await launch_sources(invocation, config, scene, meshes, seed, epsilon)
+    detectors = build_detectors(config, scene, solids)
+    launched, _ = await launch_sources(invocation, config, scene, solids, seed)
     tallies = build_volume_tallies(config, invocation.descriptor, [ray.wavelength for ray in launched])
-    paths = await trace_rays(invocation, scene, collision_scene, meshes, launched, detectors, seed, epsilon, tallies)
+    paths = await trace_rays(invocation, scene, collision_scene, solids, launched, detectors, seed, tallies)
 
     path_bundle = paths.bundle()
     return SolverResult(

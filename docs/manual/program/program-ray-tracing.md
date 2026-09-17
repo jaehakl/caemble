@@ -2,6 +2,18 @@
 
 Catalog의 `ray-tracing`은 미리 정한 표면 순서를 따르지 않고, 광선이 기하와 만나는 순서대로 반사·굴절·산란·흡수를 추적하는 non-sequential solver입니다. 다중 반사, stray light, 바플과 혼탁 매질을 포함한 광학계에 사용하세요.
 
+### 연속 형상과 표시 해상도
+
+Ray tracing은 Primitive의 연속 표면에서 교점과 외향법선을 계산합니다. Box, Sphere, Cylinder·원뿔대, Ellipsoid, Paraboloid, Hyperboloid, AsphericCylinder, Fiber, CurvedEdgeCylinder 및 이들의 Transform·Instance·Boolean 조합을 지원합니다. Viewer용 tessellation 설정을 바꿔도 같은 seed의 광원 표본, 교점, 법선과 광학 결과는 바뀌지 않습니다.
+
+표면 그룹은 기존 숫자 surface slot을 사용합니다. Boolean 내부에 가려진 면에서는 충돌이나 방출이 발생하지 않으며 절삭면의 법선은 최종 solid 바깥을 향합니다. 표면 광원은 변환 후 실제 면적에 비례해 표본을 생성하고, 점광원은 최종 연속 형상의 bounds 중심에 놓입니다.
+
+Fiber는 Line/Arc 경로와 물리적 호 길이의 반지름 profile을 그대로 사용합니다. 구간과 radius knot에는 가상 단면을 만들지 않습니다. knot의 법선은 오른쪽 미분을 사용하고 마지막 끝점에서는 왼쪽 미분을 사용합니다. 정확한 접선 접촉은 검출기에서 흡수하며 그 외에는 매질과 방향을 유지합니다. 모서리는 입사 방향과 법선 내적의 절댓값이 가장 큰 면을 선택하고 동률은 표면 식별자·배치 순서로 결정합니다.
+
+CurvedEdgeCylinder는 전 영역에서 양의 반지름을 갖는 정칙 형상을 사용하세요. 내부·외부나 법선을 정의할 수 없는 특이 형상, 또는 수치적으로 해결하지 못한 교차는 형상과 구간을 포함한 오류로 종료합니다. 삼각형 계산으로 자동 전환하지 않습니다. Float64 연산과 근 찾기·광선 표본 오차는 남으며, 표시용 분할 수는 계산 정확도를 조절하는 설정이 아닙니다.
+
+[Continuous Ray Optics 예제](/doc?help=examples&item=caemble:experiment/caemble/verified/continuous-ray-optics@1.0.0)는 비구면 렌즈, 굽은 taper Fiber와 Boolean 절삭 곡면을 함께 보여 줍니다.
+
 ### 광원과 산란
 
 - 광원은 point, area, directional, Lambertian 형식을 지원합니다. 모든 광원의 emitter locator geometry 또는 surface는 `ray.domain` group에서 제외하고, 실제 방출 위치도 모든 collision solid 바깥에 두세요. 각 광원 initialization call은 하나의 이산 wavelength line을 나타내므로, 여러 call을 나란히 추가해 다중 파장 광원을 구성합니다.
@@ -10,7 +22,7 @@ Catalog의 `ray-tracing`은 미리 정한 표면 순서를 따르지 않고, 광
 
 ### 표면 박막 적층
 
-`ray-tracing 3.0.0`은 `boundaryConditions`의 `ray.thin-film-stack`을 `experiment.surface.<group>`에 적용합니다. 대상 solid의 Material에서 `optics.thin-film-stack@1` 모델을 선택하세요. `layers`는 순서 있는 목록이며 각 층은 단위를 가진 `thickness`와 `samples: [{ frequency, n, k }, …]`를 갖습니다. 표본 하나는 일정 광학 상수입니다. 모델 입력과 선택은 기존 Material snapshot 경로를 따릅니다.
+`ray-tracing 4.0.0`은 `boundaryConditions`의 `ray.thin-film-stack`을 `experiment.surface.<group>`에 적용합니다. 대상 solid의 Material에서 `optics.thin-film-stack@1` 모델을 선택하세요. `layers`는 순서 있는 목록이며 각 층은 단위를 가진 `thickness`와 `samples: [{ frequency, n, k }, …]`를 갖습니다. 표본 하나는 일정 광학 상수입니다. 모델 입력과 선택은 기존 Material snapshot 경로를 따릅니다.
 
 층 순서는 solid 외부에서 내부 방향입니다. 내부에서 입사하면 역순으로 계산하고, 입사·출사 굴절률은 실제 경계의 medium stack에서 정합니다. 각 층은 엄격히 `0 < thickness < 50 µm`여야 합니다. `50 µm` 이상은 오류이며 별도 solid로 작성해야 합니다. Geometry scale은 명시된 박막 두께를 바꾸지 않습니다.
 

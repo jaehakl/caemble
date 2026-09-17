@@ -24,14 +24,15 @@ async def test_catalog_spectrometer_separates_three_lines_and_converges(catalog_
     nodes = [root['node'] for root in refined_world['experiment']['roots']]
     while nodes:
         node = nodes.pop()
-        if node['kind'] == 'primitive' and node['primitive'] == 'sphere':
-            node['tessellation']['segments'] *= 2
+        for name in node.get('tessellation', {}):
+            node['tessellation'][name] *= 2
         if 'child' in node:
             nodes.append(node['child'])
         nodes.extend(node.get('children', []))
     # A new mesh identity avoids a cache hit at the coarser resolution.
     refined_world['experiment']['meshHash'] += '-refined'
     centers_by_resolution = []
+    snapshots = []
     powers = []
     for input_world in [world, refined_world]:
         result = await SpawnSolverExecutor().execute(
@@ -43,6 +44,8 @@ async def test_catalog_spectrometer_separates_three_lines_and_converges(catalog_
         assert set(result.visualizations) == {'paths'}
         assert set(result.artifacts) == {'fluenceRate', 'radiantFluxDensity'}
         bundle = result.visualizations['paths'].members
+        snapshots.append(({name: value['value'] for name, value in bundle.items()},
+                          {name: value['value'] for name, value in result.artifacts.items()}))
         vertices = bundle['vertices']['value']
         offsets = bundle['pathOffsets']['value']
         events = bundle['segmentEvent']['value']
@@ -80,5 +83,8 @@ async def test_catalog_spectrometer_separates_three_lines_and_converges(catalog_
         power = result.observations['detectedPower']
         assert 1.7 < power < 2.1
         powers.append(power)
-    np.testing.assert_allclose(centers_by_resolution[0], centers_by_resolution[1], atol=0.0001, rtol=0)
-    assert powers[0] == pytest.approx(powers[1], rel=1e-3)
+    np.testing.assert_array_equal(centers_by_resolution[0], centers_by_resolution[1])
+    assert powers[0] == powers[1]
+    for first, second in zip(snapshots[0], snapshots[1]):
+        for name in first:
+            np.testing.assert_array_equal(first[name], second[name])

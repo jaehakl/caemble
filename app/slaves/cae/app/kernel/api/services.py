@@ -7,6 +7,14 @@ from typing import Any, Protocol
 class GeometryService(Protocol):
     """Canonical geometry operations used by the current solver packages."""
 
+    async def continuous_solid(
+        self,
+        scene: Mapping[str, Any],
+        root_id: str,
+        reference_length_unit: str,
+        progress: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> Any: ...
+
     async def triangular_mesh(
         self,
         scene: Mapping[str, Any],

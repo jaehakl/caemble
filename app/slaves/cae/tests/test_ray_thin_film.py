@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from app.methods.geometry import TriangleProvenance, TriangularMesh
+from app.methods.geometry.analytic import AnalyticSolid, SurfaceRef
 from app.methods.optics import multilayer_stokes
-from app.methods.rays import TriangleMetadata
+from app.methods.rays.analytic import RayMetadata
 from app.solvers.ray_tracing import formulation
 from app.solvers.ray_tracing.formulation import Ray
 from app.solvers.ray_tracing.outputs import PathCollector
@@ -45,43 +45,40 @@ def film_context(thickness=1e-7):
             )
         ],
     )
-    mesh = TriangularMesh(
-        np.array([[0.0, 0.0, 0.0], [1, 0, 0], [0, 1, 0]]),
-        np.array([[0, 1, 2]]),
-        (TriangleProvenance("glass", "face", 2),),
-    )
-    return context, scene, {"glass": mesh}, layers
+    part["node"] = dict(kind="primitive", primitive="cylinder", nodeId="face", parameters=dict(radius=1, radius_2=1, height=1))
+    return context, scene, {"glass": AnalyticSolid(part)}, layers
+
 
 
 @pytest.mark.parametrize("thickness", [0.0, -1e-9, 50e-6, 51e-6, np.inf, np.nan])
 def test_thickness_exclusive_limit(thickness):
-    context, scene, meshes, _ = film_context(thickness)
+    context, scene, solids, _ = film_context(thickness)
     with pytest.raises(ValueError, match="50 micrometers"):
-        surface_films(context, scene, meshes, set())
+        surface_films(context, scene, solids, set())
 
 
 def test_duplicate_conflicting_surfaces_and_constant_frequency_samples():
-    context, scene, meshes, layers = film_context(49.999e-6)
-    result = surface_films(context, scene, meshes, set())
-    assert result[("glass", 0)] is layers
+    context, scene, solids, layers = film_context(49.999e-6)
+    result = surface_films(context, scene, solids, set())
+    assert result[SurfaceRef("glass", "face", 2)] is layers
     assert film_layers(layers, 400e-9) == film_layers(layers, 800e-9)
     # Geometry scaling does not participate in the physical film definition.
-    meshes["glass"].vertices[:] *= 1000
+    solids["glass"] = AnalyticSolid(scene["roots"][0], scale=1000)
     assert (
-        surface_films(context, scene, meshes, set())[("glass", 0)][0]["thickness"][
+        surface_films(context, scene, solids, set())[SurfaceRef("glass", "face", 2)][0]["thickness"][
             "value"
         ]
         == 49.999e-6
     )
     with pytest.raises(ValueError, match="detectors or gratings"):
-        surface_films(context, scene, meshes, {("glass", 0)})
+        surface_films(context, scene, solids, {SurfaceRef("glass", "face", 2)})
     context.config["boundaryConditions"] *= 2
     with pytest.raises(ValueError, match="duplicate"):
-        surface_films(context, scene, meshes, set())
+        surface_films(context, scene, solids, set())
     context.config["boundaryConditions"] = context.config["boundaryConditions"][:1]
     layers[0]["samples"] *= 2
     with pytest.raises(ValueError, match="increasing"):
-        surface_films(context, scene, meshes, set())
+        surface_films(context, scene, solids, set())
 
 
 def test_existing_tmm_quarter_wave_reference_and_absorption():
@@ -125,10 +122,11 @@ def test_layer_order_medium_transition_scatter_and_exit_position(monkeypatch, en
         position=np.zeros(3),
         normal=normal,
         distance=1.0,
-        metadata=TriangleMetadata("solid", "glass", "Glass"),
-        local_triangle_index=0,
+        metadata=RayMetadata("glass", "Glass"),
+        surface_ref=SurfaceRef("glass", "face", 2),
+        crossing_kind="enter" if entering else "exit",
     )
-    collision = SimpleNamespace(intersect=lambda *args: hit, diagonal=2.0)
+    collision = SimpleNamespace(intersect=lambda *args, **kwargs: hit, diagonal=2.0)
     stack = (
         [("water", "Water")] if entering else [("water", "Water"), ("glass", "Glass")]
     )
@@ -177,15 +175,14 @@ def test_layer_order_medium_transition_scatter_and_exit_position(monkeypatch, en
         {},
         {},
         {},
-        {("glass", 0): scatter},
+        {SurfaceRef("glass", "face", 2): scatter},
         {},
         {},
         10,
         1e-8,
-        1e-9,
         1,
         PathCollector(20),
-        {("glass", 0): layers},
+        {SurfaceRef("glass", "face", 2): layers},
     )
     assert captured["media"] == ((1.33, 1.5) if entering else (1.5, 1.33))
     expected = film_layers(layers, 550e-9)
