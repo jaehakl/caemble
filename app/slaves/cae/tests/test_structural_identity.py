@@ -18,6 +18,23 @@ from app.solvers.structural_mechanics.state import encode_state
 from app.solvers.structural_mechanics.state import read_state
 
 
+def test_array_solid_storage_keeps_the_original_material_fingerprint():
+    from app.solvers.structural_mechanics.solid_elements import SolidElements
+
+    materials = [{"model": "mechanics.isotropic-elastic@1", "C": np.eye(6) * value,
+                  "E": value, "nu": .3, "density": 1000.} for value in (2e9, 3e9)]
+    indices = np.r_[np.zeros(4100, dtype=int), [1, 0, 1, 1]]
+    cells = np.tile([0, 1, 2, 3], (len(indices), 1))
+    elements = SolidElements(cells, indices, materials, ["membrane", "metal"])
+    old, compact = hashlib.sha256(), hashlib.sha256()
+    update_fingerprint(old, [(element.material, element.root_id) for element in elements])
+    elements.update_material_fingerprint(compact, update_fingerprint)
+    assert old.digest() == compact.digest()
+    assert elements[-1].root_id == "metal"
+    assert len(elements[4098:4103]) == 5
+    np.testing.assert_array_equal(elements[-1].nodes, cells[-1])
+
+
 def generalized_beam_invocation():
     config = {
         "parameters": {"analysis": "transient", "geometricNonlinear": True},
@@ -88,7 +105,7 @@ def test_each_element_block_retains_cad_target_and_ids_in_public_mesh_metadata()
     invocation = generalized_beam_invocation()
     invocation.config["initializations"].append(deepcopy(invocation.config["initializations"][1]))
     model = build_model(invocation)
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "8.0.0")
     domain, _ = _physical_domain(model)
     resources = ResourceStore()
     try:

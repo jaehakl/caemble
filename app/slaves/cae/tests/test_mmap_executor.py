@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import gc
 import os
+import tempfile
 import unittest
+from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 
@@ -18,7 +21,7 @@ from app.kernel.execution import (
 )
 from app.kernel.resources import BufferStore
 from tests.solver_test_support import invocation
-from tests.executor_transport_fixtures import closes_request_after_bootstrap, never_starts
+from tests.executor_transport_fixtures import SlowChildCleanup, closes_request_after_bootstrap, never_starts
 
 _FIXTURES = "tests.spawn_executor_fixtures"
 
@@ -289,6 +292,29 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(store.files(), ())
+
+    async def test_cancel_during_result_cleanup_rolls_back_encoded_output_files(self) -> None:
+        store, executor = self._executor()
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / "cleanup"
+            source = np.arange(128, dtype=np.float64)
+            context = replace(invocation({"left": source, "right": source}),
+                state={"cleanup": SlowChildCleanup(str(marker), os.getpid(), delay=5.)})
+            cancellation = asyncio.Event()
+            task = asyncio.create_task(executor.execute(f"{_FIXTURES}:mmap_roundtrip", context,
+                                                       cancellation=cancellation))
+            try:
+                async with asyncio.timeout(10):
+                    while not marker.exists():
+                        await asyncio.sleep(.01)
+                self.assertGreater(len(store.files()), 0)
+                cancellation.set()
+                with self.assertRaises(SolverExecutionCancelled):
+                    await task
+                self.assertEqual(store.files(), ())
+            finally:
+                cancellation.set()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def test_request_send_failure_rolls_back_all_invocation_files(self) -> None:
         store, executor = self._executor()

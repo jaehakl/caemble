@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from .constraints import revolute_joints
 from .materials import isotropic_elasticity, orient_elasticity, orthotropic_elasticity
 from .model import Element, StructuralModel
+from .solid_elements import SolidElements
 
 
 
@@ -301,19 +302,22 @@ async def build_geometry_model(invocation):
             mesh = await invocation.geometry.volume_mesh(invocation.world[source], root_ids, "m", profile, progress=invocation.progress)
         offset = sum(len(block) for block in point_blocks)
         point_blocks.append(mesh.points)
-        cell_blocks.append(mesh.cells + offset)
-        face_blocks.append(mesh.boundary_faces + offset)
+        cell_blocks.append(mesh.cells + offset if offset else mesh.cells)
+        face_blocks.append(mesh.boundary_faces + offset if offset else mesh.boundary_faces)
         aliases.extend(tuple((source, p.root_id, p.source_node_id, p.surface_index) for p in provenance) for provenance in mesh.boundary_provenance)
-        for region_index in mesh.cell_region_ids:
+        _, first = np.unique(mesh.cell_region_ids, return_index=True)
+        remap = np.empty(len(mesh.region_ids), dtype=np.int32)
+        for region_index in mesh.cell_region_ids[np.sort(first)]:
             key = (source, mesh.region_ids[int(region_index)])
             if key not in root_names:
                 root_names.append(key)
-            cell_roots.append(root_names.index(key))
+            remap[region_index] = root_names.index(key)
+        cell_roots.append(remap[mesh.cell_region_ids])
         quality.append(mesh.quality)
-    points = np.concatenate(point_blocks)
-    cells = np.concatenate(cell_blocks)
-    faces = np.concatenate(face_blocks)
-    cell_roots = np.asarray(cell_roots, dtype=np.int32)
+    points = point_blocks[0] if len(point_blocks) == 1 else np.concatenate(point_blocks)
+    cells = cell_blocks[0] if len(cell_blocks) == 1 else np.concatenate(cell_blocks)
+    faces = face_blocks[0] if len(face_blocks) == 1 else np.concatenate(face_blocks)
+    cell_roots = cell_roots[0] if len(cell_roots) == 1 else np.concatenate(cell_roots)
     model = StructuralModel(np.arange(len(points), dtype=np.int64), points, [], np.empty(0, dtype=int), np.empty(0, dtype=int), np.zeros((len(points), 6)), physical_node_count=len(points))
     model.assembly_domain = assembly_domain
     material_frames = {}
@@ -329,14 +333,18 @@ async def build_geometry_model(invocation):
         if key in material_frames and "C" in material:
             material["C"] = orient_elasticity(material["C"], material_frames[key])
         materials[key] = material
-    for index, nodes in enumerate(cells):
-        key = root_names[int(cell_roots[index])]
-        model.elements.append(Element("tet4", nodes, materials[key], {}, key[1]))
+    if "temperature" in invocation.inputs:
+        model.elements = SolidElements(cells, cell_roots, [materials[key] for key in root_names],
+                                       [key[1] for key in root_names])
+    else:
+        model.elements = [Element("tet4", nodes, materials[root_names[int(region)]], {}, root_names[int(region)][1])
+                          for nodes, region in zip(cells, cell_roots, strict=True)]
     for source in {key[0] for key in body_parts}:
         scene = invocation.world[source]
         for group in scene["geometryGroups"]:
             target = f"{source}.geometry.{group['name']}"
-            indices = np.asarray([i for i, region in enumerate(cell_roots) if root_names[int(region)][0] == source and root_names[int(region)][1] in group["rootIds"]], dtype=int)
+            selected_regions = [i for i, key in enumerate(root_names) if key[0] == source and key[1] in group["rootIds"]]
+            indices = np.flatnonzero(np.isin(cell_roots, selected_regions))
             if len(indices):
                 model.cell_regions[target] = indices
         for group in scene["surfaceGroups"]:
@@ -344,7 +352,10 @@ async def build_geometry_model(invocation):
             region = select_boundary_region(points, faces, aliases, selectors)
             if region is not None:
                 model.boundary_regions[f"{source}.surface.{group['name']}"] = region
-    active = set((6 * np.arange(len(points))[:, None] + np.arange(3)).ravel())
+    active = (6 * np.arange(len(points))[:, None] + np.arange(3)).ravel()
+    if any(rule["methodId"] in ("fea.rigid-connection", "fea.revolute", "fea.translation-spring", "fea.rotation-spring", "fea.rotor")
+           for rule in config["initializations"]):
+        active = set(active)
     references = {}
     for rule in config["initializations"]:
         method = rule["methodId"]
@@ -440,7 +451,7 @@ async def build_geometry_model(invocation):
                     load_vectors.extend(resultant)
             elif method != "fea.resultant-transfer":
                 raise ValueError(f"unsupported CSG boundary condition {method!r}")
-    model.active = np.asarray(sorted(active), dtype=int)
+    model.active = active if isinstance(active, np.ndarray) else np.asarray(sorted(active), dtype=int)
     model.fixed = np.asarray(sorted(fixed), dtype=int)
     dependent = {6 * slave + int(component) for _, slave, components in model.links for component in components}
     if fixed & dependent:
@@ -474,6 +485,12 @@ async def build_geometry_model(invocation):
         "surfaceIndices": np.asarray([alias[3] for group in aliases for alias in group], dtype=np.int32),
     }
     fingerprint = hashlib.sha256(b"structural-mechanics-model-v2")
-    update_fingerprint(fingerprint, (model.points, cells, config, model.provenance, [(e.material, e.root_id) for e in model.elements]))
+    if isinstance(model.elements, SolidElements):
+        fingerprint.update(b"sequence" + (5).to_bytes(8, "little"))
+        for item in (model.points, cells, config, model.provenance):
+            update_fingerprint(fingerprint, item)
+        model.elements.update_material_fingerprint(fingerprint, update_fingerprint)
+    else:
+        update_fingerprint(fingerprint, (model.points, cells, config, model.provenance, [(e.material, e.root_id) for e in model.elements]))
     model.identity = fingerprint.hexdigest()
     return model

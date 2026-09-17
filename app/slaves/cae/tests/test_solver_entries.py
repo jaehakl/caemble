@@ -111,7 +111,7 @@ def _dc_invocation() -> SolverInvocation:
         world=_world(),
         geometry=GeometryService(),
         progress=None,
-        descriptor=SolverCatalog.discover().descriptor("dc-current-density", "3.0.0"),
+        descriptor=SolverCatalog.discover().descriptor("dc-current-density", "3.1.0"),
     )
 
 
@@ -150,7 +150,7 @@ def _heat_invocation() -> SolverInvocation:
         world=_world(),
         geometry=GeometryService(),
         progress=None,
-        descriptor=SolverCatalog.discover().descriptor("heat-transfer", "1.0.0"),
+        descriptor=SolverCatalog.discover().descriptor("heat-transfer", "2.0.0"),
     )
 
 

@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from app.kernel.api import ContentKey
+
 from ..continuum import physical_rotation_vectors
 from ..domain import parameter
 from ..interfaces.resultants import physical_support_reactions
@@ -11,6 +13,7 @@ from .history import history_members
 from .sections import _tet_plane_triangles
 from ..solid_fields import sample_solid
 from ..thermal import thermal_stress_at
+from ..solid_elements import SolidElements
 from .thermal import surface_displacement_metrics, rms_von_mises_stress, thermal_section_resultant
 
 
@@ -49,7 +52,10 @@ def build_box_outputs(config, descriptor, model, solution):
 
     domain, cell_order = _physical_domain(model)
     count = len(domain.points)
-    cells = np.asarray([model.elements[index].nodes for index in cell_order], dtype=int)
+    cells = (model.elements.cells if isinstance(model.elements, SolidElements)
+             else np.asarray([model.elements[index].nodes for index in cell_order], dtype=int))
+    if isinstance(model.elements, SolidElements) and len(cell_order) != len(cells):
+        cells = cells[cell_order]
     harmonic = isinstance(solution, HarmonicSolution)
     if harmonic:
         unsupported = [item["methodId"] for item in config["outputs"] if item["methodId"] not in ("fea.harmonic-displacement", "fea.harmonic-rotation")]
@@ -58,11 +64,19 @@ def build_box_outputs(config, descriptor, model, solution):
     else:
         rotations = (physical_rotation_vectors(model, solution.displacement, solution.orientations)
                      if any(output["methodId"] == "fea.rotation" for output in config["outputs"]) else None)
-        stresses = np.asarray([_tet_stress(model, solution, index) for index in cell_order]).reshape(-1, 3, 3)
-        compact = stresses[:, (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
+        if model.thermal_strain is not None:
+            samples = np.asarray(solution.stresses)
+            compact = samples[:, 0] if samples.shape[1] == 1 else samples.mean(axis=1)
+            if len(cell_order) != len(compact):
+                compact = compact[cell_order]
+        else:
+            stresses = np.asarray([_tet_stress(model, solution, index) for index in cell_order]).reshape(-1, 3, 3)
+            compact = stresses[:, (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
     definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
     artifacts = {}
     samplers = {}
+    surface_metrics = {}
+    histories = {}
     deformation_fields = None
     for output in config["outputs"]:
         method = output["methodId"]
@@ -72,7 +86,11 @@ def build_box_outputs(config, descriptor, model, solution):
         parameters = {key: parameter(value) for key, value in output.get("parameters", {}).items()}
         times, frequencies = [0.0], [0.0]
         scope = parameters.get("scope", "cumulative")
-        history = {} if harmonic else history_members(model, solution, model.node_ids[:count], scope)
+        history = {}
+        if not harmonic and method.endswith("-history"):
+            if scope not in histories:
+                histories[scope] = history_members(model, solution, model.node_ids[:count], scope)
+            history = histories[scope]
         aggregate = data["boxGrid"]["sampling"] == "aggregate"
         if aggregate:
             if grid.shape != (1, 1, 1):
@@ -99,7 +117,10 @@ def build_box_outputs(config, descriptor, model, solution):
                 force, moment_value = _box_section_resultant(model, solution, grid, parameters)
                 sampled = force if method == "fea.section-force" else moment_value
             elif method in ("fea.maximum-normal-displacement", "fea.surface-warpage"):
-                maximum, warpage = surface_displacement_metrics(model, solution, grid, parameters)
+                key = ContentKey.from_parts("structural-surface-metrics", grid.geometry, parameters)
+                if key not in surface_metrics:
+                    surface_metrics[key] = surface_displacement_metrics(model, solution, grid, parameters)
+                maximum, warpage = surface_metrics[key]
                 sampled = maximum if method == "fea.maximum-normal-displacement" else warpage
             elif method == "fea.rms-von-mises-stress":
                 sampled = rms_von_mises_stress(model, solution, grid)

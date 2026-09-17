@@ -47,16 +47,21 @@ def scalar_box_statistics(points, cells, values, grid):
     total_volume = integral = 0.0
     minimum, maximum = np.inf, -np.inf
     cells = np.asarray(cells)
-    vertices = coordinates[cells]
-    selected = np.flatnonzero(np.all(vertices.max(axis=1) > 0, axis=1) & np.all(vertices.min(axis=1) < 1, axis=1))
-    inside = np.all((vertices[selected] >= 0) & (vertices[selected] <= 1), axis=(1, 2))
-    contained = selected[inside]
-    if len(contained):
-        volumes = np.abs(np.linalg.det(vertices[contained, 1:] - vertices[contained, :1])) / 6
-        nodal = np.asarray(values)[cells[contained]]
-        total_volume, integral = volumes.sum(), volumes @ nodal.mean(axis=1)
-        minimum, maximum = nodal.min(), nodal.max()
-    for cell in cells[selected[~inside]]:
+    boundary = []
+    for start in range(0, len(cells), 65536):
+        block = cells[start:start + 65536]
+        vertices = coordinates[block]
+        selected = np.flatnonzero(np.all(vertices.max(axis=1) > 0, axis=1) & np.all(vertices.min(axis=1) < 1, axis=1))
+        inside = np.all((vertices[selected] >= 0) & (vertices[selected] <= 1), axis=(1, 2))
+        contained = selected[inside]
+        if len(contained):
+            volumes = np.abs(np.linalg.det(vertices[contained, 1:] - vertices[contained, :1])) / 6
+            nodal = np.asarray(values)[block[contained]]
+            total_volume += volumes.sum()
+            integral += volumes @ nodal.mean(axis=1)
+            minimum, maximum = min(minimum, nodal.min()), max(maximum, nodal.max())
+        boundary.append(selected[~inside] + start)
+    for cell in cells[np.concatenate(boundary) if boundary else np.empty(0, dtype=int)]:
         vertices = coordinates[cell]
         nodal = np.asarray(values)[cell]
         polygons = clipped_tetrahedron(vertices)

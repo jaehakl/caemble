@@ -1,6 +1,7 @@
 """Native surface distortion and stress integrals for small-strain solids."""
 
 import numpy as np
+from ..solid_elements import SolidElements
 
 from app.methods.fields.box_grid import clip_box_polygon
 from app.methods.fields.tetrahedral import clipped_tetrahedron
@@ -11,14 +12,32 @@ from .fields import _tet_stress
 from .sections import _tet_plane_triangles
 
 
-def reference_plane_pieces(model, grid, origin, normal):
-    cells = np.asarray([element.nodes for element in model.elements])
+def reference_plane_batches(model, grid, origin, normal):
+    cells = model.elements.cells if isinstance(model.elements, SolidElements) else np.asarray([element.nodes for element in model.elements])
     distances = (model.points - origin) @ normal
     # Same signed ownership/tolerance as _tet_plane_triangles; reject distant
     # cells before constructing their plane intersection and clipping polygon.
     tolerance = 64 * np.finfo(float).eps * max(1., np.max(np.ptp(model.points, axis=0)))
-    selected = np.flatnonzero((distances[cells].min(axis=1) <= tolerance)
-                              & (distances[cells].max(axis=1) >= -tolerance))
+    remaining = []
+    for start in range(0, len(cells), 32768):
+        block = cells[start:start + 32768]
+        signed = distances[block]
+        selected = np.flatnonzero((signed.min(axis=1) <= tolerance) & (signed.max(axis=1) >= -tolerance))
+        reference = model.points[block[selected]]
+        local_tolerance = 64 * np.finfo(float).eps * np.maximum(1., np.linalg.norm(reference - reference.mean(axis=1)[:, None], axis=2).max(axis=1))
+        on_plane = np.abs(signed[selected]) <= local_tolerance[:, None]
+        owned_face = (on_plane.sum(axis=1) == 3) & np.any(signed[selected] < -local_tolerance[:, None], axis=1)
+        candidates = np.flatnonzero(owned_face)
+        face_nodes = block[selected[candidates]][on_plane[candidates]].reshape(-1, 3)
+        triangles = model.points[face_nodes]
+        local = grid.local_points(triangles)
+        contained = np.all((local >= 0) & (local <= np.asarray(grid.geometry["size"])), axis=(1, 2))
+        candidates, triangles = candidates[contained], triangles[contained]
+        if len(candidates):
+            barycentric = np.broadcast_to(np.eye(4), (len(candidates), 4, 4))[on_plane[candidates]].reshape(-1, 3, 4)
+            yield selected[candidates] + start, triangles, barycentric
+        remaining.append(np.delete(selected, candidates) + start)
+    selected = np.concatenate(remaining)
     for index in selected:
         element = model.elements[index]
         reference = model.points[element.nodes]
@@ -31,7 +50,12 @@ def reference_plane_pieces(model, grid, origin, normal):
             for corner in range(1, len(polygon) - 1):
                 piece = polygon[[0, corner, corner + 1]]
                 local = (piece - reference[0]) @ inverse.T
-                yield index, piece, np.column_stack((1 - local.sum(axis=1), local))
+                yield np.array([index]), piece[None], np.column_stack((1 - local.sum(axis=1), local))[None]
+
+
+def reference_plane_pieces(model, grid, origin, normal):
+    for indices, triangles, barycentric in reference_plane_batches(model, grid, origin, normal):
+        yield from zip(indices, triangles, barycentric, strict=True)
 
 
 def surface_displacement_metrics(model, solution, grid, parameters):
@@ -44,15 +68,14 @@ def surface_displacement_metrics(model, solution, grid, parameters):
     basis = np.column_stack((first, np.cross(normal, first)))
     length = np.max(grid.geometry["size"]) * convert_ucum_value(1, grid.geometry["lengthUnit"], "m")
     gram, load, samples = np.zeros((3, 3)), np.zeros(3), []
-    for index, triangle, barycentric in reference_plane_pieces(model, grid, origin, normal):
-        area = np.linalg.norm(np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])) / 2
-        if area == 0:
-            continue
-        design = np.column_stack(((triangle - origin) @ basis / length, np.ones(3)))
-        displacement = barycentric @ solution.displacement[model.elements[index].nodes, :3] @ normal
-        mass = area / 12 * (np.ones((3, 3)) + np.eye(3))
-        gram += design.T @ mass @ design
-        load += design.T @ mass @ displacement
+    cells = model.elements.cells if isinstance(model.elements, SolidElements) else np.asarray([element.nodes for element in model.elements])
+    for indices, triangles, barycentric in reference_plane_batches(model, grid, origin, normal):
+        area = np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]), axis=1) / 2
+        design = np.concatenate(((triangles - origin) @ basis / length, np.ones((*triangles.shape[:2], 1))), axis=2)
+        displacement = np.einsum("eij,ej->ei", barycentric, solution.displacement[cells[indices], :3] @ normal)
+        mass = area[:, None, None] / 12 * (np.ones((3, 3)) + np.eye(3))
+        gram += np.einsum("eia,eij,ejb->ab", design, mass, design)
+        load += np.einsum("eia,eij,ej->a", design, mass, displacement)
         samples.append((design, displacement))
     if not samples:
         return 0., 0.
@@ -66,23 +89,29 @@ def rms_von_mises_stress(model, solution, grid):
     """Exactly integrate the squared affine stress over the Box/material intersection."""
     local_points = grid.local_points(model.points, "m") / np.asarray(grid.geometry["size"])
     volume_sum = squared_integral = 0.
-    cells = np.asarray([element.nodes for element in model.elements])
-    coordinates = local_points[cells]
-    selected = np.flatnonzero(np.all(coordinates.max(axis=1) > 0, axis=1)
-                              & np.all(coordinates.min(axis=1) < 1, axis=1))
-    if model.thermal_strain is not None:
-        inside = np.all((coordinates[selected] >= 0) & (coordinates[selected] <= 1), axis=(1, 2))
-        contained, selected = selected[inside], selected[~inside]
-        volumes = np.abs(np.linalg.det(coordinates[contained, 1:] - coordinates[contained, :1])) / 6
-        eigenstrain = model.thermal_strain[contained]
-        change = eigenstrain - eigenstrain.mean(axis=1)[:, None]
-        elasticity = np.asarray([model.elements[index].material["C"][:, :3].sum(axis=1) for index in contained]).reshape(-1, 6)
-        stress = np.asarray(solution.stresses)[contained].mean(axis=1)[:, None, :] - change[:, :, None] * elasticity[:, None, :]
-        stress[:, :, :3] -= stress[:, :, :3].mean(axis=2)[:, :, None]
-        weighted = stress * np.sqrt([1.5, 1.5, 1.5, 3., 3., 3.])
-        squared_integral = np.sum(volumes / 20 * (np.sum(weighted.sum(axis=1)**2, axis=1) + np.sum(weighted**2, axis=(1, 2))))
-        volume_sum = volumes.sum()
-    for index in selected:
+    cells = model.elements.cells if isinstance(model.elements, SolidElements) else np.asarray([element.nodes for element in model.elements])
+    boundary_chunks = []
+    for start in range(0, len(cells), 32768):
+        coordinates = local_points[cells[start:start + 32768]]
+        selected = np.flatnonzero(np.all(coordinates.max(axis=1) > 0, axis=1)
+                                  & np.all(coordinates.min(axis=1) < 1, axis=1))
+        if model.thermal_strain is not None:
+            inside = np.all((coordinates[selected] >= 0) & (coordinates[selected] <= 1), axis=(1, 2))
+            contained, selected = selected[inside], selected[~inside]
+            volumes = np.abs(np.linalg.det(coordinates[contained, 1:] - coordinates[contained, :1])) / 6
+            contained += start
+            eigenstrain = model.thermal_strain[contained]
+            change = eigenstrain - eigenstrain.mean(axis=1)[:, None]
+            elasticity = (np.asarray([material["C"][:, :3].sum(axis=1) for material in model.elements.materials])[model.elements.material_indices[contained]]
+                          if isinstance(model.elements, SolidElements)
+                          else np.asarray([model.elements[index].material["C"][:, :3].sum(axis=1) for index in contained]).reshape(-1, 6))
+            stress = np.asarray(solution.stresses)[contained].mean(axis=1)[:, None, :] - change[:, :, None] * elasticity[:, None, :]
+            stress[:, :, :3] -= stress[:, :, :3].mean(axis=2)[:, :, None]
+            weighted = stress * np.sqrt([1.5, 1.5, 1.5, 3., 3., 3.])
+            squared_integral += np.sum(volumes / 20 * (np.sum(weighted.sum(axis=1)**2, axis=1) + np.sum(weighted**2, axis=(1, 2))))
+            volume_sum += volumes.sum()
+        boundary_chunks.append(selected + start)
+    for index in np.concatenate(boundary_chunks):
         element = model.elements[index]
         vertices = local_points[element.nodes]
         if np.all((vertices >= 0) & (vertices <= 1)):

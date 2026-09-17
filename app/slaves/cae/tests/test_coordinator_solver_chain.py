@@ -15,7 +15,7 @@ from tests.test_actual_solver_chain import parameter, world, output_box
 
 @pytest.mark.asyncio
 async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
-    dc_version, heat_version = "3.0.0", "1.0.0"
+    dc_version, heat_version = "3.1.0", "2.0.0"
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
@@ -96,6 +96,7 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
         "taskMaterialSnapshots": {name: {"materials": scene["materials"]["task"]} for name in ("electric", "thermal")},
         "modelDefinitions": definitions,
         "materialSelections": {"electric": {}, "thermal": {}},
+        "interactionSelections": {"electric": {}, "thermal": {"thermalInterface": []}},
     }, {"electric": dc_task, "thermal": heat_task}, {})
     progress = []
 

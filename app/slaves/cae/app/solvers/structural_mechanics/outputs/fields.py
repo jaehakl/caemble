@@ -6,6 +6,7 @@ from app.kernel.api import UnstructuredMeshValue
 
 from ..continuum import element_response
 from ..solid_fields import solid_cell_average
+from ..solid_elements import SolidElements
 
 
 def finite_deformation_fields(model, solution):
@@ -23,15 +24,23 @@ def finite_deformation_fields(model, solution):
 def _physical_domain(model):
     """Build the complete physical mesh for automatic visualization."""
     physical_count = len(model.points) if model.physical_node_count is None else int(model.physical_node_count)
-    grouped = {}
-    for index, element in enumerate(model.elements):
-        if np.any(element.nodes >= physical_count):
-            continue
-        grouped.setdefault(element.kind, []).append((index, element.nodes))
-    order = [index for entries in grouped.values() for index, _ in entries]
-    blocks = {}
-    for kind, entries in grouped.items():
-        blocks[kind] = np.asarray([nodes for _, nodes in entries], dtype=np.int32)
+    complete_thermal_solid = model.thermal_strain is not None and physical_count == len(model.points)
+    if complete_thermal_solid:
+        # Thermal solids contain only physical tet4 elements in assembly order.
+        # Avoid millions of temporary Python tuples and element lookup entries.
+        order = np.arange(len(model.elements))
+        blocks = {"tet4": (model.elements.cells.astype(np.int32) if isinstance(model.elements, SolidElements)
+                          else np.asarray([element.nodes for element in model.elements], dtype=np.int32))}
+    else:
+        grouped = {}
+        for index, element in enumerate(model.elements):
+            if np.any(element.nodes >= physical_count):
+                continue
+            grouped.setdefault(element.kind, []).append((index, element.nodes))
+        order = [index for entries in grouped.values() for index, _ in entries]
+        blocks = {}
+        for kind, entries in grouped.items():
+            blocks[kind] = np.asarray([nodes for _, nodes in entries], dtype=np.int32)
     if model.physical_node_count is None:
         for contact in model.contacts:
             if "faces" in contact:
@@ -58,8 +67,7 @@ def _physical_domain(model):
     if "cellRegions" in model.provenance:
         original_regions = np.asarray(model.provenance["cellRegions"], dtype=int)[order]
         retained_regions = np.unique(original_regions)
-        region_lookup = {int(region): index for index, region in enumerate(retained_regions)}
-        provenance["cellRegions"] = np.asarray([region_lookup[int(region)] for region in original_regions], dtype=np.int32)
+        provenance["cellRegions"] = np.searchsorted(retained_regions, original_regions).astype(np.int32)
         provenance["regionIds"] = np.asarray(model.provenance["regionIds"])[retained_regions]
     if "quality" in model.provenance:
         provenance["quality"] = {
@@ -70,7 +78,7 @@ def _physical_domain(model):
         supports = np.asarray(model.provenance["supportNodes"], dtype=int)
         supports = supports[(supports >= 0) & (supports < physical_count)]
         provenance["supportNodes"] = supports.astype(np.int32)
-    if "elementBlocks" in model.provenance:
+    if "elementBlocks" in model.provenance and not complete_thermal_solid:
         element_lookup = {element: index for index, element in enumerate(order)}
         provenance["elementBlocks"] = [
             {**block, "elementIds": np.asarray([

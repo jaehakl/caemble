@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 from ucumvert import PintUcumRegistry
@@ -34,6 +35,7 @@ def convert_ucum_tensor(
     return convert_ucum_value(value, source_unit, target_unit)
 
 
+@lru_cache(maxsize=128)
 def _parsed_unit(unit: str) -> tuple[float, Any]:
     if _annotation.fullmatch(unit):
         return 1.0, _registry.dimensionless

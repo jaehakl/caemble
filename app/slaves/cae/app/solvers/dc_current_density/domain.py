@@ -7,6 +7,7 @@ import numpy as np
 from app.kernel.api.world import geometry_parts, material_model, scalar_parameter
 from app.methods.mesh.models import VolumeMeshingProfile
 from app.methods.mesh.subdomain import build_volume_subdomain
+from .materials import evaluate_conductivity
 
 
 @dataclass(frozen=True)
@@ -45,17 +46,14 @@ async def build_dc_domain(invocation):
                         raise ValueError("conductor regions must be selected exactly once")
                     parts[part["id"]] = part
     mesh = await build_volume_subdomain(invocation.geometry, scene, assembly, parts, profile, invocation.progress)
-    tensors = {}
+    models = {}
     for root, part in parts.items():
         model = material_model(invocation.world, part, "conductor", "conduction")
-        if model is None or model["model"] != "electrical.ohmic-conduction@1":
-            raise ValueError("conductor requires electrical.ohmic-conduction@1")
-        tensor = np.asarray(model["parameters"]["sigma"]["value"], dtype=float).reshape(3, 3)
-        value = float(np.trace(tensor) / 3)
-        if not np.isfinite(value) or value <= 0 or not np.allclose(tensor, np.eye(3) * value, rtol=1e-10, atol=0):
-            raise ValueError("DC requires positive isotropic conductivity in each material region")
-        tensors[root] = tensor
-    conductivity = np.asarray([tensors[mesh.assembly.region_ids[r]] for r in mesh.field_domain.metadata["cellRegions"]])
+        if model is None or model["model"] not in ("electrical.ohmic-conduction@1", "electrical.linear-resistivity@1"):
+            raise ValueError("conductor requires an electrical conduction model")
+        models[root] = model
+    temperature = invocation.inputs.get("temperature")
+    conductivity = evaluate_conductivity(mesh, models, None if temperature is None else temperature.value)
     fixed, terminals = {}, {}
     for rule in invocation.config["boundaryConditions"]:
         selectors = [s for target in rule["target"] for group in scene["surfaceGroups"] if group["name"] == target.split(".", 2)[2] for s in group["selectors"]]
@@ -66,6 +64,9 @@ async def build_dc_domain(invocation):
         if name in terminals:
             raise ValueError("terminal names must be unique")
         voltage = scalar_parameter(rule["parameters"]["voltage"])
+        if rule["methodId"] == "dc.pulsed-potential":
+            from .time import pulse_voltage
+            voltage = pulse_voltage(invocation.inputs.get("stepControl"), mesh.field_domain, rule["parameters"])
         if any(int(node) in fixed for node in nodes):
             raise ValueError("potential terminals must not share nodes")
         terminals[name] = {"nodes": nodes, "voltage": voltage}

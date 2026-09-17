@@ -8,6 +8,7 @@ import manifold3d as manifold
 import numpy as np
 
 from app.methods.mesh.models import TetrahedralMeshQuality
+from app.methods.mesh.boundary import TET4_FACES, material_boundary_owners
 from app.methods.mesh.tetrahedral import triangulate_planar_domains
 from .models import VolumeMesh
 
@@ -95,66 +96,62 @@ def layered_volume_mesh(meshes, region_ids, profile):
     points = np.asarray(points)[:, np.argsort(axes)]
     cells = np.asarray(cells, dtype=np.int64)
     cell_regions = np.asarray(cell_regions, dtype=np.int64)
-    determinants = np.linalg.det(points[cells[:, 1:]] - points[cells[:, :1]])
-    inverted = determinants < 0
-    cells[inverted, 1], cells[inverted, 2] = cells[inverted, 2].copy(), cells[inverted, 1].copy()
-    volumes = np.abs(determinants) / 6
-    lengths = sum(np.sum((points[cells[:, a]] - points[cells[:, b]])**2, axis=1) for a in range(4) for b in range(a))
-    ratios = 12 * (3 * volumes)**(2 / 3) / lengths
+    del node_map
+    volumes, ratios = np.empty(len(cells)), np.empty(len(cells))
+    for start in range(0, len(cells), 65536):
+        selected = slice(start, start + 65536)
+        block = cells[selected]
+        determinants = np.linalg.det(points[block[:, 1:]] - points[block[:, :1]])
+        inverted = determinants < 0
+        block[inverted, 1], block[inverted, 2] = block[inverted, 2].copy(), block[inverted, 1].copy()
+        volumes[selected] = np.abs(determinants) / 6
+        lengths = sum(np.sum((points[block[:, a]] - points[block[:, b]])**2, axis=1) for a in range(4) for b in range(a))
+        ratios[selected] = 12 * (3 * volumes[selected])**(2 / 3) / lengths
     if np.min(ratios) < profile.minimum_quality:
         raise ValueError("layered mesh does not meet minimum_quality")
-    # Match only material/exterior faces to their original canonical triangles.
-    owners = {}
-    for index, tet in enumerate(cells):
-        for face in ((tet[0], tet[2], tet[1]), (tet[0], tet[1], tet[3]), (tet[0], tet[3], tet[2]), (tet[1], tet[2], tet[3])):
-            owners.setdefault(tuple(sorted(face)), []).append((index, face))
-    faces, provenance = [], []
-    for adjacent in owners.values():
-        regions = [int(cell_regions[index]) for index, _ in adjacent]
-        if len(adjacent) == 2 and regions[0] == regions[1]:
-            continue
-        if len(adjacent) > 2:
-            raise ValueError("layered mesh has a nonmanifold face")
-        adjacent.sort(key=lambda item: cell_regions[item[0]])
-        face = adjacent[0][1]
-        center = points[list(face)].mean(axis=0)
-        aliases = []
-        for index, _ in adjacent:
-            mesh = meshes[int(cell_regions[index])]
-            coordinates = mesh.vertices[mesh.triangles]
-            first, e1, e2 = coordinates[:, 0], coordinates[:, 1] - coordinates[:, 0], coordinates[:, 2] - coordinates[:, 0]
-            normal = np.cross(e1, e2)
-            lengths_n = np.linalg.norm(normal, axis=1)
-            delta = center - first
-            candidates = np.flatnonzero(np.abs(np.einsum("ij,ij->i", delta, normal)) <= tolerance * lengths_n)
-            found = None
-            for candidate in candidates:
-                weights = np.linalg.lstsq(np.stack((e1[candidate], e2[candidate]), axis=1), delta[candidate], rcond=None)[0]
-                if min(weights) >= -1e-8 and sum(weights) <= 1 + 1e-8:
-                    found = mesh.triangle_provenance[candidate]
-                    break
-            if found is None:
-                raise ValueError(f"layered boundary lost its canonical surface provenance: {center}, region {region_ids[int(cell_regions[index])]}")
-            aliases.append(found)
-        faces.append(face)
-        provenance.append(tuple(aliases))
-    node_regions = [set() for _ in points]
-    interfaces = [set() for _ in points]
-    for tet, region in zip(cells, cell_regions, strict=True):
-        for vertex in tet:
-            node_regions[vertex].add(int(region))
-    for adjacent in owners.values():
-        if len(adjacent) == 2:
-            pair = tuple(int(cell_regions[index]) for index, _ in adjacent)
-            if pair[0] != pair[1]:
-                for vertex in adjacent[0][1]:
-                    interfaces[vertex].add(pair)
-    for regions, edges in zip(node_regions, interfaces, strict=True):
-        connected = {next(iter(regions))}
-        for _ in regions:
-            for a, b in edges:
-                if a in connected or b in connected:
-                    connected.update((a, b))
-        if connected != regions:
-            raise ValueError("layered material regions must meet across faces, not only edges or points")
-    return VolumeMesh(points, cells, np.asarray(faces, dtype=np.int64), tuple(provenance), tuple(region_ids), cell_regions, TetrahedralMeshQuality(volumes, ratios))
+    owners = material_boundary_owners(cells, cell_regions)
+    faces = cells[owners[:, :1] // 4, TET4_FACES[owners[:, 0] % 4]]
+    boundary_regions = np.where(owners < 0, -1, cell_regions[owners // 4])
+    provenance = _boundary_provenance(points, faces, boundary_regions, meshes, region_ids, tolerance)
+    # Only material interfaces can connect the memberships of a shared node.
+    node_regions = np.zeros((len(points), len(meshes)), dtype=bool)
+    for start in range(0, len(cells), 65536):
+        selected = slice(start, start + 65536)
+        node_regions[cells[selected], cell_regions[selected, None]] = True
+    connected = np.zeros_like(node_regions)
+    connected[np.arange(len(points)), np.argmax(node_regions, axis=1)] = True
+    pairs = boundary_regions[boundary_regions[:, 1] >= 0]
+    interface_nodes = [(a, b, np.unique(faces[np.all(boundary_regions == (a, b), axis=1)]))
+                       for a, b in np.unique(pairs, axis=0)]
+    for _ in meshes:
+        for a, b, indices in interface_nodes:
+            linked = indices[connected[indices, a] | connected[indices, b]]
+            connected[linked, a] = connected[linked, b] = True
+    if not np.array_equal(connected, node_regions):
+        raise ValueError("layered material regions must meet across faces, not only edges or points")
+    return VolumeMesh(points, cells, faces, provenance, tuple(region_ids), cell_regions, TetrahedralMeshQuality(volumes, ratios))
+
+
+def _boundary_provenance(points, faces, regions, meshes, region_ids, tolerance):
+    """Match batches of boundary centers to the first canonical triangle."""
+    aliases = np.full(regions.shape, None, dtype=object)
+    for region, mesh in enumerate(meshes):
+        rows, sides = np.where(regions == region)
+        for start in range(0, len(rows), 65536):
+            selected = slice(start, start + 65536)
+            centers = points[faces[rows[selected]]].mean(axis=1)
+            matched = np.full(len(centers), -1, dtype=int)
+            for index, coordinates in enumerate(mesh.vertices[mesh.triangles]):
+                missing = np.flatnonzero(matched < 0)
+                edges = coordinates[1:] - coordinates[:1]
+                normal = np.cross(edges[0], edges[1])
+                delta = centers[missing] - coordinates[0]
+                on_plane = np.abs(delta @ normal) <= tolerance * np.linalg.norm(normal)
+                candidates = missing[on_plane]
+                weights = delta[on_plane] @ np.linalg.pinv(edges.T).T
+                inside = (weights.min(axis=1) >= -1e-8) & (weights.sum(axis=1) <= 1 + 1e-8)
+                matched[candidates[inside]] = index
+            if np.any(matched < 0):
+                raise ValueError(f"layered boundary lost its canonical surface provenance: region {region_ids[region]}")
+            aliases[rows[selected], sides[selected]] = np.asarray(mesh.triangle_provenance, dtype=object)[matched]
+    return tuple((first,) if second is None else (first, second) for first, second in aliases)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import gc
 import importlib
 import os
 import traceback
@@ -43,64 +44,54 @@ def child_main(
     """Spawn target. Solver import and invocation happen only in this process."""
 
     try:
-        result_connection.send(
-            ChildMessage(ChildMessageKind.BOOTSTRAPPED, os.getpid())
-        )
-        request = request_connection.recv()
-        if not isinstance(request, SolverChildRequest):
-            raise TypeError("parent sent an invalid solver child request")
-        context = request.codec.decode(request.encoded_context)
-        result_connection.send(ChildMessage(ChildMessageKind.STARTED, os.getpid()))
-
-        async def progress(value: Any) -> None:
-            result_connection.send(
-                ChildMessage(
-                    ChildMessageKind.PROGRESS,
-                    request.codec.encode(value),
-                )
-            )
-
-        from app.methods.geometry import GeometryService
-        from app.kernel.resources import FileResourceCache
-
-        if not isinstance(context, SolverInvocation):
-            raise TypeError("solver input must be a SolverInvocation")
-        resources = context.resources
-        cache = (
-            FileResourceCache(resources.geometry_cache_path)
-            if resources.geometry_cache_path is not None
-            else None
-        )
-        context = dataclasses.replace(
-            context,
-            progress=progress,
-            cancellation=ProcessCancellationToken(cancellation_event),
-            geometry=GeometryService(cache=cache),
-        )
-        result = asyncio.run(
-            _invoke(
-                request.locator,
-                context,
-                request.expected_abi_version,
-            )
-        )
-        result_connection.send(
-            ChildMessage(ChildMessageKind.RESULT, request.codec.encode(result))
-        )
-    except BaseException as exc:
-        remote = RemoteError(
-            type(exc).__module__,
-            type(exc).__qualname__,
-            str(exc),
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-        )
+        request = None
         try:
-            result_connection.send(ChildMessage(ChildMessageKind.ERROR, remote))
+            result_connection.send(
+                ChildMessage(ChildMessageKind.BOOTSTRAPPED, os.getpid())
+            )
+            request = request_connection.recv()
+            if not isinstance(request, SolverChildRequest):
+                raise TypeError("parent sent an invalid solver child request")
+            terminal = _execute_request(request, result_connection, cancellation_event)
+        except BaseException as exc:
+            terminal = ChildMessage(ChildMessageKind.ERROR, RemoteError(
+                type(exc).__module__, type(exc).__qualname__, str(exc),
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            ))
+        # Release invocation arrays and error tracebacks before declaring the
+        # invocation finished. Slow mmap/array cleanup belongs to its execution
+        # deadline, not the short grace for the process to exit after a result.
+        request = None
+        gc.collect()
+        try:
+            result_connection.send(terminal)
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
         request_connection.close()
         result_connection.close()
+
+
+def _execute_request(request: SolverChildRequest, result_connection: Connection,
+                     cancellation_event: Any) -> ChildMessage:
+    context = request.codec.decode(request.encoded_context)
+    result_connection.send(ChildMessage(ChildMessageKind.STARTED, os.getpid()))
+
+    async def progress(value: Any) -> None:
+        result_connection.send(ChildMessage(ChildMessageKind.PROGRESS, request.codec.encode(value)))
+
+    from app.methods.geometry import GeometryService
+    from app.kernel.resources import FileResourceCache
+
+    if not isinstance(context, SolverInvocation):
+        raise TypeError("solver input must be a SolverInvocation")
+    resources = context.resources
+    cache = (FileResourceCache(resources.geometry_cache_path)
+             if resources.geometry_cache_path is not None else None)
+    context = dataclasses.replace(context, progress=progress,
+        cancellation=ProcessCancellationToken(cancellation_event), geometry=GeometryService(cache=cache))
+    result = asyncio.run(_invoke(request.locator, context, request.expected_abi_version))
+    return ChildMessage(ChildMessageKind.RESULT, request.codec.encode(result))
 
 
 async def _invoke(

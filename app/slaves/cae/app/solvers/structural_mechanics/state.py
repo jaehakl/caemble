@@ -55,6 +55,12 @@ def append_history(model, solution, pitch=0.0, torque=0.0, *, samples=None):
 
 def initial_solution(model):
     n = len(model.points)
+    if model.thermal_strain is not None:
+        # Quasi-static linear solids have no velocity, acceleration or material
+        # evolution. Keep their immutable zero fields as views, not global workspaces.
+        zero = np.broadcast_to(np.zeros(6), (n, 6))
+        rotations = np.broadcast_to(np.eye(3), (n, 3, 3))
+        return StructuralSolution(np.zeros((n, 6)), zero, zero, rotations, zero, {}, [], [])
     return StructuralSolution(np.zeros((n, 6)), np.zeros((n, 6)), np.zeros((n, 6)), np.tile(np.eye(3), (n, 1, 1)), np.zeros((n, 6)), {}, [None] * len(model.elements), [None] * len(model.elements))
 
 

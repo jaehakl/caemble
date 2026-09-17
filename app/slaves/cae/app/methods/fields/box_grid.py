@@ -169,20 +169,29 @@ class TetrahedralSampler:
         selected = np.full(len(samples), -1, dtype=int)
         weights = np.zeros((len(samples), 4))
         tree = cKDTree(samples)
-        for index, cell in enumerate(cells):
-            vertices = nodes[cell]
-            center = vertices.mean(axis=0)
-            radius = np.linalg.norm(vertices - center, axis=1).max()
-            candidates = np.asarray(tree.query_ball_point(center, radius * (1 + 1e-12)), dtype=int)
-            candidates = candidates[selected[candidates] < 0]
-            if not len(candidates):
-                continue
-            matrix = (vertices[1:] - vertices[0]).T
-            local = np.linalg.solve(matrix, (samples[candidates] - vertices[0]).T).T
-            barycentric = np.column_stack((1 - local.sum(axis=1), local))
-            inside = np.all(barycentric >= -1e-10, axis=1)
-            selected[candidates[inside]] = index
-            weights[candidates[inside]] = barycentric[inside]
+        for start in range(0, len(cells), 32768):
+            if np.all(selected >= 0):
+                break
+            vertices = nodes[cells[start:start + 32768]]
+            centers = vertices.mean(axis=1)
+            radii = np.linalg.norm(vertices - centers[:, None, :], axis=2).max(axis=1)
+            # Query the tree in C for a bounded batch. Usually only a few of the
+            # millions of native cells intersect the small observation grid.
+            neighbors = tree.query_ball_point(centers, radii * (1 + 1e-12))
+            for offset, candidates in enumerate(neighbors):
+                if not candidates:
+                    continue
+                candidates = np.asarray(candidates, dtype=int)
+                candidates = candidates[selected[candidates] < 0]
+                if not len(candidates):
+                    continue
+                cell = vertices[offset]
+                matrix = (cell[1:] - cell[0]).T
+                local = np.linalg.solve(matrix, (samples[candidates] - cell[0]).T).T
+                barycentric = np.column_stack((1 - local.sum(axis=1), local))
+                inside = np.all(barycentric >= -1e-10, axis=1)
+                selected[candidates[inside]] = start + offset
+                weights[candidates[inside]] = barycentric[inside]
         return cls(cells, selected, weights, np.asarray(points).shape[:-1])
 
     def sample(self, values, *, location="node"):

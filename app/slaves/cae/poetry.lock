@@ -1026,6 +1026,45 @@ dev = ["pre-commit", "tox"]
 testing = ["coverage", "pytest", "pytest-benchmark"]
 
 [[package]]
+name = "pyamg"
+version = "5.3.0"
+description = "PyAMG: Algebraic Multigrid Solvers in Python"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "pyamg-5.3.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:8c5101865fb9135dd87c5039f8e5427e3d526df48cbb03338d4c8823c70eff33"},
+    {file = "pyamg-5.3.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:6d5a724a9257d4d5da2155501cff00d643673d17e3da4b5b2cb4e26df1d23b13"},
+    {file = "pyamg-5.3.0-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:564b2b0356f0e948a2fc531834766a75005e3de325619735d612b767dad73339"},
+    {file = "pyamg-5.3.0-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:e642cec5ff3b386e6087ccdda1b28b3d683f00437245b23c13f39b22ff08b058"},
+    {file = "pyamg-5.3.0-cp310-cp310-win32.whl", hash = "sha256:dcd4f1bbf0f4566d62c0dbcbfb428fbb256c44d8b70e1abe903505d1af19c3f6"},
+    {file = "pyamg-5.3.0-cp310-cp310-win_amd64.whl", hash = "sha256:dc2ee51c0a9c1a9d265d360b8dad4ef981fa8742bdc641a4e8698c438e6c7e33"},
+    {file = "pyamg-5.3.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:82619094609688d715871bce25eadfe425156242ea2ce1d73388b8af85e75f9d"},
+    {file = "pyamg-5.3.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:cd91201d246824bdf2ff16129db48b764cf10e5b45f1fd0b4af537591be1091c"},
+    {file = "pyamg-5.3.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8701ed806ed2195ff9cdad6f2b80d2b0a4d5b652d0232c0ebc43c677db88662f"},
+    {file = "pyamg-5.3.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:14d921d6f09eb9b4b3e6c22e1ef19ec27ddd193cf406dbec43ccadc4baf2a2f9"},
+    {file = "pyamg-5.3.0-cp311-cp311-win32.whl", hash = "sha256:d43fac3c4b5f2195716d1630bf7e7123bd1cc40f61d78cb8f257876a9816eb6a"},
+    {file = "pyamg-5.3.0-cp311-cp311-win_amd64.whl", hash = "sha256:6aff801a44a5eac40ffc171e326467daa571ddc93511db7c35a17150b8bed77a"},
+    {file = "pyamg-5.3.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:661f510311fbfa03b8b317ce9cdb6602902321dd936bcc975ee94bfe43eacb72"},
+    {file = "pyamg-5.3.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d7d38303310e8551ae737898577c6ec69a1ee0fa4baf95f525c86f0071d94260"},
+    {file = "pyamg-5.3.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2a69c7974b26b1d5cd5bc0e371c565239199e9032b2ceb97190d492cd6498367"},
+    {file = "pyamg-5.3.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:4a6de101435d11645293f83b23c22830c372100d13e6d0bcb8d1abd3e92c88c8"},
+    {file = "pyamg-5.3.0-cp312-cp312-win32.whl", hash = "sha256:0561b942b7b8a35700842077a2b6a228510ae8fcc402862bd3f60dc7d2cd75f4"},
+    {file = "pyamg-5.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:dd832b392314c5d4dbb6464f7ba8d788694d253a51b9809af8ade4886d24565f"},
+    {file = "pyamg-5.3.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:c8e70912b1f6fd02c2d40ca10f6e94cce24181a1baa029f084aee74600242686"},
+    {file = "pyamg-5.3.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e8f771f1ad314534d14d6d8a47d289b191f081abdd1443c491ac93f6d3102be5"},
+    {file = "pyamg-5.3.0-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5cc223c66a7aca06fba898eb5e8ede6bb7974a9ddf7b8a98f56143c829e63631"},
+    {file = "pyamg-5.3.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:fddf30940d422d97a24b6211e3405bf707688a94d0683780ae40073209c3aa6d"},
+    {file = "pyamg-5.3.0-cp313-cp313-win32.whl", hash = "sha256:6f7ea204aafc7e57a1900d47067430b059954d293a11025aea8616e5b6fba493"},
+    {file = "pyamg-5.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:3965844194dc15be5c9d7198086b58496c2833e40e60b1133ab340d24fac950c"},
+    {file = "pyamg-5.3.0.tar.gz", hash = "sha256:5323d0f1a4cd999be246a90d580c9e1e9b584b98887f6298d397611087ef860b"},
+]
+
+[package.dependencies]
+numpy = "*"
+scipy = ">=1.11.0"
+
+[[package]]
 name = "pydantic"
 version = "2.13.4"
 description = "Data validation using Python type hints"
@@ -1726,4 +1765,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "f8bea69160ab60094ee28672e30c4ce1bed37cace86641cbe141cea6fdcd6e4f"
+content-hash = "f952f870bf86efaf0d510405a71cf3717f040f9f2d11eb5d29eb01a28aa4a25b"

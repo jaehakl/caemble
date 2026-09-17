@@ -252,3 +252,99 @@ def test_general_volume_mesher_honors_region_specific_sizes():
     counts = np.bincount(mesh.cell_region_ids)
     assert counts[0] > counts[1]
     np.testing.assert_allclose(np.bincount(mesh.cell_region_ids, weights=mesh.quality.cell_volumes), [1., 1.], rtol=1e-9)
+
+
+def test_amg_checks_original_equation_after_strong_diagonal_scaling():
+    from scipy import sparse
+    from app.methods.linalg.positive_definite import solve_amg
+
+    count = 257
+    factors = np.geomspace(1e-3, 1e3, count)
+    diagonal = sparse.diags(factors)
+    laplacian = sparse.diags([-np.ones(count - 1), 2 * np.ones(count), -np.ones(count - 1)], [-1, 0, 1])
+    matrix = (diagonal @ laplacian @ diagonal).tocsr()
+    force = np.zeros(count)
+    force[0] = 1.
+    result = solve_amg(matrix, force)
+    expected = (count - np.arange(count)) / (count + 1) / (factors[0] * factors)
+    np.testing.assert_allclose(result, expected, rtol=1e-8)
+    assert np.linalg.norm(matrix @ result - force) / np.linalg.norm(force) < 1e-8
+
+
+@pytest.mark.parametrize("backend", ["direct", "cg-amg"])
+def test_compensated_solution_retains_small_temperature_differences(backend):
+    from decimal import Decimal, localcontext
+    from scipy import sparse
+    from app.methods.linalg.direct import solve_sparse
+
+    conductance = 1e10
+    matrix = sparse.csr_matrix([[conductance + 1, -conductance], [-conductance, conductance + 1]])
+    load = np.array([1., 0.])
+    result = solve_sparse(matrix, load, positive_definite=True, backend=backend, compensated=True)
+    # Verify the original two equations independently with decimal arithmetic.
+    # A float64-only solution loses the sub-ULP correction needed by these equations.
+    with localcontext() as context:
+        context.prec = 70
+        values = [Decimal(float(a)) + Decimal(float(b)) for a, b in zip(result.values, result.roundoff)]
+        residual = [sum(Decimal(float(k)) * t for k, t in zip(row, values)) - Decimal(float(f))
+                    for row, f in zip(matrix.toarray(), load)]
+        assert max(abs(value) for value in residual) < Decimal('1e-8')
+        np.testing.assert_allclose([float(value) for value in values],
+            [(conductance + 1) / (2 * conductance + 1), conductance / (2 * conductance + 1)], rtol=1e-8)
+    assert result.relative_residual < 1e-8
+
+
+def test_compensated_dot_product_matches_decimal_after_cancellation():
+    from decimal import Decimal, localcontext
+    from scipy import sparse
+    from app.methods.linalg.compensated import physical_residual
+
+    random = np.random.default_rng(302)
+    matrix = random.normal(size=(9, 27)) * np.geomspace(1e-5, 1e9, 27)
+    values = random.normal(size=27)
+    rhs = matrix @ values
+    actual = physical_residual(sparse.csr_matrix(matrix), values, rhs)
+    with localcontext() as context:
+        context.prec = 70
+        expected = [float(Decimal(float(f)) - sum(Decimal(float(k)) * Decimal(float(v)) for k, v in zip(row, values)))
+                    for row, f in zip(matrix, rhs)]
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-20)
+
+
+@pytest.mark.parametrize("block_size", [1, 3])
+def test_sparse_chunk_assembly_preserves_shared_rows_and_empty_global_rows(block_size):
+    from scipy import sparse
+    from app.methods.assembly.chunks import element_chunk, sum_sparse_chunks
+
+    random = np.random.default_rng(22)
+    chunks, expected = [], np.zeros((91 * block_size, 91 * block_size))
+    for count in (3, 0, 2, 1, 8, 4, 5):
+        nodes = random.integers(0, 71, size=(count, 4))
+        nodes = (block_size * nodes[:, :, None] + np.arange(block_size)).reshape(count, 4 * block_size)
+        entries = random.integers(-7, 9, size=(count, 4 * block_size, 4 * block_size)).astype(float)
+        nodes[nodes < block_size] = -1
+        chunks.append(element_chunk(entries, nodes, expected.shape, block_size=block_size))
+        for cell, values in zip(nodes, entries):
+            valid = cell >= 0
+            np.add.at(expected, (cell[valid, None], cell[None, valid]), values[np.ix_(valid, valid)])
+    result = sum_sparse_chunks(iter(chunks), expected.shape)
+    np.testing.assert_array_equal(result.toarray(), expected)
+    if block_size > 1:
+        assert sparse.isspmatrix_bsr(result) and result.blocksize == (block_size, block_size)
+    assert sparse.isspmatrix_csr(sum_sparse_chunks(iter(()), expected.shape))
+
+
+def test_scalar_geometry_and_assembly_cross_chunk_boundaries():
+    points = np.array([[0., 0, 0], [1., 0, 0], [0, 1., 0], [0, 0, 1.]])
+    count = 65539
+    elements = ScalarElements.prepare(points, np.tile([0, 1, 2, 3], (count, 1)))
+    gradient = np.array([2., -3., .5])
+    np.testing.assert_array_equal(elements.gradient(points @ gradient + 2**40), np.tile(gradient, (count, 1)))
+    expected = np.vstack((-np.ones(3), np.eye(3)))
+    np.testing.assert_allclose(elements.diffusion(np.eye(3)).toarray(), count / 6 * (expected @ expected.T), rtol=1e-12)
+    np.testing.assert_allclose(elements.capacity(2.).toarray(), count / 60 * (np.ones((4, 4)) + np.eye(4)), rtol=1e-12)
+    grid = BoxGrid({"origin": [0, 0, 0], "size": [1, 1, 1], "rotation": np.eye(3), "lengthUnit": "m",
+                    "gridShape": [1, 1, 1], "source": "task", "rootId": "roi"})
+    values = points @ gradient + 7
+    np.testing.assert_allclose(scalar_box_statistics(points, elements.cells, values, grid),
+                               [values.mean(), values.min(), values.max()], atol=1e-12)

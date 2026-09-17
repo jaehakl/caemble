@@ -12,9 +12,10 @@ from ..beam import beam_batch_kinematics
 class PreparedStructuralOperators:
     """Reference operators and reusable element data, never a checkpoint."""
 
-    stiffness: sparse.csr_matrix
-    mass: sparse.csr_matrix
-    damping: sparse.csr_matrix
+    # The thermal CG path stores only its constrained stiffness in thermal_batch.
+    stiffness: sparse.spmatrix | None
+    mass: sparse.spmatrix
+    damping: sparse.spmatrix
     element_data: list[dict[str, Any]]
     beam_batch: dict[str, Any] | None = None
     thermal_batch: dict[str, Any] | None = None

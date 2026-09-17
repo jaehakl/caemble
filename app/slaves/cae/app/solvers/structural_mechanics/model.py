@@ -6,6 +6,7 @@
 """
 
 import numpy as np
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,7 +25,7 @@ class Element:
 class StructuralModel:
     node_ids: np.ndarray
     points: np.ndarray
-    elements: list[Element]
+    elements: Sequence[Element]
     active: np.ndarray
     fixed: np.ndarray
     force: np.ndarray
@@ -53,6 +54,8 @@ class StructuralModel:
     assembly_domain: Any = None
     thermal_strain: np.ndarray | None = None
     thermal_force: np.ndarray | None = None
+    linear_solver: str = "direct"
+    thermal_time_history: bool = False
 
     @property
     def size(self) -> int:

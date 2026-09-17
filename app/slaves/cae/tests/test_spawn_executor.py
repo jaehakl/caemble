@@ -8,7 +8,9 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 from collections.abc import Awaitable
 from typing import Any
@@ -31,6 +33,7 @@ from tests.solver_test_support import invocation
 from tests.executor_transport_fixtures import (
     SlowInvocationDecodeCodec,
     SlowPicklePayloadCodec,
+    SlowChildCleanup,
     closes_request_after_bootstrap,
     exits_before_bootstrap,
     never_starts,
@@ -40,6 +43,22 @@ _FIXTURES = "tests.spawn_executor_fixtures"
 
 
 class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invocation_cleanup_precedes_terminal_result_and_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("payload_size", "raises_error"):
+                marker = Path(folder) / name
+                context = SolverInvocation(config={"payload": b"x"},
+                    state={"cleanup": SlowChildCleanup(str(marker), os.getpid())},
+                    inputs={}, world={}, geometry=None, progress=lambda _: None, descriptor={})
+                executor = SpawnSolverExecutor()
+                if name == "raises_error":
+                    with self.assertRaisesRegex(RemoteSolverError, "fixture solver failed"):
+                        await executor.execute(f"{_FIXTURES}:{name}", context)
+                else:
+                    result = await executor.execute(f"{_FIXTURES}:{name}", context)
+                    self.assertEqual(result.artifacts["size"], 1)
+                self.assertEqual(marker.read_text(encoding="utf-8"), "released")
+
     async def test_pipe_close_between_poll_and_receive_reports_child_exit(self):
         process = Mock(exitcode=23, pid=123)
         process.is_alive.return_value = False

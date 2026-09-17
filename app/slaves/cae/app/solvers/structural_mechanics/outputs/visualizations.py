@@ -43,8 +43,14 @@ def build_visualizations(config, descriptor, model, solution):
             }, {"timeConvention": "exp(+i*omega*t)", "amplitude": "peak", "configuration": "reference"})
         return visuals
 
-    stresses = np.asarray([_tet_stress(model, solution, index) for index in cell_order]).reshape(-1, 3, 3)
-    compact = stresses[:, (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
+    if model.thermal_strain is not None:
+        samples = np.asarray(solution.stresses)
+        compact = samples[:, 0] if samples.shape[1] == 1 else samples.mean(axis=1)
+        if len(cell_order) != len(compact):
+            compact = compact[cell_order]
+    else:
+        stresses = np.asarray([_tet_stress(model, solution, index) for index in cell_order]).reshape(-1, 3, 3)
+        compact = stresses[:, (0, 1, 2, 0, 1, 0), (0, 1, 2, 1, 2, 2)]
     for name, definition in descriptor.get("visualizations", {}).items():
         data = definition["data"]
         if name == "displacement":
@@ -52,12 +58,12 @@ def build_visualizations(config, descriptor, model, solution):
         elif name == "stress":
             visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], compact, data.get("basis"), ("xx", "yy", "zz", "xy", "yz", "xz"), {"configuration": "reference", "stressMeasure": "cauchy", "sampling": "cell-average", "weighting": "reference-volume"})
         elif name == "meanPressure" and all(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements):
-            values = -np.trace(stresses, axis1=-2, axis2=-1) / 3
+            values = -compact[:, :3].sum(axis=1) / 3
             visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], values, metadata={"configuration": "reference", "sampling": "cell-average", "weighting": "reference-volume", "signConvention": "compression-positive"})
         elif name == "volumeRatio" and all(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements):
             values = finite_deformation_fields(model, solution)["volumeRatio"][cell_order]
             visuals[name] = FieldValue(domain, "cell", data["quantityKind"], data["unit"], values, metadata={"configuration": "reference", "sampling": "cell-average", "weighting": "reference-volume"})
-        elif name == "displacementHistory" and parameter(config["parameters"]["analysis"]) == "transient":
+        elif name == "displacementHistory" and (parameter(config["parameters"]["analysis"]) == "transient" or model.thermal_time_history):
             histories = history_members(model, solution, model.node_ids[:count])
             data = data["members"]["field"]
             field = FieldValue(domain, "node", data["quantityKind"], data["unit"], histories["displacement"][-1], data.get("basis"), ("x", "y", "z"))

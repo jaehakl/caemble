@@ -262,7 +262,7 @@ async def test_two_geometry_roots_can_share_one_frozen_mixed_material():
     from app.solvers.structural_mechanics import entry
     from tests.test_structural_csg import solid_invocation
     case = solid_invocation(resolution=.8, second=True)
-    case = replace(case, descriptor=solver_catalog.descriptor('structural-mechanics', '7.2.0'))
+    case = replace(case, descriptor=solver_catalog.descriptor('structural-mechanics', '8.0.0'))
     case.config['parameters'].update(solidFormulation='mixed-mini', geometricNonlinear=True)
     case.config['initializations'].append({'methodId': 'fea.bonded', 'target': ['experiment.geometry.all'], 'parameters': {}})
     selected = case.world['materials']['experiment']['Steel']['models']['solid']
@@ -286,7 +286,7 @@ def test_mixed_box_observations_and_inline_attachment_roundtrip(count):
     model = stretch_model()
     solution = mixed_static_analysis(model)
     before = tuple(value.copy() for value in (solution.displacement, solution.auxiliary_pressure, solution.bubble))
-    descriptor = solver_catalog.descriptor('structural-mechanics', '7.2.0')
+    descriptor = solver_catalog.descriptor('structural-mechanics', '8.0.0')
     method = 'fea.current-mean-pressure'
     definition = next(item['data'] for item in descriptor['methods']['outputs'] if item['methodId'] == method)
     probe = grid(shape=(count, 1, 1), origin=(-.1, .15, .15), size=(1.2, .01, .01))

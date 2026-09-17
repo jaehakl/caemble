@@ -7,6 +7,7 @@ import numpy as np
 from app.kernel.api.world import geometry_parts, material_model, scalar_parameter
 from app.methods.mesh.models import VolumeMeshingProfile
 from app.methods.mesh.subdomain import build_volume_subdomain
+from .interfaces import prepare_interfaces
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,8 @@ class HeatDomain:
     conductivity: np.ndarray
     fixed: dict
     boundaries: tuple
+    interfaces: tuple = ()
+    volumetric_capacity: object = None
 
 
 async def build_heat_domain(invocation):
@@ -56,10 +59,28 @@ async def build_heat_domain(invocation):
             raise ValueError("Heat requires positive isotropic conductivity in each material region")
         tensors[root] = tensor
     conductivity = np.asarray([tensors[mesh.assembly.region_ids[r]] for r in mesh.field_domain.metadata["cellRegions"]])
+    original_mesh = mesh
+    mesh, interfaces, traces = prepare_interfaces(invocation, mesh, parts)
+    capacity = None
+    if invocation.config["parameters"].get("analysis", "steady") == "transient":
+        capacities = {}
+        for root, part in parts.items():
+            model = material_model(invocation.world, part, "thermalDomain", "capacity")
+            if model is None or model["model"] != "heat.constant-heat-capacity@1":
+                raise ValueError("transient Heat requires an explicit heat-capacity model in every region")
+            density, specific = (scalar_parameter(model["parameters"][key]) for key in ("density", "specificHeat"))
+            if min(density, specific) <= 0:
+                raise ValueError("density and specific heat must be positive")
+            capacities[root] = density * specific
+        capacity = np.asarray([capacities[mesh.assembly.region_ids[r]] for r in mesh.field_domain.metadata["cellRegions"]])
     fixed, boundaries, used_faces = {}, [], set()
     for rule in invocation.config["boundaryConditions"]:
+        if rule["methodId"] == "heat.interface":
+            continue
         selectors = [s for target in rule["target"] for group in scene["surfaceGroups"] if group["name"] == target.split(".", 2)[2] for s in group["selectors"]]
-        faces = mesh.surface_faces(selectors)
+        faces = original_mesh.surface_faces(selectors)
+        if traces is not None:
+            faces = np.asarray([traces[tuple(sorted(face))][0][1] for face in faces])
         keys = {tuple(sorted(face)) for face in faces}
         if used_faces & keys:
             raise ValueError("thermal boundary rules must not overlap faces")
@@ -74,4 +95,4 @@ async def build_heat_domain(invocation):
         elif method == "heat.convection" and p["coefficient"] <= 0:
             raise ValueError("Robin heat-transfer coefficient must be positive")
         boundaries.append((method, faces, p))
-    return HeatDomain(mesh, conductivity, fixed, tuple(boundaries))
+    return HeatDomain(mesh, conductivity, fixed, tuple(boundaries), interfaces, capacity)

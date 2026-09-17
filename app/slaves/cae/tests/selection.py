@@ -9,11 +9,11 @@ import subprocess
 CAE_PREFIX = "app/slaves/cae/"
 PARTICLES = ("dem", "sph", "mpm")
 SOLVER_TESTS = {
-    "dc_current_density": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_microheater", "test_box_grid_outputs"),
-    "heat_transfer": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_microheater", "test_box_grid_outputs"),
+    "dc_current_density": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_electrothermal_*", "test_microheater", "test_box_grid_outputs"),
+    "heat_transfer": ("test_actual_solver_chain", "test_coordinator_solver_chain", "test_solver_methods", "test_scalar_fem", "test_electrothermal_*", "test_microheater", "test_box_grid_outputs"),
     "ray_tracing": ("test_ray_*", "test_spectrometer_example", "test_box_grid_outputs"),
     "fdtd": ("test_fdtd_*", "test_gold_fcc_example"),
-    "structural_mechanics": ("test_structural_*", "test_microheater", "test_hyperelastic", "test_mixed_*", "test_displacement_recording", "test_harmonic_*", "test_transient_*", "test_acoustic_transient_lifecycle"),
+    "structural_mechanics": ("test_structural_*", "test_electrothermal_*", "test_microheater", "test_hyperelastic", "test_mixed_*", "test_displacement_recording", "test_harmonic_*", "test_transient_*", "test_acoustic_transient_lifecycle"),
     "pressure_acoustics": ("test_acoustic_*", "test_pressure_acoustics", "test_harmonic_surface_methods", "test_transient_coupling_methods"),
     "rigid_body": ("test_rigid_*",),
     "dem": ("test_dem_*", "test_particle_final_review", "test_particle_*"),
@@ -23,6 +23,12 @@ SOLVER_TESTS = {
 }
 # Specific method ownership takes precedence over a broad package rule.
 METHOD_FILE_CONSUMERS = {
+    "app/methods/coupling/clock.py": ("dc_current_density", "heat_transfer"),
+    "app/methods/fields/history.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/mesh/interfaces.py": ("heat_transfer",),
+    "app/methods/mesh/boundary.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/linalg/positive_definite.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
+    "app/methods/linalg/compensated.py": ("dc_current_density", "heat_transfer"),
     "app/methods/finite_element/scalar.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
     "app/methods/mesh/subdomain.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
     "app/methods/geometry/layered.py": ("dc_current_density", "heat_transfer", "structural_mechanics"),
@@ -43,8 +49,8 @@ METHOD_CONSUMERS = {
     "mesh": ("structural_mechanics", "pressure_acoustics", "incompressible_flow", "dc_current_density", "heat_transfer"),
     "geometry": tuple(SOLVER_TESTS), "structured": tuple(SOLVER_TESTS),
     "fields": tuple(SOLVER_TESTS), "coupling": tuple(SOLVER_TESTS),
-    "assembly": ("structural_mechanics",),
-    "linalg": ("structural_mechanics", "pressure_acoustics", "incompressible_flow"),
+    "assembly": ("structural_mechanics", "dc_current_density", "heat_transfer"),
+    "linalg": ("structural_mechanics", "pressure_acoustics", "incompressible_flow", "dc_current_density", "heat_transfer"),
     "nonlinear": ("structural_mechanics",), "time": ("structural_mechanics", "rigid_body", *PARTICLES),
 }
 KERNEL_TESTS = (

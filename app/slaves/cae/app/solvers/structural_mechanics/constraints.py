@@ -65,6 +65,10 @@ def spring_gradient_tangent(model, orientations, a, b, ratio):
 
 
 def constraint_transform(model, orientations):
+    if not model.links:
+        active = np.asarray(model.active)
+        free = active[~np.isin(active, model.fixed)]
+        return sparse.csr_matrix((np.ones(len(free)), (free, np.arange(len(free)))), shape=(model.size, len(free)))
     dependencies = {}
     fixed = set(map(int, model.fixed))
     joints = revolute_joints(model)

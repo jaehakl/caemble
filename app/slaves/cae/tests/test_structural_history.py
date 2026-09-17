@@ -80,7 +80,7 @@ def test_box_history_scopes_preserve_accepted_windows_and_cumulative_visualizati
     matrices = prepare_matrices(model)
     first = advance_window(invocation, model, initial, settings, matrices)[0]
     second = advance_window(invocation, model, read_state(model, encode_state(model, first)), settings, matrices)[0]
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "8.0.0")
     config = {"parameters": {"analysis": "transient"}, "outputs": [{
         "methodId": "fea.pitch-history", "key": "pitch", "boxGrid": grid(shape=(1, 1, 1)).geometry,
         "parameters": {"scope": scope},
@@ -117,7 +117,7 @@ def test_scalar_mechanical_history_survives_without_requested_node_output():
 def test_recorded_scalar_history_retains_physical_time_on_box_axes():
     """Preserve Box Grid time and geometry through the artifact/recording boundary."""
     model, solution, _, _ = history_case()
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "8.0.0")
     config = {"parameters": {"analysis": "static"}, "outputs": [{"methodId": "fea.pitch-history", "key": "history", "boxGrid": grid(shape=(1,1,1)).geometry, "parameters": {"scope": "final"}}]}
     definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.pitch-history")
     value = build_outputs(config, descriptor, model, solution)[0]["history"]
@@ -126,7 +126,7 @@ def test_recorded_scalar_history_retains_physical_time_on_box_axes():
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="7.2.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
+        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="8.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
         schema = definition["data"]
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("history", schema, recorded, 1)
@@ -149,7 +149,7 @@ def test_final_box_history_is_last_accepted_sample_of_each_call(time):
     if time:
         solution.time = time
         append_history(model, solution, pitch=.7)
-    descriptor = solver_catalog.descriptor("structural-mechanics", "7.2.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "8.0.0")
     config = {"parameters": {"analysis": "static"}, "outputs": [{
         "methodId": "fea.pitch-history", "key": "pitch", "boxGrid": grid(shape=(1,1,1)).geometry,
         "parameters": {"scope": "final"}}]}

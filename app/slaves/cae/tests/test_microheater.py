@@ -71,7 +71,7 @@ async def test_microheater_voltage_linewidth_and_refinement(catalog_builds, tmp_
     nominal = catalog_builds["steady-microheater"]
     baseline = await run_microheater(nominal, "microheater-nominal")
     variables = nominal["experiment"]["variables"]
-    voltage = await run_microheater(catalog_builds.measurement("steady-microheater", {**variables, "voltage": .12}), "microheater-voltage")
+    voltage = await run_microheater(catalog_builds.measurement("steady-microheater", {**variables, "voltage": variables["voltage"] * 1.5}), "microheater-voltage")
     assert voltage["current"] == pytest.approx(baseline["current"] * 1.5, rel=1e-7)
     assert voltage["power"] == pytest.approx(baseline["power"] * 2.25, rel=1e-7)
     assert voltage["meanTemperature"] - 293.15 == pytest.approx((baseline["meanTemperature"] - 293.15) * 2.25, rel=1e-6)
@@ -79,13 +79,14 @@ async def test_microheater_voltage_linewidth_and_refinement(catalog_builds, tmp_
         assert baseline[name] > 0
         assert voltage[name] == pytest.approx(baseline[name] * 2.25, rel=1e-6)
     assert voltage["strainEnergy"] == pytest.approx(baseline["strainEnergy"] * 2.25**2, rel=1e-6)
-    wider = await run_microheater(catalog_builds.measurement("steady-microheater", {**variables, "lineWidth": 6.}), "microheater-linewidth")
+    wide_line = nominal["experiment"]["varsSchema"]["lineWidth"]["max"]
+    wider = await run_microheater(catalog_builds.measurement("steady-microheater", {**variables, "lineWidth": wide_line}), "microheater-linewidth")
     assert wider["current"] > baseline["current"] and wider["power"] > baseline["power"]
     assert abs(wider["meanTemperature"] - baseline["meanTemperature"]) > .1
     refinements = [baseline]
     # Keep physical metal/membrane thickness fixed. Refine space and thickness
     # separately before checking the combined next refinement.
-    for size, layers in ((3., 2), (3., 4), (2., 4)):
+    for size, layers in ((.1, 32), (.05, 32), (.05, 64)):
         refined = deepcopy(nominal)
         for task in refined["experiment"]["simulationProgram"]["tasks"].values():
             if task["kernel"]["name"] == "structural-mechanics":
@@ -97,7 +98,7 @@ async def test_microheater_voltage_linewidth_and_refinement(catalog_builds, tmp_
                     rule["parameters"]["maxElementSize"]["value"] = size
                     rule["parameters"]["layerSubdivisions"] = layers
         refinements.append(await run_microheater(refined, f"microheater-h{size}-z{layers}"))
-    report = {"nominal": baseline, "voltage_0.12": voltage, "linewidth_6um": wider, "refinement": refinements}
+    report = {"nominal": baseline, "voltage_1.5x": voltage, "wide_line": wider, "refinement": refinements}
     (tmp_path / "microheater-results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report))
     for previous, current in zip(refinements, refinements[1:]):

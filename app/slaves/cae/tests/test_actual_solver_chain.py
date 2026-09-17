@@ -110,7 +110,7 @@ def output_box(shape=(1, 1, 1)):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_cache", [True, False])
 async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path, use_cache: bool) -> None:
-    dc_version, heat_version = "3.0.0", "1.0.0"
+    dc_version, heat_version = "3.1.0", "2.0.0"
     catalog = SolverCatalog.discover()
     executor = SpawnSolverExecutor()
     progress: list[Any] = []
@@ -272,7 +272,7 @@ async def test_heat_to_structure_native_temperature_cache_equivalence(tmp_path):
         ],
         "boundaryConditions": [{"methodId": "heat.fixed-temperature", "target": ["experiment.surface.sourceTerminal"],
                                 "parameters": {"temperature": parameter(310.)}}],
-        "exports": [{"methodId": "heat.native-temperature", "key": "temperature", "target": [], "parameters": {}}],
+        "exports": [{"methodId": "heat.temperature", "key": "temperature", "target": [], "parameters": {}}],
         "outputs": [],
     }
     structure_config = {
@@ -293,8 +293,8 @@ async def test_heat_to_structure_native_temperature_cache_equivalence(tmp_path):
         resources = SolverResourceServices(geometry_cache_path=str(tmp_path) if use_cache else None)
         exports = {}
         for name, version, config, inputs in (
-            ("heat-transfer", "1.0.0", heat_config, {}),
-            ("structural-mechanics", "7.2.0", structure_config, exports),
+            ("heat-transfer", "2.0.0", heat_config, {}),
+            ("structural-mechanics", "8.0.0", structure_config, exports),
         ):
             task = {"kernel": {"name": name, "version": version}, "config": config}
             spec = TaskSpec(name, task, catalog.descriptor(name, version), catalog.locator(name, version), 3, {}, {}, {})
@@ -305,7 +305,7 @@ async def test_heat_to_structure_native_temperature_cache_equivalence(tmp_path):
             if name == "heat-transfer":
                 temperature = result.exports["temperature"]
                 original = temperature.values.copy()
-                exports["temperature"] = InputArtifact("temperature", "caemble.heat/temperature@2", name, name, version,
+                exports["temperature"] = InputArtifact("temperature", "caemble.heat/temperature@3", name, name, version,
                                                        "temperature", 0, None, temperature)
             else:
                 displacement = result.visualizations["displacement"]

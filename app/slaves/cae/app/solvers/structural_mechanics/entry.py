@@ -25,6 +25,8 @@ from .operators.linear import prepare_matrices
 from .outputs.build import build_outputs
 from .state import append_history, configure_history, encode_state, initial_solution, read_state
 from .thermal import configure_thermal_expansion, prepare_thermal_force
+from .thermal_history import build_thermal_history_outputs
+from .solid_elements import SolidElements
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
@@ -61,11 +63,15 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     model = await build_geometry_model(invocation)
     model.solid_formulation = parameters.get("solidFormulation", "displacement")
     configure_thermal_expansion(invocation, model)
+    model.linear_solver = parameters.get("linearSolver", "direct")
+    if model.linear_solver != "direct" and model.thermal_strain is None:
+        raise ValueError("cg-amg currently requires static thermal elastic solids")
     if model.thermal_strain is not None and invocation.progress is not None:
         await invocation.progress({"stage": "thermal-structural-assembly", "completed": 0, "total": 1})
     if model.solid_formulation not in ("displacement", "mixed-mini"):
         raise ValueError("unknown solidFormulation")
-    hyperelastic = any(element.material["model"] == "mechanics.compressible-neo-hookean@1" for element in model.elements)
+    materials = model.elements.materials if isinstance(model.elements, SolidElements) else (element.material for element in model.elements)
+    hyperelastic = any(material["model"] == "mechanics.compressible-neo-hookean@1" for material in materials)
     if (model.solid_formulation == "mixed-mini" or model.follower_pressures) and not hyperelastic:
         raise ValueError("mixed-mini and follower pressure require Neo-Hookean solids")
     if not hyperelastic and any(output["methodId"] in ("fea.mean-pressure", "fea.current-mean-pressure") for output in invocation.config["outputs"]):
@@ -92,6 +98,8 @@ async def run(invocation: SolverInvocation) -> SolverResult:
         invocation.cancellation.raise_if_cancelled()
     prepared = prepare_matrices(model)
     prepare_thermal_force(model, prepared)
+    if model.thermal_strain is not None and invocation.progress is not None:
+        await invocation.progress({"stage": "thermal-structural-assembly", "completed": 1, "total": 1})
     stiffness = prepared.stiffness
     mass = prepared.mass
     damping = prepared.damping
@@ -101,7 +109,8 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             beta = float(parameter(rule["parameters"]["dampingStiffness"]))
             if min(alpha, beta) < 0:
                 raise ValueError("Rayleigh damping coefficients must be nonnegative")
-            damping = damping + alpha * mass + beta * stiffness
+            if stiffness is not None:
+                damping = damping + alpha * mass + beta * stiffness
     prepared = replace(prepared, damping=damping)
     motion = None
     coupling_residual, converged = 0.0, True
@@ -160,11 +169,23 @@ async def run(invocation: SolverInvocation) -> SolverResult:
             solution = await solve_harmonic(prepared, transform, spectrum["frequencies"], model.force, invocation.cancellation, invocation.progress)
     else:
         raise ValueError(f"unsupported structural analysis {analysis}")
-    if not isinstance(solution, HarmonicSolution) and not solution.history:
+    if model.thermal_strain is not None:
+        # Native recovery uses the solved field and reference cells, not the
+        # assembled operators. Release their large workspaces before output.
+        del prepared, stiffness, mass, damping
+    needs_snapshot_history = model.thermal_strain is None or any(
+        item["methodId"].endswith("-history") for item in invocation.config["outputs"])
+    if not isinstance(solution, HarmonicSolution) and not solution.history and not model.thermal_time_history and needs_snapshot_history:
         append_history(model, solution)
     if invocation.progress is not None:
         await invocation.progress({"stage": "structural-response", "completed": 1, "total": 1})
-    artifacts, exports, visuals = build_outputs(invocation.config, invocation.descriptor, model, solution, motion, surface_samples)
+    if model.thermal_time_history:
+        artifacts, exports, visuals, saved = build_thermal_history_outputs(invocation, model, solution)
+        if "structural_thermal" not in invocation.state:
+            patch = patch.put(("structural_thermal",), {})
+        patch = patch.put(("structural_thermal", invocation.task_name), saved)
+    else:
+        artifacts, exports, visuals = build_outputs(invocation.config, invocation.descriptor, model, solution, motion, surface_samples)
     if isinstance(solution, HarmonicSolution):
         observations = {"iterations": len(solution.frequencies), "relativeResidual": float(solution.relative_residuals.max())}
     else:

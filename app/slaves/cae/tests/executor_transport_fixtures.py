@@ -5,10 +5,24 @@ import pickle
 import time
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
+from pathlib import Path
 from typing import Any
 
 from app.kernel.api import SolverInvocation
 from app.kernel.execution.messages import ChildMessage, ChildMessageKind
+
+
+@dataclass(frozen=True)
+class SlowChildCleanup:
+    marker: str
+    owner_pid: int
+    delay: float = 1.5
+
+    def __del__(self) -> None:
+        if os.getpid() != self.owner_pid:
+            Path(self.marker).write_text("started", encoding="utf-8")
+            time.sleep(self.delay)
+            Path(self.marker).write_text("released", encoding="utf-8")
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,9 +3,10 @@
 import numpy as np
 
 from app.kernel.api.world import geometry_parts, material_model, scalar_parameter
-from app.methods.coupling.assembly import transfer_assembly_nodal_field
+from app.methods.coupling.assembly import transfer_assembly_element_nodal_field
 
 from .continuum import integration_points
+from .solid_elements import SolidElements
 
 
 def configure_thermal_expansion(invocation, model):
@@ -15,19 +16,25 @@ def configure_thermal_expansion(invocation, model):
         return
     if not rules or temperature is None:
         raise ValueError("temperature input and fea.thermal-expansion must be used together")
+    if not temperature.value.metadata.get("accepted", True):
+        raise ValueError("structural thermal input must be an accepted temperature, not a coupling trial")
+    model.thermal_time_history = temperature.value.metadata.get("analysis") == "transient"
     if model.assembly_domain is None:
         raise ValueError("thermal expansion requires fea.mesh and a common canonical assembly")
     parameters = invocation.config["parameters"]
+    supported_elements = (all(material["model"] in ("mechanics.isotropic-elastic@1", "mechanics.orthotropic-elastic@1")
+                              for material in model.elements.materials) if isinstance(model.elements, SolidElements)
+                          else all(element.kind == "tet4" and element.material["model"] in
+                                   ("mechanics.isotropic-elastic@1", "mechanics.orthotropic-elastic@1") for element in model.elements))
     if (parameters["analysis"] != "static" or scalar_parameter(parameters["geometricNonlinear"])
             or model.solid_formulation != "displacement" or model.contacts or model.links or model.springs
             or model.rotor is not None or model.follower_pressures
-            or any(element.kind != "tet4" or element.material["model"] not in
-                   ("mechanics.isotropic-elastic@1", "mechanics.orthotropic-elastic@1") for element in model.elements)):
+            or not supported_elements):
         raise ValueError("thermal expansion supports only static small-strain bonded elastic solids without contact or connections")
-    values = transfer_assembly_nodal_field(temperature.value, model.assembly_domain,
-                                         quantity_kind="thermodynamics.Temperature", unit="K")
+    values = transfer_assembly_element_nodal_field(
+        temperature.value, model.assembly_domain, quantity_kind="thermodynamics.Temperature", unit="K")
     model.thermal_strain = np.zeros((len(model.elements), 4))
-    assigned = set()
+    assigned = np.zeros(len(model.elements), dtype=bool)
     for rule in rules:
         stress_free = scalar_parameter(rule["parameters"]["stressFreeTemperature"])
         for target in rule["target"]:
@@ -41,12 +48,19 @@ def configure_thermal_expansion(invocation, model):
                 if selected is None or selected["model"] != "mechanics.isotropic-thermal-expansion@1":
                     raise ValueError("thermal expansion requires an explicitly selected isotropic thermal expansion model")
                 coefficients[root] = scalar_parameter(selected["parameters"]["alpha"])
-            for index in model.cell_regions[target]:
-                if int(index) in assigned:
-                    raise ValueError("thermal expansion regions must not overlap")
-                assigned.add(int(index))
-                element = model.elements[index]
-                model.thermal_strain[index] = coefficients[element.root_id] * (values[element.nodes] - stress_free)
+            indices = model.cell_regions[target]
+            if np.any(assigned[indices]):
+                raise ValueError("thermal expansion regions must not overlap")
+            assigned[indices] = True
+            if isinstance(model.elements, SolidElements):
+                alpha = np.asarray([coefficients.get(root, 0.) for root in model.elements.root_ids])
+                for start in range(0, len(indices), 65536):
+                    selected = indices[start:start + 65536]
+                    model.thermal_strain[selected] = alpha[model.elements.material_indices[selected], None] * (values[selected] - stress_free)
+            else:
+                for index in indices:
+                    element = model.elements[index]
+                    model.thermal_strain[index] = coefficients[element.root_id] * (values[index] - stress_free)
 
 
 def thermal_element_response(points, displacement, elasticity, nodal_strain):

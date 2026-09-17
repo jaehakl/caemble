@@ -11,6 +11,7 @@ from ..operators.internal import structural_response
 from app.methods.rigid.rotations import rotation_exp
 from ..state import initial_solution
 from ..loads import follower_pressure, update_follower_display
+from ..solid_elements import SolidElements
 
 
 def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterations=30, geometric=False, cancellation=None):
@@ -18,23 +19,63 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
     solution = initial_solution(model)
     gravity = np.zeros(model.size)
     gravity.reshape(-1, 6)[:, :3] = model.gravity
-    external = model.force.ravel() + mass @ gravity
+    external = model.force.ravel() + (mass @ gravity if prepared.thermal_batch is None else prepared.thermal_batch["body_force"])
+    free_dofs = None if prepared.thermal_batch is None else prepared.thermal_batch.get("free_dofs")
     rotating_gravity = geometric and np.any(gravity)
     zero_motion = np.zeros_like(solution.displacement)
     displacement_driven = any(model.prescribed.values())
-    nonlinear = geometric or bool(model.contacts) or any(e.material["model"] == "mechanics.j2-plasticity@1" for e in model.elements)
+    materials = model.elements.materials if isinstance(model.elements, SolidElements) else (e.material for e in model.elements)
+    nonlinear = geometric or bool(model.contacts) or any(material["model"] == "mechanics.j2-plasticity@1" for material in materials)
     if not nonlinear:
-        T = constraint_transform(model, solution.orientations)
+        T = constraint_transform(model, solution.orientations) if free_dofs is None else None
         for dof, value in model.prescribed.items():
             solution.displacement.ravel()[dof] = value
         applied = external if model.thermal_force is None else external + model.thermal_force
-        rhs = T.T @ (applied - stiffness @ solution.displacement.ravel())
+        if free_dofs is None:
+            rhs = T.T @ (applied - stiffness @ solution.displacement.ravel())
+            matrix = T.T @ stiffness @ T
+        else:
+            rhs = applied[free_dofs]
+            prescribed_force = prepared.thermal_batch["prescribed_force"]
+            if prescribed_force is not None:
+                rhs = rhs - prescribed_force[free_dofs]
+            matrix = prepared.thermal_batch["free_stiffness"]
         # The thermal solid matrix is symmetric. A symmetric graph ordering
         # limits sparse-factor fill in the very thin, conforming layered mesh.
         ordering = "COLAMD" if model.thermal_force is None else "MMD_AT_PLUS_A"
-        solution.displacement += np.asarray(T @ solve_linear(T.T @ stiffness @ T, rhs, ordering=ordering,
-            positive_definite=model.thermal_force is not None)).reshape(-1, 6) if T.shape[1] else 0
-        solution.orientations = np.asarray([rotation_exp(value[3:]) for value in solution.displacement])
+        modes = None
+        block_size = 1
+        if model.linear_solver == "cg-amg":
+            positions = model.points - model.points.mean(axis=0)
+            positions /= np.max(np.ptp(positions, axis=0))
+            if not model.links:
+                free = np.asarray(model.active)[~np.isin(model.active, model.fixed)]
+                axes = np.eye(3)[free % 6]
+                modes = np.column_stack((axes, np.cross(positions[free // 6], axes)))
+            else:
+                rigid = np.zeros((len(model.points), 6, 6))
+                rigid[:, :3, :3] = np.eye(3)
+                for axis in range(3):
+                    rigid[:, :3, 3 + axis] = np.cross(np.eye(3)[axis], positions)
+                modes = np.asarray(T.T @ rigid.reshape(model.size, 6))
+            # Keep node translations together when elimination preserves complete
+            # xyz blocks. Partial supports and rigid links retain scalar AMG.
+            if not model.links:
+                free = np.setdiff1d(model.active, model.fixed)
+                if len(free) and len(free) % 3 == 0:
+                    grouped = free.reshape(-1, 3)
+                    if np.all(grouped[:, 0] % 6 == 0) and np.all(grouped == grouped[:, :1] + np.arange(3)):
+                        block_size = 3
+        if len(rhs):
+            correction = solve_linear(matrix, rhs, ordering=ordering,
+                positive_definite=model.thermal_force is not None, backend=model.linear_solver,
+                near_nullspace=modes, block_size=block_size, tolerance=tolerance, cancellation=cancellation)
+            if free_dofs is None:
+                solution.displacement += np.asarray(T @ correction).reshape(-1, 6)
+            else:
+                solution.displacement.ravel()[free_dofs] += correction
+        if model.thermal_force is None or np.any(solution.displacement[:, 3:]):
+            solution.orientations = np.asarray([rotation_exp(value[3:]) for value in solution.displacement])
         for slave, (master, axis_index) in revolute_joints(model).items():
             solution.displacement[slave, 3 + axis_index] -= solution.displacement[master, 3 + axis_index]
         solution.iterations = 1
@@ -117,12 +158,20 @@ def static_analysis(model, prepared, stiffness, mass, tolerance=1e-8, max_iterat
         external += follower_pressure(model, solution.displacement, tangent=False)[0]
         update_follower_display(model, solution.displacement)
     solution.reaction = support_reactions(model, solution.orientations, internal - external)
-    T = constraint_transform(model, solution.orientations)
-    solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / max(np.linalg.norm(T.T @ external), np.linalg.norm(internal) if displacement_driven else 0., 1.0))
+    if free_dofs is None:
+        T = constraint_transform(model, solution.orientations)
+        projected_residual, projected_external = T.T @ (internal - external), T.T @ external
+    else:
+        projected_residual, projected_external = (internal - external)[free_dofs], external[free_dofs]
+    solution.residual = float(np.linalg.norm(projected_residual) / max(np.linalg.norm(projected_external), np.linalg.norm(internal) if displacement_driven else 0., 1.0))
     if model.thermal_force is not None:
-        scale = max(np.linalg.norm(T.T @ external), np.linalg.norm(T.T @ model.thermal_force),
-                    np.linalg.norm(stiffness @ solution.displacement.ravel()) if displacement_driven else 0., np.finfo(float).tiny)
-        solution.residual = float(np.linalg.norm(T.T @ (internal - external)) / scale)
+        projected_thermal = T.T @ model.thermal_force if free_dofs is None else model.thermal_force[free_dofs]
+        elastic_force = None
+        if displacement_driven:
+            elastic_force = stiffness @ solution.displacement.ravel() if free_dofs is None else internal + model.thermal_force
+        scale = max(np.linalg.norm(projected_external), np.linalg.norm(projected_thermal),
+                    np.linalg.norm(elastic_force) if displacement_driven else 0., np.finfo(float).tiny)
+        solution.residual = float(np.linalg.norm(projected_residual) / scale)
         if solution.residual > tolerance:
             raise ValueError(f"thermal structural relative residual {solution.residual:g} exceeds {tolerance:g}")
     solution.element_history, solution.stresses = history, stress

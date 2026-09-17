@@ -41,6 +41,35 @@ def solve_thermal(model):
     return static_analysis(model, prepared, prepared.stiffness, prepared.mass)
 
 
+@pytest.mark.parametrize("complete_blocks", [False, True])
+def test_reduced_thermal_cg_preserves_prescribed_loads_gravity_and_reactions(complete_blocks):
+    from copy import deepcopy
+
+    model = thermal_brick(divisions=(2, 2, 2))
+    model.thermal_strain = 1e-5 * (20 + 7 * np.asarray([model.points[element.nodes, 0] for element in model.elements]))
+    model.gravity = np.array([0., 0., -9.81])
+    end = np.flatnonzero(model.points[:, 0] == 1.)
+    model.fixed = np.unique(np.r_[model.fixed, 6 * end])
+    model.prescribed = {int(6 * node): 1e-4 for node in end}
+    if complete_blocks:
+        model.fixed = (6 * np.r_[np.flatnonzero(model.points[:, 0] == 0.), end,][:, None] + np.arange(3)).ravel()
+    direct = solve_thermal(model)
+    reduced = deepcopy(model)
+    reduced.linear_solver = "cg-amg"
+    prepared = prepare_matrices(reduced)
+    assert prepared.stiffness is None
+    free = np.setdiff1d(model.active, model.fixed)
+    assert prepared.thermal_batch["free_stiffness"].shape == (len(free), len(free))
+    if complete_blocks:
+        assert prepared.thermal_batch["free_stiffness"].format == "bsr"
+    result = static_analysis(reduced, prepared, prepared.stiffness, prepared.mass)
+    np.testing.assert_allclose(result.displacement, direct.displacement, rtol=1e-7, atol=1e-13)
+    np.testing.assert_allclose(result.reaction, direct.reaction, rtol=1e-7, atol=1e-6)
+    np.testing.assert_allclose(result.stresses, direct.stresses, rtol=1e-7, atol=1e-3)
+    assert result.strain_energy == pytest.approx(direct.strain_energy, rel=1e-8)
+    assert result.residual < 1e-8
+
+
 @pytest.mark.parametrize("scale", [1., 1e-6])
 def test_free_uniform_expansion_is_stress_free_at_macro_and_micro_scales(scale):
     model = thermal_brick(size=np.array([1., .2, .1]) * scale)
@@ -93,6 +122,44 @@ def test_positive_definite_factorization_rejects_indefinite_system_without_chang
         solve_sparse(matrix, np.ones(2), ordering="MMD_AT_PLUS_A", positive_definite=True)
 
 
+@pytest.mark.parametrize("clamped", [False, True])
+def test_amg_constrained_expansion_matches_direct_and_keeps_small_force_residual(clamped):
+    model = thermal_brick(divisions=(5, 3, 3), size=(1e-4, 2e-5, 1e-6))
+    model.thermal_strain = np.full((len(model.elements), 4), 3e-4)
+    if clamped:
+        model.fixed = (6 * np.flatnonzero(model.points[:, 0] == 0)[:, None] + np.arange(3)).ravel()
+    direct = solve_thermal(model)
+    model.linear_solver = "cg-amg"
+    iterative = solve_thermal(model)
+    np.testing.assert_allclose(iterative.displacement, direct.displacement, rtol=1e-7, atol=1e-15)
+    assert iterative.residual < 1e-8
+
+
+def test_amg_memory_retry_keeps_double_precision_equilibrium(monkeypatch):
+    import pyamg
+
+    model = thermal_brick(divisions=(5, 3, 3), size=(1e-4, 2e-5, 1e-6))
+    model.thermal_strain = np.full((len(model.elements), 4), 3e-4)
+    model.fixed = (6 * np.flatnonzero(model.points[:, 0] == 0)[:, None] + np.arange(3)).ravel()
+    direct = solve_thermal(model)
+    original = pyamg.smoothed_aggregation_solver
+    attempted = []
+
+    def limited_setup(matrix, **kwargs):
+        attempted.append(matrix.dtype)
+        if len(attempted) == 1:
+            raise MemoryError("simulated interpolation workspace exhaustion")
+        return original(matrix, **kwargs)
+
+    monkeypatch.setattr(pyamg, "smoothed_aggregation_solver", limited_setup)
+    model.linear_solver = "cg-amg"
+    iterative = solve_thermal(model)
+    assert attempted == [np.dtype("float64"), np.dtype("float32")]
+    np.testing.assert_allclose(iterative.displacement, direct.displacement, rtol=1e-6, atol=1e-15)
+    assert iterative.strain_energy == pytest.approx(direct.strain_energy, rel=1e-6)
+    assert iterative.residual < 1e-8
+
+
 def test_surface_warpage_removes_area_weighted_tilt_without_grid_sampling():
     from types import SimpleNamespace
     model = thermal_brick(divisions=(4, 2, 2))
@@ -111,6 +178,23 @@ def test_surface_warpage_removes_area_weighted_tilt_without_grid_sampling():
     maximum, warpage = surface_displacement_metrics(model, solution, grid, parameters)
     assert maximum == pytest.approx(.218, rel=1e-12)
     assert warpage == pytest.approx(.0005, rel=1e-10)
+
+
+def test_surface_metrics_clip_reference_faces_across_element_chunks():
+    from types import SimpleNamespace
+
+    model = thermal_brick(divisions=(128, 64, 1))
+    displacement = np.zeros_like(model.force)
+    displacement[:, 2] = .2 + .01 * model.points[:, 0] + .03 * model.points[:, 1] + .002 * model.points[:, 0]**2
+    grid = BoxGrid({"origin": [.13, .013, 0], "size": [.74, .174, .1], "rotation": np.eye(3),
+                    "lengthUnit": "m", "source": "task", "rootId": "clipped", "gridShape": [1, 1, 1]})
+    maximum, warpage = surface_displacement_metrics(model, SimpleNamespace(displacement=displacement), grid,
+        {"origin": [0, 0, .1], "normal": [0, 0, 1]})
+    x = np.linspace(0, 1, 129)
+    interpolated = np.interp(.87, x, x*x)
+    assert maximum == pytest.approx(.2 + .01*.87 + .03*.187 + .002*interpolated, rel=1e-12)
+    # Symmetric clipping leaves the exact fitted x slope of the quadratic nodal field.
+    assert warpage == pytest.approx(.002 * (interpolated - .25 - .37), rel=1e-10)
 
 
 def test_nonuniform_temperature_force_is_energy_derivative_and_stress_is_affine():
@@ -136,6 +220,7 @@ def test_nonuniform_temperature_force_is_energy_derivative_and_stress_is_affine(
 
 
 def test_batched_orthotropic_thermal_response_matches_element_quadrature():
+    from types import SimpleNamespace
     from app.solvers.structural_mechanics.materials import orthotropic_elasticity
     from app.solvers.structural_mechanics.operators.internal import structural_response
 
@@ -154,7 +239,10 @@ def test_batched_orthotropic_thermal_response_matches_element_quadrature():
         dofs = (6 * element.nodes[:, None] + np.arange(3)).ravel()
         np.add.at(expected_force, dofs, element_force)
         expected_energy += element_energy
-        np.testing.assert_allclose(stress[index], element_stress, rtol=1e-12, atol=1e-8)
+        np.testing.assert_allclose(stress[index, 0], element_stress.mean(axis=0), rtol=1e-12, atol=1e-8)
+        quadrature = np.full((4, 4), (5 - np.sqrt(5)) / 20) + np.eye(4) / np.sqrt(5)
+        restored = thermal_stress_at(model, SimpleNamespace(stresses=stress), index, quadrature)
+        np.testing.assert_allclose(restored, element_stress, rtol=1e-12, atol=1e-8)
     np.testing.assert_allclose(force, expected_force, rtol=1e-12, atol=1e-8)
     assert energy == pytest.approx(expected_energy, rel=1e-12)
     from app.solvers.structural_mechanics.continuum import physical_orientation_matrices
@@ -180,7 +268,7 @@ def test_box_stress_uses_point_temperature_and_native_stress_uses_volume_average
     solution.stresses = [thermal_element_response(points, np.zeros(12), material["C"], model.thermal_strain[0])[1]]
     grid = {"origin": [0, 0, 0], "size": [.2, .2, .2], "rotation": np.eye(3),
             "lengthUnit": "m", "gridShape": [2, 1, 1], "source": "task", "rootId": "probe"}
-    descriptor = SolverCatalog.discover().descriptor("structural-mechanics", "7.2.0")
+    descriptor = SolverCatalog.discover().descriptor("structural-mechanics", "8.0.0")
     output = build_box_outputs({"outputs": [{"key": "stress", "methodId": "fea.stress-field", "boxGrid": grid}]},
                                descriptor, model, solution)["stress"]["value"]
     values = np.asarray(output).reshape(2, 6)

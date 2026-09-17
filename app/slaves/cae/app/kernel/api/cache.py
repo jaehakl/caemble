@@ -67,7 +67,7 @@ def _content_digest(value: Any, active: set[int]) -> bytes:
         if value.dtype.hasobject:
             raise TypeError("object arrays cannot be used in content cache keys")
         contiguous = np.ascontiguousarray(value)
-        digest = hashlib.sha256(contiguous.tobytes(order="C")).digest()
+        digest = hashlib.sha256(contiguous).digest()
         return (
             b"array:"
             + value.dtype.str.encode("ascii")

@@ -71,6 +71,8 @@ def cylinder_segments(measurement):
     "fiber-bundle", "shell-cutaways", "random-curved-edge-cylinder-array",
     "random-curved-surface-sphere-hcp-array", "two-material-wheel-assembly",
     "czerny-turner-spectrometer", "electro-thermal-notched-bar", "steady-microheater",
+    "feedback-microheater",
+    pytest.param("pulsed-microheater", marks=pytest.mark.validation),
     "fdtd-drude-slab", "folded-ray-tracing",
     "structural-element-basics", "structural-analysis-modes",
     "curved-tower-shell", "boolean-connection-solid",
@@ -88,7 +90,8 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
     program = measurement["experiment"]["simulationProgram"]
     # The complete structural transient intentionally keeps all 32 windows;
     # its CPU reference takes about 33 seconds per window on the development host.
-    run_timeout = 1800 if key == "transient-plate-driven-duct" else 240
+    run_timeout = {"transient-plate-driven-duct": 1800, "feedback-microheater": 3600,
+                   "pulsed-microheater": 21600}.get(key, 240)
     run = CaeRun(measurement=measurement, max_run_seconds=run_timeout, job_id=f"catalog-{key}")
     run.start()
     recorded, metadata, visualizations, native = {}, {}, {}, {}
@@ -137,7 +140,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                 assert packet["kind"] == "complete", packet
                 break
         await run.task
-        if key == "steady-microheater":
+        if key in {"steady-microheater", "feedback-microheater"}:
             # simulate.py must retire all numeric/native artifacts before the
             # host closes the run, leaving only its retained empty State root.
             sim = run.simulation_api
@@ -159,7 +162,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                         {"motion"} if solver == "rigid_body" else
                         (set() if analysis == "transient" else {"pressure"}) if solver == "pressure-acoustics"
                         else {"harmonicDisplacement", "harmonicStress"} if analysis == "harmonic" else {"displacement", "stress"})
-            if solver == "structural-mechanics" and analysis == "transient":
+            if solver == "structural-mechanics" and (analysis == "transient" or key == "pulsed-microheater"):
                 expected.add("displacementHistory")
             if key.startswith(("hyperelastic-", "mixed-mini-")):
                 expected.update(("volumeRatio", "meanPressure"))
@@ -170,7 +173,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                     offsets, vertices = native[prefix + contract["offsets"]], native[prefix + contract["vertices"]]
                     assert offsets[-1] == len(vertices) and np.all(np.diff(offsets) >= 2)
         task_count = len(program["tasks"])
-        multiwindow = key in {"structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct", "asymmetric-rigid-bodies", "sliding-contact"}
+        multiwindow = key in {"feedback-microheater", "pulsed-microheater", "structural-analysis-modes", "transient-matched-impedance-duct", "transient-plate-driven-duct", "asymmetric-rigid-bodies", "sliding-contact"}
         assert len(run.trace) > task_count if multiwindow else len(run.trace) == task_count
         if "totalCurrent" in recorded:
             assert recorded["totalCurrent"].item() > 0
@@ -180,7 +183,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                                   for task in program["tasks"].values()
                                   for rule in task["config"]["boundaryConditions"]
                                   if rule["methodId"] == "heat.fixed-temperature"]
-            assert recorded["maximumTemperature"].item() > min(fixed_temperatures)
+            assert recorded["maximumTemperature"].max() > min(fixed_temperatures)
         if key.startswith("mixed-mini-"):
             assert recorded["energy"].item() > 0
             assert 0 < recorded["equilibriumEnergy"].item() <= recorded["energy"].item() + 1e-7

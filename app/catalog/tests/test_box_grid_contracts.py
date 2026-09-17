@@ -21,7 +21,7 @@ def test_published_outputs_are_seven_axis_tensors_with_separate_native_exports_a
             assert descriptor["minimumOutputs"] == 0
             assert all(method["artifactType"].startswith("caemble.box-grid/") for method in descriptor["methods"]["outputs"])
             assert all("boxGrid" not in method["data"] for method in descriptor["methods"]["exports"])
-        structural = catalog.get_solver_manifest("structural-mechanics", "7.2.0")["descriptor"]
+        structural = catalog.get_solver_manifest("structural-mechanics", "8.0.0")["descriptor"]
         assert set(structural["visualizations"]) == {"displacement", "stress", "displacementHistory", "harmonicDisplacement", "harmonicStress", "volumeRatio", "meanPressure"}
         assert {item["methodId"] for item in structural["methods"]["exports"]} == {"fea.interface", "fea.motion", "fea.harmonic-surface-motion", "fea.transient-surface-motion", "fea.deformation-gradient", "fea.first-piola-stress"}
         acoustic = catalog.get_solver_manifest("pressure-acoustics", "1.1.0")["descriptor"]
@@ -62,14 +62,14 @@ def test_publishing_rejects_invalid_shape_channels_components_and_target_contrac
 
 def test_scoped_runtime_includes_automatic_mesh_coordinate_dependencies():
     with open_catalog() as catalog:
-        runtime = catalog.runtime_slice(solvers=[("structural-mechanics", "7.2.0")], quantity_kinds=[], material_models=[])
+        runtime = catalog.runtime_slice(solvers=[("structural-mechanics", "8.0.0")], quantity_kinds=[], material_models=[])
     quantities = {item["name"] for item in runtime["quantityKinds"]}
     assert {"Length", "Volume", "Dimensionless", "mechanics.ForceMagnitude"} <= quantities
 
 
 def test_mini_contract_keeps_pressure_energy_and_native_averaging_distinct():
     with open_catalog() as catalog:
-        descriptor = catalog.get_solver_manifest('structural-mechanics', '7.2.0')['descriptor']
+        descriptor = catalog.get_solver_manifest('structural-mechanics', '8.0.0')['descriptor']
     formulation = descriptor['parameters']['solidFormulation']
     assert formulation['required'] is False
     assert formulation['data']['values'] == ['displacement', 'mixed-mini']
@@ -96,7 +96,7 @@ def test_only_explicit_symmetric_quantities_allow_six_tensor_components():
     with open_catalog() as catalog:
         assert catalog.quantity_kind("mechanics.StressTensor")["tensorSymmetry"] == "symmetric"
         assert catalog.quantity_kind("mechanics.Strain")["tensorSymmetry"] == "symmetric"
-        descriptor = catalog.get_solver_manifest("structural-mechanics", "7.2.0")["descriptor"]
+        descriptor = catalog.get_solver_manifest("structural-mechanics", "8.0.0")["descriptor"]
         stress = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.stress-field")
         descriptor["methods"]["outputs"] = [stress]
         for quantity, unit in (("mechanics.FirstPiolaStress", "Pa"), ("mechanics.DeformationGradient", "1")):

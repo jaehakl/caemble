@@ -12,6 +12,34 @@ from app.methods.mesh import VolumeMeshingProfile
 from app.methods.mesh.tetrahedral import refine_surface_mesh, triangulate_planar_domains
 
 
+def test_material_boundary_owners_preserve_original_order_and_oriented_sides():
+    from app.methods.mesh.boundary import material_boundary_owners
+
+    cells = np.array([[0, 1, 3, 7], [0, 3, 2, 7], [0, 2, 6, 7],
+                      [0, 6, 4, 7], [0, 4, 5, 7], [0, 5, 1, 7]])[[4, 1, 5, 0, 3, 2]]
+    regions = np.array([2, 2, 0, 0, 1, 1])
+    occurrences = {}
+    for index, (a, b, c, d) in enumerate(cells):
+        for side, face in enumerate(((a, c, b), (a, b, d), (a, d, c), (b, c, d))):
+            occurrences.setdefault(tuple(sorted(face)), []).append(index * 4 + side)
+    expected = []
+    for owners in occurrences.values():
+        if len(owners) == 2 and regions[owners[0] // 4] == regions[owners[1] // 4]:
+            continue
+        owners.sort(key=lambda owner: regions[owner // 4])
+        expected.append(owners if len(owners) == 2 else [owners[0], -1])
+    np.testing.assert_array_equal(material_boundary_owners(cells, regions), expected)
+
+
+@pytest.mark.parametrize("regions", [[0, 0, 0], [0, 1, 2]])
+def test_material_boundary_rejects_three_tetrahedra_at_one_face(regions):
+    from app.methods.mesh.boundary import material_boundary_owners
+
+    cells = np.array([[0, 1, 2, 3], [0, 2, 1, 4], [0, 1, 2, 5]])
+    with pytest.raises(ValueError, match="nonmanifold"):
+        material_boundary_owners(cells, np.asarray(regions))
+
+
 def _box_node(node_id: str, size: float = 1.0) -> dict[str, object]:
     return {
         "kind": "primitive",

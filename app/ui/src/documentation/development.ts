@@ -75,10 +75,10 @@ export const developmentDocuments: readonly DocumentPage[] = [
   },
   {
     id: 'development.electrothermal',
-    title: '정상 다재료 전기열 해석',
-    summary: '공통 tet4 assembly, 전력 보존 전달과 microheater 검증',
+    title: '다재료 전기열과 준정적 열변형',
+    summary: '공통 tet4 assembly, 온도 피드백·계면 열저항·펄스와 열변형 검증',
     sourcePath: 'docs/development/electrothermal.md',
-    keywords: ['DC', 'Heat', 'FEM', 'microheater', '전기열', 'Joule'],
+    keywords: ['DC', 'Heat', 'FEM', 'microheater', '전기열', 'Joule', '열변형', '펄스', '계면'],
     content: documentBody(electrothermalPage),
   },
   {

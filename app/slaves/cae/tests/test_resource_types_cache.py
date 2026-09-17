@@ -39,6 +39,19 @@ def _publish_file_cache(root: str, key: ContentKey, value: str) -> str:
     return FileResourceCache(root).publish(key, value)
 
 
+@pytest.mark.parametrize("dtype", ["f8", ">f8", "i8", "c16", "U3", "S4"])
+@pytest.mark.parametrize("shape", ["scalar", "empty", "strided"])
+def test_array_identity_preserves_existing_c_order_byte_encoding(dtype, shape):
+    import hashlib
+    from app.kernel.api.cache import _content_digest
+
+    values = np.arange(12).astype(dtype).reshape(3, 4)
+    values = values[0, 0:1].reshape(()) if shape == "scalar" else values[:0] if shape == "empty" else values[:, ::2]
+    expected = (b"array:" + values.dtype.str.encode("ascii") + repr(values.shape).encode("ascii")
+                + hashlib.sha256(np.ascontiguousarray(values).tobytes(order="C")).digest())
+    assert _content_digest(values, set()) == expected
+
+
 def test_structured_grid_and_field_are_immutable_linked_resources() -> None:
     resources = ResourceStore()
     grid = StructuredGridValue(
