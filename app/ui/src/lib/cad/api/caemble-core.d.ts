@@ -9,8 +9,11 @@ export const Box: (props: BoxAttributes) => unknown
 export const Cylinder: (props: CylinderAttributes) => unknown
 export const CurvedEdgeCylinder: (props: CurvedEdgeCylinderAttributes) => unknown
 export const Sphere: (props: SphereAttributes) => unknown
-export const CurvedSurfaceSphere: (props: CurvedSurfaceSphereAttributes) => unknown
 export const Fiber: (props: FiberAttributes) => unknown
+export const AsphericCylinder: (props: AsphericCylinderAttributes) => unknown
+export const Ellipsoid: (props: EllipsoidAttributes) => unknown
+export const Hyperboloid: (props: HyperboloidAttributes) => unknown
+export const Paraboloid: (props: ParaboloidAttributes) => unknown
 // </generated:primitive-authoring-bindings>
 export function radians(degrees: number): number
 export function radians(degrees: Vec3): Vec3
@@ -184,41 +187,57 @@ export type CurvedEdgeCylinderAttributes = Readonly<{
 }> &
   IntrinsicGeometryAttributes
 
-export type CurvedSurfaceSphereFourierMode = Readonly<{
-  amplitude: number
-  phase: number
-}>
-export type CurvedSurfaceSphereAttributes = Readonly<{
-  azimuthalCurve?: readonly CurvedSurfaceSphereFourierMode[]
-  polarCurve?: readonly CurvedSurfaceSphereFourierMode[]
-  azimuthalSegments?: number
-  polarSegments?: number
-}> &
-  IntrinsicGeometryAttributes
-
 export type SphereAttributes = Readonly<{
   radius?: number
   segments?: number
 }> &
   IntrinsicGeometryAttributes
 
-export type FiberFourierMode = Readonly<{ amplitude: number; phase: number }>
-export type FiberHelix = Readonly<{
-  turns: number
-  phase?: number
-  radius: number | ((u: number, theta: number) => number)
+export type Tessellation = Readonly<{ radialSegments?: number; pathSegments?: number; meridianSegments?: number }>
+export type Asphere = Readonly<{
+  curvature: number
+  conic: number
+  coefficients: readonly Readonly<{ order: number; value: number }>[]
 }>
+export type AsphericCylinderAttributes = Readonly<{
+  radius: number
+  centerThickness: number
+  top?: Asphere
+  bottom?: Asphere
+  tessellation?: Tessellation
+}> &
+  IntrinsicGeometryAttributes
+export type EllipsoidAttributes = Readonly<{
+  focalDistance: number
+  axialRadius: number
+  tessellation?: Tessellation
+}> &
+  IntrinsicGeometryAttributes
+export type HyperboloidAttributes = Readonly<{
+  focalDistance: number
+  axialRadius: number
+  radius: number
+  tessellation?: Tessellation
+}> &
+  IntrinsicGeometryAttributes
+export type ParaboloidAttributes = Readonly<{
+  focalLength: number
+  radius: number
+  tessellation?: Tessellation
+}> &
+  IntrinsicGeometryAttributes
+export type FiberSegment = Readonly<
+  { kind: 'line'; length: number } | { kind: 'arc'; radius: number; angle: number; normal: Vec3 }
+>
+export type FiberPath = Readonly<{ start: Vec3; direction: Vec3; segments: readonly FiberSegment[] }>
+export type RadiusKnot = Readonly<{ s: number; radius: number }>
 export type FiberAttributes = Readonly<{
   from?: Vec3
   to?: Vec3
-  basePath?: (t: number) => Vec3
-  radius?: number | ((s: number) => number)
-  helix?: FiberHelix
-  fourier?: readonly FiberFourierMode[]
-  envelopePower?: number
-  up?: Vec3
-  pathSegments?: number
-  radialSegments?: number
+  path?: FiberPath
+  radius?: number
+  radiusProfile?: readonly RadiusKnot[]
+  tessellation?: Tessellation
 }> &
   IntrinsicGeometryAttributes
 
@@ -251,12 +270,6 @@ export type ScaleAttributes = Readonly<{
   children?: unknown
 }> &
   GeometryIdentityAttributes
-
-export type ShellAttributes = Readonly<{
-  offsets: Readonly<Record<string, number>>
-  children?: unknown
-}> &
-  IntrinsicGeometryAttributes
 
 export type GeometryAttributes<P extends object = object> = Readonly<
   P & {

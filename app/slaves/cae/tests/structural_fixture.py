@@ -301,6 +301,7 @@ def solid_invocation(resolution=.3, second=False):
         for index, face in enumerate(("left", "right", "front", "back", "bottom", "top")):
             surfaces.append({"name": name + "-" + face, "selectors": [{"rootId": name, "sourceNodeId": name + "-box", "surfaceIndex": index}]})
     scene = {"lengthUnit": "m", "roots": roots, "geometryGroups": [{"name": "all", "rootIds": [r["id"] for r in roots]}, *[{"name": r["id"], "rootIds": [r["id"]]} for r in roots]], "surfaceGroups": surfaces}
+    scene["version"] = 2
     scene["geometryHash"] = hashlib.sha256(json.dumps(scene, sort_keys=True).encode()).hexdigest()
     world = {"experiment": scene, "materialSelections": {"bodyDomain": {"Steel": {"constitutive": "solid"}}},
              "materials": {"experiment": {"Steel": {"models": {"solid": {"model": "mechanics.isotropic-elastic@1", "parameters": {"E": 210e9, "nu": .3, "density": 7850.}}}}}}}

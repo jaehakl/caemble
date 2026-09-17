@@ -31,7 +31,7 @@ def test_published_outputs_are_seven_axis_tensors_with_separate_native_exports_a
         assert set(surface["data"]["members"]) == {"frequencies", "velocity"}
         assert surface["target"]["kind"] == "surface"
         assert surface["data"]["members"]["velocity"]["quantityKind"] == "kinematics.Velocity"
-        ray = catalog.get_solver_manifest("ray-tracing", "2.0.0")["descriptor"]
+        ray = catalog.get_solver_manifest("ray-tracing", "3.0.0")["descriptor"]
         assert set(ray["visualizations"]) == {"paths"}
         assert {item["methodId"] for item in ray["methods"]["outputs"]} == {"ray.fluence-rate", "ray.radiant-flux-density"}
         assert "ray.absorbing-detector" in {item["methodId"] for item in ray["methods"]["boundaryConditions"]}

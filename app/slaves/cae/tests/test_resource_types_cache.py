@@ -416,7 +416,7 @@ def test_file_cache_paths_clear_evict_and_pickle_are_safe(tmp_path: Path) -> Non
 
 def test_geometry_mesh_cache_hit_is_numerically_identical_to_miss(tmp_path: Path) -> None:
     scene = {
-        "geometryHash": "cache-box-v1",
+        "version": 2, "geometryHash": "cache-box-v1",
         "lengthUnit": "m",
         "roots": [
             {

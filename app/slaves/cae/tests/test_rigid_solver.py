@@ -25,10 +25,10 @@ from tests.geometry_fixtures import boolean, box, box_inertia, transformed
 
 def invocation(node=None, *, dt=.01, window=.03, duration=.09, output=.017, outputs=False):
     node = box("shape", [1., 2., 3.]) if node is None else node
-    scene = {"geometryHash": repr(node), "lengthUnit": "m",
+    scene = {"version": 2, "geometryHash": repr(node), "lengthUnit": "m",
              "roots": [{"id": "body", "node": node, "material": {"name": "solid"}}],
              "geometryGroups": [{"name": "bodies", "rootIds": ["body"]}], "surfaceGroups": []}
-    world = {"experiment": scene, "task": {"geometryHash": "empty", "lengthUnit": "m", "roots": [],
+    world = {"experiment": scene, "task": {"version": 2, "geometryHash": "empty", "lengthUnit": "m", "roots": [],
                                           "geometryGroups": [], "surfaceGroups": []},
              "materialSelections": {"body": {"solid": {"density": "rho"}}},
              "materials": {"experiment": {"solid": {"models": {"rho": {

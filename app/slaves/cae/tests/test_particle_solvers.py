@@ -41,9 +41,9 @@ def invocation(prefix, *, window=0.002, duration=0.004, output=0.003):
         if material:
             root["material"] = {"name": material}
         roots.append(root)
-    scene = {"geometryHash": repr(roots), "lengthUnit": "m", "roots": roots,
+    scene = {"version": 2, "geometryHash": repr(roots), "lengthUnit": "m", "roots": roots,
              "geometryGroups": [{"name": root["id"], "rootIds": [root["id"]]} for root in roots], "surfaceGroups": []}
-    empty = {"geometryHash": "empty", "lengthUnit": "m", "roots": [], "geometryGroups": [], "surfaceGroups": []}
+    empty = {"version": 2, "geometryHash": "empty", "lengthUnit": "m", "roots": [], "geometryGroups": [], "surfaceGroups": []}
     world = {"experiment": scene, "task": empty,
              "materials": {"experiment": {role: {"models": {"physical": {"model": model, "parameters": coefficients}}}, "wall": {"models": {}}}, "task": {}},
              "materialSelections": {"body": {role: {"fluid" if prefix == "sph" else "constitutive": "physical"}}}}

@@ -1,8 +1,10 @@
+import type { FiberDefinition } from '../geometry/fiber'
+import type { Tessellation } from '../geometry/continuous'
 import type { UcumUnit } from '../model/units'
 import type { GeometryEvaluationProfile } from './precision'
 
-export type CanonicalVec3V1 = readonly [number, number, number]
-export type CanonicalAffineMatrixV1 = readonly [
+export type CanonicalVec3V2 = readonly [number, number, number]
+export type CanonicalAffineMatrixV2 = readonly [
   number,
   number,
   number,
@@ -21,78 +23,61 @@ export type CanonicalAffineMatrixV1 = readonly [
   number,
 ]
 
-export type CanonicalPrimitiveNameV1 = 'box' | 'cylinder' | 'sphere' | 'curvedEdgeCylinder' | 'curvedSurfaceSphere'
+export type CanonicalPrimitiveNameV2 =
+  'box' | 'cylinder' | 'sphere' | 'curvedEdgeCylinder' | 'asphericCylinder' | 'ellipsoid' | 'hyperboloid' | 'paraboloid'
 
-export type CanonicalPrimitiveNodeV1 = Readonly<{
+export type CanonicalPrimitiveNodeV2 = Readonly<{
   kind: 'primitive'
   nodeId: string
-  primitive: CanonicalPrimitiveNameV1
+  primitive: CanonicalPrimitiveNameV2
   parameters: Readonly<Record<string, unknown>>
+  tessellation?: Readonly<Record<string, number>>
 }>
 
-export type CanonicalFiberNodeV1 = Readonly<{
-  kind: 'fiber'
-  nodeId: string
-  points: readonly CanonicalVec3V1[]
-  radii: readonly number[]
-  frames: readonly Readonly<{
-    tangent: CanonicalVec3V1
-    normal: CanonicalVec3V1
-    binormal: CanonicalVec3V1
-  }>[]
-  radialSegments: number
-}>
+export type CanonicalFiberNodeV2 = FiberDefinition &
+  Readonly<{ kind: 'fiber'; nodeId: string; tessellation?: Tessellation }>
 
-export type CanonicalTransformNodeV1 = Readonly<{
+export type CanonicalTransformNodeV2 = Readonly<{
   kind: 'transform'
   nodeId: string
-  matrix: CanonicalAffineMatrixV1
-  child: CanonicalGeometryNodeV1
+  matrix: CanonicalAffineMatrixV2
+  child: CanonicalGeometryNodeV2
 }>
 
-export type CanonicalBooleanNodeV1 = Readonly<{
+export type CanonicalBooleanNodeV2 = Readonly<{
   kind: 'boolean'
   nodeId: string
   operation: 'union' | 'subtract' | 'intersect'
-  children: readonly CanonicalGeometryNodeV1[]
+  children: readonly CanonicalGeometryNodeV2[]
 }>
 
-export type CanonicalShellNodeV1 = Readonly<{
-  kind: 'shell'
-  nodeId: string
-  innerOffset: number
-  outerOffset: number
-  child: CanonicalGeometryNodeV1
-}>
-
-export type CanonicalInstanceNodeV1 = Readonly<{
+export type CanonicalInstanceNodeV2 = Readonly<{
   kind: 'instance'
   nodeId: string
   instanceId: string
-  matrix: CanonicalAffineMatrixV1
-  child: CanonicalGeometryNodeV1
+  matrix: CanonicalAffineMatrixV2
+  child: CanonicalGeometryNodeV2
 }>
 
-export type CanonicalGeometryNodeV1 =
-  | CanonicalPrimitiveNodeV1
-  | CanonicalFiberNodeV1
-  | CanonicalTransformNodeV1
-  | CanonicalBooleanNodeV1
-  | CanonicalShellNodeV1
-  | CanonicalInstanceNodeV1
+export type CanonicalGeometryNodeV2 =
+  | CanonicalPrimitiveNodeV2
+  | CanonicalFiberNodeV2
+  | CanonicalTransformNodeV2
+  | CanonicalBooleanNodeV2
+  | CanonicalInstanceNodeV2
 
-export type CanonicalGeometryMaterialV1 = Readonly<{
+export type CanonicalGeometryMaterialV2 = Readonly<{
   name: string
 }>
 
-export type CanonicalGeometryRootV1 = Readonly<{
+export type CanonicalGeometryRootV2 = Readonly<{
   id: string
   materialRole: string
-  material?: CanonicalGeometryMaterialV1
-  node: CanonicalGeometryNodeV1
+  material?: CanonicalGeometryMaterialV2
+  node: CanonicalGeometryNodeV2
 }>
 
-export type CanonicalGeometryGroupV1 = Readonly<{
+export type CanonicalGeometryGroupV2 = Readonly<{
   id: string
   name: string
   kind: 'geometry'
@@ -101,28 +86,30 @@ export type CanonicalGeometryGroupV1 = Readonly<{
   missingMemberIds: readonly string[]
 }>
 
-export type CanonicalSurfaceSelectorV1 = Readonly<{
+export type CanonicalSurfaceSelectorV2 = Readonly<{
   rootId: string
   sourceNodeId: string
   surfaceIndex: number
 }>
 
-export type CanonicalSurfaceGroupV1 = Readonly<{
+export type CanonicalSurfaceGroupV2 = Readonly<{
   id: string
   name: string
   kind: 'surface'
   memberIds: readonly string[]
-  selectors: readonly CanonicalSurfaceSelectorV1[]
+  selectors: readonly CanonicalSurfaceSelectorV2[]
   missingMemberIds: readonly string[]
 }>
 
-export type CanonicalGeometrySceneV1 = Readonly<{
+export type CanonicalGeometrySceneV2 = Readonly<{
+  version: 2
   geometryHash: string
+  meshHash: string
   evaluationProfile?: GeometryEvaluationProfile
   lengthUnit: UcumUnit
-  roots: readonly CanonicalGeometryRootV1[]
-  geometryGroups: readonly CanonicalGeometryGroupV1[]
-  surfaceGroups: readonly CanonicalSurfaceGroupV1[]
+  roots: readonly CanonicalGeometryRootV2[]
+  geometryGroups: readonly CanonicalGeometryGroupV2[]
+  surfaceGroups: readonly CanonicalSurfaceGroupV2[]
 }>
 
-export type CanonicalGeometrySceneDraftV1 = Omit<CanonicalGeometrySceneV1, 'geometryHash'>
+export type CanonicalGeometrySceneDraftV2 = Omit<CanonicalGeometrySceneV2, 'geometryHash' | 'meshHash'>

@@ -18,11 +18,11 @@ class MaterialModelTests(unittest.TestCase):
     def test_runtime_slice_expands_model_and_nested_quantity_dependencies(self):
         with open_catalog() as catalog:
             result = catalog.runtime_slice(
-                solvers=[("ray-tracing", "2.0.0")], quantity_kinds=[],
+                solvers=[("ray-tracing", "3.0.0")], quantity_kinds=[],
                 material_models=["heat.fourier-conduction@1"],
             )
             names = {model["key"] for model in result["materialModels"]}
-            self.assertEqual(len(names), 7)
+            self.assertEqual(len(names), 8)
             self.assertIn("optics.frequency-sampled-complex-index@1", names)
             self.assertIn("heat.fourier-conduction@1", names)
             self.assertIn("Frequency", {quantity["name"] for quantity in result["quantityKinds"]})
@@ -57,12 +57,12 @@ class MaterialModelTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     return main(["--database", str(draft), *args])
             self.assertEqual(run("draft", "create", "--source", str(catalog_path())), 0)
-            identity = ("ray-tracing", "2.0.0", "opticalDomain", "opticalResponse")
+            identity = ("ray-tracing", "3.0.0", "opticalDomain", "opticalResponse")
             self.assertEqual(run("solver", "material-model-option", "remove", *identity, "optics.frequency-sampled-complex-index@1"), 0)
             self.assertEqual(run("solver", "material-model-option", "upsert", *identity, "missing.model@1"), 1)
             self.assertEqual(run("solver", "material-model-option", "remove", *identity, "optics.constant-complex-index@1"), 1)
             with open_catalog(draft) as catalog:
-                group = catalog.get_solver_manifest("ray-tracing", "2.0.0")["descriptor"]["materials"][0]["modelGroups"][0]
+                group = catalog.get_solver_manifest("ray-tracing", "3.0.0")["descriptor"]["materials"][0]["modelGroups"][0]
                 self.assertEqual(group["oneOf"], ["optics.constant-complex-index@1"])
             self.assertEqual(run("solver", "material-model-option", "upsert", *identity, "optics.frequency-sampled-complex-index@1"), 0)
             self.assertEqual(run("query", "material-model", "optics.constant-complex-index@1"), 0)

@@ -25,12 +25,12 @@ async def test_catalog_spectrometer_separates_three_lines_and_converges(catalog_
     while nodes:
         node = nodes.pop()
         if node['kind'] == 'primitive' and node['primitive'] == 'sphere':
-            node['parameters']['segments'] *= 2
+            node['tessellation']['segments'] *= 2
         if 'child' in node:
             nodes.append(node['child'])
         nodes.extend(node.get('children', []))
-    # A new geometry identity avoids a cache hit at the coarser resolution.
-    refined_world['experiment']['geometryHash'] += '-refined'
+    # A new mesh identity avoids a cache hit at the coarser resolution.
+    refined_world['experiment']['meshHash'] += '-refined'
     centers_by_resolution = []
     powers = []
     for input_world in [world, refined_world]:

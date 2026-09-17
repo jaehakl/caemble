@@ -42,9 +42,6 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
         np.testing.assert_array_equal(experiment["variables"][layer + "DiameterNm"], np.full((size, size), diameter_nm))
         assert experiment["varsSchema"][layer + "DiameterNm"]["shape"] == [size, size]
         assert experiment["varsSchema"][layer + "PositionOffsetNm"]["shape"] == [size, size, 3]
-        for axis in ("Azimuthal", "Polar"):
-            for field in ("Amplitude", "Phase"):
-                assert experiment["varsSchema"][layer + axis + field]["shape"] == [size, size, 2]
     roots = experiment["scene"]["roots"]
     assert len(roots) == 13
     centers = []
@@ -56,9 +53,9 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
             node = node["child"]
         centers.append(transform[:3,3])
         primitive = node
-        assert primitive["primitive"] == "curvedSurfaceSphere"
+        assert primitive["primitive"] == "sphere"
         parameters = primitive["parameters"]
-        radius = parameters["azimuthalCurve"][0]["amplitude"] * sum(mode["amplitude"] for mode in parameters["polarCurve"])
+        radius = parameters["radius"]
         assert radius * 2000 == pytest.approx(diameter_nm)
     centers = np.array(centers)
     z, counts = np.unique(centers[:,2], return_counts=True)
@@ -78,23 +75,13 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
     for layer, n in (("lower", 3), ("upper", 2)):
         variables[layer + "DiameterNm"] = np.full((n, n), 150.).tolist()
         variables[layer + "PositionOffsetNm"] = np.zeros((n, n, 3)).tolist()
-        for axis in ("Azimuthal", "Polar"):
-            for field in ("Amplitude", "Phase"):
-                variables[layer + axis + field] = np.zeros((n, n, 2)).tolist()
     if scenario == "max_offsets":
         for layer, n in (("lower", 3), ("upper", 2)):
             variables[layer+"DiameterNm"] = np.full((n, n), 200.).tolist()
             variables[layer+"PositionOffsetNm"] = np.full((n, n, 3), 50.).tolist()
-            for axis in ("Azimuthal", "Polar"):
-                variables[layer+axis+"Amplitude"] = np.full((n, n, 2), .04).tolist()
-                variables[layer+axis+"Phase"] = np.full((n, n, 2), 1.).tolist()
     elif scenario == "single":
         variables["upperDiameterNm"][1][1] = 180
         variables["upperPositionOffsetNm"][1][1] = [50, -50, 50]
-        variables["upperAzimuthalAmplitude"][1][1] = [.04, -.04]
-        variables["upperPolarAmplitude"][1][1] = [-.04, .04]
-        variables["upperAzimuthalPhase"][1][1] = [1.2, -.8]
-        variables["upperPolarPhase"][1][1] = [-1.8, .3]
     elif scenario == "varied":
         for layer, n in (("lower", 3), ("upper", 2)):
             for x in range(n):
@@ -102,8 +89,6 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
                     i = x*n+y
                     variables[layer+"DiameterNm"][x][y] = 100+2*i
                     variables[layer+"PositionOffsetNm"][x][y] = [5*np.sin(i), 7*np.cos(i), 6*np.sin(i+.3)]
-                    variables[layer+"AzimuthalAmplitude"][x][y] = [.04*np.sin(i), .03*np.cos(i)]
-                    variables[layer+"PolarAmplitude"][x][y] = [.03*np.cos(i), -.02*np.sin(i)]
     elif scenario == "interlayer":
         variables["lowerDiameterNm"][0][0] = variables["upperDiameterNm"][0][0] = 200
         variables["lowerPositionOffsetNm"][0][0] = [50, 50, 50]
@@ -140,23 +125,8 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
                 assert np.all(np.abs(mesh.vertices) < np.array([.46, .46, .30]) - .01)
                 radius = np.linalg.norm(mesh.vertices-center, axis=1).max()
                 parameters = node["parameters"]
-                maxima = []
-                # The example normalizes its original 32 x 24 authoring samples.
-                # Analysis evaluates that same Fourier function more densely: a
-                # newly resolved maximum must not be clipped or interpolated from
-                # the preview merely to preserve its sampled bounding radius.
-                for azimuthal_segments, polar_segments in (
-                    (32, 24),
-                    (parameters["azimuthalSegments"], parameters["polarSegments"]),
-                ):
-                    theta = 2 * np.pi * np.arange(azimuthal_segments) / azimuthal_segments
-                    phi = np.pi * np.arange(1, polar_segments) / polar_segments
-                    azimuthal = sum(mode["amplitude"] * np.cos(i * theta + mode["phase"]) for i, mode in enumerate(parameters["azimuthalCurve"]))
-                    polar = sum(mode["amplitude"] * np.cos(i * phi + mode["phase"]) for i, mode in enumerate(parameters["polarCurve"]))
-                    poles = sum(mode["amplitude"] * np.cos(i * np.array([0., np.pi]) + mode["phase"]) for i, mode in enumerate(parameters["polarCurve"]))
-                    maxima.append(max(float(np.max(azimuthal[:, None] * polar)), float(np.max(azimuthal[0] * poles))))
-                assert maxima[0] * 2000 == pytest.approx(variables[layer+"DiameterNm"][x][y], rel=2e-6)
-                assert radius == pytest.approx(maxima[1], rel=2e-6)
+                assert parameters["radius"] * 2000 == pytest.approx(variables[layer+"DiameterNm"][x][y])
+                assert radius == pytest.approx(parameters["radius"], rel=2e-6)
                 edges = np.sort(np.concatenate([mesh.triangles[:,[0,1]], mesh.triangles[:,[1,2]], mesh.triangles[:,[2,0]]]),axis=1)
                 assert np.all(np.unique(edges,axis=0,return_counts=True)[1] == 2)
                 index += 1

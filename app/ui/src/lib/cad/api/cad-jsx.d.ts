@@ -4,7 +4,6 @@ import type {
   BooleanAttributes,
   RotateAttributes,
   ScaleAttributes,
-  ShellAttributes,
   TranslateAttributes,
   Geometry,
   GeometryInvocationAttributes,
@@ -25,7 +24,6 @@ declare global {
       translate: TranslateAttributes
       rotate: RotateAttributes
       scale: ScaleAttributes
-      shell: ShellAttributes
       array: ArrayAttributes
       union: BooleanAttributes
       subtract: BooleanAttributes

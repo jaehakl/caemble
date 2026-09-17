@@ -1,0 +1,8 @@
+[
+  {"kind":"ellipsoid","parameters":{"focalDistance":3,"axialRadius":5},"surfaces":[0]},
+  {"kind":"ellipsoid","parameters":{"focalDistance":0,"axialRadius":3},"surfaces":[0]},
+  {"kind":"hyperboloid","parameters":{"focalDistance":5,"axialRadius":3,"radius":4},"surfaces":[1,2]},
+  {"kind":"paraboloid","parameters":{"focalLength":2,"radius":4},"surfaces":[1,2]},
+  {"kind":"asphericCylinder","parameters":{"radius":3,"centerThickness":2,"top":{"curvature":0.05,"conic":-1,"coefficients":[{"order":4,"value":0.001}]},"bottom":{"curvature":0,"conic":0,"coefficients":[]}},"surfaces":[0,1,2]},
+  {"kind":"asphericCylinder","parameters":{"radius":3,"centerThickness":2,"top":{"curvature":0,"conic":0,"coefficients":[]},"bottom":{"curvature":0,"conic":0,"coefficients":[]}},"surfaces":[0,1,2]}
+]

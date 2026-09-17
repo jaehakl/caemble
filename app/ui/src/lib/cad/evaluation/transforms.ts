@@ -1,9 +1,9 @@
 import { maths, transforms } from '@jscad/modeling'
 import type { Vec3 } from '../model/types'
 import type { EvaluatedPart, NormalizedTransforms } from './types'
-import type { CanonicalAffineMatrixV1 } from './canonicalTypes'
+import type { CanonicalAffineMatrixV2 } from './canonicalTypes'
 
-const { scale, transform, translate } = transforms
+const { transform, translate } = transforms
 const cadCreateMatrix = maths.mat4.create as () => unknown
 const cadFromValues = maths.mat4.fromValues as (...values: number[]) => unknown
 const cadFromRotation = maths.mat4.fromRotation as (
@@ -11,7 +11,6 @@ const cadFromRotation = maths.mat4.fromRotation as (
   angle: number,
   axis: [number, number, number],
 ) => unknown
-const cadScale = scale as (factors: [number, number, number], geometry: unknown) => unknown
 const cadTransform = transform as (matrix: unknown, geometry: unknown) => unknown
 const cadTranslate = translate as (offset: [number, number, number], geometry: unknown) => unknown
 
@@ -69,7 +68,7 @@ function xyzEulerMatrix([x, y, z]: Vec3) {
   )
 }
 
-export function normalizedTransformMatrix(values: NormalizedTransforms): CanonicalAffineMatrixV1 {
+export function normalizedTransformMatrix(values: NormalizedTransforms): CanonicalAffineMatrixV2 {
   let rotation = [1, 0, 0, 0, 1, 0, 0, 0, 1]
   if (values.rotation) {
     const [x, y, z] = values.rotation
@@ -125,7 +124,7 @@ export function normalizedTransformMatrix(values: NormalizedTransforms): Canonic
     0,
     0,
     1,
-  ]) as CanonicalAffineMatrixV1
+  ]) as CanonicalAffineMatrixV2
 }
 
 export function applyTransforms(
@@ -135,6 +134,8 @@ export function applyTransforms(
   instanceId?: string,
 ) {
   const shouldScale = values.scale.some((factor) => factor !== 1)
+  if (values.scale.some((factor) => !Number.isFinite(factor) || factor === 0))
+    throw new Error('Scale factors must be finite and nonzero.')
   const legacyRotationMatrix =
     values.rotate && values.rotate.angle !== 0
       ? cadFromRotation(cadCreateMatrix(), values.rotate.angle, [...values.rotate.axis])
@@ -149,7 +150,11 @@ export function applyTransforms(
 
   return parts.map((part, index) => {
     let geometry = part.geometry
-    if (shouldScale) geometry = cadScale([...values.scale], geometry)
+    if (shouldScale)
+      geometry = cadTransform(
+        cadFromValues(values.scale[0], 0, 0, 0, 0, values.scale[1], 0, 0, 0, 0, values.scale[2], 0, 0, 0, 0, 1),
+        geometry,
+      )
     if (shouldRotate) geometry = cadTransform(xyzEulerMatrix(values.rotation!), geometry)
     if (legacyRotationMatrix !== undefined) geometry = cadTransform(legacyRotationMatrix, geometry)
     if (shouldTranslate) geometry = cadTranslate([...values.position], geometry)

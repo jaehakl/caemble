@@ -1,6 +1,5 @@
 from app.methods.geometry.models import (
     MassProperties,
-    ShellLayerGeometry,
     SolidComponent,
     TriangleMeshingProfile,
     TriangleProvenance,
@@ -13,7 +12,6 @@ from app.methods.geometry.solids import mass_properties, solid_component_identit
 __all__ = [
     "GeometryService",
     "MassProperties",
-    "ShellLayerGeometry",
     "SolidComponent",
     "TriangleMeshingProfile",
     "TriangleProvenance",

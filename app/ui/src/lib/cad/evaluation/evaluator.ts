@@ -6,7 +6,7 @@ import { applyTransforms, normalizeTransforms } from './transforms'
 import { applyCadSceneGroups, type CadSceneGroupOptions } from './groups'
 import { canonicalPrimitiveNode } from './canonicalPrimitive'
 import { canonicalSurfaceMemberEntries, registerCanonicalGeometryScene } from './canonical'
-import type { CanonicalGeometryNodeV1, CanonicalGeometryRootV1 } from './canonicalTypes'
+import type { CanonicalGeometryRootV2 } from './canonicalTypes'
 import type {
   CadScene,
   CadSceneMaterial,
@@ -244,7 +244,8 @@ function evaluateNode(
     )
   }
 
-  const definition = getCadElementDefinition(type)!
+  const definition = getCadElementDefinition(type)
+  if (!definition) throw new Error(`Unsupported Geometry element: ${type}. Removed inputs must be migrated.`)
   const resolvedProps = definition.kind === 'primitive' ? primitiveProps(definition.defaultProps, props) : props
   const primitiveIdentity =
     definition.kind === 'primitive' && props.id === undefined
@@ -262,11 +263,12 @@ function evaluateNode(
   if (definition.kind === 'primitive') {
     const binding = materialBinding(inheritedMaterials, 'body')
 
+    const canonicalNode = canonicalPrimitiveNode(definition.tag, globalId!, resolvedProps, state.profile)
     const geometry = definition.createGeometry(resolvedProps)
     parts = [
       {
         geometry,
-        canonicalNode: canonicalPrimitiveNode(definition.tag, globalId!, resolvedProps, geometry, state.profile),
+        canonicalNode,
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
         surfaces: definition.createSurfaces(geometry, resolvedProps),
@@ -360,13 +362,7 @@ export function evaluateCadScene(
   })
 
   const sceneMaterials = new Map<Material, CadSceneMaterial>()
-  const canonicalRoots: CanonicalGeometryRootV1[] = []
-  const identifyRootShell = (node: CanonicalGeometryNodeV1, rootId: string): CanonicalGeometryNodeV1 => {
-    if (node.kind === 'transform' || node.kind === 'instance') {
-      return { ...node, child: identifyRootShell(node.child, rootId) }
-    }
-    return node.kind === 'shell' ? { ...node, nodeId: rootId } : node
-  }
+  const canonicalRoots: CanonicalGeometryRootV2[] = []
   const parts: CadScenePart[] = evaluatedParts.map((part, partIndex) => {
     const owner = state.nodes.get(part.ownerNodeKey!)!
     const resultNode = state.nodes.get(part.resultNodeKey!)!
@@ -423,7 +419,7 @@ export function evaluateCadScene(
               name: part.material.name,
                     },
           }),
-      node: identifyRootShell(part.canonicalNode, id),
+      node: part.canonicalNode,
     })
 
     return {

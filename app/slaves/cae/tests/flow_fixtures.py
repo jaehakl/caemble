@@ -57,7 +57,7 @@ def fluid_invocation(*, boolean=None, length_unit="m"):
     elif boolean == "disconnected":
         node = {"kind": "boolean", "nodeId": "cut", "operation": "subtract", "children": [outer,
             {"kind": "primitive", "nodeId": "gap", "primitive": "box", "parameters": {"size": [.2, 1.2, 1.2]}}]}
-    scene = {"geometryHash": str(ContentKey.from_parts("flow-domain-test", node, length_unit)), "lengthUnit": length_unit,
+    scene = {"version": 2, "geometryHash": str(ContentKey.from_parts("flow-domain-test", node, length_unit)), "lengthUnit": length_unit,
         "roots": [{"id": "fluid", "node": node, "material": {"name": "fluid"}}],
         "geometryGroups": [{"name": "fluid", "rootIds": ["fluid"]}],
         "surfaceGroups": [{"name": "ends", "selectors": [

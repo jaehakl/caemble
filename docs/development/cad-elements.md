@@ -11,7 +11,7 @@ Commands and component-relative paths in this document are relative to `app/ui/s
 
 1. 역할에 맞는 `primitives/_template` 또는 `operations/_template`을 복사해 `elements/<group>/<tag>/definition.ts`와 `runtime.ts`를 만듭니다.
 2. primitive는 `category: 'primitive'`, `kind: 'primitive'`, `createGeometry(props)`, `createSurfaces(geometry, props)`를 사용합니다. `createSurfaces`는 의미 기반 surface 목록을 반환합니다.
-3. geometry operation은 `category: 'operation'`, `kind: 'operation'`, `evaluate(node, context)`와 `surfacePolicy`를 사용합니다. transform이나 복제처럼 topology를 유지하면 `preserve`, shell이나 boolean처럼 topology를 다시 만들면 `derive`를 지정합니다.
+3. geometry operation은 `category: 'operation'`, `kind: 'operation'`, `evaluate(node, context)`와 `surfacePolicy`를 사용합니다. transform이나 복제처럼 topology를 유지하면 `preserve`, boolean처럼 topology를 다시 만들면 `derive`를 지정합니다.
 4. `elements/manifest.json`에 `authoringName`, `standardTransforms`와 definition/runtime export를 등록합니다.
 5. `api/caemble-core.d.ts`에 공개 attribute 타입을 추가합니다.
 6. `npm run generate:cad-api`를 실행해 registry, JSX 선언과 AI authoring reference를 갱신합니다.

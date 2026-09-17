@@ -7,6 +7,7 @@ import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
 import { assertExperimentAuthoringSemantics } from '../src/lib/cad/simulation/authoringSemantics'
 import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
+import { extractCatalogSourceReferences } from '../src/lib/catalog/references'
 import { resolveSceneMaterials } from '../src/lib/material/document'
 import { buildMeasurement } from '../src/lib/cad/execution/measurement'
 import type { Tensor } from '../src/lib/cad/model/types'
@@ -50,6 +51,21 @@ const report = {
 if (options.report) mkdirSync(path.dirname(path.resolve(options.report)), { recursive: true })
 
 for (const example of selectedExamples) {
+  try {
+    const references = extractCatalogSourceReferences(example.sourceBundle)
+    if (['structural-optical-results', 'folded-ray-tracing'].includes(example.key)) {
+      for (const model of [
+        'optics.constant-complex-index@1',
+        'optics.constant-absorption@1',
+        'optics.constant-scattering@1',
+        'optics.thin-film-stack@1',
+      ]) {
+        assert.ok(references.materialModels.includes(model), `Missing Material model reference: ${model}`)
+      }
+    }
+  } catch (error) {
+    throw new Error(`${example.key}: UI Catalog reference analysis failed: ${String(error)}`, { cause: error })
+  }
   const compiled = compileCatalogExample(example, catalog)
   const { varsSchema } = inspectCompiledDocument(compiled)
   // The midpoint is deterministic and is the nominal configuration of these examples.
@@ -88,6 +104,34 @@ for (const example of selectedExamples) {
   )
   writeFileSync(path.join(outputDirectory, `${example.key}.json`), JSON.stringify(measurement), 'utf8')
   const program = measurement.experiment.simulationProgram
+  if (['gold-fcc-fresnel', 'random-sphere-hcp-array'].includes(example.key)) {
+    const spheres = measurement.experiment.scene.roots.map((root) => {
+      let node = root.node
+      const matrices: (readonly number[])[] = []
+      while (node.kind === 'transform' || node.kind === 'instance') {
+        matrices.push(node.matrix)
+        node = node.child
+      }
+      assert.ok(node.kind === 'primitive' && node.primitive === 'sphere', `${example.key}: exact Sphere required`)
+      const radius = node.parameters.radius as number
+      assert.ok(radius > 0)
+      let center = [0, 0, 0]
+      for (const matrix of matrices.reverse())
+        center = [0, 1, 2].map((row) =>
+          center.reduce((sum, value, axis) => sum + matrix[row * 4 + axis] * value, matrix[row * 4 + 3]),
+        )
+      return { center, radius }
+    })
+    let spacing = Infinity
+    for (let i = 0; i < spheres.length; i++)
+      for (let j = i + 1; j < spheres.length; j++) {
+        const distance = Math.hypot(...spheres[i].center.map((value, axis) => value - spheres[j].center[axis]))
+        assert.ok(distance > spheres[i].radius + spheres[j].radius, `${example.key}: nominal particles must not touch`)
+        spacing = Math.min(spacing, distance)
+      }
+    const expectedSpacing = example.key === 'gold-fcc-fresnel' ? 0.25 : (variables.latticeSpacing as number)
+    assert.ok(Math.abs(spacing - expectedSpacing) < 1e-10, `${example.key}: physical lattice spacing`)
+  }
   programs.push({
     key: example.key,
     source: program.pythonSource,

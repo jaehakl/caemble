@@ -70,6 +70,7 @@ COMMON_TESTS = ("test_architecture_*", "test_solver_entries", "test_material_mod
 # Support ownership follows direct imports and child locators, including the
 # transitive structural/scalar consumers of the shared geometry and grid fixtures.
 TEST_SUPPORT_TESTS = {
+    "fixtures/continuous-geometry.json": ("test_continuous_geometry",),
     "acoustic_fixtures.py": ("test_acoustic_fdtd_accuracy", "test_pressure_acoustics"),
     "box_grid_fixtures.py": ("test_*outputs", "test_*recording", "test_fdtd_*", "test_structural_*",
                              "test_hyperelastic*", "test_mixed_hyperelastic*", "test_scalar_fem",
@@ -189,7 +190,7 @@ def select_changes(paths: list[str]) -> Selection:
             elif local.startswith("app/methods/") and len(parts) > 3 and parts[2] in METHOD_CONSUMERS:
                 consumers = METHOD_CONSUMERS[parts[2]]
                 result.solvers.update(consumers)
-                result.patterns.update(("test_composable_methods", "test_geometry_*", "test_structured_topology", "test_coupling_projection", "test_value_coupling", "test_particle_methods", "test_rigid_methods"))
+                result.patterns.update(("test_composable_methods", "test_geometry_*", "test_continuous_geometry", "test_structured_topology", "test_coupling_projection", "test_value_coupling", "test_particle_methods", "test_rigid_methods"))
                 reason = f"shared {parts[2]} methods and consumers: {', '.join(consumers)}"
             elif local.startswith("benchmarks/"):
                 reason = "standalone performance tool; outside pytest selection"

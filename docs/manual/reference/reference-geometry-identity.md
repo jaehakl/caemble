@@ -3,7 +3,7 @@
 `id`는 단순한 화면 label이 아니라 Geometry 결과의 identity입니다. custom `Geometry` component를 호출할 때는 `id`가 필수이고, 모든 intrinsic primitive와 operation에는 필요할 때 `id`를 줄 수 있습니다. Fragment(`<>...</>`)에는 `id`나 transform을 줄 수 없습니다.
 
 - primitive의 `id`는 그 primitive가 만든 part를 소유합니다.
-- topology를 바꾸는 `union`, `subtract`, `intersect`, `shell` 같은 operation에 `id`가 있으면 그 operation의 최종 결과가 해당 identity를 소유합니다. 피연산자 ID가 Boolean 결과의 ID라고 가정하지 마세요.
+- topology를 바꾸는 `union`, `subtract`, `intersect` 같은 operation에 `id`가 있으면 그 operation의 최종 결과가 해당 identity를 소유합니다. 피연산자 ID가 Boolean 결과의 ID라고 가정하지 마세요.
 - component의 `id`는 재사용되는 subtree의 namespace/root identity가 됩니다. 같은 parent 아래의 sibling ID는 서로 달라야 합니다.
 - evaluator가 component 호출의 `id`를 이미 소비하므로 받은 `id`를 leaf intrinsic에 그대로 전달하지 마세요. child에 별도 local segment가 필요할 때만 intrinsic `id`를 부여합니다.
 - `geometryGroup`에는 의도적으로 부여한 결과 ID만 넣고, 실행 전에 Viewer에서 실제 resolve 결과를 확인하세요.

@@ -44,7 +44,7 @@ def local_input(tmp_path: Path, monkeypatch):
         "experiment": {
             "sourceHash": "local-transport-source",
             "variables": {"values": list(range(10000))},
-            "scene": {"geometryHash": "empty", "lengthUnit": "m", "roots": [], "geometryGroups": [], "surfaceGroups": []},
+            "scene": {"version": 2, "geometryHash": "empty", "lengthUnit": "m", "roots": [], "geometryGroups": [], "surfaceGroups": []},
             "taskScenes": {},
             "simulationProgram": {
                 "pythonSource": 'async def simulate(*, sim, tasks, vars):\n    await sim.record("signal", vars["values"])\n    await sim.record("label", "한글 결과")\n',

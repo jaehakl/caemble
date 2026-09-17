@@ -135,6 +135,29 @@ describe('Experiment-owned Material Model inputs', () => {
     )
   })
 
+  it('normalizes surface-film layer units and enforces the exclusive 50 micrometer bound', () => {
+    const schema = catalog.materialModels.find((model) => model.key === 'optics.thin-film-stack@1')!.parameterSchema
+    const layer = {
+      thickness: { value: 5, unit: 'um' },
+      samples: [
+        { frequency: { value: 500, unit: 'THz' }, n: { value: 1.38, unit: '{fraction}' }, k: { value: 0, unit: '1' } },
+      ],
+    }
+    expect(normalizeModelParameters(schema, { layers: [layer] }, 'parameters')).toMatchObject({
+      layers: [{ thickness: { value: 5, unit: 'um' }, samples: [{ frequency: { value: 5e14, unit: 'Hz' } }] }],
+    })
+    expect(() =>
+      normalizeModelParameters(schema, { layers: [{ ...layer, thickness: { value: 50, unit: 'um' } }] }, 'parameters'),
+    ).toThrow()
+    expect(() =>
+      normalizeModelParameters(
+        schema,
+        { layers: [{ ...layer, samples: [...layer.samples, ...layer.samples] }] },
+        'parameters',
+      ),
+    ).toThrow(/strictly increasing/u)
+  })
+
   it('defaults omitted quantity dtype to float64 independently of the schema float dtype', () => {
     const schema: ModelParameterSchema = { kind: 'value', dtype: 'float32', quantityKind: 'Frequency', unit: 'Hz' }
     expect(normalizeModelParameters(schema, { value: 1e100, unit: 'Hz' }, 'frequency')).toEqual({
@@ -183,6 +206,8 @@ describe('saved Material snapshot replay', () => {
       varsHash: materialVarsHash(variables),
       modelDefinitions: resolved.modelDefinitions,
       selections: resolved.materialSelections,
+      interactions: resolved.interactions,
+      interactionSelections: resolved.interactionSelections,
     }
   })
 
@@ -208,7 +233,9 @@ describe('per-Material Solver model selection', () => {
   const ray = catalog.solvers.find((solver) => solver.name === 'ray-tracing')!.descriptor
   const descriptor: KernelDescriptor = {
     ...ray,
-    materials: ray.materials.map((role) => ({ ...role, target: { category: 'geometry', source: 'experiment' } })),
+    materials: ray.materials
+      .filter((role) => role.role === 'opticalDomain')
+      .map((role) => ({ ...role, target: { category: 'geometry', source: 'experiment' } })),
   }
 
   it('rejects an applicable geometry part without a Material for a required role', () => {

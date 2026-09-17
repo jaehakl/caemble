@@ -20,16 +20,6 @@ class CubeGeometry:
             await progress({"stage": "fixture-geometry", "completed": 1, "total": 1})
         return cube_mesh(root_id)
 
-    async def shell_layer(
-        self,
-        scene: dict[str, Any],
-        root_id: str,
-        reference_length_unit: str,
-        progress: Any = None,
-    ) -> None:
-        del scene, root_id, reference_length_unit, progress
-        return None
-
 
 def cube_mesh(root_id: str = "solid") -> TriangularMesh:
     vertices = np.asarray(

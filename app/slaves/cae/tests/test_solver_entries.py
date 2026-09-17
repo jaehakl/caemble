@@ -84,5 +84,5 @@ def _ray_invocation() -> SolverInvocation:
         world=_world(),
         geometry=CubeGeometry(),
         progress=None,
-        descriptor=SolverCatalog.discover().descriptor("ray-tracing", "2.0.0"),
+        descriptor=SolverCatalog.discover().descriptor("ray-tracing", "3.0.0"),
     )

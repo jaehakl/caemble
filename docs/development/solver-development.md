@@ -635,12 +635,13 @@ domain에서는 dtype을 바꾸거나 배열을 복사하지 않고 값을 공�
 fluence rate와 방향별 radiant flux density입니다. 검출기 표면의 흡수·종료는
 명시적인 경계조건이며 Output 요청 여부와 무관합니다.
 
-박막 처리는 실제 shell 두께에 적응합니다.
+`ray-tracing 3.0.0`의 박막은 표면 경계조건으로 명시합니다.
 
-- 두께가 `50 µm`보다 작은 인접 shell은 하나의 coherent multilayer stack으로
-  묶어 transfer-matrix method로 계산합니다.
-- 두께가 정확히 `50 µm`이거나 그보다 크면 일반 geometry collision으로
-  추적합니다.
+- `ray.thin-film-stack`의 대상 Material에서 `optics.thin-film-stack@1` 모델을 선택합니다.
+- 층 순서는 외부에서 내부이며 내부 입사 시 역순입니다. 실제 medium stack의 양쪽 매질을 사용합니다.
+- 각 층은 `0 < thickness < 50 µm`여야 하며 기존 TMM을 재사용합니다. 더 두꺼운 층은 별도 solid로 작성합니다.
+- film mesh나 출구 위치 이동을 만들지 않고 Geometry scale로 박막 두께를 변경하지 않습니다.
+- 동일 표면의 중복 적층과 detector·grating 충돌을 거부합니다. 반사 후 표면 산란은 유지합니다.
 - Reflection, transmission, scattering, absorption, detector hit, branching
   상태는 이 선택과 함께 물리적으로 이어져야 합니다.
 
@@ -727,14 +728,14 @@ CAE 디렉터리의 기본 진입점은 `python -m tests.run affected`입니다.
 현재 staged·unstaged·untracked 파일을 비교합니다. `--base <ref>`로 비교
 커밋을 바꾸고, `--list`로 실행 없이 선택 이유와 제외된 검사를 확인합니다.
 
-| 명령 | 실행 범위 |
-| --- | --- |
-| `affected` | 변경 관련 정적 분석과 작은 함수·계약 검사. 제품 Solver 실행 없음 |
-| `quick` | CAE 전체 정적 분석과 저비용 검사. 제품 Solver 실행 없음 |
-| `affected --smoke` | 관련 최소 연결·실제 child 검사 추가 |
-| `affected --validation` | 관련 수렴·보존량 등 정밀 검사 추가 |
-| `examples --key <key>` | 지정 공식 예제의 새 nominal 입력 빌드·실행·ACK·정리와 180초 예산 측정 |
-| `full` | 모든 CPU 검사·공식 예제·정밀 검증. 명시적 전체 검증 또는 release 검사에만 사용 |
+| 명령                    | 실행 범위                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `affected`              | 변경 관련 정적 분석과 작은 함수·계약 검사. 제품 Solver 실행 없음               |
+| `quick`                 | CAE 전체 정적 분석과 저비용 검사. 제품 Solver 실행 없음                        |
+| `affected --smoke`      | 관련 최소 연결·실제 child 검사 추가                                            |
+| `affected --validation` | 관련 수렴·보존량 등 정밀 검사 추가                                             |
+| `examples --key <key>`  | 지정 공식 예제의 새 nominal 입력 빌드·실행·ACK·정리와 180초 예산 측정          |
+| `full`                  | 모든 CPU 검사·공식 예제·정밀 검증. 명시적 전체 검증 또는 release 검사에만 사용 |
 
 `lowcost`, `smoke`, `validation`, `example`은 비용 분류이며, `cuda`는 별도
 환경 표시입니다. `--smoke`와 `--validation`은 독립적으로 추가할 수 있습니다.
@@ -871,7 +872,6 @@ Box Grid `configuration`은 기준 또는 현재 배치의 관측 위치를 뜻�
 Box를 공간 필터로 사용하지 않습니다. 기존 질량밀도는 전체 cell 체적을 분모로
 사용하므로 이 재료 체적 평균과 구분됩니다. 물리 mesh와 timestep은 관측 설정에
 종속되지 않습니다. API, Calculation, Prediction과 Viewer는 이 metadata를 보존합니다.
-
 
 ## MINI 혼합 solid와 현재 면 압력
 

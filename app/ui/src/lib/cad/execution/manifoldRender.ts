@@ -1,3 +1,5 @@
+import { tessellateContinuousPrimitive, type ContinuousPrimitive, type IndexedSurface } from '../geometry/continuous'
+import { tessellateFiber } from '../geometry/fiber'
 import initManifold, {
   type Manifold as ManifoldSolid,
   type ManifoldToplevel,
@@ -6,10 +8,10 @@ import initManifold, {
 } from 'manifold-3d'
 import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url'
 import type {
-  CanonicalAffineMatrixV1,
-  CanonicalGeometryNodeV1,
-  CanonicalGeometrySceneV1,
-  CanonicalPrimitiveNodeV1,
+  CanonicalAffineMatrixV2,
+  CanonicalGeometryNodeV2,
+  CanonicalGeometrySceneV2,
+  CanonicalPrimitiveNodeV2,
 } from '../evaluation/canonicalTypes'
 import type { CadScene, CadSceneSurface, CadSceneTreeNode } from '../evaluation/types'
 import { canonicalSurfaceMemberEntries } from '../evaluation/canonical'
@@ -198,7 +200,7 @@ function ringSolid(
 
 function curvedEdgeCylinder(
   module: ManifoldToplevel,
-  node: CanonicalPrimitiveNodeV1,
+  node: CanonicalPrimitiveNodeV2,
   sources: Map<number, SourceSurfaces>,
 ) {
   const parameters = node.parameters as Readonly<{
@@ -238,69 +240,8 @@ function curvedEdgeCylinder(
   )
 }
 
-function curvedSurfaceSphere(
-  module: ManifoldToplevel,
-  node: CanonicalPrimitiveNodeV1,
-  sources: Map<number, SourceSurfaces>,
-) {
-  const parameters = node.parameters as Readonly<{
-    azimuthalCurve: readonly Readonly<{ amplitude: number; phase: number }>[]
-    polarCurve: readonly Readonly<{ amplitude: number; phase: number }>[]
-    azimuthalSegments: number
-    polarSegments: number
-  }>
-  const point = (theta: number, phi: number): Vec3 => {
-    const azimuthalRadius = parameters.azimuthalCurve.reduce(
-      (radius, mode, index) => radius + mode.amplitude * Math.cos(index * theta + mode.phase),
-      0,
-    )
-    const polarRadius = parameters.polarCurve.reduce(
-      (radius, mode, index) => radius + mode.amplitude * Math.cos(index * phi + mode.phase),
-      0,
-    )
-    const radius = azimuthalRadius * polarRadius
-    return [radius * Math.sin(phi) * Math.cos(theta), radius * Math.sin(phi) * Math.sin(theta), radius * Math.cos(phi)]
-  }
-  const points: Vec3[] = [point(0, 0)]
-  for (let polar = 1; polar < parameters.polarSegments; polar += 1) {
-    for (let azimuthal = 0; azimuthal < parameters.azimuthalSegments; azimuthal += 1) {
-      points.push(
-        point((Math.PI * 2 * azimuthal) / parameters.azimuthalSegments, (Math.PI * polar) / parameters.polarSegments),
-      )
-    }
-  }
-  const south = points.push(point(0, Math.PI)) - 1
-  const triangles: Triangle[] = []
-  for (let azimuthal = 0; azimuthal < parameters.azimuthalSegments; azimuthal += 1) {
-    const next = (azimuthal + 1) % parameters.azimuthalSegments
-    triangles.push([0, 1 + azimuthal, 1 + next])
-  }
-  for (let polar = 1; polar < parameters.polarSegments - 1; polar += 1) {
-    const upper = 1 + (polar - 1) * parameters.azimuthalSegments
-    const lower = upper + parameters.azimuthalSegments
-    for (let azimuthal = 0; azimuthal < parameters.azimuthalSegments; azimuthal += 1) {
-      const next = (azimuthal + 1) % parameters.azimuthalSegments
-      triangles.push([upper + azimuthal, lower + azimuthal, lower + next])
-      triangles.push([upper + azimuthal, lower + next, upper + next])
-    }
-  }
-  const last = 1 + (parameters.polarSegments - 2) * parameters.azimuthalSegments
-  for (let azimuthal = 0; azimuthal < parameters.azimuthalSegments; azimuthal += 1) {
-    const next = (azimuthal + 1) % parameters.azimuthalSegments
-    triangles.push([last + azimuthal, south, last + next])
-  }
-  return manifoldFromTriangles(
-    module,
-    points,
-    triangles,
-    triangles.map(() => 0),
-    node.nodeId,
-    sources,
-    () => 0,
-  )
-}
-
-function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV1, sources: Map<number, SourceSurfaces>) {
+function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV2, sources: Map<number, SourceSurfaces>) {
+  node = { ...node, parameters: { ...node.parameters, ...node.tessellation } }
   if (node.primitive === 'box') {
     const solid = module.Manifold.cube(node.parameters.size as Vec3, true)
     return registerPrimitiveSource(solid, node.nodeId, sources, (_mesh, _triangle, normal) => {
@@ -336,39 +277,22 @@ function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV1
     return registerPrimitiveSource(module.Manifold.sphere(radius, segments), node.nodeId, sources, () => 0)
   }
   if (node.primitive === 'curvedEdgeCylinder') return curvedEdgeCylinder(module, node, sources)
-  return curvedSurfaceSphere(module, node, sources)
+  if (['asphericCylinder','ellipsoid','hyperboloid','paraboloid'].includes(node.primitive)) return indexedSolid(module, tessellateContinuousPrimitive(node.primitive as ContinuousPrimitive, node.parameters, node.tessellation), node.nodeId, sources)
+  throw new Error(`Unsupported primitive: ${node.primitive}`)
 }
 
-function fiberSolid(
-  module: ManifoldToplevel,
-  node: Extract<CanonicalGeometryNodeV1, { kind: 'fiber' }>,
-  sources: Map<number, SourceSurfaces>,
-) {
-  const rings = node.points.map((point, index) => {
-    const frame = node.frames[index]
-    const radius = node.radii[index]
-    return Array.from({ length: node.radialSegments }, (_, radial): Vec3 => {
-      const angle = (Math.PI * 2 * radial) / node.radialSegments
-      const normal = radius * Math.cos(angle)
-      const binormal = radius * Math.sin(angle)
-      return [
-        point[0] + normal * frame.normal[0] + binormal * frame.binormal[0],
-        point[1] + normal * frame.normal[1] + binormal * frame.binormal[1],
-        point[2] + normal * frame.normal[2] + binormal * frame.binormal[2],
-      ]
-    })
-  })
-  return ringSolid(
-    module,
-    rings,
-    node.nodeId,
-    sources,
-    [0, 2],
-    [[...node.points[0]], [...node.points[node.points.length - 1]]],
-  )
+function indexedSolid(module: ManifoldToplevel, mesh: IndexedSurface, nodeId: string, sources: Map<number, SourceSurfaces>) {
+  const originalID = module.Manifold.reserveIDs(1)
+  const origin = mesh.points[0]
+  const solid = new module.Manifold(new module.Mesh({ numProp: 3,
+    vertProperties: Float32Array.from(mesh.points.flatMap(point => point.map((value,axis) => value-origin[axis]))), triVerts: Uint32Array.from(mesh.triangles.flat()),
+    faceID: Uint32Array.from(mesh.surfaceIndices), runOriginalID: Uint32Array.of(originalID), runIndex: Uint32Array.of(0, mesh.triangles.length * 3),
+  }))
+  sources.set(originalID, { nodeId, surfaceIndices: new Map(mesh.surfaceIndices.map(index => [index, index])) })
+  try { return solid.translate(origin) } finally { solid.delete() }
 }
 
-function columnMajor(matrix: CanonicalAffineMatrixV1) {
+function columnMajor(matrix: CanonicalAffineMatrixV2) {
   return [
     matrix[0],
     matrix[4],
@@ -406,116 +330,13 @@ function columnMajor(matrix: CanonicalAffineMatrixV1) {
   ]
 }
 
-function shellSolid(
-  module: ManifoldToplevel,
-  child: ManifoldSolid,
-  node: Extract<CanonicalGeometryNodeV1, { kind: 'shell' }>,
-  sources: Map<number, SourceSurfaces>,
-) {
-  let centered: ManifoldSolid | undefined
-  try {
-    const center = solidBoundsCenter(child)
-    centered = child.translate([-center[0], -center[1], -center[2]])
-    const mesh = centered.getMesh()
-    const points = Array.from({ length: mesh.numVert }, (_, index): Vec3 => [...mesh.position(index)] as Vec3)
-    const triangles = Array.from({ length: mesh.numTri }, (_, index) => [...mesh.verts(index)] as unknown as Triangle)
-    const adjacent: { normal: Vec3; weight: number }[][] = points.map(() => [])
-    triangles.forEach((triangle, triangleIndex) => {
-      const normal = triangleNormal(mesh, triangleIndex)
-      triangle.forEach((pointIndex, corner) => {
-        const point = points[pointIndex]
-        const before = points[triangle[(corner + 2) % 3]]
-        const after = points[triangle[(corner + 1) % 3]]
-        const beforeVector = before.map((value, axis) => value - point[axis])
-        const afterVector = after.map((value, axis) => value - point[axis])
-        const cosine =
-          beforeVector.reduce((sum, value, axis) => sum + value * afterVector[axis], 0) /
-          (Math.hypot(...beforeVector) * Math.hypot(...afterVector))
-        adjacent[pointIndex].push({ normal, weight: Math.acos(Math.max(-1, Math.min(1, cosine))) })
-      })
-    })
-    const displacement = adjacent.map((faces): Vec3 => {
-      let a00 = 0,
-        a01 = 0,
-        a02 = 0,
-        a11 = 0,
-        a12 = 0,
-        a22 = 0,
-        b0 = 0,
-        b1 = 0,
-        b2 = 0,
-        weight = 0
-      faces.forEach(({ normal: [x, y, z], weight: faceWeight }) => {
-        a00 += faceWeight * x * x
-        a01 += faceWeight * x * y
-        a02 += faceWeight * x * z
-        a11 += faceWeight * y * y
-        a12 += faceWeight * y * z
-        a22 += faceWeight * z * z
-        b0 += faceWeight * x
-        b1 += faceWeight * y
-        b2 += faceWeight * z
-        weight += faceWeight
-      })
-      const length = Math.hypot(b0, b1, b2)
-      const regularization = weight * 1e-8
-      a00 += regularization
-      a11 += regularization
-      a22 += regularization
-      b0 += (regularization * b0) / length
-      b1 += (regularization * b1) / length
-      b2 += (regularization * b2) / length
-      const determinant = a00 * (a11 * a22 - a12 * a12) - a01 * (a01 * a22 - a12 * a02) + a02 * (a01 * a12 - a11 * a02)
-      return [
-        (b0 * (a11 * a22 - a12 * a12) - a01 * (b1 * a22 - a12 * b2) + a02 * (b1 * a12 - a11 * b2)) / determinant,
-        (a00 * (b1 * a22 - a12 * b2) - b0 * (a01 * a22 - a12 * a02) + a02 * (a01 * b2 - b1 * a02)) / determinant,
-        (a00 * (a11 * b2 - b1 * a12) - a01 * (a01 * b2 - b1 * a02) + b0 * (a01 * a12 - a11 * a02)) / determinant,
-      ] as Vec3
-    })
-    const boundary = (offset: number) =>
-      points.map((point, index): Vec3 => [
-        point[0] + offset * displacement[index][0],
-        point[1] + offset * displacement[index][1],
-        point[2] + offset * displacement[index][2],
-      ])
-    const inner = boundary(node.innerOffset)
-    const outer = boundary(node.outerOffset)
-    const outerStart = inner.length
-    const shellTriangles = [
-      ...triangles.map((triangle) => triangle.map((index) => index + outerStart) as unknown as Triangle),
-      ...triangles.map((triangle) => [...triangle].reverse() as unknown as Triangle),
-    ]
-    const innerPoints = new Set(inner.map(meshPointKey))
-    const localShell = manifoldFromTriangles(
-      module,
-      [...inner, ...outer],
-      shellTriangles,
-      [...triangles.map(() => 1), ...triangles.map(() => 0)],
-      node.nodeId,
-      sources,
-      (mesh, triangle) =>
-        [...mesh.verts(triangle)].every((vertex) => innerPoints.has(meshPointKey(mesh.position(vertex))))
-          ? 0
-          : 1,
-    )
-    try {
-      return localShell.translate(center)
-    } finally {
-      localShell.delete()
-    }
-  } finally {
-    centered?.delete()
-    child.delete()
-  }
-}
-
 function evaluateNode(
   module: ManifoldToplevel,
-  node: CanonicalGeometryNodeV1,
+  node: CanonicalGeometryNodeV2,
   sources: Map<number, SourceSurfaces>,
 ): ManifoldSolid {
   if (node.kind === 'primitive') return primitiveSolid(module, node, sources)
-  if (node.kind === 'fiber') return fiberSolid(module, node, sources)
+  if (node.kind === 'fiber') return indexedSolid(module, tessellateFiber(node, node.tessellation), node.nodeId, sources)
   if (node.kind === 'transform' || node.kind === 'instance') {
     const child = evaluateNode(module, node.child, sources)
     try {
@@ -524,7 +345,7 @@ function evaluateNode(
       child.delete()
     }
   }
-  if (node.kind === 'shell') return shellSolid(module, evaluateNode(module, node.child, sources), node, sources)
+  if (node.kind !== 'boolean') throw new Error('Unsupported canonical Geometry node; rebuild with current inputs.')
   const children: ManifoldSolid[] = []
   try {
     node.children.forEach((child) => children.push(evaluateNode(module, child, sources)))
@@ -540,7 +361,7 @@ function evaluateNode(
 
 function meshPart(
   module: ManifoldToplevel,
-  root: CanonicalGeometrySceneV1['roots'][number],
+  root: CanonicalGeometrySceneV2['roots'][number],
   runtimeScene: Readonly<{tree: CadScene['tree']; parts: readonly Pick<CadScene['parts'][number], 'id' | 'material'>[]}>,
   sources: Map<number, SourceSurfaces>,
 ): SerializableCadScenePart {
@@ -621,9 +442,10 @@ function semanticTree(tree: CadSceneTreeNode, parts: readonly SerializableCadSce
 }
 
 export async function renderCanonicalGeometryScene(
-  scene: CanonicalGeometrySceneV1,
+  scene: CanonicalGeometrySceneV2,
   runtimeScene: Readonly<{tree: CadScene['tree']; parts: readonly Pick<CadScene['parts'][number], 'id' | 'material'>[]}>,
 ): Promise<SerializableCadScene> {
+  if (scene.version !== 2) throw new Error('Canonical Geometry v2 is required; migrate source and rebuild previous artifacts.')
   const module = await manifoldModule()
   const sources = new Map<number, SourceSurfaces>()
   const surfaceAliases = new Map<string, Map<string, Set<string>>>()

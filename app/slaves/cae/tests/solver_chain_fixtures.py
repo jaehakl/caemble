@@ -17,7 +17,7 @@ def scene() -> dict[str, Any]:
         },
     }
     return {
-        "geometryHash": "integration-box-v1",
+        "version": 2, "geometryHash": "integration-box-v1",
         "lengthUnit": "m",
         "roots": [root],
         "geometryGroups": [
@@ -67,7 +67,7 @@ def world() -> dict[str, Any]:
         }},
     }
     empty_task_scene = {
-        "geometryHash": "empty-task",
+        "version": 2, "geometryHash": "empty-task",
         "lengthUnit": "m",
         "roots": [],
         "geometryGroups": [],

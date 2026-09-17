@@ -14,7 +14,7 @@ CAE = REPO / "app/slaves/cae"
 
 def build_in_process(root, queue):
     try:
-        measurement = CatalogBuilds(Path(root), REPO)["shell-cutaways"]
+        measurement = CatalogBuilds(Path(root), REPO)["layered-cutaways"]
         queue.put(("ok", len(measurement["experiment"]["scene"]["roots"])))
     except BaseException as error:
         queue.put(("error", repr(error)))
@@ -35,11 +35,11 @@ def test_concurrent_real_cli_build_happens_once_and_returns_isolated_inputs(tmp_
             assert worker.exitcode == 0
         assert len(list(tmp_path.glob("*/complete.json"))) == 1
         builds = CatalogBuilds(tmp_path, REPO)
-        first = builds["shell-cutaways"]
+        first = builds["layered-cutaways"]
         first["experiment"]["scene"]["roots"].clear()
-        assert builds["shell-cutaways"]["experiment"]["scene"]["roots"]
+        assert builds["layered-cutaways"]["experiment"]["scene"]["roots"]
         builds.cli_hash = "different-cli-bundle"
-        assert builds["shell-cutaways"]["experiment"]["scene"]["roots"]
+        assert builds["layered-cutaways"]["experiment"]["scene"]["roots"]
         assert len(list(tmp_path.glob("*/complete.json"))) == 2
     finally:
         for worker in workers:
@@ -65,9 +65,9 @@ def test_failed_build_is_not_reused_and_retry_has_a_fresh_destination(tmp_path, 
 
     monkeypatch.setattr(subprocess, "run", fail_first)
     with pytest.raises(RuntimeError, match="intentional failure"):
-        builds["shell-cutaways"]
+        builds["layered-cutaways"]
     assert not list(tmp_path.glob("*/complete.json"))
-    assert builds["shell-cutaways"]["experiment"]["scene"]["roots"]
+    assert builds["layered-cutaways"]["experiment"]["scene"]["roots"]
     assert len(set(attempted)) == 2
 
 

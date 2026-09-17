@@ -1,20 +1,21 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { assertBoxGridData } from '@/contracts/boxGrid'
-import type { CanonicalGeometryNodeV1, CanonicalGeometrySceneDraftV1 } from '../evaluation/canonicalTypes'
+import type { CanonicalGeometryNodeV2, CanonicalGeometrySceneDraftV2 } from '../evaluation/canonicalTypes'
 import { createDataTensor, persistDataTensor } from '../model/dataTensor'
 import type { DataSchema } from '../model/descriptor'
 import { resolveBoxGridGeometry } from './boxGrid'
 import type { KernelOutputRequest } from './kernelContract'
 
-const box: CanonicalGeometryNodeV1 = {
+const box: CanonicalGeometryNodeV2 = {
   kind: 'primitive',
   nodeId: 'box',
   primitive: 'box',
   parameters: { size: [2, 4, 6] },
 }
-function scene(node: CanonicalGeometryNodeV1): CanonicalGeometrySceneDraftV1 {
+function scene(node: CanonicalGeometryNodeV2): CanonicalGeometrySceneDraftV2 {
   return {
+    version: 2,
     lengthUnit: 'mm',
     roots: [{ id: 'box', materialRole: 'body', node }],
     geometryGroups: [

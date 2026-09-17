@@ -23,22 +23,21 @@ export type {
   CadElementSurfaceManifest,
 } from './evaluation/types'
 export type {
-  CanonicalAffineMatrixV1,
-  CanonicalBooleanNodeV1,
-  CanonicalFiberNodeV1,
-  CanonicalGeometryGroupV1,
-  CanonicalGeometryMaterialV1,
-  CanonicalGeometryNodeV1,
-  CanonicalGeometryRootV1,
-  CanonicalGeometrySceneV1,
-  CanonicalInstanceNodeV1,
-  CanonicalPrimitiveNameV1,
-  CanonicalPrimitiveNodeV1,
-  CanonicalShellNodeV1,
-  CanonicalSurfaceGroupV1,
-  CanonicalSurfaceSelectorV1,
-  CanonicalTransformNodeV1,
-  CanonicalVec3V1,
+  CanonicalAffineMatrixV2,
+  CanonicalBooleanNodeV2,
+  CanonicalFiberNodeV2,
+  CanonicalGeometryGroupV2,
+  CanonicalGeometryMaterialV2,
+  CanonicalGeometryNodeV2,
+  CanonicalGeometryRootV2,
+  CanonicalGeometrySceneV2,
+  CanonicalInstanceNodeV2,
+  CanonicalPrimitiveNameV2,
+  CanonicalPrimitiveNodeV2,
+  CanonicalSurfaceGroupV2,
+  CanonicalSurfaceSelectorV2,
+  CanonicalTransformNodeV2,
+  CanonicalVec3V2,
 } from './evaluation/canonicalTypes'
 export { CadModelError, isFloatDType, Mat, Material, MaterialInteraction, radians } from './model/core'
 export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/definition'
@@ -223,7 +222,6 @@ export {
 } from '@/platform/isolated-runner/client'
 export type { ArrayAttributes } from './elements/operations/array/definition'
 export type { BooleanAttributes } from './elements/operations/booleans/definition'
-export type { ShellAttributes } from './elements/operations/shell/definition'
 export type { BoxAttributes } from './elements/primitives/box/definition'
 export type { CylinderAttributes } from './elements/primitives/cylinder/definition'
 export type {
@@ -231,11 +229,7 @@ export type {
   CurvedEdgeCylinderFourierMode,
   CurvedEdgeCylinderTaylorCurve,
 } from './elements/primitives/curvedEdgeCylinder/definition'
-export type {
-  CurvedSurfaceSphereAttributes,
-  CurvedSurfaceSphereFourierMode,
-} from './elements/primitives/curvedSurfaceSphere/definition'
-export type { FiberAttributes, FiberFourierMode, FiberHelix } from './elements/primitives/fiber/definition'
+export type { FiberAttributes, FiberPath, FiberSegment, RadiusKnot } from './elements/primitives/fiber/definition'
 export type { SphereAttributes } from './elements/primitives/sphere/definition'
 export type {
   CadDiagnostic,
@@ -248,3 +242,9 @@ export type {
   CadGeometryPreviewResponse,
   CadWorkerErrorType,
 } from './worker/protocol'
+
+export type { AsphericCylinderAttributes } from './elements/primitives/asphericCylinder/definition'
+export type { EllipsoidAttributes } from './elements/primitives/ellipsoid/definition'
+export type { HyperboloidAttributes } from './elements/primitives/hyperboloid/definition'
+export type { ParaboloidAttributes } from './elements/primitives/paraboloid/definition'
+export type { Tessellation, Asphere } from './geometry/continuous'

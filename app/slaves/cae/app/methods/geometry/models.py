@@ -157,15 +157,3 @@ class VolumeMesh:
         except ValueError:
             return np.empty(0, dtype=np.int64)
         return np.flatnonzero(self.cell_region_ids == region_index)
-
-
-@dataclass(frozen=True, slots=True)
-class ShellLayerGeometry:
-    root_id: str
-    family_id: str
-    inner_offset: float
-    outer_offset: float
-    inner: TriangularMesh
-    outer: TriangularMesh
-    minimum_thickness: float
-    maximum_thickness: float

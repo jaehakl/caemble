@@ -286,7 +286,7 @@ async def test_domain_preserves_exact_transformed_box_and_semantic_faces():
     matrix = np.eye(4)
     matrix[:3, 3] = [.3, -.2, .1]
     part = {"id": "fluid", "node": {"kind": "transform", "matrix": matrix.ravel().tolist(), "child": node}, "material": {"name": "Air"}}
-    scene = {"geometryHash": "fluid-box-test", "lengthUnit": "m", "roots": [part], "geometryGroups": [{"name": "Fluid", "rootIds": ["fluid"]}],
+    scene = {"version": 2, "geometryHash": "fluid-box-test", "lengthUnit": "m", "roots": [part], "geometryGroups": [{"name": "Fluid", "rootIds": ["fluid"]}],
         "surfaceGroups": [{"name": "Inlet", "selectors": [{"rootId": "fluid", "sourceNodeId": "box", "surfaceIndex": 0}]}]}
     world = {"task": scene, "materialSelections": {"fluidDomain": {"Air": {"constitutive": "air"}}},
         "materials": {"task": {"Air": {"models": {"air": {"model": "acoustics.homogeneous-fluid@1", "parameters": {"density": 1.2, "soundSpeed": 343.}}}}}}}

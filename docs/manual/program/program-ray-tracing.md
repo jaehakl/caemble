@@ -8,9 +8,13 @@ Catalog의 `ray-tracing`은 미리 정한 표면 순서를 따르지 않고, 광
 - 편광은 광원의 4성분 Stokes vector로 주입합니다. 표면의 ABg 및 Lambertian scatter와 체적의 Henyey–Greenstein(HG) scatter를 사용하며, 산란된 광선은 depolarized 상태로 계속 추적됩니다.
 - `ray.domain` collision solid는 올바르게 중첩할 수 있지만 서로 부분적으로 겹치면 안 됩니다. 매질 경계의 진입·이탈 순서가 모호한 overlap은 실행을 거부합니다.
 
-### Shell layer의 적응형 박막 처리
+### 표면 박막 적층
 
-`<coating>` element를 따로 만들지 마세요. Solver가 canonical `<shell>`의 **각 layer에 대한 물리적 두께**를 판정합니다. 두께가 엄격히 `50 µm` 미만인 layer는 transfer-matrix method(TMM) 박막으로 적응형 처리하고, 인접한 박막 layer는 하나의 multilayer stack으로 계산합니다. 정확히 `50 µm`인 layer와 그보다 두꺼운 layer는 일반 광선–표면 collision으로 추적됩니다.
+`ray-tracing 3.0.0`은 `boundaryConditions`의 `ray.thin-film-stack`을 `experiment.surface.<group>`에 적용합니다. 대상 solid의 Material에서 `optics.thin-film-stack@1` 모델을 선택하세요. `layers`는 순서 있는 목록이며 각 층은 단위를 가진 `thickness`와 `samples: [{ frequency, n, k }, …]`를 갖습니다. 표본 하나는 일정 광학 상수입니다. 모델 입력과 선택은 기존 Material snapshot 경로를 따릅니다.
+
+층 순서는 solid 외부에서 내부 방향입니다. 내부에서 입사하면 역순으로 계산하고, 입사·출사 굴절률은 실제 경계의 medium stack에서 정합니다. 각 층은 엄격히 `0 < thickness < 50 µm`여야 합니다. `50 µm` 이상은 오류이며 별도 solid로 작성해야 합니다. Geometry scale은 명시된 박막 두께를 바꾸지 않습니다.
+
+기존 TMM과 편광·반사·굴절·흡수 계산을 사용합니다. film mesh나 두께에 따른 출구 위치 이동은 생성하지 않습니다. 한 표면의 중복 적층과 detector·grating 충돌은 거부하며, 반사 후 표면 산란은 유지합니다. 이전 CAD Shell 입력은 새 source로 이관하고 재빌드해야 합니다.
 
 박막과 체적에 사용할 광학 모델과 계수는 `material.tsx`에 명시합니다. Solver의 지원 모델과 입력 규격은 [Model Catalog](/doc?help=materials)에서 확인하세요. 주파수 표본 모델은 Hz로 엄격히 증가하는 표본열을 받아 광원 파장의 `frequency = c / wavelength`에서 각 성분을 선형 보간합니다. 표본 범위 밖에서는 가장 가까운 끝점 값을 사용합니다. 복소 굴절률 모델의 부호 및 감쇠 해석은 모델의 관례를 따릅니다.
 

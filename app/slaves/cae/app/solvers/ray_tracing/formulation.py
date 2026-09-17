@@ -33,13 +33,12 @@ from app.kernel.api.world import (
 )
 
 from .domain import (
-    ThinStack,
-    is_thin,
     selectors,
     surface_sampler,
     surface_triangle_keys,
 )
 from .grating import diffracted_direction
+from .thin_film import surface_films, film_layers
 from .materials import optical_material
 from .outputs import Detector, PathCollector
 
@@ -125,6 +124,8 @@ async def trace_rays(
         for triangle_key in detector.triangle_keys:
             detector_by_triangle.setdefault(triangle_key, []).append(detector)
 
+    films = surface_films(context, scene, meshes, set(gratings) | set(detector_by_triangle))
+
     await context.progress({"stage": "trace", "completed": 0, "total": len(launched)})
     collector = PathCollector(maximum_paths, tallies=[] if tallies is None else tallies)
     queue = deque(launched)
@@ -147,6 +148,7 @@ async def trace_rays(
             epsilon,
             seed,
             collector,
+            films,
         )
         queue.extend(branches)
         processed += 1
@@ -171,6 +173,7 @@ def _trace_one(
     epsilon: float,
     seed: int,
     collector: PathCollector,
+    films: dict | None = None,
 ) -> list[Ray]:
     if not ray.vertices:
         ray.vertices.append(ray.origin.copy())
@@ -238,47 +241,30 @@ def _trace_one(
     if grating is not None:
         return _diffract(ray, hit, grating, medium.refractive_index.real, threshold, epsilon, collector)
 
-    if hit.metadata.kind.startswith("thin-stack"):
-        stack = hit.metadata.payload
-        (
-            reflected,
-            transmitted,
-            s_axis,
-            transmitted_direction,
-            transmission_position,
-            target_name,
-            target_root,
-            target_stack,
-        ) = _thin_interaction(
-            ray, hit, stack, world, descriptor
+    entering = float(np.dot(ray.direction, hit.normal)) < 0
+    normal = hit.normal if entering else -hit.normal
+    target_stack = _cross_medium(
+        ray.medium_stack, None if entering else hit.metadata.root_id,
+        (hit.metadata.root_id, hit.metadata.material_name) if entering else None,
+    )
+    target_root = target_stack[-1][0] if target_stack else None
+    target_name = target_stack[-1][1] if target_stack else None
+    incident = optical_material(world, ray.medium_name, ray.wavelength)
+    target = optical_material(world, target_name, ray.wavelength)
+    film = (films or {}).get((hit.metadata.root_id, hit.local_triangle_index))
+    if film is None:
+        reflected, transmitted, s_axis = interface_stokes(
+            ray.stokes, ray.basis, ray.direction, normal, incident.refractive_index, target.refractive_index,
         )
     else:
-        entering = float(np.dot(ray.direction, hit.normal)) < 0
-        normal = hit.normal if entering else -hit.normal
-        target_stack = _cross_medium(
-            ray.medium_stack,
-            None if entering else hit.metadata.root_id,
-            (hit.metadata.root_id, hit.metadata.material_name) if entering else None,
+        layers = film_layers(film, ray.wavelength)
+        if not entering:
+            layers.reverse()
+        reflected, transmitted, s_axis = multilayer_stokes(
+            ray.stokes, ray.basis, ray.direction, normal, incident.refractive_index, layers, target.refractive_index, ray.wavelength,
         )
-        target_root = target_stack[-1][0] if target_stack else None
-        target_name = target_stack[-1][1] if target_stack else None
-        incident = optical_material(world, ray.medium_name, ray.wavelength)
-        target = optical_material(world, target_name, ray.wavelength)
-        reflected, transmitted, s_axis = interface_stokes(
-            ray.stokes,
-            ray.basis,
-            ray.direction,
-            normal,
-            incident.refractive_index,
-            target.refractive_index,
-        )
-        transmitted_direction = refract(
-            ray.direction,
-            normal,
-            max(1e-12, incident.refractive_index.real),
-            max(1e-12, target.refractive_index.real),
-        )
-        transmission_position = hit.position
+    transmitted_direction = refract(ray.direction, normal, max(1e-12, incident.refractive_index.real), max(1e-12, target.refractive_index.real))
+    transmission_position = hit.position
     reflected_direction = reflect(ray.direction, hit.normal)
     scatter = surface_scatter.get((hit.metadata.root_id, hit.local_triangle_index))
     return _continue_interface(
@@ -300,89 +286,6 @@ def _trace_one(
         epsilon,
         seed,
         collector,
-    )
-
-
-def _thin_interaction(
-    ray: Ray,
-    hit: Any,
-    stack: ThinStack,
-    world: dict[str, Any],
-    descriptor: dict[str, Any],
-) -> tuple[
-    np.ndarray[Any, Any],
-    np.ndarray[Any, Any],
-    np.ndarray[Any, Any],
-    np.ndarray[Any, Any] | None,
-    np.ndarray[Any, Any],
-    str | None,
-    str | None,
-    list[tuple[str, str]],
-]:
-    from_left = hit.metadata.kind == "thin-stack-left"
-    normal = -hit.normal if from_left else hit.normal
-    ordered = stack.layers if from_left else tuple(reversed(stack.layers))
-    incident_name = stack.left_material if from_left else stack.right_material
-    incident_root = stack.left_root if from_left else stack.right_root
-    adjacent_target_name = stack.right_material if from_left else stack.left_material
-    adjacent_target_root = stack.right_root if from_left else stack.left_root
-    if ray.medium_name is not None:
-        incident_name = ray.medium_name
-    target_stack = _cross_medium(
-        ray.medium_stack,
-        incident_root,
-        (adjacent_target_root, adjacent_target_name)
-        if adjacent_target_root is not None and adjacent_target_name is not None
-        else None,
-    )
-    target_root = target_stack[-1][0] if target_stack else None
-    target_name = target_stack[-1][1] if target_stack else None
-    incident = optical_material(world, incident_name, ray.wavelength)
-    target = optical_material(world, target_name, ray.wavelength)
-    layer_values: list[tuple[complex, float]] = []
-    for layer, material_name in ordered:
-        material = optical_material(world, material_name, ray.wavelength)
-        if layer.minimum_thickness == layer.maximum_thickness:
-            thickness = layer.maximum_thickness
-        else:
-            first_mesh = layer.inner if from_left else layer.outer
-            second_mesh = layer.outer if from_left else layer.inner
-            first_triangle = first_mesh.vertices[first_mesh.triangles[hit.local_triangle_index]]
-            second_triangle = second_mesh.vertices[second_mesh.triangles[hit.local_triangle_index]]
-            first_point = hit.barycentric @ first_triangle
-            second_point = hit.barycentric @ second_triangle
-            thickness = abs(float(np.dot(second_point - first_point, hit.normal)))
-        if not math.isfinite(thickness) or thickness <= 0 or not is_thin(thickness):
-            raise CaeError("invalid_geometry", "adaptive thin shell thickness changed outside the TMM envelope")
-        layer_values.append((material.refractive_index, thickness))
-    reflected, transmitted, s_axis = multilayer_stokes(
-        ray.stokes,
-        ray.basis,
-        ray.direction,
-        normal,
-        incident.refractive_index,
-        layer_values,
-        target.refractive_index,
-        ray.wavelength,
-    )
-    transmitted_direction = refract(
-        ray.direction,
-        normal,
-        max(1e-12, incident.refractive_index.real),
-        max(1e-12, target.refractive_index.real),
-    )
-    exit_mesh = stack.layers[-1][0].outer if from_left else stack.layers[0][0].inner
-    exit_triangle = exit_mesh.vertices[exit_mesh.triangles[hit.local_triangle_index]]
-    transmission_position = hit.barycentric @ exit_triangle
-    return (
-        reflected,
-        transmitted,
-        s_axis,
-        transmitted_direction,
-        transmission_position,
-        target_name,
-        target_root,
-        target_stack,
     )
 
 

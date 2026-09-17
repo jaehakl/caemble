@@ -1,6 +1,6 @@
 import { booleans, geometries, measurements, modifiers, transforms } from '@jscad/modeling'
 import type { CadElementManifest, EvaluatedPart, GeometryOperationDefinition } from '../../../evaluation/types'
-import type { CanonicalGeometryNodeV1 } from '../../../evaluation/canonicalTypes'
+import type { CanonicalGeometryNodeV2 } from '../../../evaluation/canonicalTypes'
 import { intersectManifest, subtractManifest, unionManifest } from './definition'
 
 type CadGeom3 = ReturnType<typeof geometries.geom3.create>
@@ -91,7 +91,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
         const cutterNodes = childParts.slice(1).flatMap((parts) => parts.map((part) => part.canonicalNode))
 
         return childParts[0].map((part, partIndex) => {
-          const canonicalNode: CanonicalGeometryNodeV1 = {
+          const canonicalNode: CanonicalGeometryNodeV2 = {
             kind: 'boolean',
             nodeId: `${context.nodeId}/$result-${partIndex + 1}`,
             operation: 'subtract',
@@ -232,7 +232,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
       const childGeometries = childParts.map((parts) => {
         return parts.length === 1 ? parts[0].geometry : cadUnion(...parts.map((part) => part.geometry))
       })
-      const canonicalChildren: CanonicalGeometryNodeV1[] = childParts.map((parts, index) =>
+      const canonicalChildren: CanonicalGeometryNodeV2[] = childParts.map((parts, index) =>
         parts.length === 1
           ? parts[0].canonicalNode
           : {

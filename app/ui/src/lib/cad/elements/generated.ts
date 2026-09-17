@@ -3,22 +3,26 @@ import { boxManifest } from './primitives/box/definition'
 import { cylinderManifest } from './primitives/cylinder/definition'
 import { curvedEdgeCylinderManifest } from './primitives/curvedEdgeCylinder/definition'
 import { sphereManifest } from './primitives/sphere/definition'
-import { curvedSurfaceSphereManifest } from './primitives/curvedSurfaceSphere/definition'
 import { fiberManifest } from './primitives/fiber/definition'
 import { translateManifest, rotateManifest, scaleManifest } from './operations/transforms/definition'
-import { shellManifest } from './operations/shell/definition'
 import { arrayManifest } from './operations/array/definition'
 import { unionManifest, subtractManifest, intersectManifest } from './operations/booleans/definition'
+import { asphericCylinderManifest } from './primitives/asphericCylinder/definition'
+import { ellipsoidManifest } from './primitives/ellipsoid/definition'
+import { hyperboloidManifest } from './primitives/hyperboloid/definition'
+import { paraboloidManifest } from './primitives/paraboloid/definition'
 import { boxDefinition } from './primitives/box/runtime'
 import { cylinderDefinition } from './primitives/cylinder/runtime'
 import { curvedEdgeCylinderDefinition } from './primitives/curvedEdgeCylinder/runtime'
 import { sphereDefinition } from './primitives/sphere/runtime'
-import { curvedSurfaceSphereDefinition } from './primitives/curvedSurfaceSphere/runtime'
 import { fiberDefinition } from './primitives/fiber/runtime'
 import { translateDefinition, rotateDefinition, scaleDefinition } from './operations/transforms/runtime'
-import { shellDefinition } from './operations/shell/runtime'
 import { arrayDefinition } from './operations/array/runtime'
 import { unionDefinition, subtractDefinition, intersectDefinition } from './operations/booleans/runtime'
+import { asphericCylinderDefinition } from './primitives/asphericCylinder/runtime'
+import { ellipsoidDefinition } from './primitives/ellipsoid/runtime'
+import { hyperboloidDefinition } from './primitives/hyperboloid/runtime'
+import { paraboloidDefinition } from './primitives/paraboloid/runtime'
 import { cadAuthoringContract } from './authoringContract'
 import type { CadElementDefinition } from '../evaluation/types'
 
@@ -29,8 +33,11 @@ export const cadPrimitiveAuthoringBindings = Object.freeze({
   Cylinder: 'cylinder',
   CurvedEdgeCylinder: 'curvedEdgeCylinder',
   Sphere: 'sphere',
-  CurvedSurfaceSphere: 'curvedSurfaceSphere',
   Fiber: 'fiber',
+  AsphericCylinder: 'asphericCylinder',
+  Ellipsoid: 'ellipsoid',
+  Hyperboloid: 'hyperboloid',
+  Paraboloid: 'paraboloid',
 } as const)
 
 export const cadElementCatalog = [
@@ -38,16 +45,18 @@ export const cadElementCatalog = [
   cylinderManifest,
   curvedEdgeCylinderManifest,
   sphereManifest,
-  curvedSurfaceSphereManifest,
   fiberManifest,
   translateManifest,
   rotateManifest,
   scaleManifest,
-  shellManifest,
   arrayManifest,
   unionManifest,
   subtractManifest,
   intersectManifest,
+  asphericCylinderManifest,
+  ellipsoidManifest,
+  hyperboloidManifest,
+  paraboloidManifest,
 ] as const
 
 export const cadElementDefinitions = [
@@ -55,14 +64,16 @@ export const cadElementDefinitions = [
   cylinderDefinition,
   curvedEdgeCylinderDefinition,
   sphereDefinition,
-  curvedSurfaceSphereDefinition,
   fiberDefinition,
   translateDefinition,
   rotateDefinition,
   scaleDefinition,
-  shellDefinition,
   arrayDefinition,
   unionDefinition,
   subtractDefinition,
   intersectDefinition,
+  asphericCylinderDefinition,
+  ellipsoidDefinition,
+  hyperboloidDefinition,
+  paraboloidDefinition,
 ] as const satisfies readonly CadElementDefinition[]

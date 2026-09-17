@@ -1,12 +1,12 @@
 # Transform: direct props와 operation wrapper
 
-Primitive, Boolean·shell·array operation과 `Geometry` component 호출은 같은 direct transform 계약을 사용합니다. `translate`·`rotate`·`scale` wrapper는 별도의 전용 prop 계약을 사용합니다.
+Primitive, Boolean·array operation과 `Geometry` component 호출은 같은 direct transform 계약을 사용합니다. `translate`·`rotate`·`scale` wrapper는 별도의 전용 prop 계약을 사용합니다. 음의 scale은 방향을 반전시키며 법선에는 역전치 변환을 적용합니다. 0인 scale은 허용하지 않습니다.
 
-| Prop | 형식 | 의미 |
-| --- | --- | --- |
-| `position` | `[x, y, z]` | parent 좌표계에서의 이동 |
+| Prop       | 형식        | 의미                                                                         |
+| ---------- | ----------- | ---------------------------------------------------------------------------- |
+| `position` | `[x, y, z]` | parent 좌표계에서의 이동                                                     |
 | `rotation` | `[x, y, z]` | radian 단위의 intrinsic XYZ Euler, `THREE.Euler(x, y, z, "XYZ")`와 같은 의미 |
-| `scale` | `[x, y, z]` | 축별 배율. 균일 배율은 세 값을 같게 작성 |
+| `scale`    | `[x, y, z]` | 축별 배율. 균일 배율은 세 값을 같게 작성                                     |
 
 한 node 안에서는 **scale → rotation → position** 순서로 적용됩니다. parent와 child transform은 tree 계층대로 합성됩니다. 각도는 degree가 아니라 radian이므로 `Math.PI / 2`처럼 작성하세요.
 
@@ -25,7 +25,7 @@ Primitive, Boolean·shell·array operation과 `Geometry` component 호출은 같
 여러 child를 한 local transform 아래 묶을 때는 lowercase operation wrapper를 사용합니다. Wrapper는 아래 전용 prop만 받고 direct transform prop과 섞지 않습니다. 안쪽 wrapper부터 적용되므로 다음 순서는 scale → rotate → translate입니다.
 
 ```tsx
-import { Box, radians } from '@caemble/core'
+import { Box, radians } from "@caemble/core";
 
 <translate offset={[100, 0, 0]}>
   <rotate axis={[0, 0, 1]} angle={radians(90)}>
@@ -33,7 +33,7 @@ import { Box, radians } from '@caemble/core'
       <Box id="body" size={[20, 10, 5]} />
     </scale>
   </rotate>
-</translate>
+</translate>;
 ```
 
 `radians(number)`와 `radians(Vec3)`는 degree를 radian으로 바꿉니다. Direct `rotation`은 intrinsic XYZ Euler Vec3이고, `<rotate>`는 오른손 법칙의 axis-angle이므로 두 표현의 의미를 구분하세요.

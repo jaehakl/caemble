@@ -4,7 +4,6 @@ import asyncio
 import json
 import math
 from dataclasses import dataclass
-from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Sequence
 
@@ -12,7 +11,6 @@ import manifold3d as manifold
 import numpy as np
 
 from app.methods.geometry.models import (
-    ShellLayerGeometry,
     SolidComponent,
     TriangleMeshingProfile,
     TriangleProvenance,
@@ -20,6 +18,8 @@ from app.methods.geometry.models import (
     VolumeMesh,
 )
 from app.methods.geometry.solids import components_from_shells
+from .continuous import tessellate_primitive
+from .fiber import tessellate_fiber
 from app.methods.mesh.models import VolumeMeshingProfile
 from app.methods.mesh.tetrahedral import (
     SurfaceDescriptor,
@@ -32,7 +32,7 @@ from app.kernel.api import ContentKey, ValueCache
 from app.kernel.api.units import convert_ucum_value
 
 _BACKEND_VERSION = "manifold3d-3.5.1"
-_MESHING_PROFILE = "canonical-v1"
+_MESHING_PROFILE = "canonical-v2"
 _VOLUME_BACKEND_VERSION = "netgen-mesher-6.2.2606"
 _VOLUME_MESHING_PROFILE = "tetrahedral-v5"
 
@@ -41,14 +41,6 @@ _VOLUME_MESHING_PROFILE = "tetrahedral-v5"
 class _CompiledGeometry:
     solid: manifold.Manifold
     provenance: dict[tuple[int, int], tuple[str, int]]
-
-
-@dataclass(frozen=True, slots=True)
-class _ShellBoundaryData:
-    world_center: np.ndarray[Any, Any]
-    triangles: np.ndarray[Any, Any]
-    displacements: np.ndarray[Any, Any]
-    boundaries: dict[float, np.ndarray[Any, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +64,6 @@ class GeometryService:
 
     def __init__(self, *, cache: ValueCache | None = None) -> None:
         self._meshes: dict[tuple[str, str, str, str, str], TriangularMesh] = {}
-        self._shell_layers: dict[tuple[str, str, str, str], ShellLayerGeometry] = {}
         self._volume_meshes: dict[tuple[Any, ...], VolumeMesh] = {}
         self._solid_components: dict[tuple[Any, ...], tuple[SolidComponent, ...]] = {}
         self._cache = cache
@@ -104,8 +95,10 @@ class GeometryService:
         reference_length_unit: str,
         progress: Callable[[Any], Awaitable[None]] | None = None,
     ) -> TriangularMesh:
+        if scene.get("version") != 2:
+            raise ValueError("Canonical Geometry v2 is required; migrate source and rebuild previous artifacts")
         key = (
-            scene["geometryHash"],
+            scene.get("meshHash", scene["geometryHash"]),
             root_id,
             reference_length_unit,
             _BACKEND_VERSION,
@@ -158,7 +151,9 @@ class GeometryService:
         progress: Callable[[Any], Awaitable[None]] | None = None,
     ) -> tuple[SolidComponent, ...]:
         """Closed material components with independent pre-Boolean mesh precision."""
-        key = (scene["geometryHash"], root_id, reference_length_unit, _BACKEND_VERSION,
+        if scene.get("version") != 2:
+            raise ValueError("Canonical Geometry v2 is required; migrate source and rebuild previous artifacts")
+        key = (scene.get("meshHash", scene["geometryHash"]), root_id, reference_length_unit, _BACKEND_VERSION,
                "solid-components-v2", profile)
         cached = self._solid_components.get(key)
         if cached is not None:
@@ -216,6 +211,8 @@ class GeometryService:
         profile: VolumeMeshingProfile,
         progress: Callable[[Any], Awaitable[None]] | None = None,
     ) -> VolumeMesh:
+        if scene.get("version") != 2:
+            raise ValueError("Canonical Geometry v2 is required; migrate source and rebuild previous artifacts")
         if isinstance(root_ids, str):
             raise TypeError("volume mesh root_ids must be a sequence, not a string")
         region_ids = tuple(root_ids)
@@ -224,7 +221,7 @@ class GeometryService:
         if not set(dict(profile.region_max_element_sizes)).issubset(region_ids) or not set(dict(profile.layer_subdivisions)).issubset(region_ids):
             raise ValueError("mesh profile refers to a root outside the assembly")
         key = (
-            scene["geometryHash"],
+            scene.get("meshHash", scene["geometryHash"]),
             region_ids,
             reference_length_unit,
             _BACKEND_VERSION,
@@ -305,121 +302,6 @@ class GeometryService:
         self._volume_meshes[key] = result
         if progress is not None:
             await progress({"stage": "volume-mesh", "completed": 1, "total": 1})
-        return result
-
-    async def shell_layer(
-        self,
-        scene: dict[str, Any],
-        root_id: str,
-        reference_length_unit: str,
-        progress: Callable[[Any], Awaitable[None]] | None = None,
-    ) -> ShellLayerGeometry | None:
-        key = (scene["geometryHash"], root_id, reference_length_unit, _MESHING_PROFILE)
-        cached = self._shell_layers.get(key)
-        if cached is not None:
-            return cached
-        cache_key = ContentKey.from_parts(
-            "geometry.shell-layer",
-            scene["geometryHash"],
-            root_id,
-            reference_length_unit,
-            _BACKEND_VERSION,
-            _MESHING_PROFILE,
-        )
-        if self._cache is not None:
-            cached = self._cache.lookup(cache_key)
-            if isinstance(cached, ShellLayerGeometry):
-                for mesh in (cached.inner, cached.outer):
-                    mesh.vertices.setflags(write=False)
-                    mesh.triangles.setflags(write=False)
-                self._shell_layers[key] = cached
-                return cached
-        root = next(root for root in scene["roots"] if root["id"] == root_id)
-        direct = _direct_shell(root["node"])
-        if direct is None:
-            return None
-        shell, outer_matrix = direct
-        if progress is not None:
-            await progress({"stage": "geometry", "completed": 0, "total": 1})
-        await asyncio.sleep(0)
-        context = manifold.ExecutionContext()
-        child = _compile_node(shell["child"], context)
-        data = _shell_boundary_data(
-            child,
-            (float(shell["innerOffset"]), float(shell["outerOffset"])),
-            context,
-        )
-        scale = _length_scale(scene["lengthUnit"], reference_length_unit)
-        linear = outer_matrix[:3, :3] * scale
-        reverses_orientation = float(np.linalg.det(linear)) < 0
-
-        def boundary(offset: float, surface_index: int) -> TriangularMesh:
-            points = data.boundaries[offset] + data.world_center
-            homogeneous = np.concatenate((points, np.ones((len(points), 1))), axis=1)
-            vertices = (homogeneous @ outer_matrix.T)[:, :3] * scale
-            vertices = np.ascontiguousarray(vertices, dtype=np.float64)
-            triangle_indices = data.triangles[:, [0, 2, 1]] if reverses_orientation else data.triangles
-            triangles = np.ascontiguousarray(triangle_indices, dtype=np.int64)
-            vertices.setflags(write=False)
-            triangles.setflags(write=False)
-            provenance = tuple(
-                TriangleProvenance(root_id, shell["nodeId"], surface_index)
-                for _ in range(len(triangles))
-            )
-            return TriangularMesh(vertices, triangles, provenance)
-
-        inner_offset = float(shell["innerOffset"])
-        outer_offset = float(shell["outerOffset"])
-        inner = boundary(inner_offset, 0)
-        outer = boundary(outer_offset, 1)
-        inner_triangles = inner.vertices[inner.triangles]
-        outer_triangles = outer.vertices[outer.triangles]
-        inner_normals = np.cross(
-            inner_triangles[:, 1] - inner_triangles[:, 0],
-            inner_triangles[:, 2] - inner_triangles[:, 0],
-        )
-        outer_normals = np.cross(
-            outer_triangles[:, 1] - outer_triangles[:, 0],
-            outer_triangles[:, 2] - outer_triangles[:, 0],
-        )
-        inner_normal_lengths = np.linalg.norm(inner_normals, axis=1)
-        outer_normal_lengths = np.linalg.norm(outer_normals, axis=1)
-        inner_normals /= inner_normal_lengths[:, None]
-        outer_normals /= outer_normal_lengths[:, None]
-        offset_span = float(abs(Decimal(str(outer_offset)) - Decimal(str(inner_offset))))
-        transformed_displacements = data.displacements @ linear.T * offset_span
-        triangle_displacements = transformed_displacements[data.triangles]
-        separations = np.concatenate(
-            (
-                np.abs(np.einsum("ijk,ik->ij", triangle_displacements, inner_normals)).reshape(-1),
-                np.abs(np.einsum("ijk,ik->ij", triangle_displacements, outer_normals)).reshape(-1),
-            )
-        )
-        family_id = json.dumps(
-            [shell["child"]["nodeId"], outer_matrix.tolist()],
-            separators=(",", ":"),
-        )
-        result = ShellLayerGeometry(
-            root_id=root_id,
-            family_id=family_id,
-            inner_offset=inner_offset,
-            outer_offset=outer_offset,
-            inner=inner,
-            outer=outer,
-            minimum_thickness=float(np.min(separations)),
-            maximum_thickness=float(np.max(separations)),
-        )
-        if self._cache is not None:
-            result = self._cache.publish(cache_key, result)
-            for mesh in (result.inner, result.outer):
-                mesh.vertices.setflags(write=False)
-                mesh.triangles.setflags(write=False)
-        existing = self._shell_layers.get(key)
-        if existing is not None:
-            return existing
-        self._shell_layers[key] = result
-        if progress is not None:
-            await progress({"stage": "geometry", "completed": 1, "total": 1})
         return result
 
 
@@ -1261,14 +1143,17 @@ def _compile_node(
 ) -> _CompiledGeometry:
     kind = node["kind"]
     if kind == "primitive":
-        parameters = node["parameters"]
+        parameters = {**node["parameters"], **node.get("tessellation", {})}
         if profile is not None:
             parameters = {
                 name: profile.angular_segments
-                if name in {"segments", "azimuthalSegments", "polarSegments", "verticalSegments"}
+                if name in {"segments", "azimuthalSegments", "polarSegments", "verticalSegments", "radialSegments", "meridianSegments"}
                 else value
                 for name, value in parameters.items()
             }
+            if node["primitive"] in {"asphericCylinder", "ellipsoid", "hyperboloid", "paraboloid"}:
+                parameters["radialSegments"] = profile.angular_segments
+                parameters["meridianSegments"] = profile.angular_segments
         primitive = node["primitive"]
         if primitive == "box":
             solid = manifold.Manifold.cube(parameters["size"], center=True)
@@ -1285,22 +1170,18 @@ def _compile_node(
         elif primitive == "curvedEdgeCylinder":
             vertices, triangles, surface_indices = _curved_edge_cylinder(parameters)
             return _from_indexed(vertices, triangles, surface_indices, node["nodeId"], context)
+        elif primitive in {"asphericCylinder", "ellipsoid", "hyperboloid", "paraboloid"}:
+            vertices, triangles, surfaces = tessellate_primitive(primitive, parameters, parameters)
+            return _from_indexed(vertices, triangles, surfaces, node["nodeId"], context)
         else:
-            vertices, triangles = _curved_surface_sphere(parameters)
-            return _from_indexed(
-                vertices,
-                triangles,
-                [0] * triangles.shape[0],
-                node["nodeId"],
-                context,
-            )
+            raise ValueError(f"Unsupported primitive {primitive}; migrate source and rebuild")
         return _primitive(solid, node["nodeId"], primitive, parameters)
     if kind == "fiber":
-        fiber = node if profile is None else {
-            **node, "radialSegments": profile.angular_segments,
-        }
-        vertices, triangles, surface_indices = _fiber(fiber)
-        return _from_indexed(vertices, triangles, surface_indices, node["nodeId"], context)
+        settings = dict(node.get("tessellation", {}))
+        if profile is not None:
+            settings["radialSegments"] = profile.angular_segments
+        vertices, triangles, surfaces = tessellate_fiber(node, settings)
+        return _from_indexed(vertices, triangles, surfaces, node["nodeId"], context)
     if kind in {"transform", "instance"}:
         child = _compile_node(node["child"], context, profile)
         matrix = node["matrix"]
@@ -1326,8 +1207,7 @@ def _compile_node(
             for item, provenance in child.provenance.items()
         }
         return _CompiledGeometry(solid, provenance)
-    child = _compile_node(node["child"], context, profile)
-    return _shell(child, node["nodeId"], node["innerOffset"], node["outerOffset"], context)
+    raise ValueError(f"Unsupported canonical Geometry kind {kind}; migrate source and rebuild")
 
 
 def _primitive(
@@ -1344,7 +1224,7 @@ def _primitive(
     original_id = int(output.run_original_id[0])
     result: dict[tuple[int, int], tuple[str, int]] = {}
     for index, triangle in enumerate(triangles):
-        if primitive in {"sphere", "curvedSurfaceSphere"}:
+        if primitive == "sphere":
             surface_index = 0
         else:
             points = vertices[triangle]
@@ -1384,6 +1264,8 @@ def _from_indexed(
         face_id=face_ids,
     )
     solid = context.from_mesh(mesh)
+    if solid.status() != manifold.Error.NoError:
+        raise ValueError(f"Geometry {node_id!r} does not form a valid closed mesh: {solid.status()}")
     output = solid.to_mesh64()
     original_id = int(output.run_original_id[0])
     return _CompiledGeometry(
@@ -1454,178 +1336,6 @@ def _curved_edge_cylinder(
             )
             surface_indices.extend((1, 1))
     return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), surface_indices
-
-
-def _curved_surface_sphere(
-    parameters: dict[str, Any],
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    azimuthal_segments = parameters["azimuthalSegments"]
-    polar_segments = parameters["polarSegments"]
-
-    def point(theta: float, phi: float) -> list[float]:
-        azimuthal_radius = sum(
-            mode["amplitude"] * math.cos(mode_index * theta + mode["phase"])
-            for mode_index, mode in enumerate(parameters["azimuthalCurve"])
-        )
-        polar_radius = sum(
-            mode["amplitude"] * math.cos(mode_index * phi + mode["phase"])
-            for mode_index, mode in enumerate(parameters["polarCurve"])
-        )
-        radius = azimuthal_radius * polar_radius
-        radial = radius * math.sin(phi)
-        return [radial * math.cos(theta), radial * math.sin(theta), radius * math.cos(phi)]
-
-    vertices = [point(0, 0)]
-    for polar_index in range(1, polar_segments):
-        phi = math.pi * polar_index / polar_segments
-        for azimuthal_index in range(azimuthal_segments):
-            vertices.append(point(2 * math.pi * azimuthal_index / azimuthal_segments, phi))
-    south = len(vertices)
-    vertices.append(point(0, math.pi))
-    triangles: list[list[int]] = []
-    for azimuthal_index in range(azimuthal_segments):
-        following = (azimuthal_index + 1) % azimuthal_segments
-        triangles.append([0, 1 + azimuthal_index, 1 + following])
-    for polar_index in range(1, polar_segments - 1):
-        upper = 1 + (polar_index - 1) * azimuthal_segments
-        lower = upper + azimuthal_segments
-        for azimuthal_index in range(azimuthal_segments):
-            following = (azimuthal_index + 1) % azimuthal_segments
-            triangles.extend(
-                ([upper + azimuthal_index, lower + azimuthal_index, lower + following],
-                 [upper + azimuthal_index, lower + following, upper + following])
-            )
-    last = 1 + (polar_segments - 2) * azimuthal_segments
-    for azimuthal_index in range(azimuthal_segments):
-        following = (azimuthal_index + 1) % azimuthal_segments
-        triangles.append([last + azimuthal_index, south, last + following])
-    return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64)
-
-
-def _fiber(node: dict[str, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], list[int]]:
-    segments = node["radialSegments"]
-    vertices: list[list[float]] = []
-    for path_index, point in enumerate(node["points"]):
-        frame = node["frames"][path_index]
-        radius = node["radii"][path_index]
-        for radial_index in range(segments):
-            angle = 2 * math.pi * radial_index / segments
-            vertices.append(
-                [
-                    point[axis]
-                    + radius * math.cos(angle) * frame["normal"][axis]
-                    + radius * math.sin(angle) * frame["binormal"][axis]
-                    for axis in range(3)
-                ]
-            )
-    start_center = len(vertices)
-    vertices.append(list(node["points"][0]))
-    end_center = len(vertices)
-    vertices.append(list(node["points"][-1]))
-    triangles: list[list[int]] = []
-    surface_indices: list[int] = []
-    for radial_index in range(segments):
-        following = (radial_index + 1) % segments
-        triangles.append([start_center, following, radial_index])
-        surface_indices.append(0)
-        end_start = (len(node["points"]) - 1) * segments
-        triangles.append([end_center, end_start + radial_index, end_start + following])
-        surface_indices.append(2)
-    for path_index in range(len(node["points"]) - 1):
-        lower = path_index * segments
-        upper = lower + segments
-        for radial_index in range(segments):
-            following = (radial_index + 1) % segments
-            triangles.extend(
-                ([lower + radial_index, lower + following, upper + following],
-                 [lower + radial_index, upper + following, upper + radial_index])
-            )
-            surface_indices.extend((1, 1))
-    return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), surface_indices
-
-
-def _direct_shell(node: dict[str, Any]) -> tuple[dict[str, Any], np.ndarray[Any, Any]] | None:
-    matrix = np.eye(4, dtype=np.float64)
-    current = node
-    while current.get("kind") in {"transform", "instance"}:
-        matrix = matrix @ np.asarray(current["matrix"], dtype=np.float64).reshape(4, 4)
-        current = current["child"]
-    return (current, matrix) if current.get("kind") == "shell" else None
-
-
-def _shell_boundary_data(
-    child: _CompiledGeometry,
-    offsets: tuple[float, ...],
-    context: manifold.ExecutionContext,
-) -> _ShellBoundaryData:
-    del context
-    output = child.solid.to_mesh64()
-    vertices = np.asarray(output.vert_properties, dtype=np.float64)[:, :3]
-    world_center = (np.min(vertices, axis=0) + np.max(vertices, axis=0)) / 2
-    vertices = vertices - world_center
-    triangles = np.asarray(output.tri_verts, dtype=np.int64)
-    adjacent: list[list[tuple[np.ndarray[Any, Any], float]]] = [[] for _ in vertices]
-    normals = np.empty((len(triangles), 3), dtype=np.float64)
-    for triangle_index, triangle in enumerate(triangles):
-        points = vertices[triangle]
-        normal = np.cross(points[1] - points[0], points[2] - points[0])
-        length = float(np.linalg.norm(normal))
-        normal /= length
-        normals[triangle_index] = normal
-        for corner, vertex_index in enumerate(triangle):
-            before = points[(corner + 2) % 3] - points[corner]
-            after = points[(corner + 1) % 3] - points[corner]
-            cosine = float(np.dot(before, after) / (np.linalg.norm(before) * np.linalg.norm(after)))
-            weight = math.acos(max(-1.0, min(1.0, cosine)))
-            adjacent[int(vertex_index)].append((normal, weight))
-    displacements = np.empty_like(vertices)
-    for vertex_index, faces in enumerate(adjacent):
-        coefficients = np.asarray([math.sqrt(weight) * normal for normal, weight in faces])
-        target = np.asarray([math.sqrt(weight) for _normal, weight in faces])
-        displacement, _residuals, _rank, _singular_values = np.linalg.lstsq(
-            coefficients,
-            target,
-            rcond=1e-12,
-        )
-        displacements[vertex_index] = displacement
-    boundaries = {offset: vertices + offset * displacements for offset in offsets}
-    return _ShellBoundaryData(world_center, triangles, displacements, boundaries)
-
-
-def _shell(
-    child: _CompiledGeometry,
-    shell_node_id: str,
-    inner_offset: float,
-    outer_offset: float,
-    context: manifold.ExecutionContext,
-) -> _CompiledGeometry:
-    data = _shell_boundary_data(child, (inner_offset, outer_offset), context)
-    inner = data.boundaries[inner_offset]
-    outer = data.boundaries[outer_offset]
-    shell_vertices = np.concatenate((inner, outer), axis=0)
-    shell_triangles = np.concatenate(
-        (data.triangles[:, ::-1], data.triangles + len(inner)),
-        axis=0,
-    )
-    face_ids = np.concatenate(
-        (
-            np.zeros(len(data.triangles), dtype=np.uint64),
-            np.ones(len(data.triangles), dtype=np.uint64),
-        )
-    )
-    mesh = manifold.Mesh64(
-        np.ascontiguousarray(shell_vertices),
-        np.ascontiguousarray(shell_triangles, dtype=np.uint64),
-        face_id=face_ids,
-    )
-    solid = context.from_mesh(mesh).translate(tuple(float(item) for item in data.world_center))
-    shell_output = solid.to_mesh64()
-    original_id = int(shell_output.run_original_id[0])
-    provenance = {
-        (original_id, 0): (shell_node_id, 0),
-        (original_id, 1): (shell_node_id, 1),
-    }
-    return _CompiledGeometry(solid, provenance)
 
 
 def _length_scale(unit: str, reference_unit: str) -> float:

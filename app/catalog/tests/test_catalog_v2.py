@@ -104,10 +104,10 @@ class CatalogV3Tests(unittest.TestCase):
 
     def test_spectrometer_has_current_grating_solver_and_complete_bundle(self) -> None:
         with open_catalog() as catalog:
-            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@5.0.0')
-            solver = catalog.get_solver_manifest('ray-tracing', '2.0.0')
+            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@6.0.0')
+            solver = catalog.get_solver_manifest('ray-tracing', '3.0.0')
         self.assertEqual(example['title'], 'Czerny–Turner Spectrometer')
-        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '2.0.0')])
+        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '3.0.0')])
         self.assertEqual(set(example['sourceBundle']['files']), {
             'experiment.tsx', 'geometry.tsx', 'material.tsx', 'simulate.py', 'tasks/trace.tsx',
         })
@@ -119,7 +119,7 @@ class CatalogV3Tests(unittest.TestCase):
     def test_release_has_only_current_solvers_and_examples(self) -> None:
         expected = {
             "dc-current-density": "3.1.0", "heat-transfer": "2.0.0",
-            "ray-tracing": "2.0.0", "fdtd": "5.0.0",
+            "ray-tracing": "3.0.0", "fdtd": "5.0.0",
             "structural-mechanics": "8.0.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
             "dem": "1.0.0", "sph": "1.1.0", "mpm": "2.0.0",
@@ -140,9 +140,10 @@ class CatalogV3Tests(unittest.TestCase):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
                 expected_version = "1.0.0" if example["key"] == "hyperelastic-uniaxial" else "7.1.2" if example["repository"] == "fea" else {
-                    "fiber-bundle": "6.0.2", "electro-thermal-notched-bar": "6.0.2", "steady-microheater": "1.2.0",
+                    "layered-cutaways": "6.0.0", "random-sphere-hcp-array": "6.0.0", "folded-ray-tracing": "6.0.1", "czerny-turner-spectrometer": "6.0.0",
+                    "fiber-bundle": "7.0.0", "electro-thermal-notched-bar": "6.0.2", "steady-microheater": "1.2.0",
                     "feedback-microheater": "1.0.0", "pulsed-microheater": "1.1.0",
-                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "6.0.0", "structural-optical-results": "4.1.4",
+                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "7.0.0", "structural-optical-results": "5.0.1",
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.4",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.1.0",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",

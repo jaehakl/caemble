@@ -121,6 +121,7 @@ async def test_offset_csg_bodies_bond_only_their_overlapping_planar_patch(angle)
     load = invocation.config["boundaryConditions"][1]["parameters"]
     load["force"] = (rotation @ load["force"]).tolist()
     load["referencePoint"] = (rotation @ load["referencePoint"]).tolist()
+    scene["version"] = 2
     scene["geometryHash"] = hashlib.sha256(json.dumps(scene, sort_keys=True).encode()).hexdigest()
     invocation.config["initializations"].append({"methodId": "fea.bonded", "target": ["experiment.geometry.all"], "parameters": {}})
     model = await build_geometry_model(invocation)
@@ -328,6 +329,7 @@ async def test_csg_rotor_initial_azimuth_and_pitch_preserve_volume_without_fake_
         scene["roots"].append(root)
         scene["geometryGroups"][0]["rootIds"].append(name)
         scene["surfaceGroups"].append({"name": name + "-left", "selectors": [{"rootId": name, "sourceNodeId": name + "-box", "surfaceIndex": 0}]})
+    scene["version"] = 2
     scene["geometryHash"] = hashlib.sha256(json.dumps(scene, sort_keys=True).encode()).hexdigest()
     invocation.config["parameters"]["geometricNonlinear"] = True
     invocation.config["initializations"].append({"methodId": "fea.rotor", "target": ["experiment.surface.body-right", "experiment.surface.extension-left", "experiment.surface.generator-left", "experiment.surface.blade-left"], "parameters": {"initialRotorSpeed": .5, "initialAzimuth": .4, "initialPitch": .2, "gearRatio": 2., "shaftStiffness": 1e4, "shaftDamping": 1.}})

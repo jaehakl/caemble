@@ -20,7 +20,7 @@ def boolean(name, operation, *children):
 
 
 def scene(node, unit="m"):
-    return {"geometryHash": repr(node), "lengthUnit": unit, "roots": [{"id": "body", "node": node}]}
+    return {"version": 2, "geometryHash": repr(node), "lengthUnit": unit, "roots": [{"id": "body", "node": node}]}
 
 
 def box_inertia(size, mass):
@@ -61,7 +61,7 @@ def _translated_box(
 
 def _scene(geometry_hash: str, roots: list[dict[str, object]]) -> dict[str, object]:
     return {
-        "geometryHash": geometry_hash,
+        "version": 2, "geometryHash": geometry_hash,
         "lengthUnit": "m",
         "roots": roots,
         "geometryGroups": [],

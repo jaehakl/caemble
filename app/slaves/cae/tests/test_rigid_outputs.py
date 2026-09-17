@@ -45,7 +45,7 @@ def make_model(nodes, densities=None, velocities=None, omegas=None):
             {"methodId": "rigid.initial-motion", "target": target,
              "parameters": {"velocity": velocities[index], "angularVelocity": omegas[index]}},
         ])
-    scene = {"geometryHash": str(ContentKey.from_parts("test", roots)), "lengthUnit": "m",
+    scene = {"version": 2, "geometryHash": str(ContentKey.from_parts("test", roots)), "lengthUnit": "m",
              "roots": roots, "geometryGroups": groups}
     invocation = SimpleNamespace(
         config={"parameters": {"massAngularSegments": 64}, "initializations": initializations, "boundaryConditions": []},

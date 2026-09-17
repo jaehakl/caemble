@@ -47,7 +47,7 @@ const templates = [
     bundleHash: 'fiber-hash',
     concepts: [],
     relatedSolvers: [
-      { name: 'ray-tracing', version: '2.0.0', description: 'Ray tracing' },
+      { name: 'ray-tracing', version: '3.0.0', description: 'Ray tracing' },
       { name: 'fdtd', version: '5.0.0', description: 'FDTD' },
     ],
   },

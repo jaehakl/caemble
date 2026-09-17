@@ -50,7 +50,7 @@ async def build_geometry_model(invocation):
         "sourceNodeIds": np.asarray([item[2] for item in flat]),
         "surfaceIndices": np.asarray([item[3] for item in flat], dtype=np.int32),
     }
-    identity = hashlib.sha256(f"{source}:{scene['geometryHash']}:{part['id']}:{resolution}".encode()).hexdigest()
+    identity = hashlib.sha256(f"{source}:{scene.get('meshHash', scene['geometryHash'])}:{part['id']}:{resolution}".encode()).hexdigest()
     metadata = {
         "nodeIds": np.arange(len(mesh.points), dtype=np.int64),
         "boundaryFaces": mesh.boundary_faces.astype(np.int32),

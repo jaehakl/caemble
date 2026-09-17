@@ -2,7 +2,7 @@ import type { Material } from '../model/core'
 import type { MaterialDefinition } from '@/contracts/material'
 import type { Rotation, Vec3 } from '../model/types'
 import type { UcumUnit } from '../model/units'
-import type { CanonicalGeometryNodeV1 } from './canonicalTypes'
+import type { CanonicalGeometryNodeV2 } from './canonicalTypes'
 
 export type GeometryComponent = (props: Record<string, unknown>) => unknown
 export type CadElementType = string | GeometryComponent
@@ -15,7 +15,7 @@ export type CadNode = {
 
 export type EvaluatedPart = {
   geometry: unknown
-  canonicalNode: CanonicalGeometryNodeV1
+  canonicalNode: CanonicalGeometryNodeV2
   materialRole: string
   material?: Material
   surfaces?: EvaluatedSurface[]

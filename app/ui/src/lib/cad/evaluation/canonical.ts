@@ -2,25 +2,28 @@ import type { CadScene } from './types'
 import type { CadSceneGroupOptions } from './groups'
 import type { GeometryEvaluationProfile } from './precision'
 import type {
-  CanonicalGeometryNodeV1,
-  CanonicalGeometryRootV1,
-  CanonicalGeometrySceneDraftV1,
-  CanonicalGeometrySceneV1,
-  CanonicalSurfaceGroupV1,
-  CanonicalSurfaceSelectorV1,
+  CanonicalGeometryNodeV2,
+  CanonicalGeometryRootV2,
+  CanonicalGeometrySceneDraftV2,
+  CanonicalGeometrySceneV2,
+  CanonicalSurfaceGroupV2,
+  CanonicalSurfaceSelectorV2,
 } from './canonicalTypes'
 
-const drafts = new WeakMap<CadScene, CanonicalGeometrySceneDraftV1>()
+const drafts = new WeakMap<CadScene, CanonicalGeometrySceneDraftV2>()
 const primitiveSurfaceIndices = Object.freeze({
   box: Object.freeze([0, 1, 2, 3, 4, 5]),
   cylinder: Object.freeze([0, 1, 2]),
   sphere: Object.freeze([0]),
   curvedEdgeCylinder: Object.freeze([0, 1, 2]),
-  curvedSurfaceSphere: Object.freeze([0]),
+  ellipsoid: Object.freeze([0]),
+  asphericCylinder: Object.freeze([0, 1, 2]),
+  hyperboloid: Object.freeze([1, 2]),
+  paraboloid: Object.freeze([1, 2]),
 })
 
 function sourceSurfaceIndex(
-  node: CanonicalGeometryNodeV1,
+  node: CanonicalGeometryNodeV2,
   index = new Map<string, Set<number>>(),
 ): Map<string, Set<number>> {
   let surfaceIndices: readonly number[] | undefined
@@ -37,8 +40,6 @@ function sourceSurfaceIndex(
     surfaceIndices = [0, 1, 2]
   } else if (node.kind === 'boolean') {
     node.children.forEach((child) => sourceSurfaceIndex(child, index))
-  } else if (node.kind === 'shell') {
-    surfaceIndices = [0, 1]
   } else {
     sourceSurfaceIndex(node.child, index)
   }
@@ -62,10 +63,10 @@ function surfaceMember(memberId: string) {
   return { sourceNodeId, surfaceIndex }
 }
 
-function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], options: CadSceneGroupOptions) {
-  const matchesByMember = new Map<string, CanonicalSurfaceSelectorV1[]>()
+function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV2[], options: CadSceneGroupOptions) {
+  const matchesByMember = new Map<string, CanonicalSurfaceSelectorV2[]>()
   roots.forEach((root) => {
-    const rootMatches = new Map<string, CanonicalSurfaceSelectorV1>()
+    const rootMatches = new Map<string, CanonicalSurfaceSelectorV2>()
     sourceSurfaceIndex(root.node).forEach((surfaceIndices, sourceNodeId) => {
       surfaceIndices.forEach((surfaceIndex) => {
         rootMatches.set(JSON.stringify([sourceNodeId, surfaceIndex]), { rootId: root.id, sourceNodeId, surfaceIndex })
@@ -78,7 +79,7 @@ function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], optio
     })
   })
   return Object.entries(options.surfaceGroup ?? {}).map(([name, memberIds]) => {
-    const selectors: CanonicalSurfaceSelectorV1[] = []
+    const selectors: CanonicalSurfaceSelectorV2[] = []
     const missingMemberIds: string[] = []
     memberIds.forEach((memberId) => {
       const member = surfaceMember(memberId)
@@ -104,7 +105,7 @@ function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], optio
   })
 }
 
-export function canonicalSurfaceMemberEntries(group: CanonicalSurfaceGroupV1) {
+export function canonicalSurfaceMemberEntries(group: CanonicalSurfaceGroupV2) {
   const missing = new Set(group.missingMemberIds)
   let selectorIndex = 0
   return group.memberIds.flatMap((memberId) => {
@@ -117,11 +118,12 @@ export function canonicalSurfaceMemberEntries(group: CanonicalSurfaceGroupV1) {
 
 export function registerCanonicalGeometryScene(
   scene: CadScene,
-  roots: readonly CanonicalGeometryRootV1[],
+  roots: readonly CanonicalGeometryRootV2[],
   options: CadSceneGroupOptions,
   evaluationProfile?: GeometryEvaluationProfile,
 ) {
-  const draft: CanonicalGeometrySceneDraftV1 = {
+  const draft: CanonicalGeometrySceneDraftV2 = {
+    version: 2,
     ...(evaluationProfile ? { evaluationProfile } : {}),
     lengthUnit: scene.lengthUnit,
     roots,
@@ -139,26 +141,29 @@ export function registerCanonicalGeometryScene(
   return draft
 }
 
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+function canonicalJson(value: unknown, physical = false): string {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item, physical)).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.keys(value)
+      .filter((key) => !physical || !['tessellation', 'evaluationProfile'].includes(key))
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key], physical)}`)
       .join(',')}}`
   }
   return JSON.stringify(value) ?? 'null'
 }
 
-export function canonicalGeometrySceneDraft(scene: CadScene): CanonicalGeometrySceneDraftV1 {
+export function canonicalGeometrySceneDraft(scene: CadScene): CanonicalGeometrySceneDraftV2 {
   const draft = drafts.get(scene)
   if (!draft) throw new Error('Canonical Geometry scene is unavailable.')
   return draft
 }
 
-export async function canonicalGeometryScene(scene: CadScene): Promise<CanonicalGeometrySceneV1> {
+export async function canonicalGeometryScene(scene: CadScene): Promise<CanonicalGeometrySceneV2> {
   const draft = canonicalGeometrySceneDraft(scene)
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(draft)))
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(draft, true)))
   const geometryHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-  return Object.freeze({ ...draft, geometryHash })
+  const meshDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(draft)))
+  const meshHash = [...new Uint8Array(meshDigest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return Object.freeze({ ...draft, geometryHash, meshHash })
 }

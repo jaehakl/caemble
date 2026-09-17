@@ -150,12 +150,13 @@ sequence. Numerical Outputs are Box Grid fluence rate and radiant flux density,
 computed from power-weighted volume track lengths. Absorbing detector surfaces
 are explicit boundary conditions independent of Output requests.
 
-Physical shell thickness controls multilayer treatment. Adjacent shell layers
-whose thickness is strictly less than `50 µm` form one coherent transfer-matrix
-stack. A shell at exactly `50 µm` or thicker participates in ordinary geometric
-collisions. This adaptive choice remains part of the physical tracing state,
-including reflection, transmission, scattering, absorption, detector hits, and
-ray branching.
+Ray tracing 3.0.0 uses explicit `ray.thin-film-stack` surface boundaries and the
+target Material's `optics.thin-film-stack@1` model. Ordered layers run from the
+solid exterior inward and reverse on exit. Every layer must satisfy
+`0 < thickness < 50 µm`; thicker layers require explicit solids. Existing TMM
+and polarization physics are preserved. Films create neither mesh nor exit
+displacement, and their declared thickness is independent of Geometry scale.
+The actual boundary medium stack determines incident and transmitted media.
 
 All RecordedData declarations are `{ task, output }` references. The build freezes
 Catalog output data schemas and semantic visualization contracts alongside Task,

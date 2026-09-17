@@ -1,5 +1,5 @@
 {
-  "core": "# Official CAD authoring grammar\nAuthority: Caemble app contract. Manuals: /doc?help=manual&item=reference-core-api and /doc?help=geometry.\n\n## Complete experiment.tsx skeleton\n```tsx\nimport { experiment } from '@caemble/core'\nimport { StarterStructure } from './geometry'\nimport { StarterMaterial } from './material'\n\nexport default experiment({\n  lengthUnit: 'mm',\n  varsSchema: {\n    sizeX: { min: 36, max: 36 },\n    sizeY: { min: 24, max: 24 },\n    sizeZ: { min: 12, max: 12 },\n    position: { shape: [3], min: -5, max: 5 },\n  },\n  geometry: ({ vars }) => (\n    <StarterStructure\n      id=\"starter\"\n      size={[vars.sizeX, vars.sizeY, vars.sizeZ]}\n      position={vars.position}\n      materials={{ body: StarterMaterial }}\n    />\n  ),\n  recordedData: {},\n})\n```\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, type Geometry, type Vec3 } from '@caemble/core'\n\nexport const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [36, 24, 12] }) => (\n  <Box size={size} />\n)\n```\n\n## Authoring conventions\n- A scalar `varsSchema` entry uses `{ min, max }`; omitted `shape` defaults to `[]`, and explicit `shape: []` remains valid. Tensors require an explicit shape such as `[3]` or `[4, 4, 1]`.\n- New code uses canonical transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms use lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- `surfaceGroup` members use `<geometry-id>/surface/<index>`. Give referenced primitive/Fiber leaves stable IDs and use the numeric slots from the Element reference. Transforms and Boolean results retain source slots; a shell root exposes slot 0 for inner and slot 1 for outer.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order defines the operation: `subtract` uses the first child as base and the rest as cutters.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.\n- `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box`: `<Box size={[x,y,z]} />`\n- `Cylinder`: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder`: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere`: `<Sphere radius={r} segments={32} />`\n- `CurvedSurfaceSphere`: `<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />`\n- `Fiber`: `<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />`\n- `translate`: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate`: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale`: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `shell`: `<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>`\n- `array`: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union`: `<union>...</union>`\n- `subtract`: `<subtract>base cutter...</subtract>`\n- `intersect`: `<intersect>shapeA shapeB...</intersect>`",
+  "core": "# Official CAD authoring grammar\nAuthority: Caemble app contract. Manuals: /doc?help=manual&item=reference-core-api and /doc?help=geometry.\n\n## Complete experiment.tsx skeleton\n```tsx\nimport { experiment } from '@caemble/core'\nimport { StarterStructure } from './geometry'\nimport { StarterMaterial } from './material'\n\nexport default experiment({\n  lengthUnit: 'mm',\n  varsSchema: {\n    sizeX: { min: 36, max: 36 },\n    sizeY: { min: 24, max: 24 },\n    sizeZ: { min: 12, max: 12 },\n    position: { shape: [3], min: -5, max: 5 },\n  },\n  geometry: ({ vars }) => (\n    <StarterStructure\n      id=\"starter\"\n      size={[vars.sizeX, vars.sizeY, vars.sizeZ]}\n      position={vars.position}\n      materials={{ body: StarterMaterial }}\n    />\n  ),\n  recordedData: {},\n})\n```\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, type Geometry, type Vec3 } from '@caemble/core'\n\nexport const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [36, 24, 12] }) => (\n  <Box size={size} />\n)\n```\n\n## Authoring conventions\n- A scalar `varsSchema` entry uses `{ min, max }`; omitted `shape` defaults to `[]`, and explicit `shape: []` remains valid. Tensors require an explicit shape such as `[3]` or `[4, 4, 1]`.\n- New code uses canonical transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms use lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- `surfaceGroup` members use `<geometry-id>/surface/<index>`. Give referenced primitive/Fiber leaves stable IDs and use the numeric slots from the Element reference. Transforms and Boolean results retain source slots. Hyperboloid and Paraboloid have only side 1 and top 2; no vertex cap or slot 0.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order defines the operation: `subtract` uses the first child as base and the rest as cutters.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Follow each primitive required/default property declaration. The four focal/aspheric primitives require their defining dimensions. Optional omitted/`undefined` props use declared defaults. Operation props and child contracts stay required.\n- Fiber uses a continuous Line/Arc path and a constant radius or physical arc-length radiusProfile. Shape definitions are separate from tessellation. CAD shell, curvedSurfaceSphere and sampled/procedural Fiber inputs were removed; migrate source and rebuild.\n- `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box`: `<Box size={[x,y,z]} />`\n- `Cylinder`: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder`: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere`: `<Sphere radius={r} segments={32} />`\n- `Fiber`: `<Fiber from={p0} to={p1} radius={r} />`\n- `translate`: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate`: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale`: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `array`: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union`: `<union>...</union>`\n- `subtract`: `<subtract>base cutter...</subtract>`\n- `intersect`: `<intersect>shapeA shapeB...</intersect>`\n- `AsphericCylinder`: `<AsphericCylinder id=\"body\" radius={5} centerThickness={2} />`\n- `Ellipsoid`: `<Ellipsoid id=\"body\" focalDistance={3} axialRadius={5} />`\n- `Hyperboloid`: `<Hyperboloid id=\"body\" focalDistance={5} axialRadius={3} radius={4} />`\n- `Paraboloid`: `<Paraboloid id=\"body\" focalLength={3} radius={4} />`",
   "elements": [
     {
       "tag": "box",
@@ -173,144 +173,63 @@
       "example": "<Sphere id=\"ball\" radius={12} position={[0, 0, 12]} />"
     },
     {
-      "tag": "curvedSurfaceSphere",
-      "authoringName": "CurvedSurfaceSphere",
-      "category": "primitive",
-      "standardTransforms": true,
-      "syntax": "<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />",
-      "summary": "방위각과 polar angle의 Fourier 곡선 곱으로 중심 반지름이 정해지는 닫힌 구면을 생성합니다.",
-      "keywords": ["curved surface sphere", "fourier sphere", "곡면 구", "푸리에"],
-      "properties": [
-        {
-          "name": "azimuthalCurve",
-          "type": "readonly { amplitude: number; phase: number }[]",
-          "required": false,
-          "default": "[{ amplitude: 0.5, phase: 0 }]",
-          "authoringValue": "[{ amplitude: 0.5, phase: 0 }]",
-          "description": "방위각 방향 Fourier mode 배열입니다."
-        },
-        {
-          "name": "polarCurve",
-          "type": "readonly { amplitude: number; phase: number }[]",
-          "required": false,
-          "default": "[{ amplitude: 1, phase: 0 }]",
-          "authoringValue": "[{ amplitude: 1, phase: 0 }]",
-          "description": "polar angle 방향 Fourier mode 배열입니다."
-        },
-        {
-          "name": "azimuthalSegments",
-          "type": "number",
-          "required": false,
-          "default": "64",
-          "authoringValue": "64",
-          "description": "방위각 방향 분할 수입니다."
-        },
-        {
-          "name": "polarSegments",
-          "type": "number",
-          "required": false,
-          "default": "32",
-          "authoringValue": "32",
-          "description": "극각 방향 분할 수입니다."
-        }
-      ],
-      "children": { "count": "none", "description": "자식을 받지 않는 primitive입니다." },
-      "origin": "변형된 구면의 중심이 원점에 있고 극축은 +Z입니다.",
-      "surfaces": [{ "index": 0, "label": "Outer", "description": "곡률이 적용된 구의 바깥쪽 표면입니다." }],
-      "example": "<CurvedSurfaceSphere id=\"particle\" azimuthalCurve={[{ amplitude: 5, phase: 0 }]} polarCurve={[{ amplitude: 1, phase: 0 }]} />"
-    },
-    {
       "tag": "fiber",
       "authoringName": "Fiber",
       "category": "primitive",
       "standardTransforms": true,
-      "syntax": "<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />",
-      "summary": "두 점 사이의 절차적 중심선을 가변 반지름 원형 단면으로 sweep합니다.",
-      "keywords": ["fiber", "sweep", "tube", "helix", "섬유", "튜브", "나선"],
+      "syntax": "<Fiber from={p0} to={p1} radius={r} />",
+      "summary": "Line/Arc 중심선과 호 길이에 따른 연속 반경 profile로 닫힌 solid를 만듭니다.",
+      "keywords": ["fiber", "sweep", "tube", "섬유", "튜브"],
       "properties": [
         {
           "name": "from",
           "type": "Vec3",
           "required": false,
-          "default": "[0, 0, -0.5]",
-          "authoringValue": "[0, 0, -0.5]",
-          "description": "중심선 시작점입니다."
+          "default": "[0,0,-0.5]",
+          "authoringValue": "[0,0,-0.5]",
+          "description": "Straight centerline start. Mutually exclusive with path."
         },
         {
           "name": "to",
           "type": "Vec3",
           "required": false,
-          "default": "[0, 0, 0.5]",
-          "authoringValue": "[0, 0, 0.5]",
-          "description": "중심선 끝점입니다."
-        },
-        {
-          "name": "basePath",
-          "type": "(t: number) => Vec3",
-          "required": false,
-          "default": "straight line from from to to",
-          "authoringValue": "undefined",
-          "description": "0≤t≤1에서 Vec3 중심선을 정의합니다."
+          "default": "[0,0,0.5]",
+          "authoringValue": "[0,0,0.5]",
+          "description": "Straight centerline end. Mutually exclusive with path."
         },
         {
           "name": "radius",
-          "type": "number | ((s: number) => number)",
+          "type": "number",
           "required": false,
           "default": "0.05",
           "authoringValue": "0.05",
-          "description": "정규화된 호 길이에 따른 단면 반지름입니다."
+          "description": "Positive constant radius in scene length units. Mutually exclusive with radiusProfile."
         },
         {
-          "name": "helix",
-          "type": "FiberHelix",
+          "name": "path",
+          "type": "FiberPath",
           "required": false,
-          "default": "none",
-          "authoringValue": "undefined",
-          "description": "turns, phase와 radius로 정의하는 나선 변위입니다."
+          "authoringValue": "{ start: [0,0,0], direction: [0,0,1], segments: [{ kind: 'line', length: 10 }] }",
+          "description": "Continuous centerline. Line {kind:'line',length}; Arc {kind:'arc',radius,angle,normal}. Each inherits the preceding endpoint/tangent. Signed angles are radians and normal is the local bending-plane normal."
         },
         {
-          "name": "fourier",
-          "type": "readonly FiberFourierMode[]",
+          "name": "radiusProfile",
+          "type": "readonly RadiusKnot[]",
           "required": false,
-          "default": "none",
-          "authoringValue": "undefined",
-          "description": "중심선에 적용할 Fourier mode 배열입니다."
+          "authoringValue": "[{ s: 0, radius: 1 }, { s: 10, radius: 0.5 }]",
+          "description": "Positive radius knots at strictly increasing physical arc lengths s, spanning 0 through the full path length. Piecewise linear interpolation preserves slope creases."
         },
         {
-          "name": "envelopePower",
-          "type": "number",
+          "name": "tessellation",
+          "type": "Tessellation",
           "required": false,
-          "default": "2",
-          "authoringValue": "2",
-          "description": "끝점에서 변위를 감쇠하는 envelope 지수입니다."
-        },
-        {
-          "name": "up",
-          "type": "Vec3",
-          "required": false,
-          "default": "automatic Bishop frame",
-          "authoringValue": "undefined",
-          "description": "초기 path frame의 기준 방향입니다."
-        },
-        {
-          "name": "pathSegments",
-          "type": "number",
-          "required": false,
-          "default": "128",
-          "authoringValue": "128",
-          "description": "중심선 방향 분할 수입니다."
-        },
-        {
-          "name": "radialSegments",
-          "type": "number",
-          "required": false,
-          "default": "12",
-          "authoringValue": "12",
-          "description": "원형 단면 분할 수입니다."
+          "authoringValue": "{ pathSegments: 128, radialSegments: 12 }",
+          "default": "{ pathSegments: 128, radialSegments: 12 }",
+          "description": "Mesh only. pathSegments >= 1 and radialSegments >= 3. Segment and radius-profile boundaries are always sampled."
         }
       ],
       "children": { "count": "none", "description": "자식을 받지 않는 primitive입니다." },
-      "origin": "from/to 또는 basePath가 정의한 좌표를 그대로 사용하며 별도의 중심 보정은 하지 않습니다.",
+      "origin": "입력한 경로 좌표를 유지합니다. 자동으로 재중심화하지 않습니다.",
       "surfaces": [
         { "index": 0, "label": "Start cap", "description": "Fiber path의 시작 단면입니다." },
         { "index": 1, "label": "Side", "description": "Fiber path를 따라 생성된 옆면입니다." },
@@ -406,31 +325,6 @@
       "example": "<scale id=\"stretched\" x={2} y={1} z={1}><Box id=\"body\" size={[10, 10, 10]} /></scale>"
     },
     {
-      "tag": "shell",
-      "authoringName": "shell",
-      "category": "operation",
-      "standardTransforms": true,
-      "syntax": "<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>",
-      "summary": "닫힌 Geometry의 signed offset 경계 사이에 다층 shell solid를 생성합니다.",
-      "keywords": ["shell", "offset", "layer", "coating", "쉘", "오프셋", "코팅"],
-      "properties": [
-        {
-          "name": "offsets",
-          "type": "Readonly<Record<string, number>>",
-          "required": true,
-          "authoringValue": "{ inner: -1, outer: 1 }",
-          "description": "Material role별 signed offset입니다."
-        }
-      ],
-      "children": { "count": "one", "description": "shell 경계를 생성할 닫힌 solid를 받습니다." },
-      "origin": "자식 좌표를 유지한 채 생성된 shell 결과에 이 element의 transform을 적용합니다.",
-      "surfaces": [
-        { "index": 0, "label": "Inner", "description": "각 shell layer의 안쪽 경계입니다." },
-        { "index": 1, "label": "Outer", "description": "각 shell layer의 바깥쪽 경계입니다." }
-      ],
-      "example": "<shell id=\"coating\" offsets={{ inner: -1, outer: 1 }}><Sphere radius={10} /></shell>"
-    },
-    {
       "tag": "array",
       "authoringName": "array",
       "category": "operation",
@@ -518,6 +412,181 @@
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
       "surfaces": [],
       "example": "<intersect id=\"overlap\"><Box size={[10, 10, 10]} /><Sphere radius={7} /></intersect>"
+    },
+    {
+      "tag": "asphericCylinder",
+      "authoringName": "AsphericCylinder",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<AsphericCylinder id=\"body\" radius={5} centerThickness={2} />",
+      "summary": "Conic and even-polynomial faces joined by a cylindrical side. Full-aperture positive thickness is certified independently of tessellation.",
+      "keywords": ["asphericCylinder", "AsphericCylinder"],
+      "properties": [
+        {
+          "name": "radius",
+          "type": "number",
+          "required": true,
+          "authoringValue": "5",
+          "description": "Positive maximum radial aperture in scene length units."
+        },
+        {
+          "name": "centerThickness",
+          "type": "number",
+          "required": true,
+          "authoringValue": "2",
+          "description": "Positive vertex separation h. Bottom vertex is -h/2; top vertex is +h/2."
+        },
+        {
+          "name": "top",
+          "type": "Asphere",
+          "required": false,
+          "authoringValue": "{ curvature: 0, conic: 0, coefficients: [] }",
+          "description": "Top sag along +Z: c*rho^2/(1+sqrt(1-(1+k)*c^2*rho^2)) + sum(A_n*rho^n). Unique even n >= 4. Omitted face is planar."
+        },
+        {
+          "name": "bottom",
+          "type": "Asphere",
+          "required": false,
+          "authoringValue": "{ curvature: 0, conic: 0, coefficients: [] }",
+          "description": "Bottom sag uses the same +Z sign and coefficient convention as top. Omitted face is planar."
+        },
+        {
+          "name": "tessellation",
+          "type": "Tessellation",
+          "required": false,
+          "authoringValue": "{ radialSegments: 64, meridianSegments: 32 }",
+          "description": "Mesh only: radialSegments >= 3 (default 64), meridianSegments >= 2 (default 32). Analysis applies its refinement profile."
+        }
+      ],
+      "children": { "count": "none", "description": "Closed primitive solid." },
+      "origin": "Local Z axis; vertices at -centerThickness/2 and +centerThickness/2. No recentering.",
+      "surfaces": [
+        { "index": 0, "label": "Bottom", "description": "Bottom" },
+        { "index": 1, "label": "Side", "description": "Side" },
+        { "index": 2, "label": "Top", "description": "Top" }
+      ],
+      "example": "<AsphericCylinder id=\"body\" radius={5} centerThickness={2} />"
+    },
+    {
+      "tag": "ellipsoid",
+      "authoringName": "Ellipsoid",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Ellipsoid id=\"body\" focalDistance={3} axialRadius={5} />",
+      "summary": "Prolate ellipsoid defined by a focus pair; focalDistance=0 gives a sphere.",
+      "keywords": ["ellipsoid", "Ellipsoid"],
+      "properties": [
+        {
+          "name": "focalDistance",
+          "type": "number",
+          "required": true,
+          "authoringValue": "3",
+          "description": "Half the focus separation, f >= 0. Foci are [0,0,+/-f]."
+        },
+        {
+          "name": "axialRadius",
+          "type": "number",
+          "required": true,
+          "authoringValue": "5",
+          "description": "Axial semiaxis a > f. Transverse semiaxis is sqrt(a^2-f^2)."
+        },
+        {
+          "name": "tessellation",
+          "type": "Tessellation",
+          "required": false,
+          "authoringValue": "{ radialSegments: 64, meridianSegments: 32 }",
+          "description": "Mesh only: radialSegments >= 3 (default 64), meridianSegments >= 2 (default 32). Analysis applies its refinement profile."
+        }
+      ],
+      "children": { "count": "none", "description": "Closed primitive solid." },
+      "origin": "The focus midpoint is the origin; Z vertices are +/-axialRadius. No caps.",
+      "surfaces": [{ "index": 0, "label": "Outer", "description": "Outer" }],
+      "example": "<Ellipsoid id=\"body\" focalDistance={3} axialRadius={5} />"
+    },
+    {
+      "tag": "hyperboloid",
+      "authoringName": "Hyperboloid",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Hyperboloid id=\"body\" focalDistance={5} axialRadius={3} radius={4} />",
+      "summary": "Positive-Z branch of a two-sheet hyperboloid, closed by a disk at the maximum radius.",
+      "keywords": ["hyperboloid", "Hyperboloid"],
+      "properties": [
+        {
+          "name": "focalDistance",
+          "type": "number",
+          "required": true,
+          "authoringValue": "5",
+          "description": "Half the focus separation f > a > 0; foci [0,0,+/-f]."
+        },
+        {
+          "name": "axialRadius",
+          "type": "number",
+          "required": true,
+          "authoringValue": "3",
+          "description": "Positive vertex coordinate a; transverse scale b=sqrt(f^2-a^2)."
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "required": true,
+          "authoringValue": "4",
+          "description": "Positive maximum radius r. Top height is a*sqrt(1+r^2/b^2); solid height is zTop-a. No Z clipping input."
+        },
+        {
+          "name": "tessellation",
+          "type": "Tessellation",
+          "required": false,
+          "authoringValue": "{ radialSegments: 64, meridianSegments: 32 }",
+          "description": "Mesh only: radialSegments >= 3 (default 64), meridianSegments >= 2 (default 32). Analysis applies its refinement profile."
+        }
+      ],
+      "children": { "count": "none", "description": "Closed primitive solid." },
+      "origin": "The focus midpoint remains the origin; vertex [0,0,a]. Surface 1 is curved; 2 is the top disk. There is no surface 0.",
+      "surfaces": [
+        { "index": 1, "label": "Side", "description": "Side" },
+        { "index": 2, "label": "Top", "description": "Top" }
+      ],
+      "example": "<Hyperboloid id=\"body\" focalDistance={5} axialRadius={3} radius={4} />"
+    },
+    {
+      "tag": "paraboloid",
+      "authoringName": "Paraboloid",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Paraboloid id=\"body\" focalLength={3} radius={4} />",
+      "summary": "Rotational paraboloid z=rho^2/(4*f), closed by a disk at maximum radius.",
+      "keywords": ["paraboloid", "Paraboloid"],
+      "properties": [
+        {
+          "name": "focalLength",
+          "type": "number",
+          "required": true,
+          "authoringValue": "3",
+          "description": "Positive focal length f; focus [0,0,f], vertex [0,0,0]."
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "required": true,
+          "authoringValue": "4",
+          "description": "Positive maximum radius r. Top height is r^2/(4*f). No Z clipping input."
+        },
+        {
+          "name": "tessellation",
+          "type": "Tessellation",
+          "required": false,
+          "authoringValue": "{ radialSegments: 64, meridianSegments: 32 }",
+          "description": "Mesh only: radialSegments >= 3 (default 64), meridianSegments >= 2 (default 32). Analysis applies its refinement profile."
+        }
+      ],
+      "children": { "count": "none", "description": "Closed primitive solid." },
+      "origin": "Vertex at origin, opening +Z. Surface 1 is curved; 2 is the top disk. There is no surface 0.",
+      "surfaces": [
+        { "index": 1, "label": "Side", "description": "Side" },
+        { "index": 2, "label": "Top", "description": "Top" }
+      ],
+      "example": "<Paraboloid id=\"body\" focalLength={3} radius={4} />"
     }
   ]
 }

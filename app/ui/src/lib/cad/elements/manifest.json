@@ -41,16 +41,6 @@
       "definitionExport": "sphereDefinition"
     },
     {
-      "tag": "curvedSurfaceSphere",
-      "authoringName": "CurvedSurfaceSphere",
-      "standardTransforms": true,
-      "attributes": "CurvedSurfaceSphereAttributes",
-      "definitionModule": "./primitives/curvedSurfaceSphere/definition",
-      "manifestExport": "curvedSurfaceSphereManifest",
-      "runtimeModule": "./primitives/curvedSurfaceSphere/runtime",
-      "definitionExport": "curvedSurfaceSphereDefinition"
-    },
-    {
       "tag": "fiber",
       "authoringName": "Fiber",
       "standardTransforms": true,
@@ -91,16 +81,6 @@
       "definitionExport": "scaleDefinition"
     },
     {
-      "tag": "shell",
-      "authoringName": "shell",
-      "standardTransforms": true,
-      "attributes": "ShellAttributes",
-      "definitionModule": "./operations/shell/definition",
-      "manifestExport": "shellManifest",
-      "runtimeModule": "./operations/shell/runtime",
-      "definitionExport": "shellDefinition"
-    },
-    {
       "tag": "array",
       "authoringName": "array",
       "standardTransforms": true,
@@ -139,6 +119,46 @@
       "manifestExport": "intersectManifest",
       "runtimeModule": "./operations/booleans/runtime",
       "definitionExport": "intersectDefinition"
+    },
+    {
+      "tag": "asphericCylinder",
+      "authoringName": "AsphericCylinder",
+      "standardTransforms": true,
+      "attributes": "AsphericCylinderAttributes",
+      "definitionModule": "./primitives/asphericCylinder/definition",
+      "manifestExport": "asphericCylinderManifest",
+      "runtimeModule": "./primitives/asphericCylinder/runtime",
+      "definitionExport": "asphericCylinderDefinition"
+    },
+    {
+      "tag": "ellipsoid",
+      "authoringName": "Ellipsoid",
+      "standardTransforms": true,
+      "attributes": "EllipsoidAttributes",
+      "definitionModule": "./primitives/ellipsoid/definition",
+      "manifestExport": "ellipsoidManifest",
+      "runtimeModule": "./primitives/ellipsoid/runtime",
+      "definitionExport": "ellipsoidDefinition"
+    },
+    {
+      "tag": "hyperboloid",
+      "authoringName": "Hyperboloid",
+      "standardTransforms": true,
+      "attributes": "HyperboloidAttributes",
+      "definitionModule": "./primitives/hyperboloid/definition",
+      "manifestExport": "hyperboloidManifest",
+      "runtimeModule": "./primitives/hyperboloid/runtime",
+      "definitionExport": "hyperboloidDefinition"
+    },
+    {
+      "tag": "paraboloid",
+      "authoringName": "Paraboloid",
+      "standardTransforms": true,
+      "attributes": "ParaboloidAttributes",
+      "definitionModule": "./primitives/paraboloid/definition",
+      "manifestExport": "paraboloidManifest",
+      "runtimeModule": "./primitives/paraboloid/runtime",
+      "definitionExport": "paraboloidDefinition"
     }
   ]
 }

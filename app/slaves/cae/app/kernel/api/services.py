@@ -32,11 +32,3 @@ class GeometryService(Protocol):
         profile: Any = ...,
         progress: Callable[[Any], Awaitable[None]] | None = None,
     ) -> Any: ...
-
-    async def shell_layer(
-        self,
-        scene: Mapping[str, Any],
-        root_id: str,
-        reference_length_unit: str,
-        progress: Callable[[Any], Awaitable[None]] | None = None,
-    ) -> Any: ...

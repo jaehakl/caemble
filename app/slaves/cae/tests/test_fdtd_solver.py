@@ -101,7 +101,7 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
         ),
     ]
     task_scene = {
-        "geometryHash": "fdtd-task-integration-v1",
+        "version": 2, "geometryHash": "fdtd-task-integration-v1",
         "lengthUnit": "m",
         "roots": task_roots,
         "geometryGroups": [
@@ -113,7 +113,7 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
         "surfaceGroups": [],
     }
     experiment_scene = {
-        "geometryHash": "fdtd-experiment-integration-v1",
+        "version": 2, "geometryHash": "fdtd-experiment-integration-v1",
         "lengthUnit": "m",
         "roots": experiment_roots,
         "geometryGroups": [{"name": "materials", "rootIds": ["drude", "later-dielectric"]}],

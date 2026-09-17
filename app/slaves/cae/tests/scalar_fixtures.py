@@ -14,7 +14,7 @@ def layered_scene():
         roots.append({"id": name, "node": {"kind": "transform", "nodeId": name + "-move",
             "matrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, height, 0, 0, 0, 1],
             "child": {"kind": "primitive", "nodeId": name + "-box", "primitive": "box", "parameters": {"size": [1, .2, thickness]}}}})
-    return {"geometryHash": "scalar-layers", "lengthUnit": "m", "roots": roots, "geometryGroups": [], "surfaceGroups": []}
+    return {"version": 2, "geometryHash": "scalar-layers", "lengthUnit": "m", "roots": roots, "geometryGroups": [], "surfaceGroups": []}
 
 
 def _dc_invocation() -> SolverInvocation:
@@ -101,7 +101,7 @@ def _heat_invocation() -> SolverInvocation:
 
 def _world() -> dict[str, Any]:
     scene = {
-        "geometryHash": "abi3-cube",
+        "version": 2, "geometryHash": "abi3-cube",
         "lengthUnit": "m",
         "roots": [{
             "id": "solid", "material": {"name": "test-material"},
@@ -130,7 +130,7 @@ def _world() -> dict[str, Any]:
     return {
         "experiment": scene,
         "task": {
-            "geometryHash": "empty-task",
+            "version": 2, "geometryHash": "empty-task",
             "lengthUnit": "m",
             "roots": [],
             "geometryGroups": [],

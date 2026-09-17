@@ -113,7 +113,6 @@ class TriangleScene:
         )
         nearest = math.inf
         selected = -1
-        selected_priority = -1
         selected_u = 0.0
         selected_v = 0.0
         tie_tolerance = max(1e-15, minimum_distance * 0.5, self.diagonal * 1e-12)
@@ -153,14 +152,9 @@ class TriangleScene:
             for local in np.flatnonzero(valid):
                 distance = float(distances[local])
                 triangle_index = int(node.indices[local])
-                priority = 1 if self._metadata[triangle_index].kind.startswith("thin-stack") else 0
-                tied = abs(distance - nearest) <= tie_tolerance
-                if distance < nearest - tie_tolerance or (
-                    tied and (priority > selected_priority or (priority == selected_priority and distance < nearest))
-                ):
+                if distance < nearest:
                     nearest = distance
                     selected = triangle_index
-                    selected_priority = priority
                     selected_u = float(u_value[local])
                     selected_v = float(v_value[local])
         if selected < 0:

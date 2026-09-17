@@ -54,6 +54,6 @@ async def build_volume_subdomain(geometry, scene, assembly_roots, active_roots, 
     if not set(active_roots).issubset(roots):
         raise ValueError("active material roots must belong to the meshed assembly")
     mesh = await geometry.volume_mesh(scene, roots, "m", profile, progress=progress)
-    identity = ContentKey.from_parts("canonical-volume-assembly-v1", scene["geometryHash"], roots,
+    identity = ContentKey.from_parts("canonical-volume-assembly-v2", scene.get("meshHash", scene["geometryHash"]), roots,
                                      mesh.points, mesh.cells, mesh.cell_region_ids).digest
     return VolumeSubdomain.create(mesh, identity, active_roots)

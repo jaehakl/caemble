@@ -1,7 +1,7 @@
 import { assertBoxGridData, type BoxGridData, type BoxGridGeometry, type BoxGridVector } from '@/contracts/boxGrid'
 import { activeCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import { canonicalGeometrySceneDraft } from '../evaluation/canonical'
-import type { CanonicalGeometrySceneDraftV1 } from '../evaluation/canonicalTypes'
+import type { CanonicalGeometrySceneDraftV2 } from '../evaluation/canonicalTypes'
 import type { CadScene } from '../evaluation/types'
 import { CadModelError } from '../model/errors'
 import { convertUcumValue } from '../model/units'
@@ -12,7 +12,7 @@ import { canonicalRecordedDataTree } from './authoring'
 
 export function resolveBoxGridGeometry(
   output: KernelOutputRequest,
-  scenes: Readonly<{ experiment: CanonicalGeometrySceneDraftV1; task: CanonicalGeometrySceneDraftV1 }>,
+  scenes: Readonly<{ experiment: CanonicalGeometrySceneDraftV2; task: CanonicalGeometrySceneDraftV2 }>,
   lengthUnit: string,
 ): BoxGridGeometry {
   const match = output.target.length === 1 ? /^(experiment|task)\.geometry\.(.+)$/u.exec(output.target[0]) : null
@@ -36,9 +36,7 @@ export function resolveBoxGridGeometry(
     node = node.child
   }
   if (node.kind !== 'primitive' || node.primitive !== 'box')
-    throw new CadModelError(
-      `Output ${output.key} requires a Box primitive; Boolean and shell results are not Box targets.`,
-    )
+    throw new CadModelError(`Output ${output.key} requires a Box primitive; Boolean results are not Box targets.`)
   const parameter = output.parameters.gridShape
   const gridShape = Array.isArray(parameter)
     ? parameter
