@@ -413,9 +413,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           onFindSelectionSource={findSelectionSource}
           onSelectionQueryChange={handleViewerSelectionQueryChange}
           onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
-          onToggleViewerExpanded={() =>
-            page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
-          }
+
           key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
           autoSelectResult={isPrediction || Boolean(preview || workbench.selection.measurement)}
           resultContracts={
@@ -445,7 +443,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           downloadProgress={workbench.selection.downloadProgress}
           selectionQuery={viewerSelectionQuery}
           selectionSourceStatus={selectionSourceStatus}
-          viewerExpanded={page.viewerExpanded}
         />
       </div>
     </div>
@@ -497,13 +494,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             hidden={page.activeSection === 'measurement'}
           >
             {page.activeSection === 'experiment' ? (
-              <ExperimentWorkspace
-                menubar={menubar}
-                ribbon={ribbon}
-                viewer={viewerPane}
-                editor={rightPane}
-                expanded={page.viewerExpanded}
-              />
+              <ExperimentWorkspace menubar={menubar} ribbon={ribbon} viewer={viewerPane} editor={rightPane} />
             ) : page.activeSection === 'calculation' ? (
               <CalculationWorkbenchContainer
                 onSourceChange={setViewerCalculationSource}

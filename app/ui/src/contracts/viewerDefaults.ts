@@ -23,7 +23,7 @@ export const viewerSettingSchemas: Record<string, z.ZodType> = {
   'box.overlay': z.boolean(),
   'box.geometryOpacity': z.number().min(0).max(1),
   'box.bins': z.number().int().positive(),
-  'box.animation': z.enum(['off', 'oscillation', 'time', 'frequency']),
+  'box.animation': z.enum(['off', 'oscillation', 'time', 'frequency', 'x', 'y', 'z', 'component']),
   'box.timeSeconds': z.number().nonnegative(),
   'box.frameIndex': index,
   'box.durationSeconds': z.number().positive().nullable(),
@@ -32,7 +32,7 @@ export const viewerSettingSchemas: Record<string, z.ZodType> = {
   'box.speed': z.number().positive(),
   'box.fixed': z
     .tuple([z.number(), z.number()])
-    .refine(([min, max]) => min < max)
+    .refine(([min, max]) => min <= max)
     .nullable(),
   'mesh.view': z.object({
     component: z.union([index, z.enum(['magnitude', 'vonMises', 'material'])]),
@@ -46,8 +46,6 @@ export const viewerSettingSchemas: Record<string, z.ZodType> = {
   }),
   'mesh.selectedDisplacement': z.string().nullable(),
   'mesh.deformed': z.boolean(),
-  'mesh.scaleMode': z.enum(['auto', 'manual']),
-  'mesh.manualScale': z.number().nonnegative(),
   'mesh.frequencyHz': z.number().nonnegative(),
   'mesh.phaseDegrees': z.number(),
   'mesh.frameIndex': index,

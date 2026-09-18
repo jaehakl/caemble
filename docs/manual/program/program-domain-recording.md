@@ -8,12 +8,12 @@ Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고�
 
 메쉬·ray path는 Solver가 자동으로 제공하는 별도 시각화 데이터입니다. outputs나 `recordedData`에 선언하지 않으며 Calculation·Analysis·Prediction 입력에 포함하지 않습니다. 반복 실행에서는 Task마다 마지막 성공 invocation의 전체 시각화 snapshot을 저장하고, 시간 이력은 그 snapshot 안에 유지합니다. Viewer의 결과 선택 영역에서 Geometry, Box Grid와 자동 시각화를 선택합니다. renderer는 결과 이름이 아닌 저장된 semantic kind로 결정합니다.
 
-- `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 변형 배율을, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
+- `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 실제 크기 1×의 변형 표시를, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
 - `polyline`: 계약에 연결된 정점과 offset으로 경로를 구성합니다. 여러 결과를 독립적으로 선택할 수 있습니다.
 - `particle-set`: 입자의 저장 시각·물리량 성분·ID·Material을 확인합니다. DEM의 실제 반경과 SPH·MPM의 화면 점 크기를 구분합니다. [입자 해석 안내](program-particles.md)에서 실행 예제와 제한을 확인하세요.
 - `box-grid`: Histogram, Line Chart, Heatmap, 3D Point cloud로 수치 Output을 표시합니다. 채널·성분·표시 축과 나머지 축의 집계 또는 개별 index를 선택합니다.
 
-초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변형 배율이 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.
+초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변위가 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.
 
 Box Grid 데이터는 float32 또는 float64이며 축 순서는 항상 `[x, y, z, time, frequency, amplitudePhase, component]`입니다. 사용하지 않는 축도 길이 1로 보존합니다. 실수는 `value` 채널 하나, 복소수는 `amplitude`, `phase` 두 채널로 저장하며 위상 단위는 rad입니다. 각 RecordedData의 ExperimentRecord ID는 Calculation dependency로 사용합니다. 자동 시각화는 별도 `/measurement/{id}/visualizations` 조회와 CLI export에 포함됩니다.
 
@@ -70,12 +70,12 @@ Box Grid의 표시 방식은 **Histogram / Line Chart / Heatmap / 3D Point cloud
 표시합니다. 전체 크기는 `sqrt(Σ|component|²)`이며 광강도가 아닙니다.
 초기 Frequency 집계는 sum, 나머지 표시하지 않는 축은 mean이므로 특정 시점·주파수·단면을 보려면
 해당 축을 **개별 index**로 바꿉니다. 공간 Heatmap의 남은 공간 축을 집계하면
-Box 중앙 평면에 표시합니다. 상세한 기본 축 선택과 표본 조회는
+Box 중앙 평면에 표시합니다. 상세한 축 역할 선택과 슬라이더 조작은
 [Output 시각화](../workbench/workbench-viewer-selection.md#output-시각화)를 따릅니다.
 
 ### 진동과 시간·주파수 순회
 
-**재생**에서 **진동 · 공통 시간**을 선택하면 복소 성분을
+**채널** 아이콘에서 **시간 전개**를 선택하면 복소 성분을
 `A_f,c × cos(φ_f,c + 2πf t)`로 표시합니다. 모든 주파수가 동일한 시간 `t`를
 사용하므로 각 주파수의 위상은 주파수에 비례해 진행하며 0 Hz는 일정합니다.
 Frequency sum/mean에서는 성분별 순간값을 합성한 뒤 벡터 크기를 구하고 나머지
@@ -83,8 +83,8 @@ Frequency sum/mean에서는 성분별 순간값을 합성한 뒤 벡터 크기�
 사용하며 추가 주파수 가중치나 FFT 정규화를 적용하지 않습니다. 원래 펄스의
 역변환을 보장하는 기능은 아닙니다. 실수부·허수부를 별도 저장 채널로 추가하지 않습니다.
 
-시간 또는 주파수가 표시 축에 포함되지 않으면 해당 축의 **index 순회**를
-선택할 수 있습니다. Histogram은 둘 다 순회할 수 있습니다. 재생·일시정지,
+x/y/z/t/f 축을 **개별 index**로 지정하면 아이콘 옆 슬라이더에서 반복 재생할 수 있습니다.
+개별 comp index도 재생할 수 있으며 한 번에 한 축만 진행합니다. 재생·일시정지,
 프레임·속도·반복을 조절하며 재생 중 값 범위와 카메라를 유지합니다. 진동 시간과
 구간은 s로 표시하고, 기본 구간은 최저 양의 주파수 한 주기입니다. 최고 주파수
 한 주기를 20프레임, 화면에서 약 2초에 재생하며 구간 길이를 직접 바꿀 수 있습니다.
@@ -92,8 +92,8 @@ Frequency sum/mean에서는 성분별 순간값을 합성한 뒤 벡터 크기�
 
 Gold FCC Array의 새 결과에서 `referenceScattered`, `incident`, `scattered`를
 선택하고 Heatmap의 공간 축과 frequency 개별 index를 지정하세요. 성분과
-Amplitude·Phase를 바꾸고, **진동 · 공통 시간** 및 **frequency index 순회**를
-차례로 확인합니다. Geometry 겹치기, 투명도, 값 범위 고정과 표본 조회도 확인하세요.
+Amplitude·Phase를 바꾸고, **시간 전개** 및 **f index 재생**을
+차례로 확인합니다. Geometry 겹치기, 투명도, 값 범위 고정과 좌표 hover 정보도 확인하세요.
 
 ### Catalog·Draft에서 임시 실행
 

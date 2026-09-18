@@ -1,3 +1,4 @@
+import { ViewerLayout } from './ViewerTools'
 import { useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
 import { MeshPlayback } from './MeshPlayback'
@@ -36,41 +37,43 @@ export function MeshTransformResult({
   }, [motion, time, prepared, minimum, maximum])
   const selectFrame = useCallback((frame: number) => setTime(motion.times[frame]), [motion.times, setTime])
   return (
-    <article
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
-      data-result-visualization="mesh transform"
-      aria-label={`${motion.label} mesh transform`}
-    >
-      <h3 className="px-2 pt-2 text-sm font-semibold text-slate-900">
-        {motion.label.startsWith('@visualizations.') ? motion.label.slice('@visualizations.'.length) : motion.label}
-      </h3>
-      <p className="px-2 text-xs text-slate-500">
-        {motion.bodyIds.length} bodies · 실제 크기 1× · {displayUnit}
-      </p>
-      <ViewerControls>
-        <MeshPlayback
-          times={motion.times}
-          unit="s"
-          frame={meshFrameAtTime(motion.times, time)}
-          onFrame={selectFrame}
-          time={time}
-          onTime={setTime}
-        />
-      </ViewerControls>
-      {rendered.error ? (
-        <p role="alert" className="p-3 text-xs text-red-700">
-          {rendered.error}
+    <ViewerLayout>
+      <article
+        className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
+        data-result-visualization="mesh transform"
+        aria-label={`${motion.label} mesh transform`}
+      >
+        <h3 className="px-2 pt-2 text-sm font-semibold text-slate-900">
+          {motion.label.startsWith('@visualizations.') ? motion.label.slice('@visualizations.'.length) : motion.label}
+        </h3>
+        <p className="px-2 text-xs text-slate-500">
+          {motion.bodyIds.length} bodies · 실제 크기 1× · {displayUnit}
         </p>
-      ) : null}
-      {rendered.data ? <div className="min-h-0 flex-1 overflow-hidden">{renderViewer(rendered.data)}</div> : null}
-      <div className="flex shrink-0 flex-wrap gap-3 border-t p-2 text-xs text-slate-600">
-        {motion.bodyIds.map((id, index) => (
-          <span className="flex min-w-0 items-center gap-1" key={id} title={id}>
-            <span className="size-3 shrink-0 rounded-sm" style={{ background: prepared.bodyColors[index] }} />
-            <span className="max-w-56 truncate">{id}</span>
-          </span>
-        ))}
-      </div>
-    </article>
+        <ViewerControls>
+          <MeshPlayback
+            times={motion.times}
+            unit="s"
+            frame={meshFrameAtTime(motion.times, time)}
+            onFrame={selectFrame}
+            time={time}
+            onTime={setTime}
+          />
+        </ViewerControls>
+        {rendered.error ? (
+          <p role="alert" className="p-3 text-xs text-red-700">
+            {rendered.error}
+          </p>
+        ) : null}
+        {rendered.data ? <div className="min-h-0 flex-1 overflow-hidden">{renderViewer(rendered.data)}</div> : null}
+        <div className="flex shrink-0 flex-wrap gap-3 border-t p-2 text-xs text-slate-600">
+          {motion.bodyIds.map((id, index) => (
+            <span className="flex min-w-0 items-center gap-1" key={id} title={id}>
+              <span className="size-3 shrink-0 rounded-sm" style={{ background: prepared.bodyColors[index] }} />
+              <span className="max-w-56 truncate">{id}</span>
+            </span>
+          ))}
+        </div>
+      </article>
+    </ViewerLayout>
   )
 }

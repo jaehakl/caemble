@@ -1,3 +1,4 @@
+import { ViewerControls } from './comparisonSettings'
 import { useSyncExternalStore } from 'react'
 import { ViewerToolbar } from './ViewerToolbar'
 import type { createComparisonCamera } from './comparisonCamera'
@@ -11,9 +12,8 @@ export function ComparisonToolbar({ camera }: { camera: ReturnType<typeof create
   const sources = (['experiment', 'task'] as const).filter((source) =>
     toolbars.some((toolbar) => toolbar.availableSources?.includes(source)),
   )
-  const expanded = toolbars.find((toolbar) => toolbar.onToggleViewerExpanded)
   return (
-    <div data-capture-exclude>
+    <ViewerControls placement="camera">
       <ViewerToolbar
         {...primary}
         meshMode={toolbars.every((toolbar) => toolbar.meshMode)}
@@ -30,9 +30,7 @@ export function ComparisonToolbar({ camera }: { camera: ReturnType<typeof create
               }
             : undefined
         }
-        onToggleViewerExpanded={expanded?.onToggleViewerExpanded}
-        viewerExpanded={expanded?.viewerExpanded}
       />
-    </div>
+    </ViewerControls>
   )
 }

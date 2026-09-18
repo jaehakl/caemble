@@ -36,7 +36,6 @@ export function ResizableCalculationLayout({
   onColumnRatiosChange,
   output,
   viewer,
-  viewerExpanded = false,
   className,
 }: {
   columnRatios: readonly number[]
@@ -44,7 +43,6 @@ export function ResizableCalculationLayout({
   onColumnRatiosChange: (ratios: readonly number[]) => void
   output: ReactNode
   viewer: ReactNode
-  viewerExpanded?: boolean
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -149,35 +147,27 @@ export function ResizableCalculationLayout({
         } satisfies CSSProperties
       }
     >
-      {viewerExpanded ? (
-        <section aria-label="3D Viewer" className="col-span-5 min-h-0 min-w-0 overflow-hidden">
-          {viewer}
-        </section>
-      ) : (
-        <>
-          <section aria-label="3D Viewer" className="min-h-0 min-w-0 overflow-hidden">
-            {viewer}
-          </section>
-          <ResizeHandle
-            label="Viewer와 편집기 너비 조절"
-            orientation="vertical"
-            onKeyDown={(event) => resizeWithKeyboard(event, 0)}
-            onPointerDown={(event) => startDragging(event, 0)}
-          />
-          <section aria-label="Calculation Source Editor" className="min-h-0 min-w-0 overflow-hidden">
-            {editor}
-          </section>
-          <ResizeHandle
-            label="편집기와 출력 너비 조절"
-            orientation="vertical"
-            onKeyDown={(event) => resizeWithKeyboard(event, 1)}
-            onPointerDown={(event) => startDragging(event, 1)}
-          />
-          <section aria-label="Calculation 출력" className="min-h-0 min-w-0 overflow-hidden">
-            {output}
-          </section>
-        </>
-      )}
+      <section aria-label="3D Viewer" className="min-h-0 min-w-0 overflow-hidden">
+        {viewer}
+      </section>
+      <ResizeHandle
+        label="Viewer와 편집기 너비 조절"
+        orientation="vertical"
+        onKeyDown={(event) => resizeWithKeyboard(event, 0)}
+        onPointerDown={(event) => startDragging(event, 0)}
+      />
+      <section aria-label="Calculation Source Editor" className="min-h-0 min-w-0 overflow-hidden">
+        {editor}
+      </section>
+      <ResizeHandle
+        label="편집기와 출력 너비 조절"
+        orientation="vertical"
+        onKeyDown={(event) => resizeWithKeyboard(event, 1)}
+        onPointerDown={(event) => startDragging(event, 1)}
+      />
+      <section aria-label="Calculation 출력" className="min-h-0 min-w-0 overflow-hidden">
+        {output}
+      </section>
     </div>
   )
 }

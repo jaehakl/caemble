@@ -1,5 +1,13 @@
-import { projectBoxGrid, type BoxGridProjectionOptions } from '@/lib/calculation/boxGridProject'
+import {
+  projectBoxGrid,
+  projectionAxes,
+  type ProjectionAxis,
+  type BoxGridProjectionOptions,
+} from '@/lib/calculation/boxGridProject'
 import type { CalculationAxis, CalculationInputLeaf } from '@/lib/calculation/types'
+
+export type PlotKind = 'histogram' | 'line' | 'heatmap' | 'cloud'
+export type BoxGridAnimation = 'off' | 'oscillation' | ProjectionAxis | 'component'
 
 export type ScalarPlotData = {
   axes: readonly CalculationAxis[]
@@ -54,12 +62,53 @@ export type BoxGridViewRequest = {
   options: BoxGridProjectionOptions
   arrows: boolean
   animationRange: boolean
+  sweepAxis?: ProjectionAxis | 'component'
+  histogramDistribution?: boolean
 }
-export function calculateBoxGridView({ leaf, options, arrows, animationRange }: BoxGridViewRequest) {
+export function calculateBoxGridView({
+  leaf,
+  options,
+  arrows,
+  animationRange,
+  sweepAxis,
+  histogramDistribution,
+}: BoxGridViewRequest) {
   const scalar = scalarPlotData(projectBoxGrid(leaf, options))
+  // The zero-axis marker is reduced, but its reference distribution always uses every original sample.
+  const distribution = histogramDistribution
+    ? scalarPlotData(
+        projectBoxGrid(leaf, {
+          ...options,
+          axes: projectionAxes,
+          reduce: {},
+          frame: options.frame?.timeSeconds === undefined ? undefined : { timeSeconds: options.frame.timeSeconds },
+        }),
+      )
+    : undefined
   const components = arrows ? boxGridVectorComponents(leaf) : undefined
   const vectors = components?.map((component) => scalarPlotData(projectBoxGrid(leaf, { ...options, component })).values)
-  if (animationRange && options.frame?.axis) {
+  if (animationRange && sweepAxis) {
+    const axis = sweepAxis === 'component' ? 6 : projectionAxes.indexOf(sweepAxis)
+    for (let index = 0; index < leaf.shape[axis]; index++) {
+      const next =
+        sweepAxis === 'component'
+          ? { ...options, component: index }
+          : {
+              ...options,
+              reduce: { ...options.reduce, [sweepAxis]: { method: 'index' as const, index } },
+            }
+      const frame = scalarPlotData(projectBoxGrid(leaf, next))
+      scalar.range[0] = Math.min(scalar.range[0], frame.range[0])
+      scalar.range[1] = Math.max(scalar.range[1], frame.range[1])
+      if (distribution && sweepAxis === 'component') {
+        const raw = scalarPlotData(
+          projectBoxGrid(leaf, { ...next, axes: projectionAxes, reduce: {}, frame: undefined }),
+        )
+        distribution.range[0] = Math.min(distribution.range[0], raw.range[0])
+        distribution.range[1] = Math.max(distribution.range[1], raw.range[1])
+      }
+    }
+  } else if (animationRange && options.frame?.axis) {
     const axis = options.frame.axis === 'time' ? 3 : 4
     for (let index = 0; index < leaf.shape[axis]; index++) {
       const frame = scalarPlotData(projectBoxGrid(leaf, { ...options, frame: { ...options.frame, index } }))
@@ -80,6 +129,7 @@ export function calculateBoxGridView({ leaf, options, arrows, animationRange }: 
       for (let c = 0; c < componentCount; c++) square += leaf.data[i + c] ** 2
       peak = Math.max(peak, Math.sqrt(square))
     }
+    if (distribution) distribution.range = [options.component === 'magnitude' ? 0 : -peak, peak]
     for (const [axis, reduction] of Object.entries(options.reduce ?? {})) {
       if (!options.axes.includes(axis as (typeof options.axes)[number]) && reduction.method === 'sum')
         peak *= leaf.shape[['x', 'y', 'z', 'time', 'frequency'].indexOf(axis)]
@@ -87,5 +137,5 @@ export function calculateBoxGridView({ leaf, options, arrows, animationRange }: 
     bound = Math.max(bound, peak)
     scalar.range = [options.component === 'magnitude' ? 0 : -bound, bound]
   }
-  return { scalar, vectors }
+  return { scalar, vectors, distribution }
 }

@@ -1,3 +1,5 @@
+import { Layers, Component, Circle, Fingerprint, Shapes } from 'lucide-react'
+import { ViewerLayout, ViewerToolButton, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
 import { useCallback, useMemo, type ReactNode } from 'react'
 import type { UcumUnit } from '@/lib/cad/model'
 import { MeshPlayback } from './MeshPlayback'
@@ -56,77 +58,19 @@ export function ParticleSetResult({
   )
   const selectFrame = useCallback((next: number) => setTime(particles.times[next]), [particles.times, setTime])
   return (
-    <article
-      className="flex h-full min-h-0 flex-col bg-white"
-      data-result-visualization="particle-set"
-      aria-label={`${particles.label} particles`}
-    >
-      <h3 className="px-2 pt-2 text-sm font-semibold">{particles.label.replace(/^@visualizations\./u, '')}</h3>
-      <p className="px-2 text-xs text-slate-500">
-        {particles.particleIds.length} particles ·{' '}
-        {particles.radius ? `실제 반경 · ${displayUnit}` : `위치 ${displayUnit} · 화면 점 크기`}
-      </p>
-      <ViewerControls>
-        <MeshPlayback
-          times={particles.times}
-          unit="s"
-          frame={frame}
-          onFrame={selectFrame}
-          time={time}
-          onTime={setTime}
-        />
-        <div className="flex flex-wrap items-center gap-2 p-2 text-xs">
-          {particles.configuration ? (
-            <span>{particles.configuration === 'reference' ? '기준 배치' : '현재 배치'}</span>
-          ) : null}
-          <label>
-            <input
-              type="checkbox"
-              aria-label="Particle Geometry Overlay"
-              disabled={!canOverlayGeometry}
-              checked={showGeometry}
-              onChange={(event) => setShowGeometry(event.target.checked)}
-            />{' '}
-            Geometry
-          </label>
-          <label>
-            물리량{' '}
-            <select
-              aria-label="Particle 물리량"
-              value={attribute}
-              onChange={(event) => {
-                setAttribute(event.target.value)
-                setComponent(0)
-              }}
-            >
-              <option value="material">Material</option>
-              {Object.keys(particles.attributes).map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-              {attribute !== 'material' && !quantity ? <option value={attribute}>{attribute} · 없음</option> : null}
-            </select>
-          </label>
-          {quantity?.components.length ? (
-            <label>
-              성분{' '}
-              <select
-                aria-label="Particle 성분"
-                value={selectedComponent}
-                onChange={(event) =>
-                  setComponent(event.target.value === 'magnitude' ? 'magnitude' : Number(event.target.value))
-                }
-              >
-                {quantity.components.map((name, index) => (
-                  <option key={name} value={index}>
-                    {name}
-                  </option>
-                ))}
-                <option value="magnitude">Norm</option>
-              </select>
-            </label>
-          ) : null}
+    <ViewerLayout>
+      <article
+        className="flex h-full min-h-0 flex-col bg-white"
+        data-result-visualization="particle-set"
+        aria-label={`${particles.label} particles`}
+      >
+        <h3 className="px-2 pt-2 text-sm font-semibold">{particles.label.replace(/^@visualizations\./u, '')}</h3>
+        <p className="px-2 text-xs text-slate-500">
+          {particles.particleIds.length} particles ·{' '}
+          {particles.radius ? `실제 반경 · ${displayUnit}` : `위치 ${displayUnit} · 화면 점 크기`}
+        </p>
+        <div className="px-2 text-xs">
+          {' '}
           {quantity ? (
             <span>
               {quantity.quantityKind} · {quantity.unit}
@@ -135,9 +79,63 @@ export function ParticleSetResult({
                 : ''}
             </span>
           ) : null}
+        </div>
+        <ViewerControls>
+          <MeshPlayback
+            times={particles.times}
+            unit="s"
+            frame={frame}
+            onFrame={selectFrame}
+            time={time}
+            onTime={setTime}
+          />
+          <ViewerToolButton
+            label="Particle Geometry Overlay"
+            title={canOverlayGeometry ? 'Geometry 겹치기' : 'Geometry와 좌표계가 일치하지 않습니다.'}
+            disabled={!canOverlayGeometry}
+            active={showGeometry}
+            onClick={() => setShowGeometry(!showGeometry)}
+          >
+            <Layers />
+          </ViewerToolButton>
+          <ViewerSelectTool
+            label="물리량"
+            icon={<Shapes />}
+            aria-label="Particle 물리량"
+            value={attribute}
+            onChange={(event) => {
+              setAttribute(event.target.value)
+              setComponent(0)
+            }}
+          >
+            <option value="material">Material</option>
+            {Object.keys(particles.attributes).map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+            {attribute !== 'material' && !quantity ? <option value={attribute}>{attribute} · 없음</option> : null}
+          </ViewerSelectTool>
+          {quantity?.components.length ? (
+            <ViewerSelectTool
+              label="성분"
+              icon={<Component />}
+              aria-label="Particle 성분"
+              value={selectedComponent}
+              onChange={(event) =>
+                setComponent(event.target.value === 'magnitude' ? 'magnitude' : Number(event.target.value))
+              }
+            >
+              {quantity.components.map((name, index) => (
+                <option key={name} value={index}>
+                  {name}
+                </option>
+              ))}
+              <option value="magnitude">Norm</option>
+            </ViewerSelectTool>
+          ) : null}
           {!particles.radius ? (
-            <label>
-              점 크기{' '}
+            <ViewerToolPanel label="점 크기" icon={<Circle />}>
               <input
                 aria-label="Particle 점 크기"
                 type="range"
@@ -146,78 +144,77 @@ export function ParticleSetResult({
                 value={pointSize}
                 onChange={(event) => setPointSize(Number(event.target.value))}
               />
-            </label>
+            </ViewerToolPanel>
           ) : null}
-          <label>
-            ID{' '}
-            <select
-              aria-label="Particle ID"
-              value={particleId}
-              onChange={(event) => setParticleId(Number(event.target.value))}
-            >
-              {particles.particleIds.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-              {selectedParticle < 0 ? <option value={particleId}>{particleId} · 없음</option> : null}
-            </select>
-          </label>
-        </div>
-      </ViewerControls>
-      {!available ? (
-        <p role="status" className="p-2 text-xs">
-          선택한 시각이 현재 결과에 없습니다. 재생 시각을 조정하세요.
-        </p>
-      ) : null}
-      {attribute !== 'material' && !quantity ? (
-        <p role="status" className="p-2 text-xs">
-          선택한 물리량이 현재 결과에 없습니다.
-        </p>
-      ) : null}
-      {rendered ? (
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {renderViewer(rendered, showGeometry && canOverlayGeometry)}
-        </div>
-      ) : null}
-      {available && selectedParticle >= 0 ? (
-        <div className="max-h-32 overflow-auto border-t p-2 text-xs">
-          <p>
-            ID {particleId} · Material {particles.materialNames[particles.materialIndices[selectedParticle]]} · t ={' '}
-            {particles.times[frame]} s
+          <ViewerSelectTool
+            label="Particle ID"
+            icon={<Fingerprint />}
+            aria-label="Particle ID"
+            value={particleId}
+            onChange={(event) => setParticleId(Number(event.target.value))}
+          >
+            {particles.particleIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+            {selectedParticle < 0 ? <option value={particleId}>{particleId} · 없음</option> : null}
+          </ViewerSelectTool>
+        </ViewerControls>
+        {!available ? (
+          <p role="status" className="p-2 text-xs">
+            선택한 시각이 현재 결과에 없습니다. 재생 시각을 조정하세요.
           </p>
-          <p>
-            Position [
-            {Array.from(
-              particles.positions.subarray(
-                (frame * particles.particleIds.length + selectedParticle) * 3,
-                (frame * particles.particleIds.length + selectedParticle + 1) * 3,
-              ),
-            )
-              .map((value) => value.toPrecision(5))
-              .join(', ')}
-            ] {particles.lengthUnit}
+        ) : null}
+        {attribute !== 'material' && !quantity ? (
+          <p role="status" className="p-2 text-xs">
+            선택한 물리량이 현재 결과에 없습니다.
           </p>
-          {Object.entries(particles.attributes).map(([name, entry]) => {
-            const width = entry.components.length || 1
-            const offset = (frame * particles.particleIds.length + selectedParticle) * width
-            return (
-              <p key={name}>
-                {name}:{' '}
-                {Array.from(entry.values.subarray(offset, offset + width))
-                  .map((value) => value.toPrecision(5))
-                  .join(', ')}{' '}
-                {entry.unit}
-              </p>
-            )
-          })}
-        </div>
-      ) : null}
-      {rendered?.minimum !== undefined ? (
-        <p className="border-t px-2 text-xs">
-          색상 범위 {rendered.minimum.toPrecision(4)} … {rendered.maximum?.toPrecision(4)} {quantity?.unit}
-        </p>
-      ) : null}
-    </article>
+        ) : null}
+        {rendered ? (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {renderViewer(rendered, showGeometry && canOverlayGeometry)}
+          </div>
+        ) : null}
+        {available && selectedParticle >= 0 ? (
+          <div className="max-h-32 overflow-auto border-t p-2 text-xs">
+            <p>
+              ID {particleId} · Material {particles.materialNames[particles.materialIndices[selectedParticle]]} · t ={' '}
+              {particles.times[frame]} s
+            </p>
+            <p>
+              Position [
+              {Array.from(
+                particles.positions.subarray(
+                  (frame * particles.particleIds.length + selectedParticle) * 3,
+                  (frame * particles.particleIds.length + selectedParticle + 1) * 3,
+                ),
+              )
+                .map((value) => value.toPrecision(5))
+                .join(', ')}
+              ] {particles.lengthUnit}
+            </p>
+            {Object.entries(particles.attributes).map(([name, entry]) => {
+              const width = entry.components.length || 1
+              const offset = (frame * particles.particleIds.length + selectedParticle) * width
+              return (
+                <p key={name}>
+                  {name}:{' '}
+                  {Array.from(entry.values.subarray(offset, offset + width))
+                    .map((value) => value.toPrecision(5))
+                    .join(', ')}{' '}
+                  {entry.unit}
+                </p>
+              )
+            })}
+          </div>
+        ) : null}
+        {rendered?.minimum !== undefined ? (
+          <p className="border-t px-2 text-xs">
+            색상 범위 {rendered.minimum.toPrecision(4)} … {rendered.maximum?.toPrecision(4)} {quantity?.unit}
+          </p>
+        ) : null}
+      </article>
+    </ViewerLayout>
   )
 }

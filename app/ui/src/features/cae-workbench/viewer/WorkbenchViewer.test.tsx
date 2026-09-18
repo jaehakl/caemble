@@ -7,6 +7,25 @@ import type { DataTensor } from '@/lib/cad/model'
 import { calculationExampleInput } from '@/authoring/examples'
 import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 
+function selectResult(value: string) {
+  fireEvent.keyDown(screen.getByRole('button', { name: /^표시 데이터 종류 변경/ }), { key: 'ArrowDown' })
+  fireEvent.click(
+    screen.getByRole('menuitem', {
+      name:
+        value === ''
+          ? 'Geometry'
+          : value.startsWith('@visualizations.')
+            ? `${value.slice('@visualizations.'.length)} · 시각화`
+            : `${value} · Output`,
+    }),
+  )
+}
+function currentResult() {
+  const label = screen.getByRole('button', { name: /^표시 데이터 종류 변경/ }).getAttribute('aria-label')!
+  const value = label.slice('표시 데이터 종류 변경 · '.length)
+  return value === 'Geometry' ? '' : value
+}
+
 vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
   BoxGridResult: ({ name }: { name: string }) => {
     const [opacity, setOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
@@ -97,7 +116,6 @@ function gridSelectionProps(grids: Record<string, readonly [number, number, numb
     onSelectionSourcePathsChange: vi.fn(),
     selectionQuery: null,
     selectionSourceStatus: {},
-    viewerExpanded: false,
     autoSelectResult: true,
     recordedData,
     resultContracts,
@@ -130,12 +148,12 @@ it('selects a native rigid animation beside numerical Outputs through its semant
       }}
     />,
   )
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('density')
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '@visualizations.movement.pose' } })
+  expect(currentResult()).toBe('density')
+  selectResult('@visualizations.movement.pose')
   expect(screen.getByText('Rigid animation @visualizations.movement.pose')).toBeTruthy()
   expect(screen.queryByText(/Geometry가 준비되지 않았습니다/)).toBeNull()
   expect(screen.queryByText('Box Grid density')).toBeNull()
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'density' } })
+  selectResult('density')
   expect(screen.getByText('Box Grid density')).toBeTruthy()
 })
 
@@ -151,12 +169,12 @@ it('prefers spatial grid count over tensor size, physical volume and non-grid ou
   }
   props.resultContracts.mesh = { ...props.resultContracts.small, visualization: { kind: 'mesh-field' } }
   render(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('largest')
+  expect(currentResult()).toBe('largest')
 })
 
 it('breaks equal grid counts by existing output order', () => {
   render(<WorkbenchViewer {...gridSelectionProps({ first: [2, 3, 1], second: [3, 1, 2] })} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('first')
+  expect(currentResult()).toBe('first')
 })
 
 it('excludes errors, missing data and invalid grid dimensions from the preference', () => {
@@ -165,34 +183,34 @@ it('excludes errors, missing data and invalid grid dimensions from the preferenc
   const invalid = props.recordedData.invalid
   props.recordedData.invalid = { ...invalid, boxGrid: { ...invalid.boxGrid!, gridShape: [3, 0, 3] } }
   render(<WorkbenchViewer {...props} resultErrors={{ failed: 'Failed' }} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('valid')
+  expect(currentResult()).toBe('valid')
 })
 
 it('waits for loading to finish and keeps the chosen result through later updates and manual selection', () => {
   const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
   const view = render(<WorkbenchViewer {...props} recordedData={{ small: props.recordedData.small }} loading />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(currentResult()).toBe('')
   view.rerender(<WorkbenchViewer {...props} loading />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(currentResult()).toBe('')
   view.rerender(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+  expect(currentResult()).toBe('large')
   const newer = gridSelectionProps({ small: [5, 5, 5], large: [3, 3, 3] })
   view.rerender(<WorkbenchViewer {...newer} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'small' } })
+  expect(currentResult()).toBe('large')
+  selectResult('small')
   view.rerender(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+  expect(currentResult()).toBe('small')
 })
 
 it('preserves external selection and manual choices made during loading', () => {
   const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
   const view = render(<WorkbenchViewer {...props} selectedResult="small" />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+  expect(currentResult()).toBe('small')
   view.unmount()
   const manual = render(<WorkbenchViewer {...props} loading />)
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'small' } })
+  selectResult('small')
   manual.rerender(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+  expect(currentResult()).toBe('small')
 })
 
 it('shows stored mesh results centrally, permits Geometry review, and displays download progress', () => {
@@ -214,19 +232,17 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
       onFindSelectionSource={vi.fn()}
       onSelectionQueryChange={vi.fn()}
       onSelectionSourcePathsChange={vi.fn()}
-      onToggleViewerExpanded={vi.fn()}
       selectionQuery={null}
       selectionSourceStatus={{}}
-      viewerExpanded={false}
       loading
       downloadProgress={{ completed: 4, total: 40 }}
     />,
   )
   expect(screen.getByText('Geometry preview')).toBeTruthy()
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'displacement' } })
+  selectResult('displacement')
   expect(screen.getByText('Stored volume field')).toBeTruthy()
   expect(screen.getByText(/4\/40/)).toBeTruthy()
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
+  selectResult('')
   expect(screen.getByText('Geometry preview')).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
 })
@@ -258,7 +274,6 @@ it('offers deformation fields only from the selected native result invocation', 
       onSelectionSourcePathsChange={vi.fn()}
       selectionQuery={null}
       selectionSourceStatus={{}}
-      viewerExpanded={false}
       selectedResult="@visualizations.solid.stress"
       visualizations={{
         solid: {
@@ -293,10 +308,8 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
     onFindSelectionSource: vi.fn(),
     onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    onToggleViewerExpanded: vi.fn(),
     selectionQuery: null,
     selectionSourceStatus: {},
-    viewerExpanded: false,
     resultSourceHash: 'source',
     resultVarsHash: materialVarsHash({}),
     recordedData: { flux: tensor },
@@ -326,8 +339,10 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
     },
   }
   const { rerender } = render(<WorkbenchViewer {...props} />)
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'flux' } })
-  expect(screen.getByRole('option', { name: 'ray.paths · 시각화' })).toBeInTheDocument()
+  selectResult('flux')
+  fireEvent.keyDown(screen.getByRole('button', { name: /^표시 데이터 종류 변경/ }), { key: 'ArrowDown' })
+  expect(screen.getByRole('menuitem', { name: 'ray.paths · 시각화' })).toBeInTheDocument()
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
   expect(screen.getByLabelText('@visualizations.ray.paths Overlay')).toBeDisabled()
   rerender(
     <WorkbenchViewer
@@ -361,13 +376,11 @@ it('shows the selected result error instead of an empty Box Grid renderer', () =
       onFindSelectionSource={vi.fn()}
       onSelectionQueryChange={vi.fn()}
       onSelectionSourcePathsChange={vi.fn()}
-      onToggleViewerExpanded={vi.fn()}
       selectionQuery={null}
       selectionSourceStatus={{}}
-      viewerExpanded={false}
     />,
   )
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'field' } })
+  selectResult('field')
   expect(screen.getAllByText('field: 응답에 선언된 결과 데이터가 없습니다.')).toHaveLength(1)
   expect(screen.queryByText('기록된 장 데이터가 없습니다.')).toBeNull()
 })
@@ -390,10 +403,8 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
     onFindSelectionSource: vi.fn(),
     onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    onToggleViewerExpanded: vi.fn(),
     selectionQuery: null,
     selectionSourceStatus: {},
-    viewerExpanded: false,
     resultContracts: { first: contract, second: contract },
     resultSourceHash: 'source',
     resultVarsHash: materialVarsHash({}),
@@ -401,40 +412,40 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   const random = vi.spyOn(Math, 'random').mockReturnValue(0.9)
   const { rerender } = render(<WorkbenchViewer {...props} />)
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('second')
+  expect(currentResult()).toBe('second')
   const calls = random.mock.calls.length
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
   expect(random).toHaveBeenCalledTimes(calls)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('second')
+  expect(currentResult()).toBe('second')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} resultContracts={{ first: contract }} />)
   expect(screen.getByText('second: 새 실행에 선택한 결과가 없습니다.')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
+  selectResult('')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(currentResult()).toBe('')
   expect(screen.getByText('Geometry preview')).toBeInTheDocument()
 })
 
 it('shows CAD during prediction, restores BoxGrid controls and respects a Geometry choice while pending', () => {
   const props = { ...gridSelectionProps({ field: [2, 2, 1] }), persistenceKey: 'prediction:1' }
   const { rerender } = render(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('field')
+  expect(currentResult()).toBe('field')
   fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.2' } })
   const pending = { ...props, recordedData: undefined, resultContracts: {}, resultPlaceholder: 'Predicting new Vars' }
   rerender(<WorkbenchViewer {...pending} />)
   expect(screen.getByText('Geometry preview')).toBeInTheDocument()
   expect(screen.queryByText('Box Grid field')).not.toBeInTheDocument()
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('field')
+  expect(currentResult()).toBe('field')
   rerender(<WorkbenchViewer {...props} />)
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
   rerender(<WorkbenchViewer {...pending} />)
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
+  selectResult('')
   rerender(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(currentResult()).toBe('')
   expect(screen.getByText('Geometry preview')).toBeInTheDocument()
   rerender(<WorkbenchViewer {...gridSelectionProps({ saved: [3, 3, 1] })} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('saved')
+  expect(currentResult()).toBe('saved')
   rerender(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(currentResult()).toBe('')
 })
 
 it('waits for data, prefers the saved result and settings, then preserves manual changes', () => {
@@ -446,19 +457,19 @@ it('waits for data, prefers the saved result and settings, then preserves manual
     camera: null,
   }
   const { rerender } = render(<WorkbenchViewer {...props} loading initialDefaults={defaults} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(currentResult()).toBe('')
   rerender(<WorkbenchViewer {...props} initialDefaults={defaults} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+  expect(currentResult()).toBe('small')
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
   fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.8' } })
   rerender(
     <WorkbenchViewer {...props} initialDefaults={{ ...defaults, settings: { 'small:box.geometryOpacity': 0.1 } }} />,
   )
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.8)
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'large' } })
+  selectResult('large')
   rerender(<WorkbenchViewer {...props} initialDefaults={defaults} loading />)
   rerender(<WorkbenchViewer {...props} initialDefaults={defaults} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+  expect(currentResult()).toBe('large')
 })
 
 it.each(['missing', ''])(
@@ -466,7 +477,7 @@ it.each(['missing', ''])(
   (selectedResult) => {
     const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
     render(<WorkbenchViewer {...props} initialDefaults={{ version: 1, selectedResult, settings: {}, camera: null }} />)
-    expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue(selectedResult === '' ? '' : 'large')
+    expect(currentResult()).toBe(selectedResult === '' ? '' : 'large')
   },
 )
 
@@ -481,6 +492,6 @@ it('isolates the next Experiment and applies its own defaults', () => {
   const { rerender } = render(<WorkbenchViewer key="first" {...props} initialDefaults={defaults} />)
   fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.8' } })
   rerender(<WorkbenchViewer key="second" {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+  expect(currentResult()).toBe('large')
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.5)
 })

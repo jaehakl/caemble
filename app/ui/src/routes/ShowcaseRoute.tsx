@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -25,7 +25,6 @@ function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated)
   const available = useQuery(availableExperimentsQueryOptions(auth.queryScope))
   const initialized = useRef(false)
-  const [expanded, setExpanded] = useState(false)
   const { loadExperiment } = workbench
   const select = useCallback(
     (row: SavedExperimentRecord) => {
@@ -51,8 +50,8 @@ function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }, [available.data, available.isSuccess, select])
   return (
     <main className="flex h-full min-h-0 flex-col bg-background text-foreground lg:overflow-hidden">
-      <div className={`grid min-h-0 flex-1 ${expanded ? 'grid-cols-1' : 'lg:grid-cols-2'}`}>
-        <div className={`${expanded ? 'hidden' : 'min-h-[400px] lg:min-h-0'} border-r`}>
+      <div className="grid min-h-0 flex-1 lg:grid-cols-2">
+        <div className="min-h-[400px] border-r lg:min-h-0">
           <ExperimentShowcase
             user={auth.user}
             selectedId={workbench.experimentId}
@@ -76,8 +75,6 @@ function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 onFindSelectionSource={() => {}}
                 onSelectionQueryChange={() => {}}
                 onSelectionSourcePathsChange={() => {}}
-                onToggleViewerExpanded={() => setExpanded((value) => !value)}
-                viewerExpanded={expanded}
                 selectionQuery={null}
                 selectionSourceStatus={{}}
                 autoSelectResult={Boolean(workbench.selection.measurement)}

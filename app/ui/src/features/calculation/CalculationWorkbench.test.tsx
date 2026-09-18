@@ -130,7 +130,6 @@ function Harness({
     outputChartRatio: 0.65,
     selectedCalculationId: selectedId,
     viewer: <div>Viewer</div>,
-    viewerExpanded: false,
   }
   return (
     <TooltipProvider>

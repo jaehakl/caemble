@@ -25,7 +25,6 @@ export function ResizableWorkbenchLayout({
   right,
   leftWidthRatio = defaultWorkbenchLayoutState.leftWidthRatio,
   rightWidthRatio = defaultWorkbenchLayoutState.rightWidthRatio,
-  viewerExpanded = defaultWorkbenchLayoutState.viewerExpanded,
   onLeftWidthRatioChange,
   onRightWidthRatioChange,
   leftLabel = '목록',
@@ -38,7 +37,6 @@ export function ResizableWorkbenchLayout({
   right: ReactNode
   leftWidthRatio?: number
   rightWidthRatio?: number
-  viewerExpanded?: boolean
   onLeftWidthRatioChange?: (ratio: number) => void
   onRightWidthRatioChange?: (ratio: number) => void
   leftLabel?: string
@@ -139,9 +137,7 @@ export function ResizableWorkbenchLayout({
     if (next !== null) event.preventDefault()
   }
 
-  const columns = viewerExpanded
-    ? `minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
-    : `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
+  const columns = `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
   return (
     <div
       className={cn('grid h-full min-h-0 flex-1 overflow-hidden bg-background', className)}
@@ -154,24 +150,23 @@ export function ResizableWorkbenchLayout({
         } satisfies CSSProperties
       }
     >
-      <section aria-label={leftLabel} className="min-h-0 min-w-0 overflow-hidden" hidden={viewerExpanded}>
+      <section aria-label={leftLabel} className="min-h-0 min-w-0 overflow-hidden">
         {left}
       </section>
-      {viewerExpanded ? null : (
-        <ResizeHandle
-          label="왼쪽 목록 너비 조절"
-          maximum={leftMaximum}
-          minimum={workbenchLayoutLimits.leftMinWidthPx}
-          onKeyDown={(event) => resizeWithKeyboard(event, 'left')}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return
-            event.preventDefault()
-            setDrag({ pane: 'left', startClient: event.clientX, startValuePx: effectiveLeftWidth })
-          }}
-          orientation="vertical"
-          value={effectiveLeftWidth}
-        />
-      )}
+
+      <ResizeHandle
+        label="왼쪽 목록 너비 조절"
+        maximum={leftMaximum}
+        minimum={workbenchLayoutLimits.leftMinWidthPx}
+        onKeyDown={(event) => resizeWithKeyboard(event, 'left')}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
+          event.preventDefault()
+          setDrag({ pane: 'left', startClient: event.clientX, startValuePx: effectiveLeftWidth })
+        }}
+        orientation="vertical"
+        value={effectiveLeftWidth}
+      />
       <section aria-label={viewerLabel} className="min-h-0 min-w-0 overflow-hidden">
         {viewer}
       </section>

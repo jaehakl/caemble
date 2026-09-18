@@ -92,7 +92,7 @@ const storedDraftBaseSchema = z
             z.enum(bottomDockModes).catch(defaultWorkbenchLayoutState.bottomMode),
           ),
           bottomHeightRatio: ratioSchema.catch(defaultWorkbenchLayoutState.bottomHeightRatio),
-          viewerExpanded: z.boolean(),
+          viewerExpanded: z.boolean().transform(() => false),
           rightTabs: z.object({
             measurement: z.enum(measurementRightTabIds).catch(defaultWorkbenchLayoutState.rightTabs.measurement),
           }),

@@ -20,7 +20,6 @@ export type CadViewerProps = {
   onFindSelectionSource?: (value: string) => void
   onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange?: (values: readonly string[]) => void
-  onToggleViewerExpanded?: () => void
   polylines?: readonly PolylineBundle[]
   meshRenderData?: MeshRenderData
   preserveCameraOnUpdate?: boolean
@@ -30,7 +29,6 @@ export type CadViewerProps = {
   displayUnit?: UcumUnit
   selectionQuery?: CadViewerSelectionQuery | null
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
-  viewerExpanded?: boolean
 }
 
 export function CadViewer({
@@ -42,7 +40,6 @@ export function CadViewer({
   onFindSelectionSource,
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
-  onToggleViewerExpanded,
   polylines,
   meshRenderData,
   meshIdentity,
@@ -52,7 +49,6 @@ export function CadViewer({
   displayUnit,
   selectionQuery,
   selectionSourceStatus,
-  viewerExpanded,
 }: CadViewerProps) {
   const [experimentVisible, setExperimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
   const [taskVisible, setTaskVisible] = useViewerSetting('taskVisible', true, 'workspace')
@@ -92,8 +88,6 @@ export function CadViewer({
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}
         onRenderStart={handleRenderStart}
-        onToggleViewerExpanded={onToggleViewerExpanded}
-        viewerExpanded={viewerExpanded}
         onToggleSource={(source) => {
           if (source === 'experiment') setExperimentVisible((current) => !current)
           else setTaskVisible((current) => !current)

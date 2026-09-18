@@ -1,3 +1,7 @@
+import { ViewerLayout, ViewerToolMenu } from '@/features/viewer/viewer/ViewerTools'
+import { ViewerControls } from '@/features/viewer/viewer/comparisonSettings'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { Layers } from 'lucide-react'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import { ComparisonToolbar } from '@/features/viewer/viewer/ComparisonToolbar'
 import { WorkbenchRibbonGroup } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
@@ -92,7 +96,7 @@ export function MeasurementWorkspace({
   const [comparisonSettings] = useState(() =>
     createComparisonSettings(workbench.experimentRecord?.viewer_defaults?.settings),
   )
-  const [controlsHost, setControlsHost] = useState<HTMLDivElement | null>(null)
+  const controlsHost = null
   const [camera] = useState(() => createComparisonCamera(workbench.experimentRecord?.viewer_defaults?.camera))
   const defaultResult = useRef(workbench.experimentRecord?.viewer_defaults?.selectedResult)
   const resultSelectionMade = useRef(false)
@@ -710,7 +714,6 @@ export function MeasurementWorkspace({
     experiment: workbench.experiment,
     selectionQuery: null,
     selectionSourceStatus: {},
-    viewerExpanded: false,
     onFindSelectionSource: () => {},
     onSelectionQueryChange: () => {},
     onSelectionSourcePathsChange: () => {},
@@ -919,39 +922,37 @@ export function MeasurementWorkspace({
             />
           }
           second={
-            <div className="flex h-full min-h-0 flex-col">
-              <div
-                aria-label="비교 Viewer 공통 툴바"
-                className="max-h-[45%] shrink-0 overflow-auto border-b bg-background [&_button]:min-h-8 [&_button]:rounded [&_button]:border [&_button]:px-2 [&_button:disabled]:opacity-40 [&_input[type=number]]:w-20 [&_input[type=number]]:rounded [&_input[type=number]]:border [&_select]:min-h-8 [&_select]:rounded [&_select]:border [&_select]:bg-background [&_select]:px-2"
-              >
-                <label className="flex items-center gap-2 p-2 text-xs">
-                  데이터
-                  <select
-                    aria-label="Viewer 결과 선택"
-                    value={selectedResult}
-                    onChange={(event) => {
+            <ViewerLayout>
+              <ViewerControls placement="data">
+                <ViewerToolMenu label={`표시 데이터 종류 변경 · ${selectedResult || 'Geometry'}`} icon={<Layers />}>
+                  <DropdownMenuItem
+                    onSelect={() => {
                       resultSelectionMade.current = true
-                      setSelectedResult(event.target.value)
+                      setSelectedResult('')
                     }}
-                    className="min-w-0 flex-1"
                   >
-                    <option value="">Geometry</option>
-                    {selectedResult && !comparisonContracts[selectedResult] ? (
-                      <option value={selectedResult}>{selectedResult} · 결과 없음</option>
-                    ) : null}
-                    {Object.keys(comparisonContracts).map((name) => (
-                      <option key={name} value={name}>
-                        {name.startsWith('@visualizations.')
-                          ? `${name.slice('@visualizations.'.length)} · 시각화`
-                          : `${name} · Output`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <ComparisonToolbar camera={camera} />
-                <div ref={setControlsHost} />
-              </div>
-              <div className="min-h-0 flex-1">
+                    Geometry
+                  </DropdownMenuItem>
+                  {selectedResult && !comparisonContracts[selectedResult] ? (
+                    <DropdownMenuItem disabled>{selectedResult} · 결과 없음</DropdownMenuItem>
+                  ) : null}
+                  {Object.keys(comparisonContracts).map((name) => (
+                    <DropdownMenuItem
+                      key={name}
+                      onSelect={() => {
+                        resultSelectionMade.current = true
+                        setSelectedResult(name)
+                      }}
+                    >
+                      {name.startsWith('@visualizations.')
+                        ? `${name.slice('@visualizations.'.length)} · 시각화`
+                        : `${name} · Output`}
+                    </DropdownMenuItem>
+                  ))}
+                </ViewerToolMenu>
+              </ViewerControls>
+              <ComparisonToolbar camera={camera} />
+              <div className="h-full min-h-0">
                 <MeasurementSplit
                   label="미리보기와 실제 결과 너비 조절"
                   first={
@@ -1065,7 +1066,7 @@ export function MeasurementWorkspace({
                   }
                 />
               </div>
-            </div>
+            </ViewerLayout>
           }
         />
       </div>

@@ -7,8 +7,8 @@ import {
 } from './comparisonSettings'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Pause, Play } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { BoxGridToolbar } from './BoxGridToolbar'
+import { ViewerLayout } from './ViewerTools'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
@@ -20,14 +20,18 @@ import {
   type ProjectionAxis,
   type ProjectionReduction,
 } from '@/lib/calculation/boxGridProject'
-import { boxGridVectorComponents, opticalPlotData, type calculateBoxGridView } from './boxGridViewData'
+import {
+  boxGridVectorComponents,
+  opticalPlotData,
+  type calculateBoxGridView,
+  type PlotKind,
+  type BoxGridAnimation,
+} from './boxGridViewData'
 import { createPointCloudData } from './pointCloudData'
 import { ScalarPlot } from './ScalarPlot'
-import { PlotProbe } from './PointCloudPlot'
 import JscadViewer from './JscadViewer'
 import type { HeatmapRenderData } from './structuredField'
 
-type PlotKind = 'histogram' | 'line' | 'heatmap' | 'cloud'
 const noLayers = Object.freeze([])
 const axisLabels = { x: 'x', y: 'y', z: 'z', time: 't', frequency: 'f' }
 export function BoxGridResult({
@@ -80,16 +84,18 @@ export function BoxGridResult({
       </p>
     )
   return (
-    <BoxGridControls
-      key={name}
-      name={name}
-      leaf={parsed.leaf}
-      displayUnit={displayUnit}
-      renderViewer={renderViewer}
-      canOverlayGeometry={canOverlayGeometry}
-      geometryBlockedReason={geometryBlockedReason}
-      recordReference={recordReference ?? `record[${JSON.stringify(name)}]`}
-    />
+    <ViewerLayout>
+      <BoxGridControls
+        key={name}
+        name={name}
+        leaf={parsed.leaf}
+        displayUnit={displayUnit}
+        renderViewer={renderViewer}
+        canOverlayGeometry={canOverlayGeometry}
+        geometryBlockedReason={geometryBlockedReason}
+        recordReference={recordReference ?? `record[${JSON.stringify(name)}]`}
+      />
+    </ViewerLayout>
   )
 }
 
@@ -149,7 +155,7 @@ function BoxGridControls({
   const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
   const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
   const [bins, setBins] = useViewerSetting<number | undefined>('box.bins', undefined)
-  const [animation, setAnimation] = useViewerSetting<'off' | 'oscillation' | 'time' | 'frequency'>(
+  const [animation, setAnimation] = useViewerSetting<BoxGridAnimation>(
     'box.animation',
     () => {
       if (leaf.shape[5] !== 2) return 'off'
@@ -162,15 +168,17 @@ function BoxGridControls({
     },
     'item',
     (value) =>
-      value === 'off' || (value === 'oscillation' ? leaf.shape[5] === 2 : leaf.shape[value === 'time' ? 3 : 4] > 1),
+      value === 'off' ||
+      (value === 'oscillation'
+        ? leaf.shape[5] === 2
+        : leaf.shape[value === 'component' ? 6 : projectionAxes.indexOf(value)] > 1),
   )
+  const animationAxis = animation === 'off' || animation === 'oscillation' ? undefined : animation
+  const animationLength = animationAxis
+    ? leaf.shape[animationAxis === 'component' ? 6 : projectionAxes.indexOf(animationAxis)]
+    : 1
   const [timeSeconds, setTimeSeconds] = useViewerSetting('box.timeSeconds', 0),
-    [frameIndex, setFrameIndex] = useViewerSetting(
-      'box.frameIndex',
-      0,
-      'item',
-      (value) => value < leaf.shape[animation === 'frequency' ? 4 : 3],
-    )
+    [frameIndex, setFrameIndex] = useViewerSetting('box.frameIndex', 0, 'item', (value) => value < animationLength)
   const [durationOverride, setDurationOverride] = useViewerSetting<number | null>('box.durationSeconds', null)
   const [playing, setPlaying] = useViewerSetting('box.playing', false),
     [repeat, setRepeat] = useViewerSetting('box.repeat', true),
@@ -180,13 +188,19 @@ function BoxGridControls({
   const [busy, setBusy] = useState(true),
     [error, setError] = useState('')
   const [renderError, setRenderError] = useState('')
-  const rangeCache = useRef<{ key: string; value: [number, number] } | null>(null)
+  const rangeCache = useRef<{ key: string; value: [number, number]; distribution?: [number, number] } | null>(null)
   const vectorComponents = boxGridVectorComponents(leaf)
   const spatial = axes.every((axis) => ['x', 'y', 'z'].includes(axis))
   const arrowsAllowed = kind === 'cloud' && spatial && !!vectorComponents && representation !== 'phase'
   const actualComponent =
-    component === 'arrows' ? 'magnitude' : representation === 'phase' && component === 'magnitude' ? 0 : component
-  const effectiveAxes = kind === 'histogram' ? [...projectionAxes] : axes
+    animation === 'component'
+      ? frameIndex
+      : component === 'arrows'
+        ? 'magnitude'
+        : representation === 'phase' && component === 'magnitude'
+          ? 0
+          : component
+  const effectiveAxes = axes
   const frequencyIndex =
     !effectiveAxes.includes('frequency') && reduce.frequency?.method === 'index' ? reduce.frequency.index : undefined
   const frequencyInfo = useMemo(() => {
@@ -228,20 +242,19 @@ function BoxGridControls({
     setTimeSeconds(0)
     setDurationOverride(null)
   }, [frequencySelection, comparison, setPlaying, setTimeSeconds, setDurationOverride])
-  const frame =
-    animation === 'oscillation'
-      ? { timeSeconds }
-      : animation === 'time' || animation === 'frequency'
-        ? {
-            axis: animation,
-            index: comparison ? frameIndex : Math.min(frameIndex, leaf.shape[animation === 'time' ? 3 : 4] - 1),
-          }
-        : undefined
+  const frame = animation === 'oscillation' ? { timeSeconds } : undefined
+  const effectiveReduce = useMemo(
+    () =>
+      animationAxis && animationAxis !== 'component'
+        ? { ...reduce, [animationAxis]: { method: 'index' as const, index: frameIndex } }
+        : reduce,
+    [animationAxis, reduce, frameIndex],
+  )
   const options: BoxGridProjectionOptions = {
     axes: effectiveAxes,
     representation,
     component: actualComponent,
-    reduce,
+    reduce: effectiveReduce,
     frame,
   }
   const optionKey = JSON.stringify(options)
@@ -250,7 +263,7 @@ function BoxGridControls({
     kind,
     axes: effectiveAxes,
     representation,
-    component: actualComponent,
+    component: animation === 'component' ? 'component-sweep' : actualComponent,
     reduce,
     animation,
   })
@@ -268,10 +281,7 @@ function BoxGridControls({
             (!Number.isInteger(component) || component < 0 || component >= leaf.shape[6])) ||
             (representation === 'phase' && leaf.shape[5] !== 2) ||
             (component === 'arrows' && !arrowsAllowed) ||
-            ((animation === 'time' || animation === 'frequency') &&
-              (!Number.isInteger(frameIndex) ||
-                frameIndex < 0 ||
-                frameIndex >= leaf.shape[animation === 'time' ? 3 : 4])) ||
+            (animationAxis && (!Number.isInteger(frameIndex) || frameIndex < 0 || frameIndex >= animationLength)) ||
             Object.entries(reduce).some(
               ([axis, reduction]) =>
                 reduction.method === 'index' &&
@@ -325,8 +335,16 @@ function BoxGridControls({
       if (!active) return
       if (data.result) {
         if (rangeCache.current?.key !== rangeKey)
-          rangeCache.current = { key: rangeKey, value: data.result.scalar.range }
-        if (animation !== 'off') data.result.scalar.range = rangeCache.current.value
+          rangeCache.current = {
+            key: rangeKey,
+            value: data.result.scalar.range,
+            distribution: data.result.distribution?.range,
+          }
+        if (animation !== 'off') {
+          data.result.scalar.range = rangeCache.current.value
+          if (data.result.distribution && rangeCache.current.distribution)
+            data.result.distribution.range = rangeCache.current.distribution
+        }
         setResult(data.result)
         setCompletedKey(requestKey)
         setCompletedView({ leaf, key: viewKey })
@@ -346,6 +364,8 @@ function BoxGridControls({
       options: JSON.parse(optionKey),
       arrows: component === 'arrows' && arrowsAllowed,
       animationRange: animation !== 'off' && rangeCache.current?.key !== rangeKey,
+      sweepAxis: animationAxis,
+      histogramDistribution: kind === 'histogram' && axes.length === 0,
     })
     return () => {
       active = false
@@ -360,6 +380,9 @@ function BoxGridControls({
     component,
     arrowsAllowed,
     animation,
+    animationAxis,
+    kind,
+    axes.length,
     invalidSetting,
     comparing,
     setPlaying,
@@ -375,7 +398,7 @@ function BoxGridControls({
     )
       return
     const timer = window.setTimeout(() => {
-      const max = leaf.shape[animation === 'time' ? 3 : 4]
+      const max = animationLength
       if (animation === 'oscillation') {
         if (timeSeconds >= durationSeconds) {
           if (repeat) setTimeSeconds(0)
@@ -399,6 +422,7 @@ function BoxGridControls({
     completedKey,
     requestKey,
     animation,
+    animationLength,
     leaf,
     timeSeconds,
     durationSeconds,
@@ -413,7 +437,7 @@ function BoxGridControls({
     setTimeSeconds,
     setFrameIndex,
   ])
-  const range = useMemo(() => fixed ?? result?.scalar.range ?? [0, 0], [fixed, result])
+  const range = useMemo(() => fixed ?? result?.distribution?.range ?? result?.scalar.range ?? [0, 0], [fixed, result])
   const renderData = useMemo(() => {
     if (
       !result ||
@@ -426,7 +450,7 @@ function BoxGridControls({
     let plane: { axis: number; coordinate: number } | undefined
     if (kind === 'heatmap') {
       const normal = [0, 1, 2].find((axis) => !axes.includes(projectionAxes[axis]))!
-      const reduction = reduce[projectionAxes[normal]]
+      const reduction = effectiveReduce[projectionAxes[normal]]
       plane = {
         axis: normal,
         coordinate:
@@ -451,7 +475,7 @@ function BoxGridControls({
     kind,
     overlay,
     axes,
-    reduce,
+    effectiveReduce,
     leaf,
     name,
     spatial,
@@ -465,461 +489,152 @@ function BoxGridControls({
     surfacePower,
   ])
   const unit = animation !== 'oscillation' && representation === 'phase' ? 'rad' : leaf.unit
+  const stopAnimation = () => {
+    setPlaying(false)
+    if (animationAxis === 'component') setComponent(frameIndex)
+    else if (animationAxis)
+      setReduce((current) => ({ ...current, [animationAxis]: { method: 'index', index: frameIndex } }))
+    setAnimation('off')
+  }
   const changeKind = (next: PlotKind) => {
     if (next === kind) return
+    stopAnimation()
     setResult(undefined)
     setKind(next)
-    setPlaying(false)
-    setAnimation('off')
     setFixed(null)
-    const nextAxes =
-      next === 'line'
-        ? ((surfacePower
-            ? ['frequency', 'x']
-            : leaf.shape[3] >= leaf.shape[4]
-              ? ['frequency', 'time']
-              : ['time', 'frequency']) as ProjectionAxis[])
-        : longest.slice(0, next === 'cloud' ? 3 : 2)
-    setAxes(nextAxes)
-    setComponent(
-      next === 'cloud' &&
-        nextAxes.every((axis) => ['x', 'y', 'z'].includes(axis)) &&
-        vectorComponents &&
-        representation !== 'phase'
-        ? 'arrows'
-        : leaf.shape[6] === 1
-          ? 0
-          : representation === 'phase'
-            ? 0
-            : 'magnitude',
-    )
+    if (next === 'histogram') return
+    const count = next === 'cloud' ? 3 : next === 'heatmap' ? 2 : Math.min(2, Math.max(1, axes.length))
+    const selected = [...new Set([...axes, ...longest])].slice(0, count)
+    const ordered = projectionAxes.filter((axis) => selected.includes(axis))
+    setAxes(next === 'heatmap' || (next === 'line' && count === 2) ? [...ordered].reverse() : ordered)
+    if (component === 'arrows' && (next !== 'cloud' || !selected.every((axis) => ['x', 'y', 'z'].includes(axis))))
+      setComponent('magnitude')
+  }
+  const changeRole = (axis: ProjectionAxis, role: 'space' | ProjectionReduction['method']) => {
+    stopAnimation()
+    const selected = role === 'space' ? [...new Set([...axes, axis])] : axes.filter((item) => item !== axis)
+    if (selected.length > 3) return
+    const ordered = projectionAxes.filter((item) => selected.includes(item))
+    if (selected.length !== axes.length) {
+      const nextKind =
+        selected.length === 3
+          ? 'cloud'
+          : selected.length === 2
+            ? 'heatmap'
+            : selected.length === 1
+              ? 'line'
+              : 'histogram'
+      setKind(nextKind)
+      setAxes(nextKind === 'heatmap' ? [...ordered].reverse() : ordered)
+      setResult(undefined)
+    }
+    if (role !== 'space') setReduce((current) => ({ ...current, [axis]: { method: role, index: 0 } }))
+    if (component === 'arrows' && (selected.length !== 3 || !selected.every((item) => ['x', 'y', 'z'].includes(item))))
+      setComponent('magnitude')
+    setFixed(null)
   }
   const ready =
     !busy && completedKey === requestKey && !error && !invalidSetting && !name.startsWith('@visualizations.')
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white [&_button]:min-h-8 [&_button]:rounded [&_button]:border [&_button]:px-3 [&_button]:text-sm [&_button]:font-medium [&_button:disabled]:opacity-40 [&_button:focus-visible]:outline-2 [&_button:focus-visible]:outline-sky-600 [&_input[type=number]]:w-20 [&_input[type=number]]:rounded [&_input[type=number]]:border [&_input[type=number]]:p-1 [&_select]:min-h-8 [&_select]:rounded [&_select]:border [&_select]:bg-white [&_select]:px-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <ViewerControls>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b p-2 text-sm" aria-label="시각화 도구모음">
-          <span className="font-semibold">시각화</span>
-          {(
-            [
-              ['histogram', 'Histogram'],
-              ['line', 'Line Chart'],
-              ['heatmap', 'Heatmap'],
-              ['cloud', '3D Point cloud'],
-            ] as const
-          ).map(([value, title]) => (
-            <button
-              key={value}
-              aria-pressed={kind === value}
-              className={kind === value ? 'border-sky-600 bg-sky-50 text-sky-900' : 'text-slate-700'}
-              onClick={() => changeKind(value)}
-            >
-              {title}
-            </button>
-          ))}
-          <button
-            className="ml-auto"
-            disabled={!ready}
-            title={
-              name.startsWith('@visualizations.')
-                ? '자동 시각화는 Calculation 입력이 아닙니다.'
-                : '현재 설정의 Calculation 변환식 복사'
+        <BoxGridToolbar
+          leaf={leaf}
+          kind={kind}
+          axes={axes}
+          reduce={effectiveReduce}
+          representation={representation}
+          component={animation === 'component' ? frameIndex : component}
+          arrowsAllowed={arrowsAllowed}
+          onKind={changeKind}
+          onRole={changeRole}
+          onRepresentation={(next) => {
+            stopAnimation()
+            setRepresentation(next)
+            if (next === 'phase') setComponent(0)
+            setFixed(null)
+          }}
+          onComponent={(next) => {
+            stopAnimation()
+            setComponent(next)
+            setFixed(null)
+          }}
+          onIndex={(axis, index) => {
+            stopAnimation()
+            if (axis === 'component') setComponent(index)
+            else setReduce((current) => ({ ...current, [axis]: { method: 'index', index } }))
+          }}
+          overlay={overlay}
+          geometryOpacity={geometryOpacity}
+          overlayAvailable={spatial && canOverlayGeometry && (kind === 'cloud' || kind === 'heatmap')}
+          geometryBlockedReason={!spatial ? '공간 좌표 축에서만 Geometry를 겹칠 수 있습니다.' : geometryBlockedReason}
+          onOverlay={() => setOverlay(!overlay)}
+          onOpacity={setGeometryOpacity}
+          fixed={fixed}
+          range={range}
+          onFixed={setFixed}
+          bins={bins}
+          onBins={setBins}
+          wavelengthDisplay={wavelengthDisplay}
+          onWavelength={setWavelengthDisplay}
+          animation={animation}
+          playing={playing}
+          repeat={repeat}
+          speed={speed}
+          timeSeconds={timeSeconds}
+          durationSeconds={durationSeconds}
+          oscillationError={oscillationError}
+          playbackError={error || invalidSetting}
+          onPlay={(axis) => {
+            if (axis === animation) {
+              setPlaying(!playing)
+              return
             }
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(
-                  projectionCode(
-                    recordReference,
-                    options,
-                    component === 'arrows' && arrowsAllowed ? vectorComponents : undefined,
-                  ),
-                )
-                toast.success(
-                  component === 'arrows' && arrowsAllowed
-                    ? 'X·Y·Z·벡터 크기 변환식 4줄을 복사했습니다.'
-                    : 'Calculation 변환식을 복사했습니다.',
-                )
-              } catch {
-                toast.error('클립보드에 복사하지 못했습니다.')
-              }
-            }}
-          >
-            {component === 'arrows' && arrowsAllowed ? '변환 코드 4줄 복사' : '변환 코드 복사'}
-          </button>
-        </div>
-        <details open className="max-h-[40%] shrink-0 overflow-auto border-b text-sm">
-          <summary className="cursor-pointer px-3 py-1 font-semibold">값·성분 / 축·집계 설정</summary>
-          <div className="flex flex-wrap items-center gap-4 px-3 py-2">
-            <label>
-              채널{' '}
-              <select
-                aria-label="채널"
-                value={representation}
-                disabled={leaf.shape[5] !== 2 || animation === 'oscillation'}
-                onChange={(event) => {
-                  const next = event.target.value as typeof representation
-                  setRepresentation(next)
-                  if (next === 'phase') setComponent(0)
-                  setFixed(null)
-                }}
-              >
-                <option value="amplitude">{leaf.shape[5] === 2 ? 'Amplitude' : 'Value'}</option>
-                {leaf.shape[5] === 2 ? <option value="phase">Phase (rad)</option> : null}
-              </select>
-            </label>
-            <label>
-              성분{' '}
-              <select
-                aria-label="성분"
-                value={component === 'arrows' && !arrowsAllowed ? actualComponent : component}
-                onChange={(event) => {
-                  setComponent(
-                    event.target.value === 'magnitude' || event.target.value === 'arrows'
-                      ? event.target.value
-                      : Number(event.target.value),
-                  )
-                  setFixed(null)
-                }}
-              >
-                <option value="magnitude" disabled={representation === 'phase'}>
-                  절대값 · 벡터 크기
-                </option>
-                {leaf.boxGrid.components.map((label, i) => (
-                  <option key={label} value={i}>
-                    {label}
-                  </option>
-                ))}
-                {kind === 'cloud' ? (
-                  <option value="arrows" disabled={!arrowsAllowed}>
-                    화살표 (XYZ 벡터 전용)
-                  </option>
-                ) : null}
-              </select>
-            </label>
-            {kind !== 'histogram' ? (
-              axes.map((axis, i) => (
-                <label key={i}>
-                  {kind === 'line'
-                    ? i === 0
-                      ? 'Sub axis · line 구분'
-                      : 'Main axis · 가로축'
-                    : kind === 'heatmap'
-                      ? i === 0
-                        ? '세로축'
-                        : '가로축'
-                      : `표시 축 ${i + 1}`}{' '}
-                  <select
-                    aria-label={`표시 축 ${i + 1}`}
-                    value={axis}
-                    onChange={(event) => {
-                      const next = [...axes]
-                      next[i] = event.target.value as ProjectionAxis
-                      setResult(undefined)
-                      setAxes(next)
-                      setPlaying(false)
-                      setAnimation('off')
-                      setFixed(null)
-                      if (component === 'arrows' && !next.every((a) => ['x', 'y', 'z'].includes(a)))
-                        setComponent('magnitude')
-                    }}
-                  >
-                    {projectionAxes.map((value) => (
-                      <option key={value} value={value} disabled={axes.includes(value) && axis !== value}>
-                        {labels[value]} · {leaf.shape[projectionAxes.indexOf(value)]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))
-            ) : (
-              <label>
-                Histogram bins{' '}
-                <input
-                  aria-label="Histogram bins"
-                  type="number"
-                  min={1}
-                  max={100}
-                  placeholder="자동"
-                  value={bins ?? ''}
-                  onChange={(event) =>
-                    setBins(
-                      event.target.value
-                        ? Math.max(1, Math.min(100, Math.trunc(Number(event.target.value))))
-                        : undefined,
-                    )
-                  }
-                />
-              </label>
-            )}
-          </div>
-          {kind !== 'histogram' ? (
-            <div className="flex flex-wrap gap-4 border-t px-3 py-2">
-              <span className="font-semibold">나머지 축 집계</span>
-              {projectionAxes
-                .filter((axis) => !axes.includes(axis))
-                .map((axis) => {
-                  const reduction = reduce[axis] ?? { method: 'mean' as const },
-                    axisIndex = projectionAxes.indexOf(axis)
-                  return (
-                    <label key={axis}>
-                      {labels[axis]}{' '}
-                      <select
-                        aria-label={`${axis} 집계`}
-                        disabled={animation === axis}
-                        value={reduction.method}
-                        onChange={(event) => {
-                          setReduce({
-                            ...reduce,
-                            [axis]: { method: event.target.value as ProjectionReduction['method'], index: 0 },
-                          })
-                          setPlaying(false)
-                        }}
-                      >
-                        {['sum', 'mean', 'min', 'max', 'median', 'std', 'index'].map((method) => (
-                          <option key={method} value={method}>
-                            {method === 'index' ? '개별 index' : method}
-                          </option>
-                        ))}
-                      </select>
-                      {reduction.method === 'index' ? (
-                        <>
-                          {' '}
-                          <input
-                            aria-label={`${axis} index`}
-                            type="number"
-                            min={0}
-                            max={leaf.shape[axisIndex] - 1}
-                            value={reduction.index ?? 0}
-                            onChange={(event) =>
-                              setReduce({
-                                ...reduce,
-                                [axis]: {
-                                  method: 'index',
-                                  index: Math.max(
-                                    0,
-                                    Math.min(leaf.shape[axisIndex] - 1, Math.trunc(Number(event.target.value) || 0)),
-                                  ),
-                                },
-                              })
-                            }
-                          />{' '}
-                          = {leaf.axes[axisIndex].ticks[reduction.index ?? 0]} {leaf.axes[axisIndex].unit}
-                        </>
-                      ) : null}
-                    </label>
-                  )
-                })}
-            </div>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-4 border-t px-3 py-2">
-            {kind === 'cloud' || kind === 'heatmap' ? (
-              <label
-                title={
-                  !canOverlayGeometry
-                    ? (geometryBlockedReason ?? 'Geometry와 결과의 좌표계 일치를 확인할 수 없습니다.')
-                    : !spatial
-                      ? '공간 축 조합에서만 사용할 수 있습니다.'
-                      : ''
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={overlay && spatial && canOverlayGeometry}
-                  disabled={!spatial || !canOverlayGeometry}
-                  onChange={(event) => setOverlay(event.target.checked)}
-                />{' '}
-                Geometry 겹치기
-              </label>
-            ) : null}
-            {(kind === 'cloud' || kind === 'heatmap') && overlay && spatial && canOverlayGeometry ? (
-              <label>
-                Geometry 투명도{' '}
-                <input
-                  aria-label="Geometry 투명도"
-                  type="range"
-                  min={0.05}
-                  max={1}
-                  step={0.05}
-                  value={geometryOpacity}
-                  onChange={(event) => setGeometryOpacity(Number(event.target.value))}
-                />
-              </label>
-            ) : null}
-            <label hidden={kind === 'histogram'}>
-              <input
-                type="checkbox"
-                checked={!!fixed}
-                onChange={(event) => setFixed(event.target.checked ? ([...range] as [number, number]) : null)}
-              />{' '}
-              값 범위 고정
-            </label>
-            {fixed
-              ? [0, 1].map((end) => (
-                  <input
-                    key={end}
-                    aria-label={end ? '범위 최댓값' : '범위 최솟값'}
-                    type="number"
-                    value={fixed[end]}
-                    onChange={(event) => {
-                      const next: [number, number] = [...fixed]
-                      next[end] = Number(event.target.value)
-                      if (Number.isFinite(next[end])) setFixed(next)
-                    }}
-                  />
-                ))
-              : null}
-          </div>
-        </details>
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-sm" aria-label="재생 설정">
-          <span className="font-semibold">재생</span>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" aria-label="공통 시간 진동 수식">
-                  ⓘ
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                각 성분은 A_f,c × cos(φ_f,c + 2πf t). Frequency sum/mean은 성분별 합성 후 벡터 크기를 계산합니다. mean은
-                주파수 표본 수로 나눕니다. 최고 주파수 한 주기를 약 2초에 재생하며, 반복은 지정 구간에서 시간을 0으로
-                되돌립니다.
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <select
-            aria-label="Animation 모드"
-            value={animation}
-            onChange={(event) => {
-              setPlaying(false)
-              setAnimation(event.target.value as typeof animation)
-              setTimeSeconds(0)
-              setFrameIndex(0)
-              setFixed(null)
-            }}
-          >
-            <option value="off">정적</option>
-            <option value="oscillation" disabled={Boolean(oscillationError)} title={oscillationError}>
-              진동 · 공통 시간
-            </option>
-            {(['time', 'frequency'] as const).map((axis) => (
-              <option
-                key={axis}
-                value={axis}
-                disabled={(kind !== 'histogram' && axes.includes(axis)) || leaf.shape[axis === 'time' ? 3 : 4] < 2}
-              >
-                {axisLabels[axis]} index 순회
-              </option>
-            ))}
-          </select>
-          {animation !== 'off' ? (
-            <>
-              <button
-                aria-pressed={playing}
-                className="inline-flex w-28 shrink-0 items-center justify-center gap-2 border-sky-700 bg-sky-600 font-semibold text-white hover:bg-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 disabled:cursor-not-allowed disabled:bg-slate-400"
-                disabled={!!error || Boolean(invalidSetting)}
-                onClick={() => setPlaying(!playing)}
-              >
-                {playing ? (
-                  <Pause aria-hidden="true" className="size-4 shrink-0" />
-                ) : (
-                  <Play aria-hidden="true" className="size-4 shrink-0" />
-                )}
-                {playing ? '일시정지' : '재생'}
-              </button>
-              <input
-                aria-label="Animation 프레임"
-                type="range"
-                min={0}
-                step={animation === 'oscillation' ? 'any' : 1}
-                max={animation === 'oscillation' ? durationSeconds : leaf.shape[animation === 'time' ? 3 : 4] - 1}
-                value={animation === 'oscillation' ? timeSeconds : frameIndex}
-                aria-valuetext={animation === 'oscillation' ? `${timeSeconds} s` : String(frameIndex)}
-                disabled={Boolean(invalidSetting)}
-                onChange={(event) => {
-                  setPlaying(false)
-                  if (animation === 'oscillation') setTimeSeconds(Number(event.target.value))
-                  else setFrameIndex(Number(event.target.value))
-                }}
-              />
-              {comparison && animation !== 'oscillation' ? (
-                <input
-                  aria-label="Animation 프레임 번호"
-                  type="number"
-                  min={0}
-                  max={leaf.shape[animation === 'time' ? 3 : 4] - 1}
-                  value={frameIndex}
-                  onChange={(event) => {
-                    setPlaying(false)
-                    setFrameIndex(Number(event.target.value))
-                  }}
-                />
-              ) : null}
-              {animation === 'oscillation' ? (
-                <span
-                  aria-label="Animation 시간"
-                  className="inline-flex shrink-0 gap-1 font-mono whitespace-nowrap tabular-nums"
-                >
-                  <span className="inline-block w-[13ch] text-right">{timeSeconds.toExponential(5)}</span>
-                  <span>s</span>
-                </span>
-              ) : (
-                <span>{`${frameIndex} · ${leaf.axes[animation === 'time' ? 3 : 4].ticks[frameIndex] ?? '현재 데이터 범위 밖'} ${leaf.axes[animation === 'time' ? 3 : 4].unit ?? ''}`}</span>
-              )}
-              {animation === 'oscillation' ? (
-                <label>
-                  재생 구간 (s){' '}
-                  <input
-                    aria-label="재생 구간 (s)"
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={durationSeconds}
-                    onChange={(event) => {
-                      const value = Number(event.target.value)
-                      if (!Number.isFinite(value) || value <= 0) return
-                      setPlaying(false)
-                      setTimeSeconds(0)
-                      setDurationOverride(value)
-                    }}
-                  />
-                </label>
-              ) : null}
-              <label>
-                속도{' '}
-                <select aria-label="재생 속도" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-                  {[0.25, 0.5, 1, 2, 4].map((value) => (
-                    <option key={value} value={value}>
-                      {value}×
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <input type="checkbox" checked={repeat} onChange={(event) => setRepeat(event.target.checked)} /> 반복
-              </label>
-            </>
-          ) : null}
-        </div>
+            stopAnimation()
+            setAnimation(axis)
+            setFrameIndex(
+              axis === 'component'
+                ? typeof component === 'number'
+                  ? component
+                  : 0
+                : axis === 'oscillation'
+                  ? 0
+                  : (reduce[axis]?.index ?? 0),
+            )
+            setPlaying(true)
+          }}
+          onPause={() => setPlaying(false)}
+          onRepeat={setRepeat}
+          onSpeed={setSpeed}
+          onTime={(time) => {
+            setPlaying(false)
+            setAnimation('oscillation')
+            setTimeSeconds(time)
+          }}
+          onDuration={(duration) => {
+            setPlaying(false)
+            setTimeSeconds(0)
+            setDurationOverride(duration)
+          }}
+          ready={ready}
+          onCopy={async () => {
+            try {
+              await navigator.clipboard.writeText(
+                projectionCode(
+                  recordReference,
+                  options,
+                  component === 'arrows' && arrowsAllowed ? vectorComponents : undefined,
+                ),
+              )
+              toast.success('Calculation 변환식을 복사했습니다.')
+            } catch {
+              toast.error('클립보드에 복사하지 못했습니다.')
+            }
+          }}
+        />
       </ViewerControls>
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-3 py-2 text-xs text-slate-600" role="status">
         <strong>{name}</strong>
-        {sourceSampled ? (
-          <label>
-            입력 파장별 응답 ·{' '}
-            <select
-              aria-label="주파수 표시 단위"
-              value={wavelengthDisplay ? 'nm' : 'Hz'}
-              onChange={(event) => setWavelengthDisplay(event.target.value === 'nm')}
-            >
-              <option value="nm">nm</option>
-              <option value="Hz">Hz</option>
-            </select>
-            {frequencyIndex !== undefined
-              ? ` · ${wavelengthDisplay ? (299792458e9 / boxGridFrequenciesHz(leaf)[frequencyIndex]).toPrecision(5) : boxGridFrequenciesHz(leaf)[frequencyIndex].toPrecision(5)} ${wavelengthDisplay ? 'nm' : 'Hz'}`
-              : ''}
-          </label>
-        ) : null}
         {surfacePower ? (
           <span>
             픽셀 적분 전력 [W] · 기하광학 응답 ·{' '}
@@ -941,16 +656,12 @@ function BoxGridControls({
               : 'Amplitude / Value'}{' '}
           · {actualComponent === 'magnitude' ? '벡터 크기' : leaf.boxGrid.components[actualComponent]} [{unit}]
         </span>
-        <span>{range[0].toPrecision(4)}</span>
-        <span className="h-3 w-24" style={{ background: 'linear-gradient(to right, blue, lime, red)' }} />
-        <span>{range[1].toPrecision(4)}</span>
         <span
           aria-hidden={!showCalculationStatus}
           className={`shrink-0 whitespace-nowrap ${showCalculationStatus ? '' : 'invisible'}`}
         >
           계산 중…
         </span>
-        {kind === 'histogram' ? <span>5차원 중간값—return 전 추가 축소 필요</span> : null}
       </div>
       {invalidSetting || error || renderError || range[0] > range[1] ? (
         <p role="alert" className="p-3 text-red-700">
@@ -977,26 +688,16 @@ function BoxGridControls({
                     />
                   )}
                 </div>
-                <div className="px-3 py-1 text-xs">
-                  {opticalPlotData(result.scalar, sourceSampled && wavelengthDisplay, surfacePower)
-                    .axes.map(
-                      (axis) =>
-                        `${axis.name}: ${axis.ticks[0]} ~ ${axis.ticks[axis.ticks.length - 1]} ${axis.unit ?? ''}`,
-                    )
-                    .join(' · ')}{' '}
-                  ·{' '}
-                  {kind === 'heatmap'
-                    ? `${renderData.displayedCount.toLocaleString()} 원본 픽셀 전체 표시 · 확대하여 작은 신호 확인`
-                    : `${renderData.displayedCount.toLocaleString()} / ${result.scalar.values.length.toLocaleString()} 표본 표시 (집계·복사는 전체 데이터)`}
-                  {kind === 'cloud'
-                    ? ` · 0값 ${renderData.hiddenZeroCount.toLocaleString()}개 숨김 · 점 면적 ∝ |값|`
-                    : null}
-                </div>
               </div>
             ) : null
           ) : (
             <ScalarPlot
-              plot={opticalPlotData(result.scalar, sourceSampled && wavelengthDisplay, surfacePower)}
+              plot={opticalPlotData(
+                result.distribution ?? result.scalar,
+                sourceSampled && wavelengthDisplay,
+                surfacePower,
+              )}
+              histogramMarker={result.distribution ? result.scalar.values[0] : undefined}
               kind={kind}
               range={range}
               bins={bins}
@@ -1006,9 +707,6 @@ function BoxGridControls({
           )
         ) : null}
       </div>
-      {result && !invalidSetting ? (
-        <PlotProbe key={result.scalar.axes.map((axis) => axis.name).join(',')} plot={result.scalar} />
-      ) : null}
     </div>
   )
 }

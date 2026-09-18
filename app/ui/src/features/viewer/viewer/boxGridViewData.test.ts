@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { opticalPlotData, type ScalarPlotData } from './boxGridViewData'
+import { calculateBoxGridView, opticalPlotData, type ScalarPlotData } from './boxGridViewData'
+import { calculationExampleInput } from '@/authoring/examples'
+import type { CalculationInputLeaf } from '@/lib/calculation/types'
 
 describe('optical power display', () => {
   it('permutes a frequency axis together with every spatial row', () => {
@@ -31,4 +33,64 @@ describe('optical power display', () => {
     }
     expect(opticalPlotData(plot, true, true).values).toEqual([4, 5, 6, 1, 2, 3])
   })
+})
+
+const sweepLeaf: CalculationInputLeaf = {
+  ...calculationExampleInput.signal,
+  shape: [2, 1, 1, 1, 1, 1, 2],
+  data: [1, 4, 2, 8],
+  tensorOrder: 0,
+  axes: ['x', 'y', 'z', 'time', 'frequency', 'amplitudePhase', 'component'].map((name, axis) => ({
+    name,
+    ticks: axis === 0 || axis === 6 ? [0, 1] : [0],
+  })),
+  boxGrid: {
+    ...calculationExampleInput.signal.boxGrid,
+    gridShape: [2, 1, 1],
+    channels: ['value'],
+    channelUnits: ['m'],
+    components: ['a', 'b'],
+  },
+}
+
+it('keeps the full original distribution separate from the indexed and reduced zero-axis marker', () => {
+  const indexed = calculateBoxGridView({
+    leaf: sweepLeaf,
+    options: { axes: [], component: 0, reduce: { x: { method: 'index', index: 1 } } },
+    arrows: false,
+    animationRange: false,
+    histogramDistribution: true,
+  })
+  expect(indexed.scalar.values).toEqual([2])
+  expect(indexed.distribution?.values).toEqual([1, 2])
+  const summed = calculateBoxGridView({
+    leaf: sweepLeaf,
+    options: { axes: [], component: 0, reduce: { x: { method: 'sum' } } },
+    arrows: false,
+    animationRange: false,
+    histogramDistribution: true,
+  })
+  expect(summed.scalar.values).toEqual([3])
+  expect(summed.distribution?.range).toEqual([1, 2])
+})
+
+it('computes stable spatial and component sweep ranges without extending Calculation frame syntax', () => {
+  const spatial = calculateBoxGridView({
+    leaf: sweepLeaf,
+    options: { axes: [], component: 0, reduce: { x: { method: 'index', index: 0 } } },
+    arrows: false,
+    animationRange: true,
+    sweepAxis: 'x',
+  })
+  expect(spatial.scalar.values).toEqual([1])
+  expect(spatial.scalar.range).toEqual([1, 2])
+  const component = calculateBoxGridView({
+    leaf: sweepLeaf,
+    options: { axes: ['x'], component: 0 },
+    arrows: false,
+    animationRange: true,
+    sweepAxis: 'component',
+  })
+  expect(component.scalar.values).toEqual([1, 2])
+  expect(component.scalar.range).toEqual([1, 8])
 })

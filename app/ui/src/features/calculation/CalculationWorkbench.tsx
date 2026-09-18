@@ -96,7 +96,6 @@ export type CalculationWorkbenchProps = Readonly<{
   outputChartRatio: number
   selectedCalculationId: number | null
   viewer: ReactNode
-  viewerExpanded: boolean
 }>
 
 export function CalculationWorkbench({
@@ -133,7 +132,6 @@ export function CalculationWorkbench({
   outputChartRatio,
   selectedCalculationId,
   viewer,
-  viewerExpanded,
 }: CalculationWorkbenchProps) {
   const changeCalculationSelection = useCallback(
     (calculationId: number | null) => onCalculationSelectionChange({ experimentId, calculationId }),
@@ -947,7 +945,6 @@ export function CalculationWorkbench({
           </section>
         }
         viewer={viewer}
-        viewerExpanded={viewerExpanded}
       />
       <CalculationSaveDialog
         defaults={{ description: draft.description, name: draft.name }}

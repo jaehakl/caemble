@@ -25,6 +25,7 @@ function renderViewer(data: MeshRenderData) {
 
 it('seeks to continuous physical time with rigid interpolation and no deformation multiplier controls', () => {
   render(<MeshTransformResult motion={motion} renderViewer={renderViewer} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Transient playback' }))
   fireEvent.change(screen.getByLabelText('Animation time'), { target: { value: '0.5' } })
   expect(screen.getByLabelText('Animation time')).toHaveValue('0.5')
   const vertices = JSON.parse(screen.getByTestId('pose').getAttribute('data-vertices')!)
@@ -34,9 +35,9 @@ it('seeks to continuous physical time with rigid interpolation and no deformatio
   expect(screen.getByText(/실제 크기 1×/)).toBeTruthy()
   expect(screen.queryByText('자동 확대')).toBeNull()
   expect(screen.queryByLabelText(/displacement scale/)).toBeNull()
-  fireEvent.click(screen.getByText('다음 프레임'))
+  fireEvent.click(screen.getByRole('button', { name: '다음 프레임' }))
   expect(screen.getByLabelText('Animation time')).toHaveValue('1')
-  fireEvent.click(screen.getByText('이전 프레임'))
+  fireEvent.click(screen.getByRole('button', { name: '이전 프레임' }))
   expect(screen.getByLabelText('Animation time')).toHaveValue('0')
 })
 
@@ -53,8 +54,9 @@ it('keeps a single snapshot visible with playback disabled', () => {
     />,
   )
   expect(screen.getByTestId('pose')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Transient playback' }))
   expect(screen.getByLabelText('Animation time')).toBeDisabled()
-  expect(screen.getByText('재생')).toBeDisabled()
-  expect(screen.getByText('이전 프레임')).toBeDisabled()
-  expect(screen.getByText('다음 프레임')).toBeDisabled()
+  expect(screen.getByRole('button', { name: '재생' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '이전 프레임' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '다음 프레임' })).toBeDisabled()
 })

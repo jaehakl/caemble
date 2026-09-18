@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { ResizableCalculationLayout } from './ResizableCalculationLayout'
 
-it('renders three columns and supports keyboard resizing and viewer expansion', () => {
+it('renders three columns and supports keyboard resizing', () => {
   const change = vi.fn()
   const props = {
     columnRatios: [0.3, 0.4, 0.3],
@@ -11,7 +11,7 @@ it('renders three columns and supports keyboard resizing and viewer expansion', 
     editor: 'Editor',
     output: 'Output',
   }
-  const { rerender } = render(<ResizableCalculationLayout {...props} />)
+  render(<ResizableCalculationLayout {...props} />)
   expect(screen.getAllByRole('separator')).toHaveLength(2)
   fireEvent.keyDown(screen.getAllByRole('separator')[0], { key: 'ArrowRight' })
   const ratios = change.mock.calls[0][0] as number[]
@@ -19,7 +19,6 @@ it('renders three columns and supports keyboard resizing and viewer expansion', 
   expect(ratios[0]).toBeGreaterThan(0.3)
   expect(ratios[1]).toBeLessThan(0.4)
   expect(ratios[2]).toBeCloseTo(0.3)
-  rerender(<ResizableCalculationLayout {...props} viewerExpanded />)
   expect(screen.getByText('Viewer')).toBeInTheDocument()
-  expect(screen.queryByText('Editor')).not.toBeInTheDocument()
+  expect(screen.getByText('Editor')).toBeInTheDocument()
 })

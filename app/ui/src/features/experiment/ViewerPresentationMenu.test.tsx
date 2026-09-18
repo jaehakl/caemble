@@ -30,19 +30,20 @@ beforeEach(() => {
 
 it('saves and clears a single initial-view bundle without replacing the image', async () => {
   render(<ViewerPresentationMenu actions={actions} snapshot={() => defaults} captureNode={() => null} />)
-  fireEvent.click(screen.getByText('초기 화면·대표이미지'))
-  fireEvent.click(screen.getByRole('button', { name: '현재 화면을 초기 화면으로 저장' }))
+  fireEvent.keyDown(screen.getByRole('button', { name: '초기 화면·대표이미지' }), { key: 'ArrowDown' })
+  fireEvent.click(screen.getByRole('menuitem', { name: '현재 화면을 초기 화면으로 저장' }))
   await waitFor(() => expect(actions.update).toHaveBeenCalledWith({ initialView: { ...defaults, measurementId: 41 } }))
-  await waitFor(() => expect(screen.getByRole('button', { name: '초기 화면 설정 해제' })).toBeEnabled())
-  fireEvent.click(screen.getByRole('button', { name: '초기 화면 설정 해제' }))
+  fireEvent.keyDown(screen.getByRole('button', { name: '초기 화면·대표이미지' }), { key: 'ArrowDown' })
+  await waitFor(() => expect(screen.getByRole('menuitem', { name: '초기 화면 설정 해제' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('menuitem', { name: '초기 화면 설정 해제' }))
   await waitFor(() => expect(actions.update).toHaveBeenLastCalledWith({ initialView: null }))
 })
 
 it('keeps image replacement independent and retains the dialog on a failed save', async () => {
   vi.mocked(actions.update).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({})
   render(<ViewerPresentationMenu actions={actions} snapshot={() => defaults} captureNode={() => null} />)
-  fireEvent.click(screen.getByText('초기 화면·대표이미지'))
-  fireEvent.click(screen.getByRole('button', { name: '대표이미지 변경' }))
+  fireEvent.keyDown(screen.getByRole('button', { name: '초기 화면·대표이미지' }), { key: 'ArrowDown' })
+  fireEvent.click(screen.getByRole('menuitem', { name: '대표이미지 변경' }))
   await screen.findByRole('dialog')
   fireEvent.click(screen.getByRole('button', { name: '저장' }))
   await screen.findByRole('alert')
@@ -60,7 +61,7 @@ it('disables initial-view saving for temporary or dirty-source results', () => {
       captureNode={() => null}
     />,
   )
-  fireEvent.click(screen.getByText('초기 화면·대표이미지'))
-  expect(screen.getByRole('button', { name: '현재 화면을 초기 화면으로 저장' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: '대표이미지 변경' })).toBeEnabled()
+  fireEvent.keyDown(screen.getByRole('button', { name: '초기 화면·대표이미지' }), { key: 'ArrowDown' })
+  expect(screen.getByRole('menuitem', { name: '현재 화면을 초기 화면으로 저장' })).toBeDisabled()
+  expect(screen.getByRole('menuitem', { name: '대표이미지 변경' })).toBeEnabled()
 })

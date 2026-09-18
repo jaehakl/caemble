@@ -14,8 +14,6 @@ export function ExperimentPreview({ workbench }: { workbench: CaeWorkbenchState 
       onFindSelectionSource={() => {}}
       onSelectionQueryChange={() => {}}
       onSelectionSourcePathsChange={() => {}}
-      onToggleViewerExpanded={() => {}}
-      viewerExpanded={false}
       selectionQuery={null}
       selectionSourceStatus={{}}
       autoSelectResult={Boolean(workbench.selection.measurement)}

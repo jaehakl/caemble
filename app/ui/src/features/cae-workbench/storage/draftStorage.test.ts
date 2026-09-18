@@ -56,6 +56,11 @@ describe('Workbench draft storage', () => {
     expect((await loadWorkbenchDraft('public'))?.layout.calculationColumnRatios).toEqual([0.2, 0.5, 0.3])
   })
 
+  it('restores the editor when an old draft saved an expanded Viewer', async () => {
+    await saveWorkbenchDraft('public', { ...draft, layout: { ...draft.layout, viewerExpanded: true } })
+    expect((await loadWorkbenchDraft('public'))?.layout.viewerExpanded).toBe(false)
+  })
+
   it('migrates v3 Calculation selection without discarding Vars or source', async () => {
     sessionStorage.setItem(
       workbenchDraftStorageKey('public'),

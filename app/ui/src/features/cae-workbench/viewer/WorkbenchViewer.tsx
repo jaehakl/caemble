@@ -1,3 +1,6 @@
+import { ViewerLayout, ViewerToolButton, ViewerToolMenu } from '@/features/viewer/viewer/ViewerTools'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { Layers, Route } from 'lucide-react'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import { cameraPoseSchema, durableViewerSettings, type ViewerDefaults } from '@/contracts/viewerDefaults'
 import { ViewerPresentationMenu, type ViewerPresentationActions } from '@/features/experiment/ViewerPresentationMenu'
@@ -48,7 +51,6 @@ export type WorkbenchViewerProps = {
   onFindSelectionSource: (value: string) => void
   onSelectionQueryChange: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange: (values: readonly string[]) => void
-  onToggleViewerExpanded?: () => void
   resultErrors?: Readonly<Record<string, string>>
   resultContracts?: RecordedResultContracts | null
   visualizations?: MeasurementVisualizations
@@ -56,7 +58,6 @@ export type WorkbenchViewerProps = {
   resultVarsHash?: string | null
   selectionQuery: CadViewerSelectionQuery | null
   selectionSourceStatus: Readonly<Record<string, CadViewerSourceLookupStatus>>
-  viewerExpanded: boolean
   recordedData?: RecordedData
   recordedRules?: readonly RecordedDataRule[]
   loading?: boolean
@@ -139,7 +140,6 @@ function ViewerContent({
   onFindSelectionSource,
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
-  onToggleViewerExpanded,
   resultContracts: outputContracts,
   resultErrors: outputErrors = {},
   visualizations = {},
@@ -147,7 +147,6 @@ function ViewerContent({
   resultVarsHash,
   selectionQuery,
   selectionSourceStatus,
-  viewerExpanded,
   recordedData: outputData,
   recordedRules: outputRules = [],
   loading = false,
@@ -404,59 +403,77 @@ function ViewerContent({
         }
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
-        onToggleViewerExpanded={onToggleViewerExpanded}
-        viewerExpanded={viewerExpanded}
       />
     </>
   )
   return (
     <ViewerPersistenceContext.Provider value={persistent ? { ...persistent, item: selectedView } : null}>
-      <div className="relative flex h-full min-h-0 flex-col">
-        {presentation ? (
-          <div className="flex justify-end border-b p-1" data-capture-exclude>
-            <ViewerPresentationMenu
-              key={presentation.experimentId}
-              actions={presentation}
-              disabled={loading || Boolean(resultPlaceholder)}
-              captureNode={() => localCaptureRef.current}
-              snapshot={() => {
-                const owner = comparison ?? persistent
-                const camera = cameraPoseSchema.safeParse(owner?.camera.current)
-                return {
-                  version: 1,
-                  selectedResult: selectedView,
-                  settings: durableViewerSettings(owner?.settings.values.entries() ?? []),
-                  camera: camera.success ? camera.data : null,
-                }
-              }}
-            />
-          </div>
-        ) : null}
-        <ViewerControls>
-          <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
-            {showToolbar ? (
-              <select
-                aria-label="Viewer 결과 선택"
-                value={selectedView}
-                onChange={(event) => {
-                  selectionMade.current.add(scope)
-                  setSelections({ ...selections, [scope]: event.target.value })
-                  onSelectedResultChange?.(event.target.value)
+      <ViewerLayout>
+        <div className="relative flex h-full min-h-0 flex-col">
+          {presentation ? (
+            <ViewerControls placement="presentation">
+              <ViewerPresentationMenu
+                key={presentation.experimentId}
+                actions={presentation}
+                disabled={loading || Boolean(resultPlaceholder)}
+                captureNode={() => localCaptureRef.current}
+                snapshot={() => {
+                  const owner = comparison ?? persistent
+                  const camera = cameraPoseSchema.safeParse(owner?.camera.current)
+                  return {
+                    version: 1,
+                    selectedResult: selectedView,
+                    settings: durableViewerSettings(owner?.settings.values.entries() ?? []),
+                    camera: camera.success ? camera.data : null,
+                  }
                 }}
-              >
-                <option value="">Geometry</option>
-                {selectedView && !selectedContract ? (
-                  <option value={selectedView}>{selectedView} · 결과 없음</option>
-                ) : null}
-                {Object.keys(resultContracts ?? {}).map((name) => (
-                  <option key={name} value={name}>
-                    {name.startsWith('@visualizations.')
-                      ? `${name.slice('@visualizations.'.length)} · 시각화`
-                      : `${name} · Output`}
-                  </option>
-                ))}
-              </select>
-            ) : null}
+              />
+            </ViewerControls>
+          ) : null}
+          <ViewerControls placement="data">
+            <div className="flex items-center gap-1 text-xs">
+              {showToolbar ? (
+                <ViewerToolMenu label={`표시 데이터 종류 변경 · ${selectedView || 'Geometry'}`} icon={<Layers />}>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      selectionMade.current.add(scope)
+                      setSelections({ ...selections, [scope]: '' })
+                      onSelectedResultChange?.('')
+                    }}
+                  >
+                    Geometry
+                  </DropdownMenuItem>
+                  {selectedView && !selectedContract ? (
+                    <DropdownMenuItem disabled>{selectedView} · 결과 없음</DropdownMenuItem>
+                  ) : null}
+                  {Object.keys(resultContracts ?? {}).map((name) => (
+                    <DropdownMenuItem
+                      key={name}
+                      onSelect={() => {
+                        selectionMade.current.add(scope)
+                        setSelections({ ...selections, [scope]: name })
+                        onSelectedResultChange?.(name)
+                      }}
+                    >
+                      {name.startsWith('@visualizations.')
+                        ? `${name.slice('@visualizations.'.length)} · 시각화`
+                        : `${name} · Output`}
+                    </DropdownMenuItem>
+                  ))}
+                </ViewerToolMenu>
+              ) : null}
+              {loading ? (
+                <span role="status">
+                  저장 결과 불러오는 중
+                  {downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
+                </span>
+              ) : null}
+              {!resultContracts && recordedRules.length ? (
+                <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
+              ) : null}
+            </div>
+          </ViewerControls>
+          <ViewerControls>
             {Object.entries(resultContracts ?? {})
               .filter(([, result]) => result.visualization.kind === 'polyline')
               .map(([name, result]) => {
@@ -467,137 +484,124 @@ function ViewerContent({
                   usesExperimentCoordinates(result.visualization) &&
                   (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
                 return (
-                  <label
+                  <ViewerToolButton
                     key={name}
+                    label={`${name} Overlay`}
+                    active={name === selectedView || overlay.includes(name)}
+                    disabled={!compatible || name === selectedView}
                     title={
                       compatible
-                        ? 'Geometry 좌표에 겹쳐 표시'
+                        ? `${name} · Geometry 좌표에 겹쳐 표시`
                         : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
                     }
+                    onClick={() =>
+                      setOverlay(overlay.includes(name) ? overlay.filter((item) => item !== name) : [...overlay, name])
+                    }
                   >
-                    <input
-                      type="checkbox"
-                      aria-label={`${name} Overlay`}
-                      disabled={!compatible || name === selectedView}
-                      checked={name === selectedView || overlay.includes(name)}
-                      onChange={(event) =>
-                        setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
-                      }
-                    />{' '}
-                    {name}
-                    {overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
-                  </label>
+                    <Route />
+                  </ViewerToolButton>
                 )
               })}
             {overlay
               .filter((name) => !resultContracts?.[name])
               .map((name) => (
-                <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
-                  <input
-                    type="checkbox"
-                    checked
-                    aria-label={`${name} Overlay`}
-                    onChange={() => setOverlay(overlay.filter((item) => item !== name))}
-                  />
-                  {name} · 결과 없음
-                </label>
+                <ViewerToolButton
+                  key={name}
+                  label={`${name} Overlay`}
+                  title={`${name} · 결과 없음 · 클릭하여 해제`}
+                  active
+                  onClick={() => setOverlay(overlay.filter((item) => item !== name))}
+                >
+                  <Route />
+                </ViewerToolButton>
               ))}
-            {loading ? (
-              <span role="status">
-                저장 결과 불러오는 중
-                {downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
-              </span>
-            ) : null}
-            {!resultContracts && recordedRules.length ? (
-              <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
-            ) : null}
-          </div>
-        </ViewerControls>
-        {resultPlaceholder ? (
-          <p role="status" className="p-2 text-xs">
-            {resultPlaceholder}
-          </p>
-        ) : null}
-        {!resultPlaceholder && !canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
-          <p role="status" className="p-2 text-xs">
-            {geometryBlockedReason}
-          </p>
-        ) : null}
-        <div ref={localCaptureRef} className="min-h-0 flex-1 overflow-auto">
+          </ViewerControls>
           {resultPlaceholder ? (
-            renderScene()
-          ) : selectedView && !selectedContract ? (
-            <p role="alert" className="p-3 text-red-700">
-              {selectedView}: 새 실행에 선택한 결과가 없습니다.
+            <p role="status" className="p-2 text-xs">
+              {resultPlaceholder}
             </p>
-          ) : resultErrors[selectedView] ? (
-            <p role="alert" className="p-3 text-red-700">
-              {selectedView}: {resultErrors[selectedView]}
+          ) : null}
+          {!resultPlaceholder && !canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
+            <p role="status" className="p-2 text-xs">
+              {geometryBlockedReason}
             </p>
-          ) : selectedParticles ? (
-            <ParticleSetResult
-              key={selectedView}
-              particles={selectedParticles}
-              displayUnit={displayUnit}
-              canOverlayGeometry={canOverlayGeometry}
-              renderViewer={(data, showGeometry) => renderScene(data, 0, undefined, 1, showGeometry)}
-            />
-          ) : selectedMotion ? (
-            <MeshTransformResult
-              key={selectedView}
-              motion={selectedMotion}
-              displayUnit={displayUnit}
-              renderViewer={(data) => renderScene(data)}
-            />
-          ) : selectedField ? (
-            <MeshFieldResult
-              key={selectedView}
-              field={selectedField}
-              displacementFields={mesh.fields.filter((candidate) => sameResultInvocation(candidate.label))}
-              displayUnit={displayUnit}
-              renderViewer={(data, view) => renderScene(data, view.deformationScale)}
-            />
-          ) : selectedContract?.visualization.kind === 'box-grid' ? (
-            <BoxGridResult
-              key={selectedView}
-              name={selectedView}
-              rules={recordedRules}
-              data={recordedData}
-              displayUnit={displayUnit}
-              canOverlayGeometry={canOverlayGeometry}
-              geometryBlockedReason={geometryBlockedReason}
-              renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
-              recordReference={recordReference}
-            />
-          ) : selectedContract &&
-            !['mesh-field', 'mesh-transform', 'polyline', 'particle-set'].includes(
-              selectedContract.visualization.kind,
-            ) ? (
-            <ResultTensorView
-              key={selectedView}
-              name={selectedView}
-              contract={selectedContract}
-              rules={recordedRules}
-              data={recordedData}
-            />
-          ) : (
-            renderScene()
-          )}
+          ) : null}
+          <div ref={localCaptureRef} className="min-h-0 flex-1 overflow-auto">
+            {resultPlaceholder ? (
+              renderScene()
+            ) : selectedView && !selectedContract ? (
+              <p role="alert" className="p-3 text-red-700">
+                {selectedView}: 새 실행에 선택한 결과가 없습니다.
+              </p>
+            ) : resultErrors[selectedView] ? (
+              <p role="alert" className="p-3 text-red-700">
+                {selectedView}: {resultErrors[selectedView]}
+              </p>
+            ) : selectedParticles ? (
+              <ParticleSetResult
+                key={selectedView}
+                particles={selectedParticles}
+                displayUnit={displayUnit}
+                canOverlayGeometry={canOverlayGeometry}
+                renderViewer={(data, showGeometry) => renderScene(data, 0, undefined, 1, showGeometry)}
+              />
+            ) : selectedMotion ? (
+              <MeshTransformResult
+                key={selectedView}
+                motion={selectedMotion}
+                displayUnit={displayUnit}
+                renderViewer={(data) => renderScene(data)}
+              />
+            ) : selectedField ? (
+              <MeshFieldResult
+                key={selectedView}
+                field={selectedField}
+                displacementFields={mesh.fields.filter((candidate) => sameResultInvocation(candidate.label))}
+                displayUnit={displayUnit}
+                renderViewer={(data, view) => renderScene(data, view.deformationScale)}
+              />
+            ) : selectedContract?.visualization.kind === 'box-grid' ? (
+              <BoxGridResult
+                key={selectedView}
+                name={selectedView}
+                rules={recordedRules}
+                data={recordedData}
+                displayUnit={displayUnit}
+                canOverlayGeometry={canOverlayGeometry}
+                geometryBlockedReason={geometryBlockedReason}
+                renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
+                recordReference={recordReference}
+              />
+            ) : selectedContract &&
+              !['mesh-field', 'mesh-transform', 'polyline', 'particle-set'].includes(
+                selectedContract.visualization.kind,
+              ) ? (
+              <ResultTensorView
+                key={selectedView}
+                name={selectedView}
+                contract={selectedContract}
+                rules={recordedRules}
+                data={recordedData}
+              />
+            ) : (
+              renderScene()
+            )}
+          </div>
+          {[
+            ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
+            ...mesh.errors.filter((error) => !resultErrors[error.label]),
+            ...transforms.errors.filter((error) => !resultErrors[error.label]),
+            ...particles.errors.filter((error) => !resultErrors[error.label]),
+            ...polylines.errors.filter((error) => !resultErrors[error.label]),
+          ]
+            .filter((error) => error.label !== selectedView || !resultErrors[selectedView])
+            .map((error) => (
+              <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
+                {error.label}: {error.message}
+              </p>
+            ))}
         </div>
-        {[
-          ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
-          ...mesh.errors.filter((error) => !resultErrors[error.label]),
-          ...transforms.errors.filter((error) => !resultErrors[error.label]),
-          ...particles.errors.filter((error) => !resultErrors[error.label]),
-          ...polylines.errors.filter((error) => !resultErrors[error.label]),
-        ]
-          .filter((error) => error.label !== selectedView || !resultErrors[selectedView])
-          .map((error) => (
-            <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
-              {error.label}: {error.message}
-            </p>
-          ))}
-      </div>
+      </ViewerLayout>
     </ViewerPersistenceContext.Provider>
   )
 }

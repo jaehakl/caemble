@@ -189,7 +189,7 @@ const server = await createServer({
             selectedResult: picker.value.slice('record:'.length),
             onSelectedResultChange: (name) => { picker.value = 'record:' + name; picker.dispatchEvent(new Event('change')); },
             onFindSelectionSource: noop, onSelectionQueryChange: noop, onSelectionSourcePathsChange: noop,
-            selectionQuery: null, selectionSourceStatus: {}, viewerExpanded: false,
+            selectionQuery: null, selectionSourceStatus: {},
           }));
         }
       });
@@ -318,6 +318,22 @@ try {
   } else {
     browser = await chromium.launch({ headless: true, args: ['--enable-unsafe-swiftshader'] })
     const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
+    const openTools = async () => {
+      for (const name of [
+        '단면',
+        '성분',
+        '주파수',
+        '위상',
+        '변위 결과',
+        'Transient playback',
+        '물리량',
+        'Particle ID',
+        '점 크기',
+      ]) {
+        const button = page.getByRole('button', { name, exact: true })
+        if ((await button.count()) && (await button.getAttribute('aria-expanded')) !== 'true') await button.click()
+      }
+    }
     const errors = []
     page.on('pageerror', (error) => {
       errors.push(error.message)
@@ -328,6 +344,7 @@ try {
     }, field)
     await page.goto(`http://127.0.0.1:${address.port}/mesh-fixture`)
     await page.getByRole('article', { name: 'Displacement mesh field' }).waitFor()
+    await openTools()
     const canvas = page.locator('canvas')
     await canvas.waitFor()
     const initial = await canvas.screenshot()
@@ -337,14 +354,14 @@ try {
     assert.ok(!initial.equals(section), 'A section must change the rendered volume, not just the controls.')
     await page.getByLabel('Displacement field component').selectOption('material')
     assert.equal(await page.getByText('Steel', { exact: true }).count(), 1)
-    await page.getByLabel(/변형 배율/u).selectOption('manual')
-    await page.getByLabel('Displacement displacement scale').fill('2')
+    assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     const outputDirectory = path.resolve('node_modules/.tmp')
     await mkdir(outputDirectory, { recursive: true })
     await page.screenshot({ path: path.join(outputDirectory, 'mesh-viewer.png') })
     const fixturePicker = page.getByLabel('Mesh fixture')
     await fixturePicker.selectOption('transient')
     await page.getByRole('article', { name: 'Transient displacement mesh field' }).waitFor()
+    await openTools()
     assert.equal(await page.getByRole('button', { name: '이전 프레임', exact: true }).isDisabled(), true)
     const transientInitial = await canvas.screenshot()
     await page.getByRole('button', { name: '다음 프레임', exact: true }).click()
@@ -354,6 +371,7 @@ try {
 
     await fixturePicker.selectOption('rigid')
     await page.getByRole('article', { name: 'Rigid motion mesh transform' }).waitFor()
+    await openTools()
     const rigidInitial = await canvas.screenshot()
     await page.getByLabel('Animation time').evaluate((input) => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '0.5')
@@ -371,11 +389,12 @@ try {
 
     await fixturePicker.selectOption('displacement')
     await page.getByRole('article', { name: 'Harmonic displacement mesh field' }).waitFor()
+    await openTools()
     assert.equal(await page.getByLabel('Harmonic displacement frequency').inputValue(), '40')
     assert.equal(await page.getByLabel('Harmonic displacement phase degrees').inputValue(), '0')
     await page.getByText('40 Hz · 0° · 순간값 Re(Q exp(iφ)) · peak phasor', { exact: true }).waitFor()
     assert.equal(await page.getByLabel('Transient playback').count(), 0)
-    await page.getByLabel(/변형 배율/u).selectOption('actual')
+    assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     const displacementPhaseZero = await canvas.screenshot()
     await page.getByLabel('Harmonic displacement phase degrees').fill('90')
     assert.ok(!displacementPhaseZero.equals(await canvas.screenshot()), 'Harmonic phase must change the actual mesh.')
@@ -385,9 +404,10 @@ try {
 
     await fixturePicker.selectOption('stress')
     await page.getByRole('article', { name: 'Harmonic stress mesh field' }).waitFor()
+    await openTools()
     assert.equal(await page.getByLabel('Harmonic stress frequency').inputValue(), '90')
     assert.equal(await page.getByLabel('Deformation result').inputValue(), 'Harmonic displacement')
-    await page.getByLabel(/변형 배율/u).selectOption('actual')
+    assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     const stressPhaseZero = await canvas.screenshot()
     await page.getByLabel('Harmonic stress phase degrees').fill('90')
     assert.ok(
@@ -405,6 +425,7 @@ try {
 
     await fixturePicker.selectOption('pressure')
     await page.getByRole('article', { name: 'Harmonic pressure mesh field' }).waitFor()
+    await openTools()
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     assert.equal(await page.getByLabel('Deformation result').count(), 0)
     await page.getByText('-2.0000', { exact: true }).waitFor()
@@ -510,6 +531,7 @@ try {
         assert.ok(selected.nodes > 4 && selected.cells > 1)
         await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
+        await openTools()
         await canvas.waitFor()
         if (selected.weighting === 'reference-volume') await page.getByText(/기준 체적 가중 평균/).waitFor()
         if (selected.signConvention === 'compression-positive') await page.getByText(/압축 양수/).waitFor()
@@ -537,6 +559,7 @@ try {
         assert.ok(selected.bodyIds.length && selected.vertices > 4 && selected.triangles > 4)
         await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh transform` }).waitFor()
+        await openTools()
         await canvas.waitFor()
         const initial = await canvas.screenshot()
         if (selected.times.length > 1) {
@@ -561,7 +584,7 @@ try {
         await article.waitFor()
         await canvas.waitFor()
         assert.equal(await page.getByLabel('Particle 점 크기').count(), selected.physicalRadius ? 0 : 1)
-        await page.getByLabel('Particle ID', { exact: true }).selectOption(String(selected.ids.at(-1)))
+        await page.getByRole('combobox', { name: 'Particle ID', exact: true }).selectOption(String(selected.ids.at(-1)))
         await article
           .getByText(`ID ${selected.ids.at(-1)} · Material ${selected.materials.at(-1)} · t = ${selected.times[0]} s`, {
             exact: true,
@@ -569,11 +592,12 @@ try {
           .waitFor()
         for (const attribute of selected.attributes) {
           await page.getByLabel('Particle 물리량', { exact: true }).selectOption(attribute.name)
+          await openTools()
           const frames =
             attribute.rowConfiguration && attribute.columnConfiguration
               ? ' · 행: 현재 Cartesian · 열: 기준 Cartesian'
               : ''
-          await article.getByText(`${attribute.quantityKind} · ${attribute.unit}${frames}`, { exact: true }).waitFor()
+          await page.getByText(`${attribute.quantityKind} · ${attribute.unit}${frames}`, { exact: true }).waitFor()
           if (attribute.components.length) {
             const component = page.getByLabel('Particle 성분', { exact: true })
             assert.deepEqual(await component.locator('option').allTextContents(), [...attribute.components, 'Norm'])
@@ -647,7 +671,7 @@ try {
         await page.screenshot({ path: path.join(outputDirectory, `mesh-viewer-recorded-grid-${name}.png`) })
         const axisLabels = await page.evaluate(() => window.renderedAxisLabels)
         for (const index of [1, 2]) {
-          const axis = await page.getByLabel(`표시 축 ${index}`, { exact: true }).inputValue()
+          const axis = index === 1 ? 'y' : 'x'
           if (['x', 'y', 'z'].includes(axis))
             assert.ok(
               axisLabels.includes(`${axis} (${spatialUnit})`),
@@ -763,6 +787,7 @@ try {
       })
       await page.reload()
       await page.getByRole('article', { name: 'Displacement mesh field' }).waitFor()
+      await openTools()
       const reopened = await page.evaluate(async (visualizations) => {
         const { visualizationData } = await import('/src/features/viewer/viewer/visualizationData.ts')
         const { parseRecordedMeshFields } = await import('/src/features/viewer/viewer/meshFields.ts')
@@ -792,6 +817,7 @@ try {
           selected.label,
         )
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
+        await openTools()
         await page.getByLabel(`${selected.label} section axis`).selectOption('0')
         await canvas.screenshot()
         assert.equal(await page.getByRole('alert').count(), 0)
@@ -854,7 +880,8 @@ try {
           assert.equal(await page.evaluate(() => window.meshUpdateCanvas === document.querySelector('canvas')), true)
         await page.getByLabel(`${selected.label} field component`).selectOption('material')
         for (const label of ['Mesh 경계선', '구속 / 하중'])
-          if (await page.getByLabel(label).isChecked()) await page.getByLabel(label).uncheck()
+          if ((await page.getByRole('button', { name: label, exact: true }).getAttribute('aria-pressed')) === 'true')
+            await page.getByRole('button', { name: label, exact: true }).click()
         await page.getByLabel(`${selected.label} section axis`).selectOption('2')
         await page.getByLabel(`${selected.label} section position`).press('End')
         await page.getByLabel(`${selected.label} section position`).press('ArrowLeft')

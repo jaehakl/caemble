@@ -11,7 +11,6 @@ export type WorkbenchShellProps = Readonly<{
   right: ReactNode
   leftWidthRatio?: number
   rightWidthRatio?: number
-  viewerExpanded?: boolean
   onLeftWidthRatioChange?: (ratio: number) => void
   onRightWidthRatioChange?: (ratio: number) => void
   leftLabel?: string
@@ -28,7 +27,6 @@ export function WorkbenchShell({
   right,
   leftWidthRatio = defaultWorkbenchLayoutState.leftWidthRatio,
   rightWidthRatio = defaultWorkbenchLayoutState.rightWidthRatio,
-  viewerExpanded = defaultWorkbenchLayoutState.viewerExpanded,
   onLeftWidthRatioChange,
   onRightWidthRatioChange,
   leftLabel,
@@ -46,7 +44,6 @@ export function WorkbenchShell({
         {ribbon}
       </header>
       <ResizableWorkbenchLayout
-        viewerExpanded={viewerExpanded}
         left={left}
         leftLabel={leftLabel}
         leftWidthRatio={leftWidthRatio}

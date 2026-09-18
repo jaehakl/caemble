@@ -1,3 +1,5 @@
+import { ViewerPersistenceContext, createComparisonSettings } from './comparisonSettings'
+import { createComparisonCamera } from './comparisonCamera'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MeshFieldResult } from './MeshFieldResult'
@@ -73,10 +75,11 @@ describe('mesh field inspection controls', () => {
     const { rerender } = render(
       <MeshFieldResult field={stress} displacementFields={[displacement]} renderViewer={show} />,
     )
+    fireEvent.click(screen.getByRole('button', { name: '위상' }))
     expect(screen.getByLabelText('stress frequency')).toHaveValue('91')
     expect(screen.getByLabelText('stress phase degrees')).toHaveValue(0)
     expect(screen.getByText(/91 Hz · 0° · 순간값/)).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('변형 배율'), { target: { value: 'actual' } })
+    expect(screen.queryByLabelText('변형 배율')).not.toBeInTheDocument()
     expect(Number(screen.getByTestId('harmonic-frame').getAttribute('data-first-x'))).toBeCloseTo(0.01)
     fireEvent.change(screen.getByLabelText('stress frequency'), { target: { value: '37' } })
     expect(Number(screen.getByTestId('harmonic-frame').getAttribute('data-first-x'))).toBeCloseTo(0.02)
@@ -102,6 +105,42 @@ describe('mesh field inspection controls', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('선택한 주파수 37 Hz')
     expect(screen.queryByTestId('harmonic-frame')).not.toBeInTheDocument()
   })
+  it('ignores saved deformation multipliers and uses real displacement or the original mesh', () => {
+    const displacement: RecordedMeshField = {
+      ...field,
+      location: 'node',
+      valueKind: 'displacement',
+      componentCount: 3,
+      components: ['x', 'y', 'z'],
+      valueUnit: 'm',
+      values: Float64Array.from({ length: 12 }, (_, index) => (index % 3 === 0 ? 0.02 : 0)),
+    }
+    const settings = createComparisonSettings({
+      'stress:mesh.view': {
+        component: 'magnitude',
+        clipAxis: -1,
+        clipFraction: 0.5,
+        wireframe: true,
+        overlays: true,
+        deformationScale: 100,
+      },
+      'stress:mesh.scaleMode': 'manual',
+      'stress:mesh.manualScale': 100,
+    })
+    render(
+      <ViewerPersistenceContext.Provider value={{ settings, item: 'stress', camera: createComparisonCamera() }}>
+        <MeshFieldResult
+          field={displacement}
+          renderViewer={(data) => <output data-testid="deformation">{data?.bounds.min[0]}</output>}
+        />
+      </ViewerPersistenceContext.Provider>,
+    )
+    expect(Number(screen.getByTestId('deformation').textContent)).toBeCloseTo(0.02)
+    fireEvent.click(screen.getByRole('button', { name: '변형 표시' }))
+    expect(Number(screen.getByTestId('deformation').textContent)).toBe(0)
+    expect(screen.queryByLabelText('변형 배율')).not.toBeInTheDocument()
+  })
+
   it('keeps harmonic pressure on its reference mesh and validates the explicitly selected phase', () => {
     const pressure: RecordedMeshField = {
       ...field,
@@ -114,6 +153,7 @@ describe('mesh field inspection controls', () => {
       spectrum: { frequencies: new Float64Array([50]), imaginaryValues: new Float64Array([2, 2, 2, 2]) },
     }
     render(<MeshFieldResult field={pressure} />)
+    fireEvent.click(screen.getByRole('button', { name: '위상' }))
     expect(screen.getByLabelText('pressure frequency')).toHaveValue('50')
     expect(screen.getByText('Value (Pa)')).toBeInTheDocument()
     expect(screen.queryByText('magnitude (Pa)')).not.toBeInTheDocument()
@@ -151,8 +191,8 @@ it('retains checkboxes and component/section settings while replacing field data
   rerender(
     <MeshFieldResult field={{ ...field, identity: 'new-mesh', values: new Float64Array([20, 0, 0, 0, 0, 0]) }} />,
   )
-  expect(screen.getByLabelText('Mesh 경계선')).not.toBeChecked()
-  expect(screen.getByLabelText('구속 / 하중')).not.toBeChecked()
+  expect(screen.getByLabelText('Mesh 경계선')).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByLabelText('구속 / 하중')).toHaveAttribute('aria-pressed', 'false')
   expect(screen.getByLabelText('stress field component')).toHaveValue('0')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '20')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-cut', '0.25')

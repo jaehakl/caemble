@@ -24,10 +24,8 @@ src/features/calculation/ExperimentRecordCatalog.tsx
 src/features/calculation/experimentRecordCatalogModel.ts
 src/features/calculation/tensorDisplayDomain.ts
 src/features/cae-workbench/chrome/index.ts
-src/features/cae-workbench/chrome/ResizableWorkbenchLayout.tsx
 src/features/cae-workbench/chrome/WorkbenchBottomDock.tsx
 src/features/cae-workbench/chrome/WorkbenchMenubar.tsx
-src/features/cae-workbench/chrome/WorkbenchShell.tsx
 src/features/cae-workbench/dialogs/index.ts
 src/features/experiment/index.ts
 src/features/measurement/index.ts

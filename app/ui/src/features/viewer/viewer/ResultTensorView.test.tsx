@@ -70,7 +70,7 @@ it('slices spatial axes and indexes time and component using the frozen contract
     [38, 41],
     [44, 47],
   ])
-  fireEvent.click(screen.getByLabelText('표시 축 2'))
+  fireEvent.change(screen.getByLabelText('표시 축 2'), { target: { value: 'index' } })
   expect(slice().shape).toEqual([2])
   expect(slice().storage.value).toEqual([38, 41])
 })

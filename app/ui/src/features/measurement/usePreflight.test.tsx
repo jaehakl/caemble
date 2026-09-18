@@ -270,13 +270,11 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
     onFindSelectionSource: vi.fn(),
     onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    onToggleViewerExpanded: vi.fn(),
     selectionQuery: null,
     selectionSourceStatus: {},
-    viewerExpanded: false,
   }
   const { rerender } = render(<WorkbenchViewer {...props} />)
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('field')
+  expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · field' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Geometry 겹치기' })).toBeEnabled()
   expect(screen.queryByText(/source가 달라|Vars가 달라/)).toBeNull()
   for (const [override, reason] of [

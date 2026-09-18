@@ -1,3 +1,5 @@
+import { Clock, Play, Pause, SkipBack, SkipForward, Repeat } from 'lucide-react'
+import { ViewerToolButton, ViewerToolPanel } from './ViewerTools'
 import { useViewerComparison, useViewerSetting } from './comparisonSettings'
 import { useEffect, useRef } from 'react'
 import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
@@ -63,61 +65,71 @@ export function MeshPlayback({
     else onFrame(value)
   }
   return (
-    <div className="my-3 flex flex-wrap items-center gap-3 text-xs" aria-label="Transient playback">
-      <button disabled={currentTime <= times[0]} onClick={() => seek(currentTime > times[frame] ? frame : frame - 1)}>
-        이전 프레임
-      </button>
-      <button
-        disabled={times.length < 2}
-        onClick={() => {
-          if (!playing && currentTime >= times[times.length - 1]) {
-            timeRef.current = times[0]
-            if (onTime) onTime(times[0])
-            else onFrame(0)
-          }
-          setPlaying(!playing)
-        }}
-      >
-        {playing ? '일시정지' : '재생'}
-      </button>
-      <button disabled={frame === times.length - 1} onClick={() => seek(frame + 1)}>
-        다음 프레임
-      </button>
-      <input
-        aria-label="Animation time"
-        type="range"
-        min={times[0]}
-        max={times[times.length - 1]}
-        step="any"
-        value={currentTime}
-        disabled={times.length < 2}
-        onChange={(event) => {
-          if (onTime) {
-            setPlaying(false)
-            onTime(Number(event.target.value))
-          } else seek(meshFrameAtTime(times, Number(event.target.value)))
-        }}
-      />
-      <span>
-        {currentTime?.toPrecision(5)} {unit} · {frame + 1}/{times.length}
-      </span>
-      <label>
-        <input type="checkbox" checked={repeat} onChange={(event) => setRepeat(event.target.checked)} /> 반복
-      </label>
-      <label>
-        재생 속도{' '}
-        <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-          {[0.25, 0.5, 1, 2, 4].map((value) => (
-            <option key={value} value={value}>
-              {value}×
-            </option>
-          ))}
-        </select>
-      </label>
-      <span>
-        실제 시간 대비 {((convertUcumValue(duration, unit, 's', 'Playback speed') / 5) * speed).toPrecision(4)}× · 전체{' '}
-        {(5 / speed).toPrecision(3)}초
-      </span>
-    </div>
+    <ViewerToolPanel label="Transient playback" icon={<Clock />} active={playing} onClose={() => setPlaying(false)}>
+      <div className="grid gap-2 text-xs">
+        <div className="flex gap-1">
+          <ViewerToolButton
+            label="이전 프레임"
+            disabled={currentTime <= times[0]}
+            onClick={() => seek(currentTime > times[frame] ? frame : frame - 1)}
+          >
+            <SkipBack />
+          </ViewerToolButton>
+          <ViewerToolButton
+            label={playing ? '일시정지' : '재생'}
+            active={playing}
+            disabled={times.length < 2}
+            onClick={() => {
+              if (!playing && currentTime >= times[times.length - 1]) {
+                timeRef.current = times[0]
+                if (onTime) onTime(times[0])
+                else onFrame(0)
+              }
+              setPlaying(!playing)
+            }}
+          >
+            {playing ? <Pause /> : <Play />}
+          </ViewerToolButton>
+          <ViewerToolButton label="다음 프레임" disabled={frame === times.length - 1} onClick={() => seek(frame + 1)}>
+            <SkipForward />
+          </ViewerToolButton>
+          <ViewerToolButton label="반복" active={repeat} onClick={() => setRepeat(!repeat)}>
+            <Repeat />
+          </ViewerToolButton>
+        </div>
+        <input
+          aria-label="Animation time"
+          type="range"
+          min={times[0]}
+          max={times[times.length - 1]}
+          step="any"
+          value={currentTime}
+          disabled={times.length < 2}
+          onChange={(event) => {
+            if (onTime) {
+              setPlaying(false)
+              onTime(Number(event.target.value))
+            } else seek(meshFrameAtTime(times, Number(event.target.value)))
+          }}
+        />
+        <span>
+          {currentTime?.toPrecision(5)} {unit} · {frame + 1}/{times.length}
+        </span>
+        <label>
+          재생 속도{' '}
+          <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
+            {[0.25, 0.5, 1, 2, 4].map((value) => (
+              <option key={value} value={value}>
+                {value}×
+              </option>
+            ))}
+          </select>
+        </label>
+        <span>
+          실제 시간 대비 {((convertUcumValue(duration, unit, 's', 'Playback speed') / 5) * speed).toPrecision(4)}× ·
+          전체 {(5 / speed).toPrecision(3)}초
+        </span>
+      </div>
+    </ViewerToolPanel>
   )
 }

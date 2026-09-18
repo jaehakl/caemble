@@ -1,3 +1,5 @@
+import { ViewerLayout } from './ViewerTools'
+import { ViewerControls } from './comparisonSettings'
 import { ViewerToolbar, type CameraView } from './ViewerToolbar'
 import { viewerScaleBar } from './scaleBar'
 import { useViewerCamera, useViewerComparison, useViewerSetting } from './comparisonSettings'
@@ -91,7 +93,6 @@ type JscadViewerProps = {
   onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange?: (values: readonly string[]) => void
   onToggleSource?: (source: CadViewerSource) => void
-  onToggleViewerExpanded?: () => void
   selectionQuery?: CadViewerSelectionQuery | null
   polylines?: readonly PolylineBundle[]
   meshRenderData?: MeshRenderData
@@ -99,7 +100,6 @@ type JscadViewerProps = {
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData
   geometryOpacity?: number
-  viewerExpanded?: boolean
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   visibleSources?: readonly CadViewerSource[]
 }
@@ -289,7 +289,6 @@ function JscadViewer({
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
   onToggleSource,
-  onToggleViewerExpanded,
   polylines = [],
   meshRenderData,
   meshIdentity,
@@ -298,7 +297,6 @@ function JscadViewer({
   geometryOpacity = 1,
   selectionQuery = null,
   selectionSourceStatus = {},
-  viewerExpanded,
   visibleSources,
 }: JscadViewerProps) {
   const savedCamera = useViewerCamera()
@@ -881,9 +879,7 @@ function JscadViewer({
     onPickModeChange: setPickMode,
     onSetCameraView: setCameraView,
     onToggleSource,
-    onToggleViewerExpanded,
     onToggleXray: () => setXrayEnabled((current) => !current),
-    viewerExpanded,
     xrayEnabled,
   }
   useLayoutEffect(() => {
@@ -907,293 +903,300 @@ function JscadViewer({
   })
 
   return (
-    <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
-      {!comparison ? (
-        <div data-capture-exclude>
-          <ViewerToolbar {...toolbar} />
-        </div>
-      ) : null}
-
-      <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        {showScaleBar ? (
-          <div
-            className="pointer-events-none absolute bottom-4 left-4 z-10 rounded bg-white/90 px-3 py-2 text-center text-xs text-slate-800"
-            title="카메라 중심 평면 기준 길이"
-          >
-            <div
-              ref={scaleBarRef}
-              aria-label="길이 Scale bar"
-              className="min-h-6 border-x-2 border-b-2 border-slate-800"
-            />
-          </div>
+    <ViewerLayout>
+      <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
+        {!comparison ? (
+          <ViewerControls placement="camera">
+            <ViewerToolbar {...toolbar} />
+          </ViewerControls>
         ) : null}
-        <canvas
-          ref={canvasRef}
-          className={`block h-full w-full touch-none ${
-            pickMode === 'off' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
-          }`}
-          data-viewer-canvas="true"
-          onContextMenu={(event) => event.preventDefault()}
-          onPointerDown={(event) => {
-            if (event.button !== 0 && event.button !== 2) return
-            event.preventDefault()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            lastPointRef.current = {
-              button: event.button,
-              moved: false,
-              pointerId: event.pointerId,
-              startX: event.clientX,
-              startY: event.clientY,
-              x: event.clientX,
-              y: event.clientY,
-            }
-          }}
-          onPointerMove={(event) => {
-            const lastPoint = lastPointRef.current
-            if (!lastPoint || lastPoint.pointerId !== event.pointerId) return
-            const pressedButton = lastPoint.button === 2 ? 2 : 1
-            if ((event.buttons & pressedButton) === 0) {
+
+        <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          {showScaleBar ? (
+            <div
+              className="pointer-events-none absolute bottom-4 left-4 z-10 rounded bg-white/90 px-3 py-2 text-center text-xs text-slate-800"
+              title="카메라 중심 평면 기준 길이"
+            >
+              <div
+                ref={scaleBarRef}
+                aria-label="길이 Scale bar"
+                className="min-h-6 border-x-2 border-b-2 border-slate-800"
+              />
+            </div>
+          ) : null}
+          <canvas
+            ref={canvasRef}
+            className={`block h-full w-full touch-none ${
+              pickMode === 'off' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
+            }`}
+            data-viewer-canvas="true"
+            onContextMenu={(event) => event.preventDefault()}
+            onPointerDown={(event) => {
+              if (event.button !== 0 && event.button !== 2) return
+              event.preventDefault()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              lastPointRef.current = {
+                button: event.button,
+                moved: false,
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                x: event.clientX,
+                y: event.clientY,
+              }
+            }}
+            onPointerMove={(event) => {
+              const lastPoint = lastPointRef.current
+              if (!lastPoint || lastPoint.pointerId !== event.pointerId) return
+              const pressedButton = lastPoint.button === 2 ? 2 : 1
+              if ((event.buttons & pressedButton) === 0) {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId)
+                }
+                lastPointRef.current = null
+                return
+              }
+              if (!cameraRef.current || !controlsRef.current) return
+              event.preventDefault()
+              const dx = event.clientX - lastPoint.x
+              const dy = event.clientY - lastPoint.y
+              if (lastPoint.button === 2) {
+                const rect = event.currentTarget.getBoundingClientRect()
+                Object.assign(
+                  cameraRef.current,
+                  panCamera({
+                    aspect: cameraRef.current.aspect as number,
+                    deltaX: dx,
+                    deltaY: dy,
+                    fov: cameraRef.current.fov as number,
+                    height: rect.height,
+                    position: cameraRef.current.position as number[],
+                    target: cameraRef.current.target as number[],
+                    up: cameraRef.current.up as number[],
+                    width: rect.width,
+                  }),
+                )
+              } else {
+                const controlChange = renderer.controls.orbit.rotate(
+                  { camera: cameraRef.current, controls: controlsRef.current, speed: 0.006 },
+                  [dx, dy],
+                )
+                Object.assign(cameraRef.current, controlChange.camera)
+                Object.assign(controlsRef.current, controlChange.controls)
+              }
+              lastPointRef.current = {
+                ...lastPoint,
+                moved:
+                  lastPoint.moved || Math.hypot(event.clientX - lastPoint.startX, event.clientY - lastPoint.startY) > 4,
+                x: event.clientX,
+                y: event.clientY,
+              }
+              renderWithControls()
+            }}
+            onPointerUp={(event) => {
+              const lastPoint = lastPointRef.current
+              if (lastPoint?.pointerId !== event.pointerId) return
+              event.preventDefault()
               if (event.currentTarget.hasPointerCapture(event.pointerId)) {
                 event.currentTarget.releasePointerCapture(event.pointerId)
               }
               lastPointRef.current = null
-              return
-            }
-            if (!cameraRef.current || !controlsRef.current) return
-            event.preventDefault()
-            const dx = event.clientX - lastPoint.x
-            const dy = event.clientY - lastPoint.y
-            if (lastPoint.button === 2) {
+              if (lastPoint.button !== 0 || lastPoint.moved || pickMode === 'off' || !cameraRef.current) return
               const rect = event.currentTarget.getBoundingClientRect()
-              Object.assign(
-                cameraRef.current,
-                panCamera({
-                  aspect: cameraRef.current.aspect as number,
-                  deltaX: dx,
-                  deltaY: dy,
-                  fov: cameraRef.current.fov as number,
-                  height: rect.height,
-                  position: cameraRef.current.position as number[],
-                  target: cameraRef.current.target as number[],
-                  up: cameraRef.current.up as number[],
-                  width: rect.width,
-                }),
-              )
-            } else {
-              const controlChange = renderer.controls.orbit.rotate(
-                { camera: cameraRef.current, controls: controlsRef.current, speed: 0.006 },
-                [dx, dy],
-              )
-              Object.assign(cameraRef.current, controlChange.camera)
-              Object.assign(controlsRef.current, controlChange.controls)
-            }
-            lastPointRef.current = {
-              ...lastPoint,
-              moved:
-                lastPoint.moved || Math.hypot(event.clientX - lastPoint.startX, event.clientY - lastPoint.startY) > 4,
-              x: event.clientX,
-              y: event.clientY,
-            }
-            renderWithControls()
-          }}
-          onPointerUp={(event) => {
-            const lastPoint = lastPointRef.current
-            if (lastPoint?.pointerId !== event.pointerId) return
-            event.preventDefault()
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-            lastPointRef.current = null
-            if (lastPoint.button !== 0 || lastPoint.moved || pickMode === 'off' || !cameraRef.current) return
-            const rect = event.currentTarget.getBoundingClientRect()
-            const point = {
-              height: rect.height,
-              width: rect.width,
-              x: event.clientX - rect.left,
-              y: event.clientY - rect.top,
-            }
-            const hits = pickCadViewerTargets(pickParts, cameraRef.current as CadViewerPickingCamera, point, pickMode)
-            if (hits.length === 0) {
-              onSelectionQueryChange?.(null)
-              return
-            }
-            const hit = xrayEnabled ? hits[hits.length - 1] : hits[0]
-            onSelectionQueryChange?.({
-              kind: pickMode,
-              match: 'exact',
-              origin: 'viewer',
-              scope:
-                hit.source === 'experiment' ? { source: 'experiment' } : { source: 'task', taskName: hit.taskName! },
-              value: pickMode === 'surface' ? hit.surfaceId! : hit.geometryId,
-            })
-          }}
-          onPointerCancel={(event) => {
-            if (lastPointRef.current?.pointerId !== event.pointerId) return
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-            lastPointRef.current = null
-          }}
-          onLostPointerCapture={(event) => {
-            if (lastPointRef.current?.pointerId === event.pointerId) lastPointRef.current = null
-          }}
-        />
+              const point = {
+                height: rect.height,
+                width: rect.width,
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+              }
+              const hits = pickCadViewerTargets(pickParts, cameraRef.current as CadViewerPickingCamera, point, pickMode)
+              if (hits.length === 0) {
+                onSelectionQueryChange?.(null)
+                return
+              }
+              const hit = xrayEnabled ? hits[hits.length - 1] : hits[0]
+              onSelectionQueryChange?.({
+                kind: pickMode,
+                match: 'exact',
+                origin: 'viewer',
+                scope:
+                  hit.source === 'experiment' ? { source: 'experiment' } : { source: 'task', taskName: hit.taskName! },
+                value: pickMode === 'surface' ? hit.surfaceId! : hit.geometryId,
+              })
+            }}
+            onPointerCancel={(event) => {
+              if (lastPointRef.current?.pointerId !== event.pointerId) return
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+              lastPointRef.current = null
+            }}
+            onLostPointerCapture={(event) => {
+              if (lastPointRef.current?.pointerId === event.pointerId) lastPointRef.current = null
+            }}
+          />
 
-        {selectionQuery ? (
-          <div className="absolute top-2 left-2 z-10 max-h-[33%] w-fit max-w-[min(20rem,calc(100%-1rem))] overflow-auto rounded border border-white/60 bg-white/65 p-1 text-[9px] text-slate-800 shadow-sm backdrop-blur-sm">
-            <div className="flex min-w-0 items-start gap-0.5">
-              <div className="min-w-0 flex-1 space-y-0.5">
-                {selectionMatches.length === 0 ? (
-                  <div className="flex min-w-0 items-center gap-1 px-0.5 py-0.5">
-                    <span className="max-w-56 min-w-0 truncate font-mono" title={selectionQuery.value}>
-                      {selectionQuery.value}
-                    </span>
-                    <span className="shrink-0 text-amber-700">찾지 못함</span>
-                    {onFindSelectionSource ? (
-                      <button
-                        aria-label={`Find ${selectionQuery.value} in Source`}
-                        className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
-                        disabled={selectionSourceStatus[selectionQuery.value] !== 'available'}
-                        title={
-                          selectionSourceStatus[selectionQuery.value] === 'available'
-                            ? 'Source에서 전역 경로 찾기'
-                            : selectionSourceStatus[selectionQuery.value] === 'missing'
-                              ? 'Source에서 일치하는 경로 없음'
-                              : 'Source 위치 확인 중'
-                        }
-                        type="button"
-                        onClick={() => onFindSelectionSource(selectionQuery.value)}
-                      >
-                        <SearchCode className="size-3" />
-                      </button>
-                    ) : null}
-                  </div>
-                ) : (
-                  selectionMatches.map((match) => {
-                    const path = match.surfaceId ?? match.geometryId
-                    const layerLabel = match.source === 'experiment' ? 'Exp' : `T·${match.taskName}`
-                    return (
-                      <div
-                        className="flex min-w-0 items-center gap-0.5"
-                        key={`${match.source}:${match.taskName ?? ''}:${match.geometryId}:${match.surfaceId ?? ''}`}
-                      >
-                        {selectionMatches.length > 1 ? (
-                          <span
-                            className="max-w-16 shrink-0 truncate rounded bg-slate-900/5 px-1 py-0.5 text-[8px] text-slate-500"
-                            title={match.source === 'experiment' ? 'Experiment' : `Task · ${match.taskName}`}
-                          >
-                            {layerLabel}
-                          </span>
-                        ) : null}
-                        <span className="max-w-56 min-w-0 flex-1 truncate font-mono" title={path}>
-                          {path}
-                        </span>
-                        {onFindSelectionSource ? (
-                          <button
-                            aria-label={`Find ${path} in Source`}
-                            className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
-                            disabled={selectionSourceStatus[path] !== 'available'}
-                            title={
-                              selectionSourceStatus[path] === 'available'
-                                ? 'Source에서 전역 경로 찾기'
-                                : selectionSourceStatus[path] === 'missing'
-                                  ? 'Source에서 일치하는 경로 없음'
-                                  : 'Source 위치 확인 중'
-                            }
-                            type="button"
-                            onClick={() => onFindSelectionSource(path)}
-                          >
-                            <SearchCode className="size-3" />
-                          </button>
-                        ) : null}
+          {selectionQuery ? (
+            <div className="absolute top-2 left-2 z-10 max-h-[33%] w-fit max-w-[min(20rem,calc(100%-1rem))] overflow-auto rounded border border-white/60 bg-white/65 p-1 text-[9px] text-slate-800 shadow-sm backdrop-blur-sm">
+              <div className="flex min-w-0 items-start gap-0.5">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  {selectionMatches.length === 0 ? (
+                    <div className="flex min-w-0 items-center gap-1 px-0.5 py-0.5">
+                      <span className="max-w-56 min-w-0 truncate font-mono" title={selectionQuery.value}>
+                        {selectionQuery.value}
+                      </span>
+                      <span className="shrink-0 text-amber-700">찾지 못함</span>
+                      {onFindSelectionSource ? (
                         <button
-                          aria-label={`Focus Viewer on ${path}`}
-                          className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
-                          title="선택 요소에 카메라 맞추기"
+                          aria-label={`Find ${selectionQuery.value} in Source`}
+                          className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                          disabled={selectionSourceStatus[selectionQuery.value] !== 'available'}
+                          title={
+                            selectionSourceStatus[selectionQuery.value] === 'available'
+                              ? 'Source에서 전역 경로 찾기'
+                              : selectionSourceStatus[selectionQuery.value] === 'missing'
+                                ? 'Source에서 일치하는 경로 없음'
+                                : 'Source 위치 확인 중'
+                          }
                           type="button"
-                          onClick={() => focusSelectionMatch(match)}
+                          onClick={() => onFindSelectionSource(selectionQuery.value)}
                         >
-                          <Focus className="size-3" />
+                          <SearchCode className="size-3" />
                         </button>
-                        <button
-                          aria-label={`Copy selected ID ${path}`}
-                          className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
-                          title="전역 경로 복사"
-                          type="button"
-                          onClick={() => {
-                            void navigator.clipboard
-                              .writeText(path)
-                              .then(() => toast.success('전역 경로를 복사했습니다.'))
-                              .catch(() => toast.error('전역 경로를 복사하지 못했습니다.'))
-                          }}
-                        >
-                          <Copy className="size-3" />
-                        </button>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-              <button
-                aria-label="Clear Viewer selection"
-                className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
-                title="선택 해제"
-                type="button"
-                onClick={() => onSelectionQueryChange?.(null)}
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmapRenderData ? (
-          <div
-            data-viewer-empty="true"
-            className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500"
-          >
-            {emptyMessage}
-          </div>
-        ) : null}
-
-        {rayPathCount > 0 ? (
-          <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-700 shadow-sm backdrop-blur-sm">
-            Polylines · {rayPathCount.toLocaleString()} paths · {raySegmentCount.toLocaleString()} segments
-          </div>
-        ) : null}
-
-        {parts.length > 0 ? (
-          <div className="pointer-events-none absolute top-3 right-3 min-w-32 rounded border border-slate-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur-sm">
-            <div className="mb-1.5 text-[10px] font-semibold tracking-wide text-slate-500 uppercase">Materials</div>
-            {[...new Map(parts.map((part) => [part.materialRole, part])).values()].map((part, index) => {
-              const color = scenePartColor(part)
-              const role = typeof part.materialRole === 'string' && part.materialRole.trim() ? part.materialRole : null
-              return (
-                <div
-                  key={role ?? `unassigned-${index}`}
-                  className="flex items-center gap-2 py-0.5 text-xs text-slate-700"
-                >
-                  {color ? (
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-sm border border-black/10"
-                      data-material-swatch="fill"
-                      style={{ backgroundColor: color }}
-                    />
+                      ) : null}
+                    </div>
                   ) : (
-                    <span className="grid h-2.5 w-2.5 shrink-0 items-center" data-material-swatch="wireframe">
-                      <span className="block border-t-2" style={{ borderColor: unassignedGeometryColor }} />
-                    </span>
+                    selectionMatches.map((match) => {
+                      const path = match.surfaceId ?? match.geometryId
+                      const layerLabel = match.source === 'experiment' ? 'Exp' : `T·${match.taskName}`
+                      return (
+                        <div
+                          className="flex min-w-0 items-center gap-0.5"
+                          key={`${match.source}:${match.taskName ?? ''}:${match.geometryId}:${match.surfaceId ?? ''}`}
+                        >
+                          {selectionMatches.length > 1 ? (
+                            <span
+                              className="max-w-16 shrink-0 truncate rounded bg-slate-900/5 px-1 py-0.5 text-[8px] text-slate-500"
+                              title={match.source === 'experiment' ? 'Experiment' : `Task · ${match.taskName}`}
+                            >
+                              {layerLabel}
+                            </span>
+                          ) : null}
+                          <span className="max-w-56 min-w-0 flex-1 truncate font-mono" title={path}>
+                            {path}
+                          </span>
+                          {onFindSelectionSource ? (
+                            <button
+                              aria-label={`Find ${path} in Source`}
+                              className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                              disabled={selectionSourceStatus[path] !== 'available'}
+                              title={
+                                selectionSourceStatus[path] === 'available'
+                                  ? 'Source에서 전역 경로 찾기'
+                                  : selectionSourceStatus[path] === 'missing'
+                                    ? 'Source에서 일치하는 경로 없음'
+                                    : 'Source 위치 확인 중'
+                              }
+                              type="button"
+                              onClick={() => onFindSelectionSource(path)}
+                            >
+                              <SearchCode className="size-3" />
+                            </button>
+                          ) : null}
+                          <button
+                            aria-label={`Focus Viewer on ${path}`}
+                            className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                            title="선택 요소에 카메라 맞추기"
+                            type="button"
+                            onClick={() => focusSelectionMatch(match)}
+                          >
+                            <Focus className="size-3" />
+                          </button>
+                          <button
+                            aria-label={`Copy selected ID ${path}`}
+                            className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                            title="전역 경로 복사"
+                            type="button"
+                            onClick={() => {
+                              void navigator.clipboard
+                                .writeText(path)
+                                .then(() => toast.success('전역 경로를 복사했습니다.'))
+                                .catch(() => toast.error('전역 경로를 복사하지 못했습니다.'))
+                            }}
+                          >
+                            <Copy className="size-3" />
+                          </button>
+                        </div>
+                      )
+                    })
                   )}
-                  <span>
-                    {role ? (part.material ? `${role}: ${part.material.name}` : `${role} (Unresolved)`) : 'Unassigned'}
-                  </span>
                 </div>
-              )
-            })}
-          </div>
-        ) : null}
+                <button
+                  aria-label="Clear Viewer selection"
+                  className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                  title="선택 해제"
+                  type="button"
+                  onClick={() => onSelectionQueryChange?.(null)}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmapRenderData ? (
+            <div
+              data-viewer-empty="true"
+              className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500"
+            >
+              {emptyMessage}
+            </div>
+          ) : null}
+
+          {rayPathCount > 0 ? (
+            <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-700 shadow-sm backdrop-blur-sm">
+              Polylines · {rayPathCount.toLocaleString()} paths · {raySegmentCount.toLocaleString()} segments
+            </div>
+          ) : null}
+
+          {parts.length > 0 ? (
+            <div className="pointer-events-none absolute top-3 right-3 min-w-32 rounded border border-slate-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur-sm">
+              <div className="mb-1.5 text-[10px] font-semibold tracking-wide text-slate-500 uppercase">Materials</div>
+              {[...new Map(parts.map((part) => [part.materialRole, part])).values()].map((part, index) => {
+                const color = scenePartColor(part)
+                const role =
+                  typeof part.materialRole === 'string' && part.materialRole.trim() ? part.materialRole : null
+                return (
+                  <div
+                    key={role ?? `unassigned-${index}`}
+                    className="flex items-center gap-2 py-0.5 text-xs text-slate-700"
+                  >
+                    {color ? (
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-sm border border-black/10"
+                        data-material-swatch="fill"
+                        style={{ backgroundColor: color }}
+                      />
+                    ) : (
+                      <span className="grid h-2.5 w-2.5 shrink-0 items-center" data-material-swatch="wireframe">
+                        <span className="block border-t-2" style={{ borderColor: unassignedGeometryColor }} />
+                      </span>
+                    )}
+                    <span>
+                      {role
+                        ? part.material
+                          ? `${role}: ${part.material.name}`
+                          : `${role} (Unresolved)`
+                        : 'Unassigned'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </ViewerLayout>
   )
 }
 

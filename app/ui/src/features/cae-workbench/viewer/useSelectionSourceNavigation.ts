@@ -66,7 +66,6 @@ export function useSelectionSourceNavigation({
           ...current,
           activeExperimentFile: location.path,
           activeSection: 'experiment',
-          viewerExpanded: false,
         }))
       }
       if (activeSection === 'calculation' && calculationDirty) guardReplacement(reveal)

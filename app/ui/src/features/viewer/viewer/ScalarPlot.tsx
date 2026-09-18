@@ -31,6 +31,7 @@ export function ScalarPlot({
   bins,
   unit,
   lockHistogramRange = false,
+  histogramMarker,
 }: {
   plot: ScalarPlotData
   kind: 'histogram' | 'line' | 'heatmap'
@@ -38,6 +39,7 @@ export function ScalarPlot({
   bins?: number
   unit?: string
   lockHistogramRange?: boolean
+  histogramMarker?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -128,7 +130,11 @@ export function ScalarPlot({
         histogram.forEach((bin, i) => {
           const x = left + (w * i) / histogram.length,
             bar = (h * bin.count) / maximum
-          ctx.fillStyle = '#0284c7'
+          const selected =
+            histogramMarker !== undefined &&
+            histogramMarker >= bin.min &&
+            (histogramMarker < bin.max || (i === histogram.length - 1 && histogramMarker === bin.max))
+          ctx.fillStyle = selected ? '#f97316' : '#0284c7'
           ctx.fillRect(x + 1, bottom - bar, Math.max(1, w / histogram.length - 2), bar)
           targets.current.push({
             x: x + w / histogram.length / 2,
@@ -136,12 +142,28 @@ export function ScalarPlot({
             label: `${tickText(bin.min)} ~ ${tickText(bin.max)} ${unit ?? ''} · ${bin.count} 표본`,
           })
         })
+        if (histogramMarker !== undefined) {
+          const fraction = range[0] === range[1] ? 0.5 : (histogramMarker - range[0]) / (range[1] - range[0])
+          const x = left + Math.max(0, Math.min(1, fraction)) * w
+          ctx.strokeStyle = '#ea580c'
+          ctx.beginPath()
+          ctx.moveTo(x, top)
+          ctx.lineTo(x, bottom)
+          ctx.stroke()
+          ctx.textAlign = fraction > 0.5 ? 'right' : 'left'
+          ctx.fillStyle = '#9a3412'
+          ctx.fillText(
+            `${tickText(histogramMarker)} ${unit ?? ''}${histogramMarker < range[0] || histogramMarker > range[1] ? ' · 분포 범위 밖' : ''}`,
+            x,
+            top - 8,
+          )
+        }
         axis(range[0], range[1], false, `값 (${unit ?? 'unitless'})`)
         axis(0, maximum, true, '빈도')
       } else if (kind === 'line') {
-        const main = plot.axes[1],
-          sub = plot.axes[0],
-          columns = plot.shape[1]
+        const main = plot.axes[plot.axes.length - 1],
+          sub = plot.axes.length === 1 ? { name: '', ticks: [0], unit: '' } : plot.axes[0],
+          columns = plot.shape[plot.shape.length - 1]
         const min = range[0],
           max = range[1]
         const seriesStride = Math.max(1, Math.ceil(sub.ticks.length / 200))
@@ -171,7 +193,7 @@ export function ScalarPlot({
             targets.current.push({
               x,
               y,
-              label: `${sub.name}=${sub.ticks[row]} ${sub.unit ?? ''}, ${main.name}=${main.ticks[column]} ${main.unit ?? ''} · ${value} ${unit ?? ''}`,
+              label: `${plot.axes.length > 1 ? `${sub.name}=${sub.ticks[row]} ${sub.unit ?? ''}, ` : ''}${main.name}=${main.ticks[column]} ${main.unit ?? ''} · ${value} ${unit ?? ''}`,
             })
           })
           ctx.stroke()
@@ -239,7 +261,7 @@ export function ScalarPlot({
         tile.image.height = 0
       }
     }
-  }, [plot, kind, range, bins, unit, lockHistogramRange, nativeSize])
+  }, [plot, kind, range, bins, unit, lockHistogramRange, nativeSize, histogramMarker])
   return (
     <div className="flex h-full min-h-0 flex-col" data-result-visualization={kind}>
       {kind === 'line' ? (
@@ -319,12 +341,13 @@ export function ScalarPlot({
         </div>
       </div>
       <div role="status" className="min-h-7 px-3 text-xs text-slate-600">
-        {hover ||
-          (kind === 'histogram'
-            ? `${plot.values.length.toLocaleString()} 표본`
-            : kind === 'heatmap'
-              ? `${plot.shape.join(' × ')} · 모든 원본 픽셀 표시 · 축소 시 작은 신호는 원본 크기에서 확인`
-              : `${plot.shape.join(' × ')} · 최대 100,000 표본 / 200 lines 표시 · 집계 및 복사는 전체 데이터 사용`)}
+        {hover}
+        {histogramMarker !== undefined ? (
+          <span aria-label="집계 결과값">
+            {histogramMarker.toPrecision(6)} {unit ?? ''}
+            {histogramMarker < range[0] || histogramMarker > range[1] ? ' · 분포 범위 밖' : ''}
+          </span>
+        ) : null}
       </div>
     </div>
   )

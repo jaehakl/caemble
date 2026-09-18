@@ -10,7 +10,6 @@ export function ResizableWorkbenchSplit({
   maxViewerPercent = 75,
   onViewerPercentChange,
   className,
-  viewerExpanded = false,
 }: {
   viewer: ReactNode
   editor: ReactNode
@@ -20,7 +19,6 @@ export function ResizableWorkbenchSplit({
   maxViewerPercent?: number
   onViewerPercentChange?: (viewerPercent: number) => void
   className?: string
-  viewerExpanded?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [internalPercent, setInternalPercent] = useState(defaultViewerPercent)
@@ -76,9 +74,7 @@ export function ResizableWorkbenchSplit({
       className={cn('grid min-h-0 min-w-0 flex-1 overflow-hidden', className)}
       ref={containerRef}
       style={{
-        gridTemplateColumns: viewerExpanded
-          ? 'minmax(0, 1fr)'
-          : `calc(${currentPercent}% - 0.25rem) 0.5rem minmax(0, 1fr)`,
+        gridTemplateColumns: `calc(${currentPercent}% - 0.25rem) 0.5rem minmax(0, 1fr)`,
       }}
     >
       <section aria-label="3D Viewer" className="min-h-0 min-w-0 overflow-hidden">
@@ -102,14 +98,9 @@ export function ResizableWorkbenchSplit({
           setResizing(true)
         }}
         role="separator"
-        hidden={viewerExpanded}
         tabIndex={0}
       />
-      <section
-        aria-label="Editor"
-        hidden={viewerExpanded}
-        className={cn('min-h-0 min-w-0 overflow-hidden', viewerExpanded ? 'hidden' : 'flex')}
-      >
+      <section aria-label="Editor" className="flex min-h-0 min-w-0 overflow-hidden">
         {editor}
       </section>
     </div>

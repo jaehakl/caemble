@@ -1,3 +1,6 @@
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { Image } from 'lucide-react'
+import { ViewerToolMenu } from '@/features/viewer/viewer/ViewerTools'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -54,56 +57,61 @@ export function ViewerPresentationMenu({
   }
   return (
     <>
-      <details className="relative text-xs" data-capture-exclude>
-        <summary className="cursor-pointer rounded border px-2 py-1">초기 화면·대표이미지</summary>
-        <div className="absolute right-0 z-30 mt-1 grid w-64 gap-1 rounded border bg-background p-2 shadow-lg">
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy || disabled || !actions.canSaveInitialView || !actions.measurementId}
-            title={
-              !actions.canSaveInitialView
-                ? '저장된 소스의 Recorded Measurement를 표시할 때 저장할 수 있습니다.'
-                : undefined
-            }
-            onClick={() =>
-              void run(async () => {
-                await actions.update({ initialView: { ...snapshot(), measurementId: actions.measurementId! } })
-                toast.success('현재 화면을 Experiment 초기 화면으로 저장했습니다.')
-              })
-            }
-          >
-            현재 화면을 초기 화면으로 저장
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy || !actions.hasInitialView}
-            onClick={() =>
-              void run(async () => {
-                await actions.update({ initialView: null })
-                toast.success('초기 화면 설정을 해제했습니다. 다음 진입부터 최신 결과를 표시합니다.')
-              })
-            }
-          >
-            초기 화면 설정 해제
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy || disabled}
-            onClick={() =>
-              void run(async () => {
-                const next = await captureViewer(captureNode())
-                setCapture(next)
-                setCrop(centeredThumbnailCrop(next.width, next.height))
-              })
-            }
-          >
-            대표이미지 변경
-          </Button>
+      <ViewerToolMenu label="초기 화면·대표이미지" icon={<Image />}>
+        <div className="grid gap-1">
+          <DropdownMenuItem asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || disabled || !actions.canSaveInitialView || !actions.measurementId}
+              title={
+                !actions.canSaveInitialView
+                  ? '저장된 소스의 Recorded Measurement를 표시할 때 저장할 수 있습니다.'
+                  : undefined
+              }
+              onClick={() =>
+                void run(async () => {
+                  await actions.update({ initialView: { ...snapshot(), measurementId: actions.measurementId! } })
+                  toast.success('현재 화면을 Experiment 초기 화면으로 저장했습니다.')
+                })
+              }
+            >
+              현재 화면을 초기 화면으로 저장
+            </Button>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || !actions.hasInitialView}
+              onClick={() =>
+                void run(async () => {
+                  await actions.update({ initialView: null })
+                  toast.success('초기 화면 설정을 해제했습니다. 다음 진입부터 최신 결과를 표시합니다.')
+                })
+              }
+            >
+              초기 화면 설정 해제
+            </Button>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || disabled}
+              onClick={() =>
+                void run(async () => {
+                  const next = await captureViewer(captureNode())
+                  setCapture(next)
+                  setCrop(centeredThumbnailCrop(next.width, next.height))
+                })
+              }
+            >
+              대표이미지 변경
+            </Button>
+          </DropdownMenuItem>
         </div>
-      </details>
+      </ViewerToolMenu>
       {capture && crop ? (
         <Dialog
           open

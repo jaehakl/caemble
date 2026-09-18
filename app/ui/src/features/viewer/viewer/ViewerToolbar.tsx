@@ -1,5 +1,6 @@
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Box, MousePointer2, Scan, ScanFace, ScanLine, FlaskConical, ListTodo } from 'lucide-react'
 import type { CadViewerPickMode, CadViewerSource } from './model'
+import { ViewerAxisIcon, ViewerToolButton } from './ViewerTools'
 
 export type CameraView = 'default' | 'x' | 'y' | 'z'
 
@@ -9,10 +10,8 @@ export function ViewerToolbar({
   onPickModeChange,
   onSetCameraView,
   onToggleSource,
-  onToggleViewerExpanded,
   onToggleXray,
   pickMode,
-  viewerExpanded = false,
   visibleSources = [],
   xrayEnabled,
 }: {
@@ -21,107 +20,64 @@ export function ViewerToolbar({
   onPickModeChange: (mode: CadViewerPickMode) => void
   onSetCameraView: (view: CameraView) => void
   onToggleSource?: (source: CadViewerSource) => void
-  onToggleViewerExpanded?: () => void
   onToggleXray: () => void
   pickMode: CadViewerPickMode
-  viewerExpanded?: boolean
   visibleSources?: readonly CadViewerSource[]
   xrayEnabled: boolean
 }) {
   return (
-    <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-white px-2 py-1">
+    <div className="flex shrink-0 items-center gap-1">
       <div aria-label="Camera views" className="flex items-center gap-1">
-        <span className="mr-1 text-xs font-semibold">카메라</span>
         {(['default', 'x', 'y', 'z'] as const).map((view) => (
-          <button
-            aria-label={`Set ${view} camera view`}
-            className="min-w-7 rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
+          <ViewerToolButton
             key={view}
-            type="button"
+            label={view === 'default' ? '전체 맞춤' : `${view.toUpperCase()} 방향`}
+            aria-label={`Set ${view} camera view`}
             onClick={() => onSetCameraView(view)}
           >
-            {view === 'default' ? '전체 맞춤' : `${view.toUpperCase()} 방향`}
-          </button>
+            {view === 'default' ? <Scan /> : <ViewerAxisIcon axis={view.toUpperCase()} />}
+          </ViewerToolButton>
         ))}
       </div>
-
-      {!meshMode ? (
-        <>
-          <button
-            aria-label="Toggle X-ray"
-            aria-pressed={xrayEnabled}
-            className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
-              xrayEnabled
-                ? 'border-sky-400 bg-sky-50 text-sky-900'
-                : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
-            }`}
-            title="내부 Geometry를 보기 위한 반투명 표시"
-            type="button"
-            onClick={onToggleXray}
+      <ViewerToolButton
+        label="X-ray"
+        aria-label="Toggle X-ray"
+        active={xrayEnabled}
+        disabled={meshMode}
+        title={meshMode ? 'Geometry가 없어 X-ray를 사용할 수 없습니다.' : '내부 Geometry를 보기 위한 반투명 표시'}
+        onClick={onToggleXray}
+      >
+        <ScanLine />
+      </ViewerToolButton>
+      <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l pl-1">
+        {(['off', 'geometry', 'surface'] as const).map((mode) => (
+          <ViewerToolButton
+            key={mode}
+            label={mode === 'off' ? 'Off' : mode === 'geometry' ? 'Geometry' : 'Surface'}
+            aria-label={`Selection mode ${mode}`}
+            active={pickMode === mode}
+            disabled={meshMode}
+            onClick={() => onPickModeChange(mode)}
           >
-            X-ray
-          </button>
-
-          <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l border-slate-200 pl-3">
-            {(['off', 'geometry', 'surface'] as const).map((mode) => (
-              <button
-                aria-label={`Selection mode ${mode}`}
-                aria-pressed={pickMode === mode}
-                className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
-                  pickMode === mode
-                    ? 'border-orange-400 bg-orange-50 text-orange-900'
-                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
-                }`}
-                key={mode}
-                type="button"
-                onClick={() => onPickModeChange(mode)}
-              >
-                {mode === 'off' ? 'Off' : mode === 'geometry' ? 'Geometry' : 'Surface'}
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {onToggleSource ? (
-        <div aria-label="Viewer sources" className="flex items-center gap-1 border-l border-slate-200 pl-3">
-          {(['experiment', 'task'] as const).map((source) => {
-            const available = availableSources.includes(source)
-            const visible = visibleSources.includes(source)
-            return (
-              <button
-                aria-label={`Toggle ${source}`}
-                aria-pressed={available && visible}
-                className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
-                  available && visible
-                    ? 'border-slate-400 bg-slate-100 text-slate-900'
-                    : 'border-slate-200 bg-white text-slate-400'
-                } disabled:cursor-not-allowed disabled:opacity-50`}
-                disabled={!available}
-                key={source}
-                type="button"
-                onClick={() => onToggleSource(source)}
-              >
-                {source === 'experiment' ? 'Experiment' : 'Task'}
-              </button>
-            )
-          })}
-        </div>
-      ) : null}
-
-      {onToggleViewerExpanded ? (
-        <button
-          aria-label={viewerExpanded ? 'Viewer 영역 복원' : 'Viewer 확장'}
-          aria-pressed={viewerExpanded}
-          className="ml-auto flex h-8 items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
-          title={viewerExpanded ? '좌측 및 하단 영역 복원' : '좌측 및 하단 영역 숨기기'}
-          type="button"
-          onClick={onToggleViewerExpanded}
-        >
-          {viewerExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}{' '}
-          {viewerExpanded ? '영역 복원' : 'Viewer 확장'}
-        </button>
-      ) : null}
+            {mode === 'off' ? <MousePointer2 /> : mode === 'geometry' ? <Box /> : <ScanFace />}
+          </ViewerToolButton>
+        ))}
+      </div>
+      <div aria-label="Viewer sources" className="flex items-center gap-1 border-l pl-1">
+        {(['experiment', 'task'] as const).map((source) => (
+          <ViewerToolButton
+            key={source}
+            label={`display ${source === 'experiment' ? 'Experiment' : 'Task'}`}
+            aria-label={`Toggle ${source}`}
+            active={availableSources.includes(source) && visibleSources.includes(source)}
+            disabled={!onToggleSource || !availableSources.includes(source)}
+            title={!availableSources.includes(source) ? `${source} Geometry가 없습니다.` : `${source} 표시 전환`}
+            onClick={() => onToggleSource?.(source)}
+          >
+            {source === 'experiment' ? <FlaskConical /> : <ListTodo />}
+          </ViewerToolButton>
+        ))}
+      </div>
     </div>
   )
 }
