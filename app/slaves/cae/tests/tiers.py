@@ -95,6 +95,7 @@ MODULE_TIERS = {
     "tests/test_pressure_acoustics.py": "lowcost",
     "tests/test_program_state_contract.py": "lowcost",
     "tests/test_ray_grating.py": "lowcost",
+    "tests/test_ray_grating_smoke.py": "smoke",
     "tests/test_ray_detector.py": "lowcost",
     "tests/test_ray_detector_smoke.py": "smoke",
     "tests/test_ray_pixel_example.py": "smoke",

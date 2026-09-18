@@ -39,7 +39,7 @@ from .domain import (
     surface_sampler,
     surface_keys,
 )
-from .grating import diffracted_direction
+from .grating import build_gratings, diffracted_direction
 from .thin_film import surface_films, film_layers
 from .materials import optical_material
 from .outputs import Detector, PathCollector, VolumeTally
@@ -126,11 +126,7 @@ def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tall
     minimum_power_fraction = scalar_parameter(config["parameters"]["minPowerFraction"])
     surface_scatter = _surface_scatter(config, scene, solids)
     bulk_scatter = _bulk_scatter(config, scene)
-    gratings = {}
-    for rule in config["boundaryConditions"]:
-        if rule["methodId"] == "ray.reflection-grating":
-            for key in surface_keys(scene, target_group(rule, "surface"), solids):
-                gratings[key] = rule["parameters"]
+    gratings = build_gratings(config, scene, solids)
     detector_by_surface: dict[SurfaceRef, list[Detector]] = {}
     for detector in detectors:
         for surface_key in detector.surface_keys:
@@ -326,7 +322,16 @@ def _trace_one(
 
     grating = gratings.get(hit.surface_ref)
     if grating is not None:
-        return _diffract(ray, hit, grating, medium.refractive_index.real, threshold, collector)
+        transmitted_stack = list(ray.medium_stack)
+        target_index = medium.refractive_index.real
+        if any(efficiency > 0 for efficiency in _array(grating['transmittedEfficiencies'])):
+            entering = hit.crossing_kind == 'enter'
+            transmitted_stack = _cross_medium(ray.medium_stack, None if entering else hit.metadata.root_id,
+                                             (hit.metadata.root_id, hit.metadata.material_name) if entering else None)
+            target_name = transmitted_stack[-1][1] if transmitted_stack else None
+            target_index = optical_material(world, target_name, ray.wavelength).refractive_index.real
+        return _diffract(ray, hit, grating, medium.refractive_index.real, threshold, collector,
+                         target_index=target_index, target_stack=transmitted_stack)
 
     entering = hit.crossing_kind == "enter"
     normal = hit.normal if entering else -hit.normal
@@ -679,6 +684,9 @@ def _diffract(
     refractive_index: float,
     threshold: float,
     collector: PathCollector,
+    *,
+    target_index: float,
+    target_stack: list[tuple[str, str]],
 ) -> list[Ray]:
     normal = hit.normal
     groove = vector_parameter(parameters["grooveDirection"], "grating groove direction")
@@ -688,24 +696,35 @@ def _diffract(
     spacing = scalar_parameter(parameters["spacing"])
     branches = []
     produced = False
-    for index, (order, efficiency) in enumerate(zip(_array(parameters["orders"]), _array(parameters["efficiencies"]))):
-        direction = diffracted_direction(ray.direction, normal, groove, ray.wavelength / refractive_index, spacing, order)
-        if direction is None or efficiency <= 0:
-            continue
-        produced = True
-        branch = ray.branch()
-        branch.path_key = _branch_key(ray.path_key, index + 2)
-        _segment(branch, hit.position, EVENT_DIFFRACTION)
-        branch.stokes = local_stokes * efficiency
-        branch.direction = direction
-        branch.basis = unit_vector(groove - np.dot(groove, direction) * direction)
-        branch.origin = hit.position.copy()
-        branch.interactions += 1
-        if branch.stokes[0] <= threshold:
-            _segment(branch, branch.origin, EVENT_POWER_CUTOFF)
-            collector.finish(branch)
-        else:
-            branches.append(branch)
+    orders = _array(parameters['orders'])
+    for transmission, name in [(False, 'reflectedEfficiencies'), (True, 'transmittedEfficiencies')]:
+        for index, (order, efficiency) in enumerate(zip(orders, _array(parameters[name]))):
+            if efficiency <= 0:
+                continue
+            direction = diffracted_direction(ray.direction, normal, groove, ray.wavelength, spacing, order,
+                                            incident_index=refractive_index,
+                                            outgoing_index=target_index if transmission else refractive_index,
+                                            transmission=transmission)
+            if direction is None:
+                continue
+            produced = True
+            branch = ray.branch()
+            branch.path_key = _branch_key(ray.path_key, index + 2 + (len(orders) if transmission else 0))
+            _segment(branch, hit.position, EVENT_DIFFRACTION)
+            branch.stokes = local_stokes * efficiency
+            branch.direction = direction
+            basis = groove - np.dot(groove, direction) * direction
+            branch.basis = unit_vector(basis) if np.linalg.norm(basis) > 1e-12 else perpendicular(direction)
+            branch.origin = hit.position.copy()
+            branch.interactions += 1
+            if transmission:
+                branch.medium_stack = list(target_stack)
+                branch.medium_root, branch.medium_name = target_stack[-1] if target_stack else (None, None)
+            if branch.stokes[0] <= threshold:
+                _segment(branch, branch.origin, EVENT_POWER_CUTOFF)
+                collector.finish(branch)
+            else:
+                branches.append(branch)
     if not produced:
         _segment(ray, hit.position, EVENT_ABSORPTION)
         collector.finish(ray)

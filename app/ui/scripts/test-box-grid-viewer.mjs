@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { createServer } from 'vite'
 import { chromium } from 'playwright'
 import { transformSync } from 'esbuild'
@@ -65,6 +66,25 @@ const server = await createServer({
         onFindSelectionSource={noop} onSelectionQueryChange={noop} onSelectionSourcePathsChange={noop} onToggleViewerExpanded={noop} selectionQuery={null} selectionSourceStatus={{}} viewerExpanded={false}
       />);
       window.renderBox();
+      window.renderRecordedRays=async({input,packet})=>{
+        const {parseResultPolylines}=await import('/src/features/viewer/viewer/resultPolylines.ts');
+        const {renderCanonicalGeometryScene}=await import('/src/lib/cad/execution/manifoldRender.ts');
+        const {deserializeCadScene}=await import('/src/lib/cad/execution/mesh.ts');
+        const {CadViewer}=await import('/src/features/viewer/viewer/CadViewer.tsx');
+        const contracts={}, rules=[], data={};
+        for(const [name,item] of Object.entries(packet.visualizations)){
+          contracts[name]={...item.contract,schema:item.schema};
+          for(const [member,schema] of Object.entries(item.schema)){
+            const label=name+'.'+member; rules.push({label,result:schema,methodId:'stored',parameters:{},target:[]});data[label]=item.data[member];
+          }
+        }
+        const parsed=parseResultPolylines(contracts,rules,data);
+        if(parsed.errors.length)throw new Error(JSON.stringify(parsed.errors));
+        const presentation=input.presentation.experiment;
+        const serialized=await renderCanonicalGeometryScene(input.measurement.experiment.scene,{tree:presentation.tree,parts:presentation.materials});
+          window.recordedRayStats={paths:parsed.bundles.reduce((sum,b)=>sum+b.pathCount,0),detectorHits:parsed.bundles.reduce((sum,b)=>sum+b.segmentEvent.filter(event=>event===5).length,0),refractions:parsed.bundles.reduce((sum,b)=>sum+b.segmentEvent.filter(event=>event===1).length,0)};
+        root.render(<CadViewer key="recorded-rays" experiment={{scene:deserializeCadScene(serialized),sceneHash:serialized.sceneHash}} polylines={parsed.bundles} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>);
+      };
       window.renderPixel=()=>{
         const shape=[2,2,1,1,2,1,1], values=[1,0,0,2,0,0,3,2];
         const axes=['x','y','z','time','frequency','amplitudePhase','component'].map((name,i)=>({name,ticks:[[.5,1.5],[.5,1.5],[.1],[0],[299792458/600e-9,299792458/500e-9],['value'],['value']][i],unit:i<3?'m':i===3?'s':i===4?'Hz':undefined}));
@@ -403,6 +423,27 @@ try {
   await page.getByLabel('주파수 표시 단위').selectOption('nm')
   await ready()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/pixel-profile.png' })
+  if (process.env.CAEMBLE_VIEWER_RAY_RESULT) {
+    const directory = path.resolve(process.env.CAEMBLE_VIEWER_RAY_RESULT)
+    const manifest = JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8'))
+    const packet = JSON.parse(await readFile(path.join(directory, manifest.visualizations[0].path), 'utf8'))
+    const input = JSON.parse(await readFile(manifest.input, 'utf8'))
+    await page.evaluate((fixture) => window.renderRecordedRays(fixture), { input, packet })
+    const expectedPaths = manifest.trace[0].observations.recordedPaths
+    await page.getByText(new RegExp('Polylines · ' + expectedPaths + ' paths')).waitFor()
+    const stats = await page.evaluate(() => window.recordedRayStats)
+    assert.equal(stats.paths, expectedPaths)
+    assert.ok(stats.detectorHits > 0)
+    const transmission = manifest.records.some((record) => record.name === 'transmittedPower')
+    if (transmission) assert.ok(stats.refractions > 0)
+    await page
+      .getByRole('button', { name: transmission ? 'Set y camera view' : 'Set z camera view', exact: true })
+      .click()
+    await page.screenshot({
+      path: 'node_modules/.tmp/viewer-qa/recorded-' + (transmission ? 'transmission' : 'pixel') + '-rays.png',
+    })
+    console.log('Recorded pixel paths in Viewer:', stats)
+  }
   assert.deepEqual(errors, [])
   console.log(
     'Box Grid browser QA passed: four charts, code execution, playback, overlays, Scale bar, resize, Calculation 3D, mesh layout.',

@@ -63,4 +63,4 @@ def scattering_ray_invocation(count=512, maximum_paths=2048):
                   {"methodId": "ray.hg-medium", "target": ["experiment.geometry.medium"], "parameters": {"anisotropy": {"value": .2}}}],
               "outputs": []}
     return SolverInvocation(config=config, state={}, inputs={}, world=world, geometry=None, progress=None,
-                            descriptor=SolverCatalog.discover().descriptor("ray-tracing", "4.1.0"))
+                            descriptor=SolverCatalog.discover().descriptor("ray-tracing", "5.0.0"))

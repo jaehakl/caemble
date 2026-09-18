@@ -600,8 +600,11 @@ Native thread 제어는 실행 서비스가 소유합니다. batch worker는 1�
 `configure_torch()`는 새 Solver child에서 intra-op을 예산으로, inter-op을
 최초 한 번 1로 설정합니다. Runtime은 Torch를 공통으로 eager import하지 않습니다.
 Ray는 128개 초기 광선 단위로 같은 추적 함수를 직렬·병렬 실행하고, 512개 미만은
-pool을 생략합니다. 큐 깊이·초기 순번·재삽입 이력·종료 순번으로 기존 경로 저장
-순서를 복원하며 전역 `maxPaths`가 수치 누적을 중단하지 않게 합니다.
+pool을 생략합니다. 실행 seed와 큐 깊이·초기 순번·재삽입 이력·종료 순번을
+고정된 JSON으로 직렬화하고 별도의 BLAKE2b 해시로 완료 경로를 표본 추출합니다.
+각 배치와 최종 병합은 같은 우선순위의 상위 `maxPaths`개를 제한 크기 heap에
+보관합니다. 종료 순서·배치 분할·worker 수가 표본을 바꾸지 않으며, 경로 한도는
+수치 누적을 중단하지 않습니다. `maxPaths=0`은 해시 계산과 경로 보관을 생략합니다.
 
 기본 검사 실행기는 CPU 예산을 1로 고정합니다. 별도 병렬 검사는 executor에
 명시적 예산을 전달하고 실제 CPU 수가 부족하면 그 비교를 skip으로 기록합니다.
@@ -694,7 +697,7 @@ miss나 mesh fallback으로 숨기지 않습니다. 위치 오차 범위와 이�
 fluence rate와 방향별 radiant flux density입니다. 검출기 표면의 흡수·종료는
 명시적인 경계조건이며 Output 요청 여부와 무관합니다.
 
-`ray-tracing 4.0.0`의 박막은 표면 경계조건으로 명시합니다.
+`ray-tracing 5.0.0`의 박막은 표면 경계조건으로 명시합니다.
 
 - `ray.thin-film-stack`의 대상 Material에서 `optics.thin-film-stack@1` 모델을 선택합니다.
 - 층 순서는 외부에서 내부이며 내부 입사 시 역순입니다. 실제 medium stack의 양쪽 매질을 사용합니다.

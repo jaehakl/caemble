@@ -82,6 +82,19 @@ async def run_catalog_example(measurement, key, *, run_timeout=180, timings=None
                 assert packet["kind"] == "complete", packet
                 break
         await run.task
+        if key == 'transmission-grating-response':
+            for name in ('reflectedPower', 'transmittedPower'):
+                assert recorded[name].shape == (96, 32, 1, 1, 3, 1, 1)
+                assert np.all(recorded[name].sum(axis=(0, 1, 2, 3, 5, 6)) > 0)
+                assert metadata[name]['boxGrid']['sampling'] == 'surface-integral'
+                assert metadata[name]['boxGrid']['frequencyKind'] == 'source-sampled'
+            np.testing.assert_array_equal(recorded['launchedPower'].ravel(), [1, 1, 1])
+            total = recorded['reflectedPower'].sum() + recorded['transmittedPower'].sum()
+            assert 2.2 < total < 2.4
+            assert total == pytest.approx(run.trace[0]['observations']['detectedPower'])
+            offsets, events = native['trace.paths.pathOffsets'], native['trace.paths.segmentEvent']
+            paths = [events[first - i:end - i - 1].tolist() for i, (first, end) in enumerate(zip(offsets[:-1], offsets[1:]))]
+            assert [11, 5] in paths and [11, 1, 5] in paths
         if key == 'pixel-monochromatic-response':
             power = recorded['detectorPower']
             launched = recorded['launchedPower']
@@ -91,6 +104,11 @@ async def run_catalog_example(measurement, key, *, run_timeout=180, timings=None
             assert launched.item() == 1
             assert metadata['detectorPower']['boxGrid']['sampling'] == 'surface-integral'
             assert metadata['detectorPower']['boxGrid']['frequencyKind'] == 'source-sampled'
+            offsets = native['trace.paths.pathOffsets']
+            events = native['trace.paths.segmentEvent']
+            assert len(offsets) == 65
+            assert any(events[first - index:end - index - 1].tolist() == [0, 11, 0, 5]
+                       for index, (first, end) in enumerate(zip(offsets[:-1], offsets[1:])))
         if key in {"steady-microheater", "feedback-microheater"}:
             # simulate.py must retire all numeric/native artifacts before the
             # host closes the run, leaving only its retained empty State root.

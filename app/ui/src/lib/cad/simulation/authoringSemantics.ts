@@ -387,24 +387,27 @@ function validateCalls(
       return
     }
     validateParameters(call.parameters, method.parameters, `${callPath}.parameters`, catalog, issues)
-    if (method.methodId === 'ray.reflection-grating' && isRecord(call.parameters)) {
-      const { orders, efficiencies, grooveDirection } = call.parameters
+    if (method.methodId === 'ray.diffraction-grating' && isRecord(call.parameters)) {
+      const { orders, reflectedEfficiencies, transmittedEfficiencies, grooveDirection } = call.parameters
       const orderValues = isRecord(orders) ? orders.value : undefined
-      const efficiencyValues = isRecord(efficiencies) ? efficiencies.value : undefined
+      const efficiencyParameters = [reflectedEfficiencies, transmittedEfficiencies]
+      const efficiencyArrays = efficiencyParameters.map((parameter) => isRecord(parameter) ? parameter.value : undefined)
       const groove = isRecord(grooveDirection) ? grooveDirection.value : undefined
-      if (Array.isArray(orderValues) && Array.isArray(efficiencyValues)) {
-        if (orderValues.length === 0 || orderValues.length !== efficiencyValues.length)
-          addIssue(issues, `${callPath}.parameters`, 'orders and efficiencies must have the same non-zero length.')
+      if (Array.isArray(orderValues) && efficiencyArrays.every(Array.isArray)) {
+        if (orderValues.length === 0 || efficiencyArrays.some((values) => values.length !== orderValues.length))
+          addIssue(issues, `${callPath}.parameters`, 'orders and both efficiency arrays must have the same non-zero length.')
         if (new Set(orderValues).size !== orderValues.length)
           addIssue(issues, `${callPath}.parameters.orders`, 'diffraction orders must not contain duplicates.')
-        if (isRecord(efficiencies) && typeof efficiencies.unit === 'string' && efficiencyValues.every((value) => typeof value === 'number')) {
-          try {
-            const total = convertUcumValue(efficiencyValues.reduce((sum: number, value: number) => sum + value, 0), efficiencies.unit, '{fraction}', callPath)
-            if (total > 1)
-              addIssue(issues, `${callPath}.parameters.efficiencies`, 'diffraction efficiencies must sum to at most 1.')
-          } catch {
-            // validateParameters reports incompatible units above.
+        try {
+          let total = 0
+          for (const parameter of efficiencyParameters) {
+            if (isRecord(parameter) && typeof parameter.unit === 'string' && Array.isArray(parameter.value))
+              total += convertUcumValue(parameter.value.reduce((sum: number, value: number) => sum + value, 0), parameter.unit, '{fraction}', callPath)
           }
+          if (total > 1)
+            addIssue(issues, `${callPath}.parameters`, 'reflected and transmitted efficiencies together must sum to at most 1.')
+        } catch {
+          // validateParameters reports incompatible units and values above.
         }
       }
       if (Array.isArray(groove) && groove.every((value) => value === 0))
@@ -462,7 +465,14 @@ function validateCalls(
       if (group.missingMemberIds.length > 0) {
         addIssue(issues, targetPath, `references unresolved members: ${group.missingMemberIds.join(', ')}.`)
       }
-      if (method.methodId === 'ray.reflection-grating' && isRecord(call.parameters)) {
+      if (method.methodId === 'ray.diffraction-grating' && isRecord(call.parameters)) {
+        const incompatible = new Set(['ray.diffraction-grating', 'ray.absorbing-detector', 'ray.thin-film-stack', 'ray.abg-scatter', 'ray.lambertian-scatter'])
+        const conflicts = calls.some((other, otherIndex) => otherIndex !== index && isRecord(other) && incompatible.has(String(other.methodId)) && Array.isArray(other.target) && other.target.some((reference) => {
+          if (typeof reference !== 'string' || !reference.startsWith('experiment.surface.')) return false
+          const otherGroup = targetGroup(scenes.experiment, 'surface', reference.slice('experiment.surface.'.length))
+          return otherGroup?.surfaceIds.some((id) => group.surfaceIds.includes(id))
+        }))
+        if (conflicts) addIssue(issues, targetPath, 'grating surface cannot overlap another grating, detector, thin film or surface scattering.')
         const direction = call.parameters.grooveDirection
         const groove = isRecord(direction) ? direction.value : undefined
         if (Array.isArray(groove) && groove.length === 3 && groove.every((value) => typeof value === 'number')) {
@@ -476,7 +486,7 @@ function validateCalls(
               for (const polygonIndex of surface.polygonIndices) {
                 const normal = geometries.poly3.plane(polygons[polygonIndex]).slice(0, 3)
                 if (firstNormal && normal.some((value, axis) => Math.abs(value - firstNormal![axis]) > 1e-6)) {
-                  addIssue(issues, targetPath, 'reflection gratings require a planar surface with consistent normals.')
+                  addIssue(issues, targetPath, 'diffraction gratings require a planar surface with consistent normals.')
                   break
                 }
                 firstNormal ??= normal

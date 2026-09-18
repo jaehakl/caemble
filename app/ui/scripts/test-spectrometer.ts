@@ -37,7 +37,9 @@ const task = evaluated.simulationProgram.tasks.trace
 for (const [parameter, value, message] of [
   ['orders', [1, 1, 0], 'duplicates'],
   ['orders', [0], 'same non-zero length'],
-  ['efficiencies', [0.5, 0.5, 0.5], 'sum to at most 1'],
+  ['reflectedEfficiencies', [0.5, 0.5, 0.5], 'sum to at most 1'],
+  ['transmittedEfficiencies', [0.2, 0, 0], 'sum to at most 1'],
+  ['transmittedEfficiencies', [0], 'same non-zero length'],
   ['grooveDirection', [0, 0, 0], 'non-zero'],
   ['grooveDirection', [0, 1, 0], 'tangent'],
 ] as const) {
@@ -53,10 +55,39 @@ for (const [parameter, value, message] of [
   )
 }
 
+for (const methodId of [
+  'ray.diffraction-grating',
+  'ray.absorbing-detector',
+  'ray.thin-film-stack',
+  'ray.abg-scatter',
+  'ray.lambertian-scatter',
+]) {
+  const invalid = structuredClone(task)
+  invalid.config.boundaryConditions.push({ ...structuredClone(invalid.config.boundaryConditions[0]), methodId })
+  assert.throws(
+    () =>
+      assertExperimentAuthoringSemantics(catalog, {
+        ...evaluated,
+        simulationProgram: { ...evaluated.simulationProgram, tasks: { trace: invalid } },
+      }),
+    /cannot overlap/,
+  )
+}
+const legacy = structuredClone(task)
+legacy.config.boundaryConditions[0].methodId = 'ray.reflection-grating'
+assert.throws(
+  () =>
+    assertExperimentAuthoringSemantics(catalog, {
+      ...evaluated,
+      simulationProgram: { ...evaluated.simulationProgram, tasks: { trace: legacy } },
+    }),
+  /methodId is not declared/,
+)
+
 mkdirSync(outputDirectory, { recursive: true })
 const percentTask = JSON.parse(JSON.stringify(task))
-percentTask.config.boundaryConditions[0].parameters.efficiencies.unit = '%'
-percentTask.config.boundaryConditions[0].parameters.efficiencies.value = [10, 10, 70]
+percentTask.config.boundaryConditions[0].parameters.reflectedEfficiencies.unit = '%'
+percentTask.config.boundaryConditions[0].parameters.reflectedEfficiencies.value = [10, 10, 70]
 assertExperimentAuthoringSemantics(catalog, {
   ...evaluated,
   simulationProgram: { ...evaluated.simulationProgram, tasks: { trace: percentTask } },

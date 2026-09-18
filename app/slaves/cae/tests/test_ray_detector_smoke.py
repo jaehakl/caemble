@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 
 from app.kernel.execution import SpawnSolverExecutor, RemoteSolverError
+from app.kernel.api import SolverInvocation
+from app.kernel.coordinator.plan import RunPlan, detached
 from tests.ray_parallel_fixtures import scattering_ray_invocation
 
 
@@ -56,3 +58,35 @@ async def test_mismatched_detector_box_is_rejected_before_trace():
                     'gridShape': [2, 2, 1], 'lengthUnit': 'm', 'source': 'experiment', 'rootId': 'observation'}}]
     with pytest.raises(RemoteSolverError, match='full face'):
         await SpawnSolverExecutor(cpu_budget=1).execute('app.solvers.ray_tracing.entry:implementation', invocation, timeout=30)
+
+
+@pytest.mark.asyncio
+async def test_pixel_example_samples_detector_paths_without_changing_power(catalog_builds):
+    measurement = catalog_builds['pixel-monochromatic-response']
+    program = measurement['experiment']['simulationProgram']
+    plan = RunPlan.prepare(measurement, program['tasks'], program['recordedData'])
+    spec = plan.task_specs['trace']
+    results = []
+    for limit in [0, 64, 4096]:
+        config = detached(spec.task['config'])
+        config['parameters']['maxPaths'] = limit
+        result = await SpawnSolverExecutor(cpu_budget=1).execute(spec.locator,
+            SolverInvocation(config=config, state={}, inputs={}, world=plan.world(spec),
+                             geometry=None, progress=None, descriptor=detached(spec.descriptor)), timeout=60)
+        results.append(result)
+        bundle = result.visualizations['paths'].members
+        offsets = bundle['pathOffsets']['value']
+        events = bundle['segmentEvent']['value']
+        if limit == 0:
+            assert offsets.tolist() == [0]
+        else:
+            assert any(events[first - index:end - index - 1].tolist() == [0, 11, 0, 5]
+                       for index, (first, end) in enumerate(zip(offsets[:-1], offsets[1:])))
+            if limit == 64:
+                assert result.observations['recordedPaths'] == 64
+            else:
+                assert 64 < len(offsets) - 1 < limit
+    for result in results[1:]:
+        assert result.observations['detectedPower'] == results[0].observations['detectedPower']
+        for name in result.artifacts:
+            np.testing.assert_array_equal(result.artifacts[name]['value'], results[0].artifacts[name]['value'])

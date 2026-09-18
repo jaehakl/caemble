@@ -104,28 +104,33 @@ class CatalogV3Tests(unittest.TestCase):
 
     def test_spectrometer_has_current_grating_solver_and_complete_bundle(self) -> None:
         with open_catalog() as catalog:
-            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@7.0.1')
-            solver = catalog.get_solver_manifest('ray-tracing', '4.1.0')
+            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@7.0.3')
+            solver = catalog.get_solver_manifest('ray-tracing', '5.0.0')
         self.assertEqual(example['title'], 'Czerny–Turner Spectrometer')
-        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '4.1.0')])
+        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '5.0.0')])
         self.assertEqual(set(example['sourceBundle']['files']), {
             'experiment.tsx', 'geometry.tsx', 'material.tsx', 'simulate.py', 'tasks/trace.tsx',
         })
         self.assertEqual(solver['abiVersion'], 3)
         self.assertEqual(solver['implementation'], 'app.solvers.ray_tracing.entry:implementation')
-        method = next(m for m in solver['descriptor']['methods']['boundaryConditions'] if m['methodId'] == 'ray.reflection-grating')
-        self.assertEqual(set(method['parameters']), {'spacing', 'grooveDirection', 'orders', 'efficiencies'})
+        method = next(m for m in solver['descriptor']['methods']['boundaryConditions'] if m['methodId'] == 'ray.diffraction-grating')
+        self.assertEqual(set(method['parameters']), {'spacing', 'grooveDirection', 'orders', 'reflectedEfficiencies', 'transmittedEfficiencies'})
+        self.assertNotIn('ray.reflection-grating', {m['methodId'] for m in solver['descriptor']['methods']['boundaryConditions']})
 
     def test_release_has_only_current_solvers_and_examples(self) -> None:
         expected = {
             "dc-current-density": "3.1.0", "heat-transfer": "2.0.0",
-            "ray-tracing": "4.1.0", "fdtd": "5.0.0",
+            "ray-tracing": "5.0.0", "fdtd": "5.0.0",
             "structural-mechanics": "8.0.0", "pressure-acoustics": "1.1.0",
             "rigid_body": "2.0.0",
             "dem": "1.0.0", "sph": "1.1.0", "mpm": "2.0.0",
             "incompressible-flow": "3.0.0",
         }
         with open_catalog() as catalog:
+            with self.assertRaises(CatalogNotFoundError):
+                catalog.get_solver_manifest('ray-tracing', '4.1.0')
+            with self.assertRaises(CatalogNotFoundError):
+                catalog.get_solver_manifest('ray-tracing', '4.1.1')
             manifests = catalog.solver_manifests()
             self.assertEqual(len(manifests), len(expected))
             self.assertEqual({m["descriptor"]["name"]: m["descriptor"]["version"] for m in manifests}, expected)
@@ -140,11 +145,11 @@ class CatalogV3Tests(unittest.TestCase):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
                 expected_version = "1.0.0" if example["key"] == "hyperelastic-uniaxial" else "7.1.2" if example["repository"] == "fea" else {
-                    "layered-cutaways": "6.0.0", "random-sphere-hcp-array": "6.0.0", "folded-ray-tracing": "7.0.1", "czerny-turner-spectrometer": "7.0.1",
-                    "continuous-ray-optics": "1.0.1", "pixel-monochromatic-response": "1.0.0",
+                    "layered-cutaways": "6.0.0", "random-sphere-hcp-array": "6.0.0", "folded-ray-tracing": "7.0.3", "czerny-turner-spectrometer": "7.0.3",
+                    "continuous-ray-optics": "1.0.3", "pixel-monochromatic-response": "1.0.2", "transmission-grating-response": "1.0.0",
                     "fiber-bundle": "7.0.0", "electro-thermal-notched-bar": "6.0.2", "steady-microheater": "1.2.0",
                     "feedback-microheater": "1.0.0", "pulsed-microheater": "1.1.0",
-                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "7.0.0", "structural-optical-results": "6.0.1",
+                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "7.0.0", "structural-optical-results": "6.0.3",
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.4",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.1.0",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",
