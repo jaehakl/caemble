@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   read: vi.fn(),
   wait: vi.fn(),
   cancel: vi.fn(),
+  execution: vi.fn(),
+  retry: vi.fn(),
   save: vi.fn(),
   calculate: vi.fn(),
   cancelCalculation: vi.fn(),
@@ -36,7 +38,15 @@ vi.mock('@/api/submitArtifact', () => ({
     return result
   },
 }))
-vi.mock('@/api/cae', () => ({ caeBatches: { create: mocks.create, read: mocks.read, cancel: mocks.cancel } }))
+vi.mock('@/api/cae', () => ({
+  caeBatches: {
+    create: mocks.create,
+    read: mocks.read,
+    cancel: mocks.cancel,
+    execution: mocks.execution,
+    retry: mocks.retry,
+  },
+}))
 vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save } } }))
 vi.mock('@/features/cae/CaeBatchProvider', () => ({
   useCaeBatches: () => ({
@@ -163,6 +173,14 @@ beforeEach(() => {
   mocks.create.mockResolvedValue(batch())
   mocks.read.mockResolvedValue(batch())
   mocks.cancel.mockResolvedValue({ ...batch(), state: 'cancelled' })
+  mocks.execution.mockImplementation(async (id: number) => ({
+    measurement_id: id,
+    experiment_id: 10,
+    recorded_at: null,
+    batch_id: null,
+    job: null,
+  }))
+  mocks.retry.mockResolvedValue(batch())
   mocks.calculate.mockResolvedValue(summary)
   mocks.invalidate.mockResolvedValue([])
 })
@@ -254,7 +272,7 @@ describe('server-owned CAE measurement actions', () => {
     await act(async () => {
       expect(await completion).toMatchObject({ name: 'AbortError' })
     })
-    if (action === 'cancel') expect(mocks.cancel).toHaveBeenCalledWith('batch-1')
+    if (action === 'cancel') expect(mocks.cancel).toHaveBeenCalledWith('batch-1', undefined)
     else expect(mocks.cancel).not.toHaveBeenCalled()
     expect(mocks.calculate).not.toHaveBeenCalled()
   })
@@ -454,25 +472,43 @@ describe('server-owned CAE measurement actions', () => {
     expect(mocks.save).not.toHaveBeenCalled()
   })
 
-  it('opens the existing batch for a linked Prepared Measurement instead of registering it again', () => {
-    mocks.batches = [
-      {
-        ...batch(),
-        state: 'completed',
-        succeeded: 0,
-        failed: 1,
-        jobs: batch().jobs.map((job) => ({ ...job, state: 'failed' })),
-      },
-    ]
-    const rendered = renderActions(measurement(41))
-    act(() => {
-      expect(rendered.result.current.runSelected()).toBeNull()
-    })
-    expect(mocks.inspect).toHaveBeenCalledWith('batch-1')
-    expect(mocks.create).not.toHaveBeenCalled()
-  })
+  it.each(['failed', 'cancelled'])(
+    'retries a %s Measurement outside cached pages and calculates only its new attempt',
+    async (state) => {
+      const execution = {
+        measurement_id: 41,
+        experiment_id: 10,
+        recorded_at: null,
+        batch_id: 'batch-1',
+        job: { ...batch().jobs[0], state },
+      }
+      mocks.execution
+        .mockResolvedValue({ ...execution, job: { ...execution.job, state: 'succeeded', attempt_count: 2 } })
+        .mockResolvedValueOnce(execution)
+      mocks.read.mockResolvedValue({ ...batch([42, 43]), state: 'running', finished_at: null, failed: 1 })
+      const rendered = renderActions(measurement(41))
+      act(() => {
+        expect(rendered.result.current.runSelected()).toEqual(expect.any(String))
+        expect(rendered.result.current.runSelected()).toBeNull()
+      })
+      await waitFor(() => expect(rendered.result.current.busy).toBe(false))
+      expect(mocks.retry).toHaveBeenCalledExactlyOnceWith('batch-1', ['job-41'])
+      expect(mocks.calculate.mock.calls.map(([id]) => id)).toEqual([41])
+      expect(mocks.wait).not.toHaveBeenCalled()
+      expect(mocks.create).not.toHaveBeenCalled()
+    },
+  )
 
-  it('opens a linked job outside the snapshot page when registration returns its batch', async () => {
+  it('joins the existing job when concurrent registration wins', async () => {
+    mocks.execution
+      .mockResolvedValue({
+        measurement_id: 41,
+        experiment_id: 10,
+        recorded_at: null,
+        batch_id: 'batch-1',
+        job: batch().jobs[0],
+      })
+      .mockResolvedValueOnce({ measurement_id: 41, experiment_id: 10, recorded_at: null, batch_id: null, job: null })
     mocks.create.mockRejectedValue(
       new ApiError(409, 'Already linked', { detail: { batch_id: 'batch-1', job_id: 'job-41' } }),
     )
@@ -480,9 +516,131 @@ describe('server-owned CAE measurement actions', () => {
     act(() => {
       rendered.result.current.runSelected()
     })
-    await waitFor(() => expect(mocks.inspect).toHaveBeenCalledWith('batch-1'))
-    expect(mocks.read).toHaveBeenCalledWith('batch-1')
+    await waitFor(() => expect(rendered.result.current.busy).toBe(false))
+    expect(mocks.read).toHaveBeenCalledWith('batch-1', {}, true)
+    expect(mocks.calculate).toHaveBeenCalledExactlyOnceWith(41, expect.any(Object))
+    expect(mocks.retry).not.toHaveBeenCalled()
+  })
+
+  it('joins a concurrent retry without retrying its new attempt again', async () => {
+    const execution = {
+      measurement_id: 41,
+      experiment_id: 10,
+      recorded_at: null,
+      batch_id: 'batch-1',
+      job: batch().jobs[0],
+    }
+    mocks.execution
+      .mockResolvedValue({ ...execution, job: { ...execution.job, attempt_count: 2 } })
+      .mockResolvedValueOnce({ ...execution, job: { ...execution.job, state: 'failed' } })
+    mocks.retry.mockRejectedValueOnce(new ApiError(409, 'Already retried', {}))
+    const rendered = renderActions(measurement(41))
+    await act(async () => {
+      expect(
+        await rendered.result.current.runReviewed({ candidateId: 'measurement:41', measurementId: 41, vars: {} }),
+      ).toMatchObject({ measurementId: 41 })
+    })
+    expect(mocks.retry).toHaveBeenCalledOnce()
+    expect(mocks.calculate).toHaveBeenCalledExactlyOnceWith(41, expect.any(Object))
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+
+  it('delivers a selected cancellation again if retry was still in flight', async () => {
+    mocks.execution.mockResolvedValue({
+      measurement_id: 41,
+      experiment_id: 10,
+      recorded_at: null,
+      batch_id: 'batch-1',
+      job: { ...batch().jobs[0], state: 'cancelled' },
+    })
+    let finish!: (value: CaeBatch) => void
+    mocks.retry.mockReturnValueOnce(
+      new Promise<CaeBatch>((resolve) => {
+        finish = resolve
+      }),
+    )
+    const rendered = renderActions(measurement(41))
+    let completion!: Promise<unknown>
+    act(() => {
+      completion = rendered.result.current
+        .runReviewed({ candidateId: 'measurement:41', measurementId: 41, vars: {} })
+        .catch((cause) => cause)
+    })
+    await waitFor(() => expect(mocks.retry).toHaveBeenCalledOnce())
+    act(() => rendered.result.current.cancel())
+    await act(async () => {
+      finish(batch())
+      expect(await completion).toMatchObject({ name: 'AbortError' })
+    })
+    expect(mocks.cancel.mock.calls).toEqual([
+      ['batch-1', ['job-41']],
+      ['batch-1', ['job-41']],
+    ])
     expect(mocks.calculate).not.toHaveBeenCalled()
+  })
+
+  it.each(['cleanup', 'recorded'])('refuses %s work without submitting or retrying', async (reason) => {
+    mocks.execution.mockResolvedValue({
+      measurement_id: 41,
+      experiment_id: 10,
+      recorded_at: reason === 'recorded' ? '2026-09-18' : null,
+      batch_id: 'batch-1',
+      job: { ...batch().jobs[0], state: 'failed', cleanup_pending: true },
+    })
+    const rendered = renderActions(measurement(41))
+    act(() => {
+      rendered.result.current.runSelected()
+    })
+    await waitFor(() =>
+      expect(rendered.result.current.error).toContain(reason === 'cleanup' ? 'worker 정리' : '기록이 완료'),
+    )
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.retry).not.toHaveBeenCalled()
+    expect(mocks.calculate).not.toHaveBeenCalled()
+  })
+
+  it('observes only the selected active job, ignores stale events and cancels only that job', async () => {
+    mocks.execution.mockResolvedValue({
+      measurement_id: 41,
+      experiment_id: 10,
+      recorded_at: null,
+      batch_id: 'batch-1',
+      job: { ...batch().jobs[0], state: 'running', attempt_count: 2 },
+    })
+    const rendered = renderActions(measurement(41))
+    act(() => {
+      rendered.result.current.runSelected()
+    })
+    await waitFor(() => expect(mocks.wait).toHaveBeenCalledOnce())
+    mocks.events = [
+      {
+        id: 10,
+        type: 'job.succeeded',
+        batch_id: 'batch-1',
+        job_id: 'job-41',
+        attempt_count: 1,
+        measurement_id: 41,
+        payload: {},
+        created_at: '',
+      },
+      {
+        id: 11,
+        type: 'job.succeeded',
+        batch_id: 'batch-1',
+        job_id: 'job-42',
+        attempt_count: 2,
+        measurement_id: 42,
+        payload: {},
+        created_at: '',
+      },
+    ]
+    rendered.rerender({ sourceHash: 'source-hash' })
+    expect(mocks.load).not.toHaveBeenCalled()
+    expect(mocks.calculate).not.toHaveBeenCalled()
+    act(() => rendered.result.current.cancel())
+    expect(mocks.cancel).toHaveBeenCalledWith('batch-1', ['job-41'])
+    expect(mocks.retry).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
   })
 
   it('visits every paginated result of a large batch exactly once', async () => {

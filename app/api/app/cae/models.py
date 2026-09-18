@@ -59,5 +59,9 @@ class BatchRetryRequest(BaseModel):
     job_ids: list[UUID] | None = None
 
 
+class BatchCancelRequest(BaseModel):
+    job_ids: list[UUID] | None = Field(default=None, min_length=1)
+
+
 class BatchReadRequest(BaseModel):
     event_id: int = Field(ge=0)

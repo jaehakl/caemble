@@ -48,6 +48,13 @@ def _leaf_events(leaf, origin, direction):
         return []
     o = leaf.inverse[:3, :3] @ origin + leaf.inverse[:3, 3]
     d = leaf.inverse[:3, :3] @ direction
+    # Bounds use the operands before cancellation, not the small local result.
+    # Seven rounded operations cover a three-term dot product and translation.
+    unit_roundoff = np.finfo(float).eps / 2
+    gamma = 7 * unit_roundoff / (1 - 7 * unit_roundoff)
+    inverse_magnitude = np.abs(leaf.inverse[:3, :3])
+    origin_error = gamma * (inverse_magnitude @ np.abs(origin) + np.abs(leaf.inverse[:3, 3]))
+    direction_error = gamma * (inverse_magnitude @ np.abs(direction))
     p, kind = leaf.parameters, leaf.kind
     local_scale = max(
         np.linalg.norm(o),
@@ -62,11 +69,31 @@ def _leaf_events(leaf, origin, direction):
     spatial_error = time_error * np.linalg.norm(d)
     events = []
 
+    def plane_error(t, normal, offset, offset_error=0.0):
+        magnitude = np.abs(normal)
+        numerator_error = (
+            magnitude @ origin_error + offset_error
+            + gamma * (abs(offset) + magnitude @ np.abs(o))
+        )
+        denominator_error = magnitude @ direction_error + gamma * (magnitude @ np.abs(d))
+        denominator_lower = abs(np.dot(normal, d)) - denominator_error
+        if denominator_lower <= 0:
+            raise UnresolvedIntersection(
+                f"{leaf.root_id}/{leaf.occurrence_id}: unresolved plane direction near t={t}"
+            )
+        error = (numerator_error + abs(t) * denominator_error) / denominator_lower + gamma * abs(t)
+        if not math.isfinite(error):
+            raise UnresolvedIntersection(
+                f"{leaf.root_id}/{leaf.occurrence_id}: unbounded plane intersection error near t={t}"
+            )
+        return error
+
     def append(t, normal, surface, coordinates=(0.0, 0.0), error=0.0):
+        error = max(time_error, error)
         if (
             not math.isfinite(t)
-            or t < interval[0] - time_error
-            or t > interval[1] + time_error
+            or t < interval[0] - error
+            or t > interval[1] + error
         ):
             return
         normal = leaf.inverse[:3, :3].T @ np.asarray(normal, dtype=float)
@@ -76,7 +103,6 @@ def _leaf_events(leaf, origin, direction):
                 f"{leaf.root_id}/{leaf.occurrence_id}: nonregular normal at t={t}"
             )
         normal /= length
-        error = max(time_error, error)
         point = origin + t * direction
         rounding = (
             16 * np.finfo(float).eps * (np.abs(origin) + abs(t) * np.abs(direction))
@@ -109,6 +135,7 @@ def _leaf_events(leaf, origin, direction):
                 [0, 0, -1 if surface == 0 else 1],
                 surface,
                 (np.linalg.norm(point[:2]) / r if r else 0, theta),
+                plane_error(t, np.array([0., 0., 1.]), z),
             )
 
     if kind == "box":
@@ -128,6 +155,7 @@ def _leaf_events(leaf, origin, direction):
                         normal,
                         2 * axis + int(side > 0),
                         tuple(point[i] / (2 * half[i]) + 0.5 for i in axes),
+                        plane_error(t, normal, half[axis]),
                     )
     elif kind in {"sphere", "ellipsoid"}:
         a = p["radius"] if kind == "sphere" else p["axialRadius"]
@@ -404,6 +432,8 @@ def _leaf_events(leaf, origin, direction):
                             np.dot(radial, frame["normal"]),
                         ),
                     ),
+                    plane_error(t, frame["tangent"], np.dot(frame["center"], frame["tangent"]),
+                                gamma * np.dot(np.abs(frame["center"]), np.abs(frame["tangent"]))),
                 )
     return events
 
@@ -628,9 +658,32 @@ class AnalyticScene:
                 previous is not None
                 and event.surface_ref == previous.surface_ref
                 and event.occurrence_id == previous.occurrence_id
-                and abs(event.distance)
-                <= event.distance_error + previous.distance_error
             ):
-                continue
+                # The origin is uncertain in the *incident* ray's direction.
+                # Project its normal displacement onto the new outgoing ray;
+                # reusing its coordinate-wise box alone loses that uncertainty
+                # after diffraction/refraction changes direction.
+                position_error = event.position_error + previous.position_error
+                same_normal = np.linalg.norm(event.normal - previous.normal) <= 32 * np.finfo(float).eps
+                if event.distance == 0 and np.array_equal(event.position, previous.position) and same_normal:
+                    continue  # Includes an exactly repeated, analytically resolved touch.
+                normal_speed = abs(np.dot(previous.normal, direction))
+                speed_error = 8 * np.finfo(float).eps * np.dot(np.abs(previous.normal), np.abs(direction))
+                if normal_speed <= speed_error:
+                    if np.all(np.abs(event.position - previous.position) <= position_error):
+                        raise UnresolvedIntersection(f"{event.surface_ref}: unresolved tangent self-intersection")
+                    return event
+                origin_distance_error = (
+                    np.dot(np.abs(previous.normal), previous.position_error) / (normal_speed - speed_error)
+                )
+                distance_error = event.distance_error + origin_distance_error
+                position_error = position_error + np.abs(direction) * origin_distance_error
+                if not math.isfinite(distance_error) or not np.all(np.isfinite(position_error)):
+                    raise UnresolvedIntersection(f"{event.surface_ref}: unbounded self-intersection error")
+                if (abs(event.distance) <= distance_error
+                        and np.all(np.abs(event.position - previous.position) <= position_error)):
+                    if not same_normal:
+                        raise UnresolvedIntersection(f"{event.surface_ref}: unresolved separation from previous crossing")
+                    continue
             return event
         return None

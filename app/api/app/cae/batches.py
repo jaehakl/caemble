@@ -135,22 +135,38 @@ async def batch_snapshot(
         "last_event_id": batch.last_event_id,
         "read_event_id": batch.read_event_id,
         "jobs_total": batch.created_count,
-        "jobs": [
-            {
-                "id": job.id,
-                "index": job.item_index,
-                "attempt_count": job.attempt_count,
-                "state": job.state,
-                "uploaded": job.input is not None,
-                "input_hash": (job.artifact_metadata or {}).get("input_hash"),
-                "measurement_id": measurement_id,
-                "progress": (job.progress[-1].get("progress") if job.progress else None),
-                "last_error": job.last_error,
-                "created_at": job.created_at,
-                "updated_at": job.updated_at,
-            }
-            for job, measurement_id in rows
-        ],
+        "jobs": [job_snapshot(job, measurement_id) for job, measurement_id in rows],
+    }
+
+
+def job_snapshot(job: Job, measurement_id: int | None) -> dict:
+    return {
+        "id": job.id, "index": job.item_index, "attempt_count": job.attempt_count,
+        "state": job.state, "uploaded": job.input is not None,
+        "input_hash": (job.artifact_metadata or {}).get("input_hash"),
+        "measurement_id": measurement_id,
+        "cleanup_pending": bool(job.launcher_id and job.cleaned_at is None),
+        "progress": job.progress[-1].get("progress") if job.progress else None,
+        "last_error": job.last_error, "created_at": job.created_at, "updated_at": job.updated_at,
+    }
+
+
+async def measurement_execution(db: AsyncSession, measurement_id: int, user_id: str) -> dict:
+    measurement = await db.scalar(select(Measurement).where(
+        Measurement.id == measurement_id, Measurement.user_id == user_id))
+    if measurement is None:
+        raise HTTPException(404, "Measurement not found.")
+    job = None
+    if measurement.job_id is not None:
+        job = await db.scalar(select(Job).join(CaeBatch, CaeBatch.batch_id == Job.batch_id).where(
+            Job.id == measurement.job_id, Job.user_id == user_id))
+        if job is None:
+            raise HTTPException(409, "The linked CAE execution is unavailable.")
+    return {
+        "measurement_id": measurement.id, "experiment_id": measurement.experiment_id,
+        "recorded_at": measurement.recorded_at,
+        "batch_id": job.batch_id if job else None,
+        "job": job_snapshot(job, measurement.id) if job else None,
     }
 
 
@@ -179,12 +195,26 @@ async def list_batches(
 
 
 async def cancel_batch(
-    db: AsyncSession, batch_id: str, user_id: str
+    db: AsyncSession, batch_id: str, user_id: str, job_ids: list[str] | None = None
 ) -> tuple[JobBatch, list[tuple[str, str]]]:
     await serialize_events(db)
     batch = await require_batch(db, batch_id, user_id, lock=True)
     cancellations = []
-    if batch.state not in {"completed", "cancelled"}:
+    if job_ids is not None:
+        jobs = list((await db.scalars(select(Job).where(
+            Job.batch_id == batch.id, Job.id.in_(job_ids)).order_by(Job.id).with_for_update())).all())
+        if not job_ids or {job.id for job in jobs} != set(job_ids):
+            raise HTTPException(409, "Select jobs from this batch.")
+        if batch.state == "uploading":
+            raise HTTPException(409, "Cancel the uploading batch before changing individual jobs.")
+        for job in jobs:
+            if job.state not in SERVER_ACTIVE_STATES:
+                continue
+            job.cancel_requested_at = utcnow()
+            if job.launcher_id and job.cleaned_at is None:
+                cancellations.append((job.launcher_id, job.id))
+            await finish_job(db, job, "cancelled", "Cancelled by user.")
+    elif batch.state not in {"completed", "cancelled"}:
         was_uploading = batch.state == "uploading"
         batch.state = "cancelled"
         if not batch.generation_stopped:
@@ -227,7 +257,7 @@ async def retry_batch(
     batch = await require_batch(db, batch_id, user_id, lock=True)
     query = (
         select(Job)
-        .where(Job.batch_id == batch.id, Job.state == "failed")
+        .where(Job.batch_id == batch.id, Job.state.in_(("failed", "cancelled")))
         .order_by(Job.item_index)
         .with_for_update()
     )
@@ -235,7 +265,7 @@ async def retry_batch(
         query = query.where(Job.id.in_(job_ids))
     jobs = list((await db.scalars(query)).all())
     if not jobs or (job_ids is not None and {job.id for job in jobs} != set(job_ids)):
-        raise HTTPException(409, "Select failed jobs from this batch.")
+        raise HTTPException(409, "Select failed or cancelled jobs from this batch.")
     if any(job.launcher_id and job.cleaned_at is None for job in jobs):
         raise HTTPException(409, "Wait for worker cleanup before retrying.")
     cae = await db.get(CaeBatch, batch.id)
@@ -249,10 +279,17 @@ async def retry_batch(
     if experiment is None or experiment.source_hash != cae.spec["source_hash"]:
         raise HTTPException(409, "The original Experiment is no longer available.")
     for job in jobs:
-        if job.input is not None and not await db.scalar(
-            select(Measurement.id).where(Measurement.job_id == job.id).with_for_update()
-        ):
+        measurement = await db.scalar(
+            select(Measurement).where(Measurement.job_id == job.id).with_for_update()
+        )
+        if measurement is None:
             raise HTTPException(409, "The original Measurement was deleted.")
+        if measurement.recorded_at is not None:
+            raise HTTPException(409, "This Measurement already has recorded results.")
+        if job.state == "failed":
+            batch.failed -= 1
+        else:
+            batch.cancelled -= 1
         job.attempt_count += 1
         job.state = "queued"
         job.launcher_id = None
@@ -262,7 +299,6 @@ async def retry_batch(
         job.last_error = None
         job.progress = []
         job.updated_at = utcnow()
-        batch.failed -= 1
         await add_event(db, batch, "job.queued", job=job)
     batch.state = "running"
     batch.finished_at = None
@@ -292,10 +328,10 @@ async def mark_batch_read(db: AsyncSession, batch_id: str, user_id: str, event_i
     await db.commit()
 
 
-async def stop_batch(db: AsyncSession, batch_id: str, user_id: str) -> JobBatch:
+async def stop_batch(db: AsyncSession, batch_id: str, user_id: str, job_ids: list[str] | None = None) -> JobBatch:
     from gpstation.service.job_orchestrator import job_orchestrator
 
-    batch, assignments = await cancel_batch(db, batch_id, user_id)
+    batch, assignments = await cancel_batch(db, batch_id, user_id, job_ids)
     for launcher_id, job_id in assignments:
         try:
             async with job_orchestrator.launcher_send_lock(launcher_id):
@@ -304,7 +340,7 @@ async def stop_batch(db: AsyncSession, batch_id: str, user_id: str) -> JobBatch:
                     {
                         "type": "job.cancel",
                         "job_id": job_id,
-                        "reason": "batch cancelled",
+                        "reason": "job cancelled" if job_ids is not None else "batch cancelled",
                     },
                 )
         except Exception:

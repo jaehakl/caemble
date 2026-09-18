@@ -555,3 +555,189 @@ def test_touch_preserves_medium_and_direction_unless_detected(monkeypatch, detec
     np.testing.assert_array_equal(ray.direction, [1, 0, 0])
     assert collector.detected_power == int(detector)
     assert len(result) == int(not detector)
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_rotated_thin_grating_exit_is_not_repeated_after_world_rounding(order):
+    from app.solvers.ray_tracing.grating import diffracted_direction
+    from app.solvers.ray_tracing.formulation import _cross_medium
+    matrix = np.array([
+        [0.9999823208972435, 0., -0.005946250327933201, 0.],
+        [0., 1., 0., 0.],
+        [0.005946250327933201, 0., 0.9999823208972435, 0.1192437306685398],
+        [0., 0., 0., 1.],
+    ])
+    scene = AnalyticScene([solid(dict(kind="transform", matrix=matrix.ravel().tolist(),
+        child=primitive("box", size=[.02, .02, .0000762])))])
+    origin = np.array([-.00020206606634240584, -.0003835484692435692, .07])
+    incoming = np.array([.006926325427595277, .006021548651563518, .9999578825970161])
+    front = scene.intersect(origin, incoming)
+    assert front.crossing_kind == "enter"
+    direction = diffracted_direction(incoming, front.normal, np.array([0., -1., 0.]),
+        550e-9, 2e-6, order, incident_index=1., outgoing_index=1., transmission=True)
+    rear = scene.intersect(front.position, direction, previous=front)
+    assert rear.crossing_kind == "exit" and rear.surface_ref.surface_index == 5
+    assert rear.distance > .0000762
+    stack = _cross_medium([], None, ("solid", "Glass"))
+    assert _cross_medium(stack, "solid", None) == []
+    assert scene.intersect(rear.position, direction, previous=rear) is None
+    # A real reflected crossing through the other face remains visible.
+    reflected = direction - 2 * np.dot(direction, rear.normal) * rear.normal
+    back = scene.intersect(rear.position, reflected, previous=rear)
+    assert back.crossing_kind == "exit" and back.surface_ref.surface_index == 4
+    assert back.distance > .0000762
+
+
+def test_self_hit_filter_keeps_a_distinct_crossing_of_the_same_curved_surface():
+    scene = AnalyticScene([solid(primitive("sphere", radius=1.))])
+    first = scene.intersect([-2., .25, 0.], [1., 0., 0.])
+    last = scene.intersect(first.position, [1., 0., 0.], previous=first)
+    assert first.surface_ref == last.surface_ref
+    assert first.crossing_kind == "enter" and last.crossing_kind == "exit"
+    assert last.distance == pytest.approx(2 * np.sqrt(1 - .25**2))
+
+
+def test_diffracted_nearly_axial_ray_crosses_each_film_face_once(monkeypatch):
+    from app.methods.optics import perpendicular
+    from app.solvers.ray_tracing import formulation
+    # Seed 42, case 8947: the old filter accepted the front face again at
+    # t=1.3581848041908873e-17 after the first-order direction changed.
+    matrix = np.array([
+        [.999838604433591, 0., .01796566403696789, 0.],
+        [0., 1., 0., 0.],
+        [-.01796566403696789, 0., .999838604433591, .12267024792692374],
+        [0., 0., 0., 1.],
+    ])
+    scene = AnalyticScene([solid(dict(kind="transform", matrix=matrix.ravel().tolist(),
+        child=primitive("box", size=[.02, .02, .0000762])))])
+    origin = np.array([-1.6996600614159994e-05, .0001396058599266658, .07])
+    incoming = np.array([-3.269065001722279e-05, -.0018557101170121677, .9999982776341583])
+    ray = Ray(origin, incoming, perpendicular(incoming), np.array([1., 0., 0., 0.]), 550e-9, 1., 0)
+    monkeypatch.setattr(formulation, "optical_material", lambda *args: SimpleNamespace(
+        absorption_coefficient=0., scattering_coefficient=0., refractive_index=complex(1.)))
+    grating = {SurfaceRef("solid", "box", 4): dict(spacing={"value": 2e-6},
+        grooveDirection={"value": [0., -1., 0.]}, orders={"value": [1]},
+        reflectedEfficiencies={"value": [0.]}, transmittedEfficiencies={"value": [1.]})}
+    collector = PathCollector(10)
+    for step in range(3):
+        branches = _trace_one(ray, scene, {}, {}, {}, {}, {}, grating, 8, 1e-8, 42, collector)
+        if step < 2:
+            assert len(branches) == 1
+            ray = branches[0]
+            assert ray.last_hit.surface_ref.surface_index == (4 if step == 0 else 5)
+            assert ray.medium_stack == ([("solid", "Glass")] if step == 0 else [])
+            assert ray.stokes[0] == pytest.approx(1.)
+        else:
+            assert not branches
+    assert collector.paths[0].events == [11, 1, 7]
+
+
+@pytest.mark.parametrize("translation", [0., 1e6])
+def test_plane_distance_bound_covers_affine_cancellation(translation):
+    import mpmath
+    from app.methods.rays.analytic import _leaf_events
+    matrix = np.array([[.999838604433591, 0., .01796566403696789, 0.], [0., 1., 0., 0.],
+        [-.01796566403696789, 0., .999838604433591, .12267024792692374], [0., 0., 0., 1.]])
+    shift = np.array([translation, -translation, translation])
+    matrix[:3, 3] += shift
+    body = solid(dict(kind="transform", matrix=matrix.ravel().tolist(),
+        child=primitive("box", size=[.02, .02, .0000762])))
+    origin = np.array([-1.8717193498686394e-05, 4.193506961222959e-05, .12263247809785088]) + shift
+    direction = np.array([.27432238514702706, -.0018557101170121677, .961635994203216])
+    leaf = body.leaves[0]
+    hit = next(event for event in _leaf_events(leaf, origin, direction) if event.surface_ref.surface_index == 4)
+    precise = mpmath.mp.clone()
+    precise.dps = 80
+    local_origin = sum(precise.mpf(float(leaf.inverse[2, i])) * float(origin[i]) for i in range(3)) + float(leaf.inverse[2, 3])
+    local_direction = sum(precise.mpf(float(leaf.inverse[2, i])) * float(direction[i]) for i in range(3))
+    expected = (-precise.mpf(.0000762) / 2 - local_origin) / local_direction
+    assert abs(precise.mpf(hit.distance) - expected) <= hit.distance_error
+    for axis in range(3):
+        expected_position = precise.mpf(float(origin[axis])) + expected * float(direction[axis])
+        assert abs(precise.mpf(float(hit.position[axis])) - expected_position) <= hit.position_error[axis]
+
+
+def test_seeded_transformed_films_keep_enter_exit_and_reflection_order():
+    from app.solvers.ray_tracing.grating import diffracted_direction
+    rng = np.random.default_rng(42)
+    for index in range(10000):
+        angle, z = rng.uniform(-.05, .05), rng.uniform(.08, .15)
+        c, s = np.cos(angle), np.sin(angle)
+        matrix = np.array([[c, 0., s, 0.], [0., 1., 0., 0.], [-s, 0., c, z], [0., 0., 0., 1.]])
+        origin = np.array([rng.uniform(-.003, .003), rng.uniform(-.0015, .0015), .07])
+        incoming = np.array([rng.uniform(-.03, .03), rng.uniform(-.01, .01), 1.])
+        incoming /= np.linalg.norm(incoming)
+        scene = AnalyticScene([solid(dict(kind="transform", matrix=matrix.ravel().tolist(),
+            child=primitive("box", size=[.02, .02, .0000762])))])
+        front = scene.intersect(origin, incoming)
+        assert front.crossing_kind == "enter", index
+        direction = diffracted_direction(incoming, front.normal, np.array([0., -1., 0.]),
+            (400e-9, 550e-9, 700e-9)[index % 3], 2e-6, (0, 1, -1)[index % 3],
+            incident_index=1., outgoing_index=1., transmission=True)
+        rear = scene.intersect(front.position, direction, previous=front)
+        assert rear.crossing_kind == "exit" and rear.surface_ref.surface_index == 5, index
+        assert rear.distance > .0000762, index
+        assert scene.intersect(rear.position, direction, previous=rear) is None, index
+        reflected = direction - 2 * np.dot(direction, rear.normal) * rear.normal
+        returning = scene.intersect(rear.position, reflected, previous=rear)
+        assert returning.crossing_kind == "exit" and returning.surface_ref.surface_index == 4, index
+        assert scene.intersect(returning.position, reflected, previous=returning) is None, index
+
+
+def test_near_tangent_true_recrossing_is_kept_or_explicitly_unresolved():
+    scene = AnalyticScene([solid(primitive("sphere", radius=1.))])
+    # Resolvable entry and exit of the same curved surface must both survive.
+    first = scene.intersect([-2., 1. - 1e-8, 0.], [1., 0., 0.])
+    following = scene.intersect(first.position, [1., 0., 0.], previous=first)
+    assert following.crossing_kind == "exit" and following.distance > 2e-4
+    # Closer to tangency the propagated uncertainty includes a different root.
+    first = scene.intersect([-2., 1. - 5e-16, 0.], [1., 0., 0.])
+    with pytest.raises(UnresolvedIntersection, match="separation"):
+        scene.intersect(first.position, [1., 0., 0.], previous=first)
+    tangent = scene.intersect([-2., 1., 0.], [1., 0., 0.])
+    assert tangent.crossing_kind == "touch"
+    assert scene.intersect(tangent.position, [1., 0., 0.], previous=tangent) is None
+
+
+def test_incident_position_error_is_projected_along_diffracted_direction():
+    from app.solvers.ray_tracing.grating import diffracted_direction
+    matrix = np.array([[.999838604433591, 0., .01796566403696789, 0.], [0., 1., 0., 0.],
+        [-.01796566403696789, 0., .999838604433591, .12267024792692374], [0., 0., 0., 1.]])
+    scene = AnalyticScene([solid(dict(kind="transform", matrix=matrix.ravel().tolist(),
+        child=primitive("box", size=[.02, .02, .0000762])))])
+    incoming = np.array([0., 0., 1.])
+    front = scene.intersect([0., 0., -1e8], incoming)
+    direction = diffracted_direction(incoming, front.normal, np.array([0., -1., 0.]),
+        550e-9, 2e-6, 1, incident_index=1., outgoing_index=1., transmission=True)
+    # Long incident travel leaves uncertainty along z, while the new ray has x motion.
+    assert front.position_error[0] == 0
+    raw = scene.intersect(front.position, direction)
+    assert raw.surface_ref == front.surface_ref and raw.distance > 1e-9
+    rear = scene.intersect(front.position, direction, previous=front)
+    assert rear.surface_ref.surface_index == 5 and rear.crossing_kind == "exit"
+    assert rear.distance > .0000762
+
+
+def test_plane_direction_cancellation_is_explicitly_unresolved():
+    c, s = np.cos(.3), np.sin(.3)
+    matrix = np.array([[c, 0., s, 0.], [0., 1., 0., 0.], [-s, 0., c, 0.], [0., 0., 0., 1.]])
+    scene = AnalyticScene([solid(dict(kind="transform", matrix=matrix.ravel().tolist(),
+        child=primitive("box", size=[2., 2., .0000762])))])
+    origin = matrix[:3, :3] @ np.array([0., 0., -.0000381])
+    resolved = matrix[:3, :3] @ np.array([1., 0., 1e-10])
+    assert scene.intersect(origin, resolved).surface_ref.surface_index == 4
+    unresolved = matrix[:3, :3] @ np.array([1., 0., 1e-16])
+    with pytest.raises(UnresolvedIntersection, match="plane direction"):
+        scene.intersect(origin, unresolved)
+
+
+@pytest.mark.parametrize("stack,exiting,entering,message", [
+    ([], "solid", None, "exited inactive medium"),
+    ([("solid", "Glass")], None, ("solid", "Glass"), "entered active medium"),
+    ([("outer", "Glass"), ("inner", "Glass")], "outer", None, "must not overlap"),
+])
+def test_medium_transition_errors_are_not_silenced(stack, exiting, entering, message):
+    from app.kernel.api.errors import CaeError
+    from app.solvers.ray_tracing.formulation import _cross_medium
+    with pytest.raises(CaeError, match=message):
+        _cross_medium(stack, exiting, entering)

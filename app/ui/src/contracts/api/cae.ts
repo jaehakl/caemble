@@ -9,10 +9,20 @@ export const caeJobSchema = z
     measurement_id: z.number().int().nullable(),
     progress: z.record(z.string(), z.unknown()).nullable(),
     last_error: z.string().nullable(),
+    cleanup_pending: z.boolean().optional(),
     created_at: z.string(),
     updated_at: z.string(),
   })
   .passthrough()
+
+export const caeMeasurementExecutionSchema = z.object({
+  measurement_id: z.number().int(),
+  experiment_id: z.number().int(),
+  recorded_at: z.string().nullable(),
+  batch_id: z.string().nullable(),
+  job: caeJobSchema.nullable(),
+})
+export type CaeMeasurementExecution = z.infer<typeof caeMeasurementExecutionSchema>
 
 export const caeBatchSchema = z
   .object({

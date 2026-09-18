@@ -196,10 +196,10 @@ function BatchPanel({ className, compact }: { className?: string; compact: boole
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || detail.failed === 0 || detail.preflight}
+                  disabled={busy || detail.failed + detail.cancelled === 0 || detail.preflight}
                   onClick={() => void act(() => caeBatches.retry(detail.id))}
                 >
-                  실패한 작업 재시도
+                  실패·취소 작업 재시도
                 </Button>
                 <Button
                   size="sm"
@@ -246,7 +246,7 @@ function BatchPanel({ className, compact }: { className?: string; compact: boole
                       {job.last_error ? (
                         <p className="mt-1 text-xs break-words text-destructive">{job.last_error}</p>
                       ) : null}
-                      {job.state === 'failed' && !detail.preflight ? (
+                      {['failed', 'cancelled'].includes(job.state) && !detail.preflight ? (
                         <Button
                           className="mt-2"
                           size="sm"
@@ -254,7 +254,7 @@ function BatchPanel({ className, compact }: { className?: string; compact: boole
                           disabled={busy}
                           onClick={() => void act(() => caeBatches.retry(detail.id, [job.id]))}
                         >
-                          이 작업 재시도
+                          {job.cleanup_pending ? 'worker 정리 확인 후 재시도' : '이 작업 재시도'}
                         </Button>
                       ) : null}
                     </li>

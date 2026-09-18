@@ -1,6 +1,7 @@
 import { API_URL, browserClient, type CaembleClient, type RequestContext } from './http'
 import {
   caeBatchListSchema,
+  caeMeasurementExecutionSchema,
   caeBatchSchema,
   caeEventSchema,
   type CaeBatchRequest,
@@ -52,17 +53,20 @@ export function createCaeBatches(client: CaembleClient) {
         undefined,
         { ...context, validate: (value) => caeBatchSchema.parse(value) },
       ),
-    cancel: (id: string) =>
-      request(
-        'post',
-        `/cae/batches/${encodeURIComponent(id)}/cancel`,
-        {},
-        { csrf: 'required', validate: (value) => caeBatchSchema.parse(value) },
-      ),
+    cancel: (id: string, jobIds?: readonly string[]) =>
+      request('post', `/cae/batches/${encodeURIComponent(id)}/cancel`, jobIds ? { job_ids: jobIds } : {}, {
+        csrf: 'required',
+        validate: (value) => caeBatchSchema.parse(value),
+      }),
     retry: (id: string, jobIds?: readonly string[]) =>
       request('post', `/cae/batches/${encodeURIComponent(id)}/retry`, jobIds ? { job_ids: jobIds } : {}, {
         csrf: 'required',
         validate: (value) => caeBatchSchema.parse(value),
+      }),
+    execution: (measurementId: number, context?: RequestContext) =>
+      request('get', `/cae/measurements/${measurementId}/execution`, undefined, {
+        ...context,
+        validate: (value) => caeMeasurementExecutionSchema.parse(value),
       }),
     markRead: (id: string, eventId: number) =>
       request('post', `/cae/batches/${encodeURIComponent(id)}/read`, { event_id: eventId }, { csrf: 'required' }),

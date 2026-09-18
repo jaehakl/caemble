@@ -62,8 +62,13 @@ state survive a browser disconnect. The browser subscribes to server events and
 restores snapshots using an event cursor; closing the Workbench only stops that
 subscription. Completed selected Measurements are fetched again for visualization.
 CalculationData postprocessing runs explicitly in the browser or CLI; Prediction iteration remains browser work. Both
-do not automatically resume on reconnect. Failed runs require manual retry, which
+do not automatically resume on reconnect. Failed and cancelled runs require manual retry, which
 reuses the saved source, Vars, model definitions, selections and parameters.
+Selected Measurement execution first queries its owner-scoped
+`GET /cae/measurements/{id}/execution` link, independently of cached batch pages.
+An active job is observed; a failed or cancelled job is retried only after worker
+cleanup; a recorded Measurement is not run again. Observation and Calculation
+postprocessing stay scoped to the selected job and attempt.
 A newly generated Candidate reevaluates material.tsx for its new Vars; it does
 not inherit the selected Measurement's parameter snapshot.
 
@@ -93,8 +98,12 @@ restart. Retry uses the same saved input and a new attempt number. Inactive uplo
 expire after 24 hours; cancellation and expiry share the commit lock. Queued CAE
 jobs do not expire. Legacy jobs without stored input require a new client build.
 
-`/cae/batches` provides submission, listing, detail, cancellation, failed-item
-retry and notification read state. `/cae/events` replays owner-scoped SSE events;
+`/cae/batches` provides submission, listing, detail, cancellation, failed/cancelled-item
+retry and notification read state. `/cae/events` replays owner-scoped SSE events.
+Cancellation accepts optional `job_ids` to cancel selected jobs without affecting
+their siblings; omitting them cancels the whole batch. A duplicate Measurement
+commit returns HTTP 409 with its existing batch and job IDs so the client can
+observe the winning execution without registering another one.
 `/v1/jobs/{id}/stream` authenticates a worker for one Job, Launcher and attempt.
 Event writers serialize commits before assigning event IDs, so a snapshot cursor
 cannot miss a lower ID that commits later. The old Measurement record-upload

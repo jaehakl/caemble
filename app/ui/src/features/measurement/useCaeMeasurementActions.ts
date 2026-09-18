@@ -7,7 +7,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { dbTables } from '@/api'
 import { caeBatches } from '@/api/cae'
 import { ApiError } from '@/api/http'
-import type { CaeBatch } from '@/contracts/api/cae'
+import type { CaeBatch, CaeMeasurementExecution } from '@/contracts/api/cae'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
@@ -72,7 +72,7 @@ export function useCaeMeasurementActions({
 }) {
   const queryClient = useQueryClient()
   const queryScope = usePrivateQueryScope()
-  const { batches, events, inspectBatch, update, readPage, waitForChange } = useCaeBatches()
+  const { events, update, readPage, waitForChange } = useCaeBatches()
   const [operation, setOperation] = useState<
     'save' | 'delete' | 'generate-and-run' | 'save-and-run' | 'measurement' | null
   >(null)
@@ -87,6 +87,8 @@ export function useCaeMeasurementActions({
   const active = useRef<{
     controller: AbortController
     batchId: string | null
+    jobId: string | null
+    jobAttempt: number | null
     cancelRequested: boolean
     completed: Set<number>
   } | null>(null)
@@ -117,10 +119,12 @@ export function useCaeMeasurementActions({
     for (const event of events) {
       if (event.id <= lastEvent.current) continue
       lastEvent.current = event.id
-      if (event.type === 'job.succeeded' && event.measurement_id && active.current?.batchId === event.batch_id)
-        active.current.completed.add(event.measurement_id)
+      const run = active.current
+      const matchesAttempt = !run?.jobId || (event.job_id === run.jobId && event.attempt_count === run.jobAttempt)
+      if (event.type === 'job.succeeded' && event.measurement_id && run?.batchId === event.batch_id && matchesAttempt)
+        run.completed.add(event.measurement_id)
       const selected = latest.current.selection.measurement
-      if (event.type === 'job.succeeded' && selected && selected.id === event.measurement_id) {
+      if (event.type === 'job.succeeded' && selected && selected.id === event.measurement_id && matchesAttempt) {
         void invalidateMeasurementMutation(queryClient, queryScope, selected.experiment_id, [selected.id])
           .then(() => {
             if (latest.current.selection.measurement?.id === selected.id)
@@ -168,6 +172,8 @@ export function useCaeMeasurementActions({
       const run = {
         controller: new AbortController(),
         batchId: null as string | null,
+        jobId: null as string | null,
+        jobAttempt: null as number | null,
         cancelRequested: false,
         completed: new Set<number>(),
       }
@@ -185,28 +191,109 @@ export function useCaeMeasurementActions({
       let calculationCompleted = 0
       let completion: SaveAndRunCompletion | null = null
       return (async () => {
-        const built = await buildBatchArtifact(request, signal, (completed, total) =>
-          setStage(`입력 준비 ${completed}/${total}`),
-        )
-        const registered = await submitArtifact({
-          client: browserClient,
-          artifact: built.artifact,
-          experimentId: request.experiment_id,
-          requestId: request.request_id,
-          readItem: (item) => built.store.readItem(item),
-          signal,
-          onRegistered: async (id) => {
-            run.batchId = id
-            if (run.cancelRequested) await caeBatches.cancel(id)
-          },
-          onProgress: (completed, total) => setStage(`업로드 ${completed}/${total}`),
-        }).finally(() => built.store.close())
+        const resume = async (execution: CaeMeasurementExecution, allowRetry: boolean) => {
+          const job = execution.job
+          if (!job || !execution.batch_id || execution.experiment_id !== request.experiment_id)
+            throw new Error('Measurement의 기존 CAE 작업을 찾을 수 없습니다.')
+          run.batchId = execution.batch_id
+          run.jobId = job.id
+          run.jobAttempt = job.attempt_count
+          if (allowRetry && ['failed', 'cancelled'].includes(job.state)) {
+            if (job.cleanup_pending) throw new Error('worker 정리 대기 중입니다. 정리가 끝난 후 다시 실행하세요.')
+            setStage('선택 작업 재시도')
+            try {
+              update(await caeBatches.retry(execution.batch_id, [job.id]))
+            } catch (cause) {
+              // Another tab may have retried first. Join its attempt, never create another job.
+              if (!(cause instanceof ApiError) || cause.status !== 409) throw cause
+              const current = await caeBatches.execution(execution.measurement_id, { signal })
+              if (!current.job || current.job.id !== job.id || current.job.attempt_count <= job.attempt_count)
+                throw cause
+            }
+            if (run.cancelRequested) await caeBatches.cancel(execution.batch_id, [job.id])
+            signal.throwIfAborted()
+            const current = await caeBatches.execution(execution.measurement_id, { signal })
+            if (!current.job || current.job.id !== job.id) throw new Error('Measurement의 실행 연결이 변경됐습니다.')
+            run.jobAttempt = current.job.attempt_count
+          }
+          return update(await readPage(execution.batch_id, {}, true))
+        }
+        let registered: CaeBatch | undefined
+        if (request.measurement_id) {
+          const execution = await caeBatches.execution(request.measurement_id, { signal })
+          signal.throwIfAborted()
+          if (execution.recorded_at) throw new Error('이미 기록이 완료된 Measurement입니다.')
+          if (execution.job) registered = await resume(execution, true)
+        }
+        if (!registered) {
+          const built = await buildBatchArtifact(request, signal, (completed, total) =>
+            setStage(`입력 준비 ${completed}/${total}`),
+          )
+          try {
+            registered = await submitArtifact({
+              client: browserClient,
+              artifact: built.artifact,
+              experimentId: request.experiment_id,
+              requestId: request.request_id,
+              readItem: (item) => built.store.readItem(item),
+              signal,
+              onRegistered: async (id) => {
+                run.batchId = id
+                if (run.cancelRequested) await caeBatches.cancel(id)
+              },
+              onProgress: (completed, total) => setStage(`업로드 ${completed}/${total}`),
+            })
+          } catch (cause) {
+            const detail =
+              cause instanceof ApiError
+                ? (cause.body as { detail?: { batch_id?: string; job_id?: string } })?.detail
+                : undefined
+            if (
+              !request.measurement_id ||
+              !(cause instanceof ApiError) ||
+              cause.status !== 409 ||
+              !detail?.batch_id ||
+              !detail.job_id
+            )
+              throw cause
+            // A competing submission won the commit. Release this staged upload, then observe the winner.
+            if (run.batchId && run.batchId !== detail.batch_id) await caeBatches.cancel(run.batchId)
+            signal.throwIfAborted()
+            const execution = await caeBatches.execution(request.measurement_id, { signal })
+            registered = await resume(execution, false)
+          } finally {
+            built.store.close()
+          }
+        }
         run.batchId = registered.id
-        if (run.cancelRequested) await caeBatches.cancel(registered.id)
+        if (run.cancelRequested) await caeBatches.cancel(registered.id, run.jobId ? [run.jobId] : undefined)
         signal.throwIfAborted()
-        let snapshot = update(registered)
+        let observed = update(registered)
         while (true) {
           signal.throwIfAborted()
+          let snapshot = observed
+          if (run.jobId && request.measurement_id) {
+            const execution = await caeBatches.execution(request.measurement_id, { signal })
+            signal.throwIfAborted()
+            const job = execution.job
+            if (!job || job.id !== run.jobId || job.attempt_count !== run.jobAttempt)
+              throw new Error('선택 작업의 실행 시도가 변경됐습니다. 현재 상태를 확인하세요.')
+            const terminal = ['succeeded', 'failed', 'cancelled'].includes(job.state)
+            // Local progress is scoped to this job. The provider retains the real batch totals.
+            snapshot = {
+              ...observed,
+              mode: 'measurement',
+              jobs: [job],
+              jobs_total: 1,
+              total: 1,
+              created_count: 1,
+              succeeded: Number(job.state === 'succeeded'),
+              failed: Number(job.state === 'failed'),
+              cancelled: Number(job.state === 'cancelled'),
+              state: job.state === 'cancelled' ? 'cancelled' : terminal ? 'completed' : 'running',
+              finished_at: terminal ? job.updated_at : null,
+            }
+          }
           onBatchState?.(snapshot)
           const jobs = snapshot.jobs
           for (const job of jobs) {
@@ -298,44 +385,18 @@ export function useCaeMeasurementActions({
               throw new Error(jobs.find((job) => job.last_error)?.last_error ?? 'CAE 작업이 완료되지 않았습니다.')
             return completion
           }
-          snapshot = await waitForChange(registered.id, snapshot, signal)
+          observed = await waitForChange(registered.id, observed, signal)
         }
-      })()
-        .catch(async (cause: unknown) => {
-          signal.throwIfAborted()
-          if (
-            cause instanceof ApiError &&
-            cause.status === 409 &&
-            typeof cause.body === 'object' &&
-            cause.body !== null &&
-            'detail' in cause.body
-          ) {
-            const detail = cause.body.detail
-            if (
-              typeof detail === 'object' &&
-              detail !== null &&
-              'batch_id' in detail &&
-              typeof detail.batch_id === 'string'
-            ) {
-              const registered = await readPage(detail.batch_id)
-              signal.throwIfAborted()
-              update(registered)
-              inspectBatch(registered.id)
-              throw new Error('이미 등록된 Measurement입니다. CAE 작업에서 상태를 확인하고 실패한 작업을 재시도하세요.')
-            }
-          }
-          throw cause
-        })
-        .finally(() => {
-          if (active.current !== run) return
-          active.current = null
-          setOperation(null)
-          setStage(null)
-          setBatch(null)
-          setAutomaticCalculationData(false)
-        })
+      })().finally(() => {
+        if (active.current !== run) return
+        active.current = null
+        setOperation(null)
+        setStage(null)
+        setBatch(null)
+        setAutomaticCalculationData(false)
+      })
     },
-    [inspectBatch, operation, queryClient, queryScope, update, readPage, waitForChange],
+    [operation, queryClient, queryScope, update, readPage, waitForChange],
   )
   const reportFailure = useCallback((cause: unknown) => {
     if ((cause as { name?: string })?.name === 'AbortError') return
@@ -415,11 +476,6 @@ export function useCaeMeasurementActions({
       const selected = selection.measurement
       if (!selected || selected.recorded_at || selected.experiment_id !== identity.experiment_id)
         throw new Error('현재 Experiment의 Prepared Measurement를 선택하세요.')
-      const registered = batches.find((item) => item.jobs.some((job) => job.measurement_id === selected.id))
-      if (registered) {
-        inspectBatch(registered.id)
-        return null
-      }
       const requestId = crypto.randomUUID()
       void submit(
         {
@@ -436,15 +492,7 @@ export function useCaeMeasurementActions({
       reportFailure(cause)
       return null
     }
-  }, [
-    batches,
-    experimentDocument.evaluationTimeoutMs,
-    inspectBatch,
-    reportFailure,
-    requireExperiment,
-    selection.measurement,
-    submit,
-  ])
+  }, [experimentDocument.evaluationTimeoutMs, reportFailure, requireExperiment, selection.measurement, submit])
   const repeatGenerateAndRun = useCallback(
     (count: number) => {
       try {
@@ -550,7 +598,11 @@ export function useCaeMeasurementActions({
     const run = active.current
     if (!run) return
     run.cancelRequested = true
-    if (run.batchId) void caeBatches.cancel(run.batchId).then(update).catch(reportFailure)
+    if (run.batchId)
+      void caeBatches
+        .cancel(run.batchId, run.jobId ? [run.jobId] : undefined)
+        .then(update)
+        .catch(reportFailure)
     if (automaticCalculationData) latest.current.calculationDataActions.cancel()
     detach()
   }, [automaticCalculationData, detach, reportFailure, update])

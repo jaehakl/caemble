@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+﻿import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CaeBatch } from '@/contracts/api/cae'
@@ -180,7 +180,7 @@ describe('CAE batch panel', () => {
     )
     const rendered = render(<CaeBatchPanel />)
     await user.click(screen.getByRole('button', { name: /Experiment #7/ }))
-    await user.click(await screen.findByRole('button', { name: '실패한 작업 재시도' }))
+    await user.click(await screen.findByRole('button', { name: '실패·취소 작업 재시도' }))
     mocks.scope = 'user:second'
     mocks.batches = [failedBatch('batch-2', 8)]
     rendered.rerender(<CaeBatchPanel />)
@@ -190,6 +190,28 @@ describe('CAE batch panel', () => {
     await act(async () => finish(failedBatch('batch-1', 7)))
     expect(screen.getByText('batch-2')).toBeInTheDocument()
     expect(screen.queryByText('batch-1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('allows explicit retry of a cancelled job and rechecks worker cleanup on each click', async () => {
+    const user = userEvent.setup()
+    const value = failedBatch('batch-1', 7)
+    mocks.batches = [
+      { ...value, failed: 0, cancelled: 1, jobs: [{ ...value.jobs[0], state: 'cancelled', cleanup_pending: true }] },
+    ]
+    mocks.retry.mockRejectedValueOnce(new Error('Wait for worker cleanup before retrying.')).mockResolvedValueOnce({
+      ...value,
+      failed: 0,
+      cancelled: 0,
+      jobs: [{ ...value.jobs[0], state: 'queued', attempt_count: 2 }],
+    })
+    render(<CaeBatchPanel />)
+    await user.click(screen.getByRole('button', { name: /Experiment #7/ }))
+    await user.click(await screen.findByRole('button', { name: 'worker 정리 확인 후 재시도' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('worker cleanup')
+    await user.click(screen.getByRole('button', { name: 'worker 정리 확인 후 재시도' }))
+    expect(mocks.retry).toHaveBeenCalledTimes(2)
+    expect(mocks.retry).toHaveBeenLastCalledWith('batch-1', ['job-batch-1'])
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

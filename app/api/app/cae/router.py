@@ -11,12 +11,13 @@ from cae.batches import (
     create_batch,
     list_batches,
     mark_batch_read,
+    measurement_execution,
     require_batch,
     retry_batch,
     stop_batch,
 )
 from cae.events import stream_events
-from cae.models import BatchCreateRequest, BatchReadRequest, BatchRetryRequest
+from cae.models import BatchCancelRequest, BatchCreateRequest, BatchReadRequest, BatchRetryRequest
 from cae.uploads import CHUNK_BYTES, commit_batch, finalize_item, finalize_stored_item, measurement_artifact, measurement_artifact_info, upload_chunk
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.utils.csrf import require_web_csrf
@@ -83,9 +84,11 @@ async def batch_detail(
 
 @router.post("/batches/{batch_id}/cancel")
 async def cancel(
-    batch_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)
+    batch_id: UUID, body: BatchCancelRequest | None = Body(default=None),
+    db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)
 ):
-    batch = await stop_batch(db, str(batch_id), user.id)
+    batch = await stop_batch(db, str(batch_id), user.id,
+        [str(value) for value in body.job_ids] if body and body.job_ids is not None else None)
     return await batch_snapshot(db, batch)
 
 
@@ -177,3 +180,10 @@ async def artifact_info(
     user: UserData = Depends(authenticated),
 ):
     return await measurement_artifact_info(db, measurement_id, user.id)
+
+
+@router.get("/measurements/{measurement_id}/execution")
+async def execution(
+    measurement_id: int, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated),
+):
+    return await measurement_execution(db, measurement_id, user.id)

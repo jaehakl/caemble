@@ -265,7 +265,12 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                 if measurement is None:
                     raise HTTPException(404, "Measurement not found.")
                 if measurement.job_id is not None or measurement.recorded_at is not None:
-                    raise HTTPException(409, "Measurement already has an execution. Open its batch to retry.")
+                    linked = await db.get(Job, measurement.job_id) if measurement.job_id else None
+                    raise HTTPException(409, {
+                        "code": "measurement_execution_exists", "message": "Measurement already has an execution.",
+                        "measurement_id": measurement.id,
+                        "batch_id": linked.batch_id if linked else None, "job_id": linked.id if linked else None,
+                    })
                 from storage.service import object_refs
                 has_objects = bool(list(object_refs([measurement.vars, measurement.material_snapshot, variables, materials])))
                 try:

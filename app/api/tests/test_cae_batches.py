@@ -24,7 +24,7 @@ from test_calculation_database import (
 )
 from cae.batches import (
     cancel_batch, create_batch, list_batches, require_batch,
-    mark_batch_read, require_no_active_batches, retry_batch,
+    mark_batch_read, measurement_execution, require_no_active_batches, retry_batch,
 )
 from cae.db import CaeBatch
 from cae.events import stream_events
@@ -547,6 +547,186 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as caught:
                 await retry_batch(db, batch.id, self.owner_id, [queued.id])
             self.assertEqual(caught.exception.status_code, 409)
+
+    async def test_measurement_execution_is_owned_and_independent_of_batch_pages(self):
+        batch, _ = await self.create(count=102)
+        job = await self.ready_job(batch.id, index=102)
+        async with self.sessions() as db:
+            measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
+            result = await measurement_execution(db, measurement.id, self.owner_id)
+            self.assertEqual((result["batch_id"], result["job"]["id"], result["job"]["index"]), (batch.id, job.id, 102))
+            self.assertFalse(result["job"]["cleanup_pending"])
+            with self.assertRaises(HTTPException) as hidden:
+                await measurement_execution(db, measurement.id, self.other_id)
+            self.assertEqual(hidden.exception.status_code, 404)
+            prepared = Measurement(user_id=self.owner_id, experiment_id=self.experiment_id, vars={}, material_snapshot={})
+            db.add(prepared)
+            await db.flush()
+            result = await measurement_execution(db, prepared.id, self.owner_id)
+            self.assertIsNone(result["job"])
+            self.assertIsNone(result["batch_id"])
+
+    async def test_selected_cancel_and_retry_preserve_siblings_input_and_counters(self):
+        batch, _ = await self.create(count=3)
+        first = await self.ready_job(batch.id)
+        failed = await self.ready_job(batch.id, index=2)
+        sibling = await self.ready_job(batch.id, index=3)
+        async with self.sessions() as db:
+            await finish_job(db, await db.get(Job, failed.id), "failed", "fixture")
+            await db.commit()
+            cancelled, assignments = await cancel_batch(db, batch.id, self.owner_id, [first.id])
+            self.assertEqual((cancelled.failed, cancelled.cancelled, assignments), (1, 1, []))
+            await cancel_batch(db, batch.id, self.owner_id, [first.id])
+            self.assertEqual(cancelled.cancelled, 1)
+            self.assertEqual((await db.get(Job, sibling.id)).state, "queued")
+            retried = await retry_batch(db, batch.id, self.owner_id, [first.id])
+            self.assertEqual((retried.failed, retried.cancelled, retried.state), (1, 0, "running"))
+            current = await db.get(Job, first.id)
+            self.assertEqual((current.input, current.attempt_count, current.state), (first.input, 2, "queued"))
+            self.assertEqual((await db.get(Job, failed.id)).state, "failed")
+            await retry_batch(db, batch.id, self.owner_id, [failed.id])
+            self.assertEqual((retried.failed, retried.cancelled), (0, 0))
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 3)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(JobBatch)), 1)
+
+    async def test_retry_waits_for_cleanup_and_concurrent_requests_increment_once(self):
+        batch, _ = await self.create()
+        original = await self.ready_job(batch.id, state="running")
+        async with self.sessions() as db:
+            launcher = Launcher(user_id=self.owner_id, launcher_name="cleanup", status="busy", slave_app_ids=["cae"], job_modes={"cae": "websocket"}, connected_at=utcnow(), last_heartbeat_at=utcnow())
+            db.add(launcher)
+            await db.flush()
+            launcher_id = launcher.id
+            job = await db.get(Job, original.id)
+            job.launcher_id = launcher.id
+            await finish_job(db, job, "cancelled", "fixture")
+            await db.commit()
+            measurement_id = await db.scalar(select(Measurement.id).where(Measurement.job_id == job.id))
+            result = await measurement_execution(db, measurement_id, self.owner_id)
+            self.assertTrue(result["job"]["cleanup_pending"])
+            with self.assertRaises(HTTPException) as waiting:
+                await retry_batch(db, batch.id, self.owner_id, [job.id])
+            self.assertIn("cleanup", waiting.exception.detail)
+            await db.rollback()
+        async with self.sessions() as db:
+            with patch("gpstation.service.worker_connection.runtime.launcher_matches_job", AsyncMock(return_value=True)), patch(
+                "gpstation.service.worker_connection.runtime.mark_launcher_job", AsyncMock()
+            ):
+                self.assertTrue(await worker_cleaned(db, job_id=original.id, attempt_count=1,
+                    launcher_id=launcher_id, user_id=self.owner_id))
+            self.assertFalse((await measurement_execution(db, measurement_id, self.owner_id))["job"]["cleanup_pending"])
+        async def retry():
+            async with self.sessions() as db:
+                try:
+                    await retry_batch(db, batch.id, self.owner_id, [original.id])
+                    return 200
+                except HTTPException as error:
+                    return error.status_code
+        self.assertEqual(sorted(await asyncio.wait_for(asyncio.gather(retry(), retry()), 5)), [200, 409])
+        async with self.sessions() as db:
+            current = await db.get(Job, original.id)
+            self.assertEqual((current.attempt_count, current.state, current.input), (2, "queued", original.input))
+            self.assertEqual((await db.get(JobBatch, batch.id)).cancelled, 0)
+
+    async def test_retry_refuses_recorded_measurement(self):
+        batch, _ = await self.create()
+        original = await self.ready_job(batch.id)
+        async with self.sessions() as db:
+            await finish_job(db, await db.get(Job, original.id), "failed", "fixture")
+            measurement = await db.scalar(select(Measurement).where(Measurement.job_id == original.id))
+            measurement.recorded_at = utcnow()
+            await db.commit()
+            with self.assertRaises(HTTPException) as error:
+                await retry_batch(db, batch.id, self.owner_id, [original.id])
+            self.assertIn("recorded", error.exception.detail)
+
+    async def test_duplicate_measurement_commit_returns_existing_execution_ids(self):
+        existing, _ = await self.create()
+        job = await self.ready_job(existing.id)
+        async with self.sessions() as db:
+            measurement_id = await db.scalar(select(Measurement.id).where(Measurement.job_id == job.id))
+        staged, request = await self.create()
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
+        async with self.sessions() as db:
+            pending = await db.scalar(select(Job).where(Job.batch_id == staged.id))
+            pending.artifact_metadata = {**pending.artifact_metadata, "measurement_id": measurement_id}
+            await db.commit()
+            await upload_chunk(db, staged.id, self.owner_id, 1, 0, hashlib.sha256(raw).hexdigest(), raw)
+            await finalize_item(db, staged.id, self.owner_id, 1)
+            with self.assertRaises(HTTPException) as error:
+                await commit_batch(db, staged.id, self.owner, self.catalog)
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertEqual(error.exception.detail["batch_id"], existing.id)
+            self.assertEqual(error.exception.detail["job_id"], job.id)
+            self.assertEqual(error.exception.detail["measurement_id"], measurement_id)
+            await db.rollback()
+            await cancel_batch(db, staged.id, self.owner_id)
+            self.assertEqual((await db.get(Job, job.id)).state, "queued")
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 1)
+
+    async def test_execution_and_selected_cancel_http_routes(self):
+        import httpx
+        from fastapi import FastAPI
+        from cae.router import router, authenticated, get_db
+        batch, _ = await self.create(count=2)
+        selected = await self.ready_job(batch.id)
+        sibling = await self.ready_job(batch.id, index=2)
+        async with self.sessions() as db:
+            measurement_id = await db.scalar(select(Measurement.id).where(Measurement.job_id == selected.id))
+        app = FastAPI()
+        app.include_router(router)
+        async def session():
+            async with self.sessions() as db:
+                yield db
+        app.dependency_overrides[get_db] = session
+        app.dependency_overrides[authenticated] = lambda: self.owner
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local.test",
+                                    headers={"authorization": "Bearer fixture"}) as client:
+            response = await client.get(f"/cae/measurements/{measurement_id}/execution")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["job"]["id"], selected.id)
+            response = await client.post(f"/cae/batches/{batch.id}/cancel", json={"job_ids": [selected.id]})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["cancelled"], 1)
+            async with self.sessions() as db:
+                self.assertEqual((await db.get(Job, sibling.id)).state, "queued")
+            response = await client.post(f"/cae/batches/{batch.id}/cancel")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["cancelled"], 2)
+
+    async def test_retry_completion_uses_only_current_attempt_records(self):
+        from box_grid_fixtures import box_schema, box_tensor
+        batch, _ = await self.create()
+        original = await self.ready_job(batch.id)
+        tensor = box_tensor()
+        async with self.sessions() as db:
+            job = await db.get(Job, original.id)
+            frozen = self.item()
+            program = frozen["measurement"]["experiment"]["simulationProgram"]
+            program["recordedData"]["signal"] = box_schema()
+            program["resultContracts"]["signal"]["schema"] = box_schema()
+            for key in ("task", "solver", "catalogRevision"):
+                tensor["provenance"][key] = program["resultContracts"]["signal"][key]
+            job.input = frozen
+            db.add(ExperimentRecord(experiment_id=self.experiment_id, name="signal", dtype="float64",
+                tensor_order=0, quantity_kind="Dimensionless", contract_hash="fixture", data_schema=box_schema()))
+            await finish_job(db, job, "failed", "fixture")
+            await db.commit()
+            await retry_batch(db, batch.id, self.owner_id, [job.id])
+            self.assertEqual(job.input, frozen)
+            # A late old-attempt row must never satisfy or contaminate this completion.
+            db.add(JobRecord(job_id=job.id, attempt_count=1, sequence=1, name="signal", payload={"stale": True}))
+            job.state = "running"
+            await stage_record(db, job, {"sequence": 1, "name": "signal", "value": tensor}, [])
+            await db.commit()
+            result = await complete_job(db, job, {"recordSequences": [1], "visualizationSequences": []})
+            await finish_job(db, job, "succeeded", result=result)
+            await db.commit()
+            rows = list((await db.scalars(select(RecordedData))).all())
+            self.assertEqual([row.data for row in rows], [tensor])
+            self.assertIsNotNone((await db.get(Measurement, result["measurement_id"])).recorded_at)
+            current = await db.get(JobBatch, batch.id)
+            self.assertEqual((current.failed, current.succeeded, job.attempt_count), (0, 1, 2))
 
     async def test_staging_publish_atomicity_and_terminal_idempotence(self):
         batch, _ = await self.create()
