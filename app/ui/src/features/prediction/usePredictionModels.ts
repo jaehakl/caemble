@@ -6,7 +6,7 @@ import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { runCalculation } from '@/lib/calculation'
 import type { BoxGridData } from '@/contracts/boxGrid'
 import type { RecordedResultContracts } from '@/contracts/results'
-import type { Vars, VarsSchemaEntry } from '@/lib/cad/model'
+import type { Vars, VarsSchemaEntry, RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import type { RecordedDataSchemaTree } from '@/lib/cad/simulation'
 import { buildCalculationRecordedData } from '../calculation/calculationRecordedData'
 import { calculationOutputSample, inverseTrainingRows, predictionFingerprint, predictionVarsLayouts } from './data'
@@ -27,6 +27,14 @@ import {
 export type { PredictionContext, SavedPredictionCalculation, SavedPredictionMeasurement } from './predictionContextData'
 
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
+
+/** Recorded predictions are ready before downstream Calculations run. */
+export type PredictionRecordedPreview = Readonly<{
+  recorded: RecordedData
+  rules: readonly RecordedDataRule[]
+  resultContracts: RecordedResultContracts
+  modelFingerprint: string
+}>
 
 export type PredictionSetup = Readonly<{
   calculationIds: readonly number[]
@@ -300,7 +308,7 @@ export function usePredictionModels({
   )
 
   const forwardOutputs = useCallback(
-    (vars: Readonly<Vars>, transaction: number) =>
+    (vars: Readonly<Vars>, transaction: number, onRecorded?: (preview: PredictionRecordedPreview) => void) =>
       runtime.runWithWorkerRestartRetry(
         transaction,
         async () => {
@@ -318,6 +326,9 @@ export function usePredictionModels({
             candidateBoxGrids,
             onActivity,
           })
+          if (!runtime.transactionIsCurrent(transaction))
+            throw new DOMException('Stale Prediction transaction', 'AbortError')
+          onRecorded?.({ recorded, rules: model.rules, resultContracts, modelFingerprint: model.fingerprint })
           const input = buildCalculationRecordedData(model.rules, recorded)
           if (!input.input)
             throw new Error(input.error ?? '예측 RecordedData를 Calculation input으로 만들 수 없습니다.')
@@ -331,6 +342,7 @@ export function usePredictionModels({
       clearModelCaches,
       ensureForwardModel,
       executeCalculations,
+      resultContracts,
       onActivity,
       runtime,
       varsSchema,

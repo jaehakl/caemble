@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Tensor, Vars } from '@/lib/cad/model/types'
 import type { VarsSchema } from '@/lib/cad/model/vars'
 import { flattenVarsTensor, varsTensorFromFlat } from '@/lib/cad/model/tensor'
@@ -38,6 +38,8 @@ export function MeasurementVarsEditor({
   onVarsChange,
   onValidityChange,
   disabled = false,
+  layout = 'horizontal',
+  editorControls,
 }: {
   schema: VarsSchema | null
   vars: Readonly<Vars> | null
@@ -46,6 +48,8 @@ export function MeasurementVarsEditor({
   onVarsChange: (vars: Vars) => void
   onValidityChange: (valid: boolean) => void
   disabled?: boolean
+  layout?: 'horizontal' | 'vertical'
+  editorControls?: ReactNode
 }) {
   const keys = Object.keys(schema ?? {})
   const activeKey = selectedKey && keys.includes(selectedKey) ? selectedKey : keys[0]
@@ -305,188 +309,180 @@ export function MeasurementVarsEditor({
       )
     }
 
+  const list = (
+    <div
+      className="grid max-h-full auto-rows-[88px] gap-2 overflow-y-auto p-2"
+      style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(120px, 100%), 1fr))' }}
+    >
+      {keys.map((key) => {
+        const item = schema[key]
+        const flat = flattenVarsTensor(vars[key] as Tensor, item.shape, key)
+        const average = flat.length ? flat.reduce((sum, value) => sum + value / flat.length, 0) : null
+        return (
+          <button
+            key={key}
+            type="button"
+            disabled={disabled}
+            aria-pressed={activeKey === key}
+            aria-label={`Var ${key}`}
+            title={key}
+            className={`flex h-[88px] min-w-0 flex-col justify-center gap-1 rounded border p-2 text-left text-xs ${activeKey === key ? 'border-primary bg-primary/10' : 'bg-card hover:bg-accent'}`}
+            onClick={() => {
+              if (commit()) onSelectedKeyChange(key)
+            }}
+          >
+            <strong className="w-full truncate">{key}</strong>
+            {item.shape.length ? (
+              <>
+                <span className="truncate">shape [{item.shape.join(' × ')}]</span>
+                <span className="truncate">
+                  평균 {average === null ? '—' : average.toLocaleString('ko-KR', { maximumSignificantDigits: 7 })}
+                </span>
+              </>
+            ) : (
+              <span className="truncate">{String(vars[key])}</span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+  const editor = (
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
+        <strong className="truncate" title={activeKey}>
+          {activeKey}
+        </strong>
+        <span className="text-muted-foreground">
+          [{entry.min}, {entry.max}]
+        </span>
+      </header>
+      {editorControls}
+      {rank > 2 ? (
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {entry.shape.slice(0, -2).map((length, dimension) => (
+            <label key={dimension} className="text-xs">
+              축 {dimension}
+              <input
+                aria-label={`${activeKey} 축 ${dimension} 단면`}
+                type="number"
+                className={`${fieldClass} ml-1 w-16`}
+                min={0}
+                max={length - 1}
+                step={1}
+                value={slice[dimension] ?? 0}
+                onChange={(event) => {
+                  const value = Number(event.target.value)
+                  if (!Number.isInteger(value) || value < 0 || value >= length || !commit()) return
+                  setSlice((current) =>
+                    entry.shape.slice(0, -2).map((_, index) => (index === dimension ? value : (current[index] ?? 0))),
+                  )
+                  setSelected(new Set())
+                  anchor.current = null
+                }}
+              />
+            </label>
+          ))}
+        </div>
+      ) : null}
+      {rank ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
+          <select
+            aria-label="일괄 편집 대상"
+            className={fieldClass}
+            value={scope}
+            onChange={(event) => setScope(event.target.value as 'all' | 'selected')}
+          >
+            <option value="all">전체 tensor ({values.length})</option>
+            <option value="selected">선택 ({selected.size})</option>
+          </select>
+          <select
+            aria-label="일괄 연산"
+            className={fieldClass}
+            value={operation}
+            onChange={(event) => setOperation(event.target.value as TensorOperation)}
+          >
+            <option value="fill">채우기</option>
+            <option value="add">더하기</option>
+            <option value="multiply">곱하기</option>
+          </select>
+          <input
+            aria-label="일괄 편집 값"
+            className={`${fieldClass} w-20`}
+            value={operand}
+            onChange={(event) => setOperand(event.target.value)}
+          />
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={locked || !targetIndexes.length || Object.keys(drafts).length > 0}
+            onClick={() => {
+              try {
+                if (!operand.trim()) throw new Error('숫자를 입력하세요.')
+                const next = editTensorValues(values, targetIndexes, operation, Number(operand), entry.min, entry.max)
+                setError('')
+                onVarsChange({ ...vars, [activeKey]: varsTensorFromFlat(next, entry.shape) })
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : String(cause))
+              }
+            }}
+          >
+            적용 {targetIndexes.length}개
+          </button>
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={locked || !values.length || Object.keys(drafts).length > 0}
+            title="이 tensor 전체의 값을 범위 내에서 새로 생성합니다."
+            onClick={() => {
+              setError('')
+              onVarsChange({
+                ...vars,
+                [activeKey]: varsTensorFromFlat(
+                  values.map(() => entry.min + Math.random() * (entry.max - entry.min)),
+                  entry.shape,
+                ),
+              })
+            }}
+          >
+            Shuffle · 전체
+          </button>
+        </div>
+      ) : null}
+      {error ? (
+        <p role="alert" className="shrink-0 text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+      {values.length ? (
+        <div
+          ref={viewportRef}
+          className="min-h-0 flex-1 overflow-auto"
+          onScroll={(event) => {
+            const { scrollLeft: left, scrollTop: top } = event.currentTarget
+            setViewport((current) => ({ ...current, left, top }))
+          }}
+        >
+          <div className="relative" style={{ width: columns * cellWidth, height: rows * cellHeight }}>
+            {cells}
+          </div>
+        </div>
+      ) : (
+        <div className="grid min-h-20 flex-1 place-items-center text-xs text-muted-foreground">
+          원소가 없는 tensor입니다.
+        </div>
+      )}
+    </div>
+  )
   return (
     <section aria-label="Measurement Vars 편집기" className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1">
-        <MeasurementSplit
-          initial={0.4}
-          label="Vars 항목과 값 편집 너비 조절"
-          first={
-            <div
-              className="grid max-h-full auto-rows-[88px] gap-2 overflow-y-auto p-2"
-              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(120px, 100%), 1fr))' }}
-            >
-              {keys.map((key) => {
-                const item = schema[key]
-                const flat = flattenVarsTensor(vars[key] as Tensor, item.shape, key)
-                const average = flat.length ? flat.reduce((sum, value) => sum + value / flat.length, 0) : null
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    disabled={disabled}
-                    aria-pressed={activeKey === key}
-                    aria-label={`Var ${key}`}
-                    title={key}
-                    className={`flex h-[88px] min-w-0 flex-col justify-center gap-1 rounded border p-2 text-left text-xs ${activeKey === key ? 'border-primary bg-primary/10' : 'bg-card hover:bg-accent'}`}
-                    onClick={() => {
-                      if (commit()) onSelectedKeyChange(key)
-                    }}
-                  >
-                    <strong className="w-full truncate">{key}</strong>
-                    {item.shape.length ? (
-                      <>
-                        <span className="truncate">shape [{item.shape.join(' × ')}]</span>
-                        <span className="truncate">
-                          평균{' '}
-                          {average === null ? '—' : average.toLocaleString('ko-KR', { maximumSignificantDigits: 7 })}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="truncate">{String(vars[key])}</span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          }
-          second={
-            <div className="flex h-full min-h-0 flex-col gap-2 p-2">
-              <header className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
-                <strong className="truncate" title={activeKey}>
-                  {activeKey}
-                </strong>
-                <span className="text-muted-foreground">
-                  [{entry.min}, {entry.max}]
-                </span>
-              </header>
-              {rank > 2 ? (
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  {entry.shape.slice(0, -2).map((length, dimension) => (
-                    <label key={dimension} className="text-xs">
-                      축 {dimension}
-                      <input
-                        aria-label={`${activeKey} 축 ${dimension} 단면`}
-                        type="number"
-                        className={`${fieldClass} ml-1 w-16`}
-                        min={0}
-                        max={length - 1}
-                        step={1}
-                        value={slice[dimension] ?? 0}
-                        onChange={(event) => {
-                          const value = Number(event.target.value)
-                          if (!Number.isInteger(value) || value < 0 || value >= length || !commit()) return
-                          setSlice((current) =>
-                            entry.shape
-                              .slice(0, -2)
-                              .map((_, index) => (index === dimension ? value : (current[index] ?? 0))),
-                          )
-                          setSelected(new Set())
-                          anchor.current = null
-                        }}
-                      />
-                    </label>
-                  ))}
-                </div>
-              ) : null}
-              {rank ? (
-                <div className="flex shrink-0 flex-wrap items-center gap-1">
-                  <select
-                    aria-label="일괄 편집 대상"
-                    className={fieldClass}
-                    value={scope}
-                    onChange={(event) => setScope(event.target.value as 'all' | 'selected')}
-                  >
-                    <option value="all">전체 tensor ({values.length})</option>
-                    <option value="selected">선택 ({selected.size})</option>
-                  </select>
-                  <select
-                    aria-label="일괄 연산"
-                    className={fieldClass}
-                    value={operation}
-                    onChange={(event) => setOperation(event.target.value as TensorOperation)}
-                  >
-                    <option value="fill">채우기</option>
-                    <option value="add">더하기</option>
-                    <option value="multiply">곱하기</option>
-                  </select>
-                  <input
-                    aria-label="일괄 편집 값"
-                    className={`${fieldClass} w-20`}
-                    value={operand}
-                    onChange={(event) => setOperand(event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    disabled={locked || !targetIndexes.length || Object.keys(drafts).length > 0}
-                    onClick={() => {
-                      try {
-                        if (!operand.trim()) throw new Error('숫자를 입력하세요.')
-                        const next = editTensorValues(
-                          values,
-                          targetIndexes,
-                          operation,
-                          Number(operand),
-                          entry.min,
-                          entry.max,
-                        )
-                        setError('')
-                        onVarsChange({ ...vars, [activeKey]: varsTensorFromFlat(next, entry.shape) })
-                      } catch (cause) {
-                        setError(cause instanceof Error ? cause.message : String(cause))
-                      }
-                    }}
-                  >
-                    적용 {targetIndexes.length}개
-                  </button>
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    disabled={locked || !values.length || Object.keys(drafts).length > 0}
-                    title="이 tensor 전체의 값을 범위 내에서 새로 생성합니다."
-                    onClick={() => {
-                      setError('')
-                      onVarsChange({
-                        ...vars,
-                        [activeKey]: varsTensorFromFlat(
-                          values.map(() => entry.min + Math.random() * (entry.max - entry.min)),
-                          entry.shape,
-                        ),
-                      })
-                    }}
-                  >
-                    Shuffle · 전체
-                  </button>
-                </div>
-              ) : null}
-              {error ? (
-                <p role="alert" className="shrink-0 text-xs text-destructive">
-                  {error}
-                </p>
-              ) : null}
-              {values.length ? (
-                <div
-                  ref={viewportRef}
-                  className="min-h-0 flex-1 overflow-auto"
-                  onScroll={(event) => {
-                    const { scrollLeft: left, scrollTop: top } = event.currentTarget
-                    setViewport((current) => ({ ...current, left, top }))
-                  }}
-                >
-                  <div className="relative" style={{ width: columns * cellWidth, height: rows * cellHeight }}>
-                    {cells}
-                  </div>
-                </div>
-              ) : (
-                <div className="grid min-h-20 flex-1 place-items-center text-xs text-muted-foreground">
-                  원소가 없는 tensor입니다.
-                </div>
-              )}
-            </div>
-          }
-        />
-      </div>
+      <MeasurementSplit
+        vertical={layout === 'vertical'}
+        initial={layout === 'vertical' ? 0.6 : 0.4}
+        label={layout === 'vertical' ? 'Vars 값 편집과 항목 높이 조절' : 'Vars 항목과 값 편집 너비 조절'}
+        first={layout === 'vertical' ? editor : list}
+        second={layout === 'vertical' ? list : editor}
+      />
     </section>
   )
 }

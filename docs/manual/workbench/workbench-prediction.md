@@ -13,11 +13,17 @@ Workbench를 처음 열면 **Prediction**에서 시작합니다. 왼쪽 위 Expe
 - 왼쪽 Vars를 편집하면 **Forward**가 됩니다. `vars → RecordedData`를 kNN으로 예측한 뒤, 선택한 각 Calculation의 저장된 source를 브라우저에서 직접 실행해 오른쪽 CalculationData를 갱신합니다.
 - 오른쪽의 Forward 결과를 처음 편집하면 전체 결과가 Target draft가 되고 **Inverse**가 됩니다. 선택한 CalculationData target 전체에서 vars를 kNN으로 예측하고, 완전한 vars 묶음을 한 번에 Candidate와 Viewer에 적용합니다. 입력한 target은 유지되며 Forward surrogate도 다시 계산합니다. 저장 Measurement를 Target으로 불러오는 selector는 없으며, Inverse는 현재 Forward 결과를 편집해서 시작합니다.
 - 연속 편집은 잠시 모아 처리하며 이전 요청의 늦은 결과는 버립니다. Inverse가 적용한 vars 때문에 Forward가 다시 시작되지는 않습니다. 리본의 Direction과 상태를 확인하고, 오래 걸리는 작업은 **Cancel**로 중단할 수 있습니다.
-- Prediction의 Vars도 Calculation과 같은 인라인 단일-open 카드입니다. Candidate 값이나 Inverse 결과가 갱신되어도 열린 카드는 유지되며 별도 팝업을 열지 않습니다.
+- Prediction의 Vars 편집기는 상단 값 편집(기본 60%)과 하단 Vars 목록(40%)으로 나뉩니다. 구분선을 드래그하거나 방향키로 높이를 조절합니다. Measurement와 같은 scalar·vector 슬라이더, Tensor 셀 선택·일괄 편집·단면 선택·가상 스크롤을 사용합니다. 선택한 Vars의 Sampling Min/Max와 Reset은 상단에 있습니다. 유효한 값을 Enter 또는 포커스 이동으로 확정하면 Candidate에 반영하며, 미확정·잘못된 입력 중에는 Save & Run과 Sampling이 비활성화됩니다. Experiment나 schema가 바뀌면 선택과 편집 초안을 초기화합니다.
 - 오른쪽 편집기는 기준 데이터와 비교 시리즈를 한 화면에 표시합니다. Forward는 파란 **Predicted**와 초록 **Save + Run Actual**을, Inverse는 주황 **Target**, 보라 **Re-predicted**, 초록 **Save + Run Actual**을 사용합니다. 비교 시리즈는 읽기 전용이므로 hover나 legend 확인이 Prediction 방향을 바꾸지 않습니다.
 - scalar는 공통 수치축 marker, 1-D는 공통 축의 line overlay로 비교합니다. 2-D는 동일 axes와 color scale을 공유하는 heatmap을 한 행에 병렬 배치하며, 같은 cell을 hover하면 모든 heatmap에서 좌표와 값을 함께 강조합니다. 좁은 패널에서는 가로 스크롤로 각 heatmap의 판독 크기를 유지합니다.
 - 각 CalculationData 카드의 **Display range**는 새 Forward primary 결과가 들어올 때 실제 min/max에 5% 여백을 더해 한 번 맞춘 뒤 고정됩니다. Target 편집, Inverse, Re-predicted 또는 Actual 도착만으로는 다시 확대·축소하지 않습니다. **Fit**은 현재 primary와 ready 상태인 호환 비교 시리즈 전체로 범위를 다시 맞춥니다. 범위 밖 cell은 끝 색으로 표시하고 `clipped` 수를 알리지만 데이터 값이나 dtype 허용 범위를 변경하지 않습니다.
 - Target heatmap의 선택 사각형은 Target commit, Inverse 시작·완료, Re-predicted·Actual 갱신과 Fit 뒤에도 유지됩니다. 새 Forward primary로 교체되거나 dtype, shape, axes가 바뀔 때만 선택을 초기화합니다.
+
+### Prediction Viewer
+
+Vars 변경 후 CAD 평가가 끝나면 새 구조를 먼저 표시합니다. 이전 BoxGrid는 숨기고 갱신 상태를 표시하며, 현재 Vars의 Forward RecordedData가 준비되면 Calculation 완료를 기다리지 않고 BoxGrid를 표시합니다. 선택한 Calculation에 필요한 Record만 예측합니다. Inverse로 찾은 Vars도 같은 방식으로 표시하고 입력한 Target은 유지합니다.
+
+첫 결과는 기존 Viewer 기본 규칙으로 BoxGrid를 선택합니다. 이후에는 선택했던 BoxGrid·Geometry, 표시 설정과 카메라를 유지합니다. 갱신 중 Geometry를 선택했다면 예측이 도착해도 Geometry를 유지합니다. Prediction에서는 저장된 Measurement나 임시 Preflight 결과를 대신 표시하지 않습니다. Calculation이 실패해도 성공한 BoxGrid 예측은 남으며, 예측 실패·취소·Experiment 또는 탭 전환 뒤 늦게 도착한 응답은 표시하지 않습니다.
 
 ### Settings와 cohort
 
@@ -37,7 +43,7 @@ Auto k는 포함된 행 수 `n`에 대해 `round(sqrt(n))`을 사용하되 1–1
 
 ### Farthest Sample & Run
 
-각 Vars 카드의 **Sampling Min/Max**는 schema 범위 안에서 탐색 범위를 추가로 좁힙니다. Tensor Vars는 모든 cell에 같은 Min/Max를 사용하고 이 범위는 Experiment 또는 varsSchema가 바뀌면 초기화되며 저장되지 않습니다. 리본의 N은 시도 횟수이며 양의 JavaScript safe integer여야 합니다.
+선택한 Vars의 상단 **Sampling Min/Max**는 schema 범위 안에서 탐색 범위를 추가로 좁힙니다. Tensor Vars는 모든 cell에 같은 Min/Max를 사용하고 이 범위는 Experiment 또는 varsSchema가 바뀌면 초기화되며 저장되지 않습니다. 리본의 N은 시도 횟수이며 양의 JavaScript safe integer여야 합니다.
 
 **Sample & Run**은 선택 범위 안의 중복 없는 Recorded Measurement를 center로 사용합니다. 첫 center가 없으면 범위 정중앙에서 시작하고, 이후에는 정규화된 Vars별 평균제곱거리를 균형 있게 사용한 결정적 farthest-point/k-center 근사로 다음 후보를 고릅니다. N회 후보를 순차 준비하며, 준비에 성공한 후보를 이번 실행의 임시 center로 추가합니다. 각 후보의 Vars로 `material.tsx`를 다시 평가하고, 현재 화면의 Candidate는 바꾸지 않습니다. 준비 실패는 집계하고 다음 시도를 계속하며, 성공한 후보만 하나의 서버 CAE Batch로 제출합니다. 모두 실패하면 제출하지 않습니다. 서버는 각 후보의 Simulation과 RecordedData 저장을 실행하고, 브라우저는 성공한 Measurement의 CalculationData를 후처리합니다. 개별 Simulation 또는 Calculation 실패는 다른 후보의 처리를 막지 않습니다. 준비·업로드·서버 실행·후처리 진행 상태를 표시하며 기존 CAE Batch 화면에서도 작업을 확인할 수 있습니다. Cancel은 준비와 후처리를 중단하고 등록된 Batch의 취소를 요청합니다. Experiment 또는 source 변경은 현재 화면의 처리를 분리하며, 이미 제출된 서버 작업은 Batch 화면에서 관리합니다. 브라우저를 닫아도 제출된 Simulation은 계속되지만 Calculation 후처리는 브라우저가 필요합니다. 누락된 CalculationData는 기존 누락 계산 기능으로 보완하세요. Batch 종료·취소·중단 뒤 저장된 점이 있으면 모델을 한 번 자동 갱신합니다. 서버에서 나중에 실패한 후보도 이번 실행의 임시 center에는 포함되지만, 다음 실행의 center는 실제 Recorded Measurement로 다시 구성합니다.
 

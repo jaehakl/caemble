@@ -1,3 +1,4 @@
+import { materialVarsHash } from '@/lib/material/resolution'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -52,6 +53,7 @@ import {
   defaultPredictionSetup as defaultSetup,
   usePredictionModels,
   type PredictionSetup,
+  type PredictionRecordedPreview,
   type PredictionVarsSchema as VarsSchema,
 } from './usePredictionModels'
 
@@ -69,6 +71,16 @@ export type PredictionWorkspaceChromeState = Readonly<{
   status: string
   sampleDisabledReason?: string
   validateDisabledReason?: string
+}>
+
+export type PredictionViewerState = Readonly<{
+  experimentId: number | null
+  varsFingerprint: string
+  sourceHash: string | null
+  varsHash: string
+  contextKey: string
+  transaction: number
+  preview: PredictionRecordedPreview
 }>
 
 type ForwardRefreshFailure = Readonly<{
@@ -157,6 +169,7 @@ export function PredictionWorkspace({
   command,
   onActivity,
   onChromeStateChange,
+  onViewerStateChange,
   onExperimentChange,
   onRequestLogin,
   selectedCalculationId,
@@ -168,6 +181,7 @@ export function PredictionWorkspace({
   dataReadable: boolean
   command: PredictionWorkspaceCommand | null
   onActivity?: RuntimeActivityCallback
+  onViewerStateChange?: (state: PredictionViewerState | null) => void
   onChromeStateChange: (state: PredictionWorkspaceChromeState) => void
   onExperimentChange: (experiment: AvailableExperimentRecord) => void
   onRequestLogin: () => void
@@ -175,6 +189,8 @@ export function PredictionWorkspace({
   varsContainer: HTMLDivElement | null
   workbench: CaeWorkbenchState
 }) {
+  const [varsEditorValid, setVarsEditorValid] = useState(true)
+  const [viewerState, setViewerState] = useState<PredictionViewerState | null>(null)
   const [forwardRecordProfiles, setForwardRecordProfiles] = useState<readonly PredictionForwardRecordProfile[]>([])
   const {
     busyRef,
@@ -311,6 +327,65 @@ export function PredictionWorkspace({
   setCandidateVariablesRef.current = workbench.setCandidateVariables
   sourceIdentityRef.current = sourceIdentity
 
+  const viewerContextKey = predictionFingerprint([sourceIdentity, context?.fingerprint, setup, varsSchema])
+  const viewerContextRef = useRef(viewerContextKey)
+  const viewerActiveRef = useRef(active)
+  viewerContextRef.current = viewerContextKey
+  viewerActiveRef.current = active
+  const receiveRecorded = useCallback(
+    (vars: Readonly<Vars>, transaction: number) => {
+      const expectedFingerprint = candidateFingerprint(vars)
+      const expectedContext = viewerContextRef.current
+      return (preview: PredictionRecordedPreview) => {
+        const document = experimentDocumentRef.current
+        if (
+          !viewerActiveRef.current ||
+          !runtime.transactionIsCurrent(transaction) ||
+          viewerContextRef.current !== expectedContext ||
+          candidateFingerprintRef.current !== expectedFingerprint ||
+          document.status !== 'Ready' ||
+          document.successfulRevision !== document.revision ||
+          candidateFingerprint(document.variables) !== expectedFingerprint
+        )
+          return
+        setViewerState({
+          experimentId: experimentIdRef.current,
+          varsFingerprint: expectedFingerprint,
+          contextKey: expectedContext,
+          transaction,
+          sourceHash: document.evaluatedSnapshot?.sourceHash ?? null,
+          varsHash: materialVarsHash(vars),
+          preview,
+        })
+      }
+    },
+    [runtime],
+  )
+  useLayoutEffect(() => {
+    onViewerStateChange?.(
+      active &&
+        !dataStale &&
+        !freshnessPending &&
+        candidateEvaluationReady &&
+        viewerState?.contextKey === viewerContextKey &&
+        runtime.transactionIsCurrent(viewerState.transaction) &&
+        viewerState.varsFingerprint === currentCandidateFingerprint
+        ? viewerState
+        : null,
+    )
+  }, [
+    active,
+    dataStale,
+    freshnessPending,
+    candidateEvaluationReady,
+    viewerState,
+    runtime,
+    viewerContextKey,
+    currentCandidateFingerprint,
+    onViewerStateChange,
+  ])
+  useEffect(() => () => onViewerStateChange?.(null), [onViewerStateChange])
+
   const samplingRangeResetKey = predictionFingerprint([
     experimentId,
     Object.entries(varsSchema ?? {}).map(([key, entry]) => [key, entry.shape, entry.min, entry.max]),
@@ -364,6 +439,7 @@ export function PredictionWorkspace({
 
   const cancelCurrent = useCallback(
     (explicit = false) => {
+      setViewerState(null)
       const samplingAtCancellation = samplingProgressRef.current
       const outcome = runtime.cancelCurrent({
         cancelCalculationData: cancelCalculationDataRef.current,
@@ -710,6 +786,7 @@ export function PredictionWorkspace({
         return
       runtime.advancePrimaryRevision()
       const transaction = runtime.beginTransaction()
+      setViewerState(null)
       activeForwardVarsFingerprintRef.current = expectedFingerprint
       runtime.abortCalculation()
       if (runtime.cancelPendingPrediction()) clearModelCaches()
@@ -719,7 +796,7 @@ export function PredictionWorkspace({
       setCalculationErrors({})
       startOperation('forward', 'Forward · RecordedData를 예측하는 중…', { direction: 'forward' })
       try {
-        const completed = await forwardOutputs(vars, transaction)
+        const completed = await forwardOutputs(vars, transaction, receiveRecorded(vars, transaction))
         const completedDocument = experimentDocumentRef.current
         if (
           !predictionForwardResultIsCurrent({
@@ -780,6 +857,7 @@ export function PredictionWorkspace({
       experimentId,
       finishOperation,
       forwardOutputs,
+      receiveRecorded,
       rememberProfile,
       runtime,
       setStatus,
@@ -801,6 +879,7 @@ export function PredictionWorkspace({
         return
       runtime.advancePrimaryRevision()
       const transaction = runtime.beginTransaction()
+      setViewerState(null)
       activeForwardVarsFingerprintRef.current = null
       runtime.abortCalculation()
       if (runtime.cancelPendingPrediction()) clearModelCaches()
@@ -846,7 +925,11 @@ export function PredictionWorkspace({
               throw new Error('Inverse Candidate의 Geometry 평가를 기다리는 시간이 초과되었습니다.')
             await new Promise((resolve) => setTimeout(resolve, 50))
           }
-          const surrogate = await forwardOutputsRef.current(nextVars, transaction)
+          const surrogate = await forwardOutputsRef.current(
+            nextVars,
+            transaction,
+            receiveRecorded(nextVars, transaction),
+          )
           if (!runtime.transactionIsCurrent(transaction)) return
           setSurrogateValues(surrogate.calculated.values)
           setSurrogateErrors(surrogate.calculated.errors)
@@ -878,6 +961,7 @@ export function PredictionWorkspace({
       experimentId,
       finishOperation,
       forwardOutputs,
+      receiveRecorded,
       predictInverse,
       rememberProfile,
       runtime,
@@ -981,6 +1065,7 @@ export function PredictionWorkspace({
   )
 
   const validationDisabledReason = useMemo(() => {
+    if (!varsEditorValid) return 'Vars 입력을 올바르게 확정하세요.'
     if (!authenticated) return '로그인 후 검증할 수 있습니다.'
     if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
     if (!contextExperimentMatches) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
@@ -1010,6 +1095,7 @@ export function PredictionWorkspace({
       return '현재 Vars가 최신 Inverse 결과가 아닙니다.'
     return undefined
   }, [
+    varsEditorValid,
     authenticated,
     busy,
     candidateEvaluationReady,
@@ -1036,6 +1122,7 @@ export function PredictionWorkspace({
   ])
 
   const samplingDisabledReason = useMemo(() => {
+    if (!varsEditorValid) return 'Vars 입력을 올바르게 확정하세요.'
     if (!authenticated) return '로그인 후 sampling할 수 있습니다.'
     if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
     if (!contextExperimentMatches || !varsSchema) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
@@ -1063,6 +1150,7 @@ export function PredictionWorkspace({
     if (!active) return 'Sampling 범위가 고정되지 않은 Vars가 하나 이상 필요합니다.'
     return undefined
   }, [
+    varsEditorValid,
     authenticated,
     busy,
     contextExperimentMatches,
@@ -1609,7 +1697,7 @@ export function PredictionWorkspace({
     setForwardFailure(null)
     startOperation('initializing-targets', '새 Calculation Target을 현재 Candidate의 Forward 예측으로 초기화하는 중…')
     try {
-      const completed = await forwardOutputs(candidateVars, transaction)
+      const completed = await forwardOutputs(candidateVars, transaction, receiveRecorded(candidateVars, transaction))
       if (!runtime.transactionIsCurrent(transaction)) return
       const nextValues = { ...calculationValuesRef.current }
       const nextErrors: Record<number, string> = {}
@@ -1637,6 +1725,7 @@ export function PredictionWorkspace({
     clearModelCaches,
     finishOperation,
     forwardOutputs,
+    receiveRecorded,
     runInverse,
     runtime,
     setStatus,
@@ -1936,6 +2025,7 @@ export function PredictionWorkspace({
 
   const varsPane = (
     <PredictionVarsPane
+      onValidityChange={setVarsEditorValid}
       currentExperimentId={experimentId}
       candidateSessionKey={`${experimentId ?? 'none'}:prediction`}
       demos={availableQuery.data?.demos ?? []}

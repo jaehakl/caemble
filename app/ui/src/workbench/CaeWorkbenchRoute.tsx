@@ -1,3 +1,4 @@
+import { varsFingerprint } from '@/lib/cad/model/vars'
 import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
 import { usePreflight } from '@/features/measurement/usePreflight'
 import { Rows3 } from 'lucide-react'
@@ -18,6 +19,7 @@ import { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSa
 import { ExperimentWorkspace } from '@/features/cae-workbench/chrome/ExperimentWorkspace'
 import { calculationAccessPolicy, type CalculationSaveState } from '@/features/calculation'
 import type {
+  PredictionViewerState,
   PredictionWorkspaceChromeState,
   PredictionWorkspaceCommand,
 } from '@/features/prediction/PredictionWorkspace'
@@ -109,6 +111,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [predictionVarsContainer, setPredictionVarsContainer] = useState<HTMLDivElement | null>(null)
   const [analysisCommand, setAnalysisCommand] = useState<AnalysisCommand | null>(null)
   const [predictionCommand, setPredictionCommand] = useState<PredictionWorkspaceCommand | null>(null)
+  const [predictionViewer, setPredictionViewer] = useState<PredictionViewerState | null>(null)
   const [predictionState, setPredictionState] = useState<PredictionWorkspaceChromeState>({
     busy: false,
     canSample: false,
@@ -349,6 +352,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               command={predictionCommand}
               onActivity={runtimeConsole.append}
               onChromeStateChange={setPredictionState}
+              onViewerStateChange={setPredictionViewer}
               onExperimentChange={(row) =>
                 page.guardReplacement(async () => {
                   await workbench.loadExperiment(row)
@@ -366,13 +370,33 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     </div>
   )
 
-  const preview = preflight.result
+  const isPrediction = page.activeSection === 'prediction'
+  const preview = isPrediction ? null : preflight.result
+  const predictionResult =
+    isPrediction &&
+    predictionViewer !== null &&
+    predictionViewer.experimentId === workbench.experimentId &&
+    predictionViewer.varsFingerprint === varsFingerprint(workbench.candidateVars) &&
+    predictionViewer.sourceHash === workbench.experimentDocument.evaluatedSnapshot?.sourceHash
+      ? predictionViewer
+      : null
+  const predictionContracts = Object.fromEntries(
+    Object.entries(predictionResult?.preview.resultContracts ?? {}).filter(
+      ([name, contract]) => contract.visualization.kind === 'box-grid' && predictionResult?.preview.recorded[name],
+    ),
+  )
   const viewerPane = (
     <div className="flex h-full min-h-0 flex-col">
       {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
-          calculationSource={viewerCalculationSource}
+          persistenceKey={
+            isPrediction
+              ? `prediction:${workbench.experimentId}:${workbench.experimentDocument.resultSessionKey}`
+              : undefined
+          }
+          resultPlaceholder={isPrediction && !predictionResult ? `BoxGrid 예측 · ${predictionState.status}` : undefined}
+          calculationSource={isPrediction ? undefined : viewerCalculationSource}
           captureRef={viewerCaptureRef}
           activeExperimentTaskName={page.activeExperimentFile}
           experiment={preview?.experiment ?? workbench.experiment}
@@ -384,15 +408,31 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
           }
           key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
-          autoSelectResult={Boolean(preview || workbench.selection.measurement)}
-          resultContracts={preview?.payload.result_contracts ?? workbench.selection.resultContracts}
-          visualizations={preview?.payload.visualizations ?? workbench.selection.visualizations}
-          resultErrors={preview?.errors ?? workbench.selection.resultErrors}
-          resultSourceHash={preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash}
-          resultVarsHash={preview?.payload.vars_hash ?? workbench.selection.materialSnapshot?.varsHash}
-          recordedData={preview?.data ?? workbench.selection.flatRecordedData}
-          recordedRules={preview?.rules ?? workbench.selection.recordedRules}
-          loading={!preview && workbench.selection.loading}
+          autoSelectResult={isPrediction || Boolean(preview || workbench.selection.measurement)}
+          resultContracts={
+            isPrediction
+              ? predictionContracts
+              : (preview?.payload.result_contracts ?? workbench.selection.resultContracts)
+          }
+          visualizations={isPrediction ? {} : (preview?.payload.visualizations ?? workbench.selection.visualizations)}
+          resultErrors={isPrediction ? {} : (preview?.errors ?? workbench.selection.resultErrors)}
+          resultSourceHash={
+            isPrediction
+              ? predictionResult?.sourceHash
+              : (preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash)
+          }
+          resultVarsHash={
+            isPrediction
+              ? predictionResult?.varsHash
+              : (preview?.payload.vars_hash ?? workbench.selection.materialSnapshot?.varsHash)
+          }
+          recordedData={
+            isPrediction ? predictionResult?.preview.recorded : (preview?.data ?? workbench.selection.flatRecordedData)
+          }
+          recordedRules={
+            isPrediction ? predictionResult?.preview.rules : (preview?.rules ?? workbench.selection.recordedRules)
+          }
+          loading={isPrediction ? false : !preview && workbench.selection.loading}
           downloadProgress={workbench.selection.downloadProgress}
           selectionQuery={viewerSelectionQuery}
           selectionSourceStatus={selectionSourceStatus}

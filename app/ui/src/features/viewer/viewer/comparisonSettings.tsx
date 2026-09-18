@@ -43,6 +43,15 @@ export type ViewerComparison = {
   suspended: boolean
   camera: ComparisonCamera
 }
+/** A standalone Viewer can retain settings and camera while its data renderer changes. */
+export type ViewerPersistence = Pick<ViewerComparison, 'settings' | 'item' | 'camera'>
+export const ViewerPersistenceContext = createContext<ViewerPersistence | null>(null)
+export function useViewerCamera() {
+  const comparison = useContext(ViewerComparisonContext)
+  const persistent = useContext(ViewerPersistenceContext)
+  return comparison?.camera ?? persistent?.camera
+}
+
 export const ViewerComparisonContext = createContext<ViewerComparison | null>(null)
 
 export function useViewerComparison() {
@@ -56,9 +65,11 @@ export function useViewerSetting<T>(
   scope: 'item' | 'workspace' = 'item',
 ): [T, Dispatch<SetStateAction<T>>] {
   const comparison = useViewerComparison()
+  const persistent = useContext(ViewerPersistenceContext)
   const [local, setLocal] = useState(initial)
-  const settings = comparison?.settings
-  const key = `${scope === 'workspace' ? '@workspace' : (comparison?.item ?? '')}:${name}`
+  const owner = comparison ?? persistent
+  const settings = owner?.settings
+  const key = `${scope === 'workspace' ? '@workspace' : (owner?.item ?? '')}:${name}`
   const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
   const snapshot = useCallback(
     () => (settings?.values.has(key) ? (settings.values.get(key) as T) : local),

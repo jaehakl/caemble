@@ -9,6 +9,7 @@ import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
 const mocks = vi.hoisted(() => ({
   measurement: null as { id: number; recorded_at: string | null } | null,
   viewerMounts: 0,
+  viewerProps: {} as Record<string, unknown>,
   isDemo: false,
   manageable: false,
   restoring: false,
@@ -26,7 +27,7 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
     workspaceSession: {},
     selection: {
       recordedData: {},
-      flatRecordedData: {},
+      flatRecordedData: { savedMeasurement: 'sentinel' },
       recordedSchemas: {},
       recordedRules: {},
       measurement: mocks.measurement,
@@ -140,7 +141,9 @@ vi.mock('@/features/cae-workbench/editors', () => ({
 }))
 vi.mock('@/features/experiment', () => ({ ExperimentManager: () => null }))
 vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({
-  WorkbenchViewer: ({ autoSelectResult }: { autoSelectResult?: boolean }) => {
+  WorkbenchViewer: (props: { autoSelectResult?: boolean }) => {
+    mocks.viewerProps = props
+    const { autoSelectResult } = props
     const [mount] = useState(() => ++mocks.viewerMounts)
     return (
       <div
@@ -216,9 +219,14 @@ describe('Workbench section navigation', () => {
       expect(screen.queryByRole('button', { name: retired })).not.toBeInTheDocument()
     }
     fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
-    fireEvent.change(await screen.findByLabelText('Candidate variable'), { target: { value: '11' } })
+    await screen.findByLabelText('Candidate variable')
+    expect(mocks.viewerProps.recordedData).toBeUndefined()
+    expect(mocks.viewerProps.visualizations).toEqual({})
+    expect(mocks.viewerProps.resultContracts).toEqual({})
+    fireEvent.change(screen.getByLabelText('Candidate variable'), { target: { value: '11' } })
     fireEvent.click(screen.getByRole('button', { name: 'analysis' }))
     expect(await screen.findByText('Analysis settings')).toBeInTheDocument()
+    expect(mocks.viewerProps.recordedData).toEqual({ savedMeasurement: 'sentinel' })
     expect(screen.queryByLabelText('Candidate variable')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
     await waitFor(() => expect(screen.getByLabelText('Candidate variable')).toHaveValue('11'))

@@ -1,6 +1,6 @@
 import { ViewerToolbar, type CameraView } from './ViewerToolbar'
 import { viewerScaleBar } from './scaleBar'
-import { useViewerComparison, useViewerSetting } from './comparisonSettings'
+import { useViewerCamera, useViewerComparison, useViewerSetting } from './comparisonSettings'
 import type { HeatmapRaster, HeatmapRenderData } from './structuredField'
 import { heatmapTiles } from './pointCloudData'
 import { measurements } from '@jscad/modeling'
@@ -301,7 +301,8 @@ function JscadViewer({
   viewerExpanded,
   visibleSources,
 }: JscadViewerProps) {
-  const savedCamera = useViewerComparison()?.camera
+  const savedCamera = useViewerCamera()
+  const comparison = useViewerComparison()
   const cameraToken = useRef({})
   const [pickMode, setPickMode] = useViewerSetting<CadViewerPickMode>('pickMode', 'off', 'workspace')
   const [xrayEnabled, setXrayEnabled] = useViewerSetting('xrayEnabled', false, 'workspace')
@@ -907,7 +908,7 @@ function JscadViewer({
 
   return (
     <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
-      {!savedCamera ? (
+      {!comparison ? (
         <div data-capture-exclude>
           <ViewerToolbar {...toolbar} />
         </div>

@@ -1,4 +1,8 @@
+import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import {
+  createComparisonSettings,
+  ViewerPersistenceContext,
+  type ViewerPersistence,
   ViewerComparisonContext,
   useViewerComparison,
   useViewerSetting,
@@ -8,7 +12,7 @@ import {
 import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
 import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
 import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
-import { useEffect, useMemo, useRef, useState, type Ref } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
 import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
@@ -59,9 +63,21 @@ export type WorkbenchViewerProps = {
   onSelectedResultChange?: (name: string) => void
   comparison?: ViewerComparison
   showToolbar?: boolean
+  /** Retain camera, result selection and controls across pending Prediction renders. */
+  persistenceKey?: string
+  resultPlaceholder?: string
 }
 
 export function WorkbenchViewer(props: WorkbenchViewerProps) {
+  const sessions = useRef(new Map<string, ViewerPersistence>())
+  if (props.persistenceKey && !sessions.current.has(props.persistenceKey)) {
+    sessions.current.set(props.persistenceKey, {
+      settings: createComparisonSettings(),
+      camera: createComparisonCamera(),
+      item: '',
+    })
+  }
+  const persistent = props.persistenceKey ? sessions.current.get(props.persistenceKey) : undefined
   const previous = useRef<WorkbenchViewerProps | null>(null)
   const name = props.selectedResult ?? ''
   const visualName = name.startsWith('@visualizations.')
@@ -79,28 +95,32 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
     props.comparison && (!present || props.resultErrors?.[name]) && previous.current?.selectedResult === name
       ? previous.current
       : null
-  const unavailable = Boolean(props.comparison && name && (!present || props.resultErrors?.[name]))
+  const unavailable = Boolean(
+    !props.resultPlaceholder && props.comparison && name && (!present || props.resultErrors?.[name]),
+  )
   return (
-    <ViewerComparisonContext.Provider value={props.comparison ?? null}>
-      <div className="relative h-full min-h-0">
-        <div className={`h-full min-h-0 ${unavailable ? 'invisible' : ''}`}>
-          <ViewerContent
-            {...props}
-            recordedData={retained?.recordedData ?? props.recordedData}
-            recordedRules={retained?.recordedRules ?? props.recordedRules}
-            resultContracts={retained?.resultContracts ?? props.resultContracts}
-            visualizations={retained?.visualizations ?? props.visualizations}
-            resultErrors={unavailable && retained ? retained.resultErrors : props.resultErrors}
-          />
+    <ViewerPersistenceContext.Provider value={persistent ?? null}>
+      <ViewerComparisonContext.Provider value={props.comparison ?? null}>
+        <div className="relative h-full min-h-0">
+          <div className={`h-full min-h-0 ${unavailable ? 'invisible' : ''}`}>
+            <ViewerContent
+              {...props}
+              recordedData={retained?.recordedData ?? props.recordedData}
+              recordedRules={retained?.recordedRules ?? props.recordedRules}
+              resultContracts={retained?.resultContracts ?? props.resultContracts}
+              visualizations={retained?.visualizations ?? props.visualizations}
+              resultErrors={unavailable && retained ? retained.resultErrors : props.resultErrors}
+            />
+          </div>
+          {unavailable ? (
+            <p role="status" className="absolute inset-0 grid place-items-center p-3 text-sm">
+              {props.resultErrors?.[name] ??
+                (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
+            </p>
+          ) : null}
         </div>
-        {unavailable ? (
-          <p role="status" className="absolute inset-0 grid place-items-center p-3 text-sm">
-            {props.resultErrors?.[name] ??
-              (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
-          </p>
-        ) : null}
-      </div>
-    </ViewerComparisonContext.Provider>
+      </ViewerComparisonContext.Provider>
+    </ViewerPersistenceContext.Provider>
   )
 }
 
@@ -130,8 +150,11 @@ function ViewerContent({
   selectedResult,
   onSelectedResultChange,
   showToolbar = true,
+  persistenceKey,
+  resultPlaceholder,
 }: WorkbenchViewerProps) {
   const comparison = useViewerComparison()
+  const persistent = useContext(ViewerPersistenceContext)
   const visual = useMemo(() => visualizationData(visualizations), [visualizations])
   const resultContracts = useMemo(
     () =>
@@ -173,9 +196,10 @@ function ViewerContent({
     [recordedRules, recordedData, resultContracts],
   )
   const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [])
-  const [localSelectedView, setSelectedView] = useState('')
-  const selectedView = selectedResult ?? localSelectedView
-  const selectionMade = useRef(false)
+  const [selections, setSelections] = useState<Record<string, string>>({})
+  const scope = persistenceKey ?? ''
+  const selectedView = selectedResult ?? selections[scope] ?? ''
+  const selectionMade = useRef(new Set<string>())
   const selectedField = mesh.fields.find((field) => field.label === selectedView)
   const selectedMotion = transforms.motions.find((motion) => motion.label === selectedView)
   const selectedParticles = particles.particles.find((value) => value.label === selectedView)
@@ -212,7 +236,15 @@ function ViewerContent({
             : undefined
   const frameMatches = !frameBlockedReason
   useEffect(() => {
-    if (selectedResult !== undefined || !autoSelectResult || loading || !recordedData || selectionMade.current) return
+    if (
+      selectedResult !== undefined ||
+      !autoSelectResult ||
+      loading ||
+      !recordedData ||
+      selectionMade.current.has(scope) ||
+      resultPlaceholder
+    )
+      return
     const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
       if (resultErrors[name]) return false
       if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
@@ -252,16 +284,16 @@ function ViewerContent({
         largestGridCount = count
       }
     }
-    setSelectedView(
+    const nextSelection =
       largestBoxGrid ??
-        (spatial.length
-          ? spatial[Math.floor(Math.random() * spatial.length)]
-          : candidates[candidates.length - 1])?.[0] ??
-        '',
-    )
-    selectionMade.current = candidates.length > 0
+      (spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ??
+      ''
+    setSelections((current) => ({ ...current, [scope]: nextSelection }))
+    if (candidates.length > 0) selectionMade.current.add(scope)
   }, [
     selectedResult,
+    scope,
+    resultPlaceholder,
     autoSelectResult,
     loading,
     recordedData,
@@ -279,7 +311,7 @@ function ViewerContent({
       ? '이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.'
       : undefined)
   const canOverlayGeometry = !geometryBlockedReason
-  const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
+  const sceneDocument = !resultPlaceholder && selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
   const recordReference = useMemo(() => {
     if (!calculationSource) return undefined
     try {
@@ -366,165 +398,174 @@ function ViewerContent({
     </>
   )
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      <ViewerControls>
-        <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
-          {showToolbar ? (
-            <select
-              aria-label="Viewer 결과 선택"
-              value={selectedView}
-              onChange={(event) => {
-                selectionMade.current = true
-                setSelectedView(event.target.value)
-                onSelectedResultChange?.(event.target.value)
-              }}
-            >
-              <option value="">Geometry</option>
-              {selectedView && !selectedContract ? (
-                <option value={selectedView}>{selectedView} · 결과 없음</option>
-              ) : null}
-              {Object.keys(resultContracts ?? {}).map((name) => (
-                <option key={name} value={name}>
-                  {name.startsWith('@visualizations.')
-                    ? `${name.slice('@visualizations.'.length)} · 시각화`
-                    : `${name} · Output`}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {Object.entries(resultContracts ?? {})
-            .filter(([, result]) => result.visualization.kind === 'polyline')
-            .map(([name, result]) => {
-              const compatible =
-                sameResultInvocation(name) &&
-                polylines.bundles.some((bundle) => bundle.id === name) &&
-                frameMatches &&
-                usesExperimentCoordinates(result.visualization) &&
-                (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
-              return (
-                <label
-                  key={name}
-                  title={
-                    compatible
-                      ? 'Geometry 좌표에 겹쳐 표시'
-                      : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
-                  }
-                >
+    <ViewerPersistenceContext.Provider value={persistent ? { ...persistent, item: selectedView } : null}>
+      <div className="relative flex h-full min-h-0 flex-col">
+        <ViewerControls>
+          <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
+            {showToolbar ? (
+              <select
+                aria-label="Viewer 결과 선택"
+                value={selectedView}
+                onChange={(event) => {
+                  selectionMade.current.add(scope)
+                  setSelections({ ...selections, [scope]: event.target.value })
+                  onSelectedResultChange?.(event.target.value)
+                }}
+              >
+                <option value="">Geometry</option>
+                {selectedView && !selectedContract ? (
+                  <option value={selectedView}>{selectedView} · 결과 없음</option>
+                ) : null}
+                {Object.keys(resultContracts ?? {}).map((name) => (
+                  <option key={name} value={name}>
+                    {name.startsWith('@visualizations.')
+                      ? `${name.slice('@visualizations.'.length)} · 시각화`
+                      : `${name} · Output`}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {Object.entries(resultContracts ?? {})
+              .filter(([, result]) => result.visualization.kind === 'polyline')
+              .map(([name, result]) => {
+                const compatible =
+                  sameResultInvocation(name) &&
+                  polylines.bundles.some((bundle) => bundle.id === name) &&
+                  frameMatches &&
+                  usesExperimentCoordinates(result.visualization) &&
+                  (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
+                return (
+                  <label
+                    key={name}
+                    title={
+                      compatible
+                        ? 'Geometry 좌표에 겹쳐 표시'
+                        : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`${name} Overlay`}
+                      disabled={!compatible || name === selectedView}
+                      checked={name === selectedView || overlay.includes(name)}
+                      onChange={(event) =>
+                        setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
+                      }
+                    />{' '}
+                    {name}
+                    {overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
+                  </label>
+                )
+              })}
+            {overlay
+              .filter((name) => !resultContracts?.[name])
+              .map((name) => (
+                <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
                   <input
                     type="checkbox"
+                    checked
                     aria-label={`${name} Overlay`}
-                    disabled={!compatible || name === selectedView}
-                    checked={name === selectedView || overlay.includes(name)}
-                    onChange={(event) =>
-                      setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
-                    }
-                  />{' '}
-                  {name}
-                  {overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
+                    onChange={() => setOverlay(overlay.filter((item) => item !== name))}
+                  />
+                  {name} · 결과 없음
                 </label>
-              )
-            })}
-          {overlay
-            .filter((name) => !resultContracts?.[name])
-            .map((name) => (
-              <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
-                <input
-                  type="checkbox"
-                  checked
-                  aria-label={`${name} Overlay`}
-                  onChange={() => setOverlay(overlay.filter((item) => item !== name))}
-                />
-                {name} · 결과 없음
-              </label>
-            ))}
-          {loading ? (
-            <span role="status">
-              저장 결과 불러오는 중
-              {downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
-            </span>
-          ) : null}
-          {!resultContracts && recordedRules.length ? (
-            <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
-          ) : null}
+              ))}
+            {loading ? (
+              <span role="status">
+                저장 결과 불러오는 중
+                {downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
+              </span>
+            ) : null}
+            {!resultContracts && recordedRules.length ? (
+              <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
+            ) : null}
+          </div>
+        </ViewerControls>
+        {resultPlaceholder ? (
+          <p role="status" className="p-2 text-xs">
+            {resultPlaceholder}
+          </p>
+        ) : null}
+        {!resultPlaceholder && !canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
+          <p role="status" className="p-2 text-xs">
+            {geometryBlockedReason}
+          </p>
+        ) : null}
+        <div ref={captureRef} className="min-h-0 flex-1 overflow-auto">
+          {resultPlaceholder ? (
+            renderScene()
+          ) : selectedView && !selectedContract ? (
+            <p role="alert" className="p-3 text-red-700">
+              {selectedView}: 새 실행에 선택한 결과가 없습니다.
+            </p>
+          ) : resultErrors[selectedView] ? (
+            <p role="alert" className="p-3 text-red-700">
+              {selectedView}: {resultErrors[selectedView]}
+            </p>
+          ) : selectedParticles ? (
+            <ParticleSetResult
+              key={selectedView}
+              particles={selectedParticles}
+              displayUnit={displayUnit}
+              canOverlayGeometry={canOverlayGeometry}
+              renderViewer={(data, showGeometry) => renderScene(data, 0, undefined, 1, showGeometry)}
+            />
+          ) : selectedMotion ? (
+            <MeshTransformResult
+              key={selectedView}
+              motion={selectedMotion}
+              displayUnit={displayUnit}
+              renderViewer={(data) => renderScene(data)}
+            />
+          ) : selectedField ? (
+            <MeshFieldResult
+              key={selectedView}
+              field={selectedField}
+              displacementFields={mesh.fields.filter((candidate) => sameResultInvocation(candidate.label))}
+              displayUnit={displayUnit}
+              renderViewer={(data, view) => renderScene(data, view.deformationScale)}
+            />
+          ) : selectedContract?.visualization.kind === 'box-grid' ? (
+            <BoxGridResult
+              key={selectedView}
+              name={selectedView}
+              rules={recordedRules}
+              data={recordedData}
+              displayUnit={displayUnit}
+              canOverlayGeometry={canOverlayGeometry}
+              geometryBlockedReason={geometryBlockedReason}
+              renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
+              recordReference={recordReference}
+            />
+          ) : selectedContract &&
+            !['mesh-field', 'mesh-transform', 'polyline', 'particle-set'].includes(
+              selectedContract.visualization.kind,
+            ) ? (
+            <ResultTensorView
+              key={selectedView}
+              name={selectedView}
+              contract={selectedContract}
+              rules={recordedRules}
+              data={recordedData}
+            />
+          ) : (
+            renderScene()
+          )}
         </div>
-      </ViewerControls>
-      {!canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
-        <p role="status" className="p-2 text-xs">
-          {geometryBlockedReason}
-        </p>
-      ) : null}
-      <div ref={captureRef} className="min-h-0 flex-1 overflow-auto">
-        {selectedView && !selectedContract ? (
-          <p role="alert" className="p-3 text-red-700">
-            {selectedView}: 새 실행에 선택한 결과가 없습니다.
-          </p>
-        ) : resultErrors[selectedView] ? (
-          <p role="alert" className="p-3 text-red-700">
-            {selectedView}: {resultErrors[selectedView]}
-          </p>
-        ) : selectedParticles ? (
-          <ParticleSetResult
-            key={selectedView}
-            particles={selectedParticles}
-            displayUnit={displayUnit}
-            canOverlayGeometry={canOverlayGeometry}
-            renderViewer={(data, showGeometry) => renderScene(data, 0, undefined, 1, showGeometry)}
-          />
-        ) : selectedMotion ? (
-          <MeshTransformResult
-            key={selectedView}
-            motion={selectedMotion}
-            displayUnit={displayUnit}
-            renderViewer={(data) => renderScene(data)}
-          />
-        ) : selectedField ? (
-          <MeshFieldResult
-            key={selectedView}
-            field={selectedField}
-            displacementFields={mesh.fields.filter((candidate) => sameResultInvocation(candidate.label))}
-            displayUnit={displayUnit}
-            renderViewer={(data, view) => renderScene(data, view.deformationScale)}
-          />
-        ) : selectedContract?.visualization.kind === 'box-grid' ? (
-          <BoxGridResult
-            key={selectedView}
-            name={selectedView}
-            rules={recordedRules}
-            data={recordedData}
-            displayUnit={displayUnit}
-            canOverlayGeometry={canOverlayGeometry}
-            geometryBlockedReason={geometryBlockedReason}
-            renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
-            recordReference={recordReference}
-          />
-        ) : selectedContract &&
-          !['mesh-field', 'mesh-transform', 'polyline', 'particle-set'].includes(
-            selectedContract.visualization.kind,
-          ) ? (
-          <ResultTensorView
-            key={selectedView}
-            name={selectedView}
-            contract={selectedContract}
-            rules={recordedRules}
-            data={recordedData}
-          />
-        ) : (
-          renderScene()
-        )}
+        {[
+          ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
+          ...mesh.errors.filter((error) => !resultErrors[error.label]),
+          ...transforms.errors.filter((error) => !resultErrors[error.label]),
+          ...particles.errors.filter((error) => !resultErrors[error.label]),
+          ...polylines.errors.filter((error) => !resultErrors[error.label]),
+        ]
+          .filter((error) => error.label !== selectedView || !resultErrors[selectedView])
+          .map((error) => (
+            <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
+              {error.label}: {error.message}
+            </p>
+          ))}
       </div>
-      {[
-        ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
-        ...mesh.errors.filter((error) => !resultErrors[error.label]),
-        ...transforms.errors.filter((error) => !resultErrors[error.label]),
-        ...particles.errors.filter((error) => !resultErrors[error.label]),
-        ...polylines.errors.filter((error) => !resultErrors[error.label]),
-      ]
-        .filter((error) => error.label !== selectedView || !resultErrors[selectedView])
-        .map((error) => (
-          <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
-            {error.label}: {error.message}
-          </p>
-        ))}
-    </div>
+    </ViewerPersistenceContext.Provider>
   )
 }

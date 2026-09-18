@@ -7,7 +7,12 @@ import type { CalculationDataOutput } from '@/api'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { BrowserBatchCandidates } from '@/features/measurement/buildBatchArtifact'
 import type { CandidateBatchProgress } from '@/features/measurement/useCaeMeasurementActions'
-import { PredictionWorkspace, type PredictionWorkspaceCommand } from './PredictionWorkspace'
+import {
+  PredictionWorkspace,
+  type PredictionWorkspaceCommand,
+  type PredictionWorkspaceChromeState,
+} from './PredictionWorkspace'
+import type { PredictionRecordedPreview } from './usePredictionModels'
 
 const mocks = vi.hoisted(() => ({
   manageable: true,
@@ -16,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   calculationSource: 'calculation-source',
   contextFingerprint: 'before',
   forwardOutputs: vi.fn(),
+  viewerState: vi.fn(),
+  chromeState: vi.fn(),
   loadContextData: vi.fn(),
   loadContextFingerprint: vi.fn(),
   predictInverse: vi.fn(),
@@ -121,10 +128,20 @@ vi.mock('./PredictionPanels', () => ({
       </button>
     )
   },
-  PredictionVarsPane: ({ onVariableChange }: { onVariableChange: (key: string, value: number) => void }) => (
-    <button type="button" onClick={() => onVariableChange('x', 2)}>
-      Edit Vars
-    </button>
+  PredictionVarsPane: ({
+    onVariableChange,
+    onValidityChange,
+  }: {
+    onVariableChange: (key: string, value: number) => void
+    onValidityChange: (valid: boolean) => void
+  }) => (
+    <>
+      <button type="button" onClick={() => onVariableChange('x', 2)}>
+        Edit Vars
+      </button>
+      <button onClick={() => onValidityChange(false)}>Invalid Vars draft</button>
+      <button onClick={() => onValidityChange(true)}>Discard Vars draft</button>
+    </>
   ),
 }))
 
@@ -154,10 +171,13 @@ function predictionResult(direction: 'forward' | 'inverse', value: number) {
 }
 
 function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEvaluation?: boolean }) {
+  const [active, setActive] = useState(true)
+  const [experimentId, setExperimentId] = useState(10)
+  const [varsContainer, setVarsContainer] = useState<HTMLDivElement | null>(null)
   const [candidate, setCandidate] = useState({ x: 1 })
   const [evaluatedCandidate, setEvaluatedCandidate] = useState({ x: 1 })
   const [command, setCommand] = useState<PredictionWorkspaceCommand | null>(null)
-  const onChromeStateChange = useCallback(() => undefined, [])
+  const onChromeStateChange = useCallback((state: PredictionWorkspaceChromeState) => mocks.chromeState(state), [])
   const workbench = {
     calculationDataActions: { busy: false, cancel: vi.fn(), calculateMeasurement: mocks.calculateMeasurement },
     candidateVars: candidate,
@@ -172,7 +192,7 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
       variables: deferCandidateEvaluation ? evaluatedCandidate : candidate,
       varsSchema: { x: { min: 0, max: 10, shape: [] } },
     },
-    experimentId: 10,
+    experimentId,
     experimentIsDemo: false,
     experimentManageable: mocks.manageable,
     experimentRecord: null,
@@ -206,16 +226,21 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
       <button type="button" onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'sample', sampleCount: 3 })}>
         Sample
       </button>
+      <button onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'cancel' })}>Cancel</button>
+      <button onClick={() => setActive(false)}>Leave Prediction</button>
+      <div ref={setVarsContainer} />
+      <button onClick={() => setExperimentId(11)}>Change Experiment</button>
       <PredictionWorkspace
-        active
+        active={active}
         authenticated
         dataReadable
         command={command}
         onChromeStateChange={onChromeStateChange}
+        onViewerStateChange={mocks.viewerState}
         onExperimentChange={() => undefined}
         onRequestLogin={() => undefined}
         selectedCalculationId={1}
-        varsContainer={null}
+        varsContainer={varsContainer}
         workbench={workbench}
       />
     </>
@@ -233,6 +258,7 @@ async function renderWorkspace(deferCandidateEvaluation = false) {
 }
 
 beforeEach(() => {
+  mocks.viewerState.mockReset()
   mocks.manageable = true
   mocks.calculateMeasurement.mockReset()
   mocks.runCandidates.mockReset()
@@ -416,7 +442,7 @@ describe('Prediction Save & Run snapshot display', () => {
     expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Finish Candidate Evaluation' }))
     await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '19'))
-    expect(mocks.forwardOutputs).toHaveBeenLastCalledWith({ x: 3 }, expect.any(Number))
+    expect(mocks.forwardOutputs).toHaveBeenLastCalledWith({ x: 3 }, expect.any(Number), expect.any(Function))
   })
 
   it('clears the snapshot when an automatic reload finds a changed Calculation contract', async () => {
@@ -455,4 +481,79 @@ it('blocks validation, sampling and missing-data writes without persistent Exper
   expect(mocks.saveAndRun).not.toHaveBeenCalled()
   expect(mocks.runCandidates).not.toHaveBeenCalled()
   expect(mocks.calculateMeasurement).not.toHaveBeenCalled()
+})
+
+const recordedPreview: PredictionRecordedPreview = {
+  modelFingerprint: 'model-before-calculation',
+  recorded: {},
+  rules: [],
+  resultContracts: {},
+}
+
+it('publishes RecordedData before Calculation, rejects old Vars callbacks, and retains it after Calculation fails', async () => {
+  const pending: {
+    vars: { x: number }
+    publish: (preview: PredictionRecordedPreview) => void
+    reject: (error: Error) => void
+  }[] = []
+  mocks.forwardOutputs.mockImplementation(
+    (vars, _transaction, publish) =>
+      new Promise((_resolve, reject) => {
+        pending.push({ vars, publish, reject })
+      }),
+  )
+  await renderWorkspace(true)
+  expect(pending).toHaveLength(1)
+  await act(async () => pending[0].publish(recordedPreview))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: recordedPreview }))
+  fireEvent.click(screen.getByRole('button', { name: 'Change Candidate' }))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(null)
+  await act(async () => pending[0].publish(recordedPreview))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(null)
+  fireEvent.click(screen.getByRole('button', { name: 'Finish Candidate Evaluation' }))
+  await waitFor(() => expect(pending).toHaveLength(2))
+  const next = { ...recordedPreview, modelFingerprint: 'next-model' }
+  await act(async () => pending[1].publish(next))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: next }))
+  await act(async () => pending[0].publish(recordedPreview))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: next }))
+  await act(async () => pending[1].reject(new Error('Calculation failed')))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: next }))
+})
+
+it.each(['Cancel', 'Leave Prediction', 'Change Experiment'])(
+  'discards pending RecordedData after %s',
+  async (action) => {
+    mocks.forwardOutputs.mockImplementation(() => new Promise(() => {}))
+    await renderWorkspace()
+    const publish = mocks.forwardOutputs.mock.calls[0][2]
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await act(async () => publish(recordedPreview))
+    expect(mocks.viewerState).toHaveBeenLastCalledWith(null)
+  },
+)
+
+it('publishes Inverse surrogate BoxGrid while preserving the user Target', async () => {
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 20))
+  mocks.forwardOutputs.mockImplementation(async (_vars, _transaction, publish) => {
+    publish(recordedPreview)
+    return predictionResult('forward', 10)
+  })
+  await renderWorkspace()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '10'))
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: recordedPreview }))
+})
+
+it('blocks Save & Run and Sampling until a Vars draft is valid', async () => {
+  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+  await renderWorkspace()
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true, canSample: true })),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Invalid Vars draft' }))
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: false, canSample: false }))
+  fireEvent.click(screen.getByRole('button', { name: 'Discard Vars draft' }))
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true, canSample: true }))
 })

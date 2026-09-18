@@ -1,3 +1,4 @@
+import { useViewerSetting } from '@/features/viewer/viewer/comparisonSettings'
 import { materialVarsHash } from '@/lib/material/resolution'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
@@ -7,7 +8,20 @@ import { calculationExampleInput } from '@/authoring/examples'
 import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 
 vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
-  BoxGridResult: ({ name }: { name: string }) => <div>Box Grid {name}</div>,
+  BoxGridResult: ({ name }: { name: string }) => {
+    const [opacity, setOpacity] = useViewerSetting('fixture.opacity', 0.5)
+    return (
+      <div>
+        Box Grid {name}
+        <input
+          aria-label="Grid opacity"
+          value={opacity}
+          type="number"
+          onChange={(event) => setOpacity(Number(event.target.value))}
+        />
+      </div>
+    )
+  },
 }))
 
 vi.mock('@/features/viewer/viewer/CadViewer', () => ({ default: () => <div>Geometry preview</div> }))
@@ -398,4 +412,27 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
   expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
   expect(screen.getByText('Geometry preview')).toBeInTheDocument()
+})
+
+it('shows CAD during prediction, restores BoxGrid controls and respects a Geometry choice while pending', () => {
+  const props = { ...gridSelectionProps({ field: [2, 2, 1] }), persistenceKey: 'prediction:1' }
+  const { rerender } = render(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('field')
+  fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.2' } })
+  const pending = { ...props, recordedData: undefined, resultContracts: {}, resultPlaceholder: 'Predicting new Vars' }
+  rerender(<WorkbenchViewer {...pending} />)
+  expect(screen.getByText('Geometry preview')).toBeInTheDocument()
+  expect(screen.queryByText('Box Grid field')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('field')
+  rerender(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
+  rerender(<WorkbenchViewer {...pending} />)
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
+  rerender(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(screen.getByText('Geometry preview')).toBeInTheDocument()
+  rerender(<WorkbenchViewer {...gridSelectionProps({ saved: [3, 3, 1] })} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('saved')
+  rerender(<WorkbenchViewer {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
 })

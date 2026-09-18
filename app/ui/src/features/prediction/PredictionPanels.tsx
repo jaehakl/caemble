@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { AlertCircle, Calculator, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import type { AvailableExperimentRecord, CalculationDataOutput } from '@/api'
 import { TensorEditor, type TensorEditorComparisonStatus } from '@/components/tensor-editor'
@@ -16,7 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { flattenVarsTensor, varsTensorFromFlat, type Tensor, type Vars, type VarsSchemaEntry } from '@/lib/cad/model'
-import { VarsPanel } from '../calculation/VarsPanel'
+import { MeasurementVarsEditor } from '../measurement/MeasurementVarsEditor'
 import type {
   PredictionCohortExclusionReason,
   PredictionCohortSummary,
@@ -56,6 +57,7 @@ export type PredictionVarsPaneProps = Readonly<{
   onExperimentChange: (experimentId: number) => void
   onSamplingRangeChange: (key: string, range: PredictionSamplingRange) => void
   onVariableChange: (key: string, value: Tensor) => void
+  onValidityChange?: (valid: boolean) => void
 }>
 
 export function PredictionVarsPane({
@@ -79,6 +81,7 @@ export function PredictionVarsPane({
   onExperimentChange,
   onSamplingRangeChange,
   onVariableChange,
+  onValidityChange,
 }: PredictionVarsPaneProps) {
   const currentExperiment = [...mine, ...demos].find((experiment) => experiment.id === currentExperimentId)
   return (
@@ -167,19 +170,111 @@ export function PredictionVarsPane({
         </div>
       </header>
       <div className={`flex min-h-0 flex-1 flex-col transition-opacity ${updating ? 'opacity-60' : ''}`}>
-        <VarsPanel
-          candidateSessionKey={candidateSessionKey}
-          disabled={disabled}
-          expandFirstByDefault
-          schema={schema}
-          samplingRanges={samplingRanges}
-          resetValues={resetValues}
-          vars={vars}
-          onSamplingRangeChange={onSamplingRangeChange}
-          onVariableChange={onVariableChange}
+        <PredictionVarsEditor
+          key={`${candidateSessionKey}:${JSON.stringify(schema)}`}
+          {...{
+            disabled,
+            schema,
+            samplingRanges,
+            resetValues,
+            vars,
+            onSamplingRangeChange,
+            onVariableChange,
+            onValidityChange,
+          }}
         />
       </div>
     </section>
+  )
+}
+
+function PredictionVarsEditor({
+  schema,
+  vars,
+  disabled,
+  samplingRanges,
+  resetValues,
+  onSamplingRangeChange,
+  onVariableChange,
+  onValidityChange,
+}: Pick<
+  PredictionVarsPaneProps,
+  | 'schema'
+  | 'vars'
+  | 'disabled'
+  | 'samplingRanges'
+  | 'resetValues'
+  | 'onSamplingRangeChange'
+  | 'onVariableChange'
+  | 'onValidityChange'
+>) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [valid, setValid] = useState(true)
+  const [resetRevision, setResetRevision] = useState(0)
+  const rangesValid = Object.entries(schema ?? {}).every(([key, item]) => {
+    const range = samplingRanges[key] ?? item
+    return (
+      Number.isFinite(range.min) &&
+      Number.isFinite(range.max) &&
+      range.min >= item.min &&
+      range.max <= item.max &&
+      range.min <= range.max
+    )
+  })
+  useEffect(() => onValidityChange?.(valid && rangesValid), [valid, rangesValid, onValidityChange])
+  const activeKey = selectedKey ?? Object.keys(schema ?? {})[0]
+  const entry = schema?.[activeKey]
+  const range = samplingRanges[activeKey] ?? entry
+  return (
+    <MeasurementVarsEditor
+      key={resetRevision}
+      layout="vertical"
+      schema={schema}
+      vars={vars}
+      selectedKey={selectedKey}
+      onSelectedKeyChange={setSelectedKey}
+      disabled={disabled}
+      onValidityChange={setValid}
+      onVarsChange={(next) => onVariableChange(activeKey, next[activeKey])}
+      editorControls={
+        entry && range ? (
+          <div className="flex shrink-0 flex-wrap items-end gap-2">
+            {(['min', 'max'] as const).map((bound) => (
+              <label key={bound} className="min-w-0 flex-1 text-xs">
+                Sampling {bound === 'min' ? 'Min' : 'Max'}
+                <Input
+                  aria-label={`${activeKey} Sampling ${bound === 'min' ? 'Min' : 'Max'}`}
+                  type="number"
+                  className="mt-1 h-8"
+                  min={entry.min}
+                  max={entry.max}
+                  step="any"
+                  disabled={disabled || !valid}
+                  value={Number.isFinite(range[bound]) ? range[bound] : ''}
+                  onChange={(event) =>
+                    onSamplingRangeChange(activeKey, {
+                      ...range,
+                      [bound]: event.target.value === '' ? Number.NaN : Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+            ))}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || resetValues[activeKey] === undefined}
+              onClick={() => {
+                setResetRevision((current) => current + 1)
+                onVariableChange(activeKey, resetValues[activeKey]!)
+              }}
+            >
+              Reset
+            </Button>
+          </div>
+        ) : null
+      }
+    />
   )
 }
 
