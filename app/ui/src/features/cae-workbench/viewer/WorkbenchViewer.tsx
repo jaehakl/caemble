@@ -1,4 +1,6 @@
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
+import { cameraPoseSchema, durableViewerSettings, type ViewerDefaults } from '@/contracts/viewerDefaults'
+import { ViewerPresentationMenu, type ViewerPresentationActions } from '@/features/experiment/ViewerPresentationMenu'
 import {
   createComparisonSettings,
   ViewerPersistenceContext,
@@ -12,7 +14,7 @@ import {
 import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
 import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
 import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
-import { useContext, useEffect, useMemo, useRef, useState, type Ref } from 'react'
+import { useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
 import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
@@ -37,6 +39,8 @@ function usesExperimentCoordinates(visualization: NonNullable<RecordedResultCont
 }
 
 export type WorkbenchViewerProps = {
+  initialDefaults?: ViewerDefaults | null
+  presentation?: ViewerPresentationActions
   calculationSource?: string
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
@@ -70,14 +74,15 @@ export type WorkbenchViewerProps = {
 
 export function WorkbenchViewer(props: WorkbenchViewerProps) {
   const sessions = useRef(new Map<string, ViewerPersistence>())
-  if (props.persistenceKey && !sessions.current.has(props.persistenceKey)) {
-    sessions.current.set(props.persistenceKey, {
-      settings: createComparisonSettings(),
-      camera: createComparisonCamera(),
+  const sessionKey = props.persistenceKey ?? 'default'
+  if (!sessions.current.has(sessionKey)) {
+    sessions.current.set(sessionKey, {
+      settings: createComparisonSettings(props.initialDefaults?.settings),
+      camera: createComparisonCamera(props.initialDefaults?.camera),
       item: '',
     })
   }
-  const persistent = props.persistenceKey ? sessions.current.get(props.persistenceKey) : undefined
+  const persistent = sessions.current.get(sessionKey)
   const previous = useRef<WorkbenchViewerProps | null>(null)
   const name = props.selectedResult ?? ''
   const visualName = name.startsWith('@visualizations.')
@@ -125,6 +130,8 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
 }
 
 function ViewerContent({
+  initialDefaults,
+  presentation,
   calculationSource,
   activeExperimentTaskName,
   experiment,
@@ -153,6 +160,9 @@ function ViewerContent({
   persistenceKey,
   resultPlaceholder,
 }: WorkbenchViewerProps) {
+  const localCaptureRef = useRef<HTMLDivElement>(null)
+  useImperativeHandle(captureRef, () => localCaptureRef.current!)
+  const initialSelection = useRef(initialDefaults?.selectedResult)
   const comparison = useViewerComparison()
   const persistent = useContext(ViewerPersistenceContext)
   const visual = useMemo(() => visualizationData(visualizations), [visualizations])
@@ -195,10 +205,10 @@ function ViewerContent({
     () => parseRecordedParticleSets(recordedRules, recordedData, resultContracts ?? {}),
     [recordedRules, recordedData, resultContracts],
   )
-  const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [])
   const [selections, setSelections] = useState<Record<string, string>>({})
   const scope = persistenceKey ?? ''
   const selectedView = selectedResult ?? selections[scope] ?? ''
+  const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [], 'item', undefined, selectedView)
   const selectionMade = useRef(new Set<string>())
   const selectedField = mesh.fields.find((field) => field.label === selectedView)
   const selectedMotion = transforms.motions.find((motion) => motion.label === selectedView)
@@ -284,12 +294,14 @@ function ViewerContent({
         largestGridCount = count
       }
     }
+    const preferred = initialSelection.current
     const nextSelection =
+      (preferred === '' || candidates.some(([name]) => name === preferred) ? preferred : undefined) ??
       largestBoxGrid ??
       (spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ??
       ''
     setSelections((current) => ({ ...current, [scope]: nextSelection }))
-    if (candidates.length > 0) selectionMade.current.add(scope)
+    if (candidates.length > 0 || preferred === '') selectionMade.current.add(scope)
   }, [
     selectedResult,
     scope,
@@ -400,6 +412,26 @@ function ViewerContent({
   return (
     <ViewerPersistenceContext.Provider value={persistent ? { ...persistent, item: selectedView } : null}>
       <div className="relative flex h-full min-h-0 flex-col">
+        {presentation ? (
+          <div className="flex justify-end border-b p-1" data-capture-exclude>
+            <ViewerPresentationMenu
+              key={presentation.experimentId}
+              actions={presentation}
+              disabled={loading || Boolean(resultPlaceholder)}
+              captureNode={() => localCaptureRef.current}
+              snapshot={() => {
+                const owner = comparison ?? persistent
+                const camera = cameraPoseSchema.safeParse(owner?.camera.current)
+                return {
+                  version: 1,
+                  selectedResult: selectedView,
+                  settings: durableViewerSettings(owner?.settings.values.entries() ?? []),
+                  camera: camera.success ? camera.data : null,
+                }
+              }}
+            />
+          </div>
+        ) : null}
         <ViewerControls>
           <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
             {showToolbar ? (
@@ -491,7 +523,7 @@ function ViewerContent({
             {geometryBlockedReason}
           </p>
         ) : null}
-        <div ref={captureRef} className="min-h-0 flex-1 overflow-auto">
+        <div ref={localCaptureRef} className="min-h-0 flex-1 overflow-auto">
           {resultPlaceholder ? (
             renderScene()
           ) : selectedView && !selectedContract ? (

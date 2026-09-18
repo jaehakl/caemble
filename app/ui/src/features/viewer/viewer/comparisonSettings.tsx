@@ -1,4 +1,5 @@
 import type { createComparisonCamera } from './comparisonCamera'
+import { durableViewerSettings } from '@/contracts/viewerDefaults'
 import {
   createContext,
   useCallback,
@@ -13,11 +14,13 @@ import {
 import { createPortal } from 'react-dom'
 
 /** Owned by the comparison workspace, independently of data and renderer lifetimes. */
-export function createComparisonSettings() {
-  const values = new Map<string, unknown>()
+export function createComparisonSettings(initial?: Record<string, unknown>) {
+  const values = new Map<string, unknown>(Object.entries(durableViewerSettings(Object.entries(initial ?? {}))))
+  const seeded = new Set(values.keys())
   const listeners = new Set<() => void>()
   return {
     values,
+    seeded,
     subscribe(listener: () => void) {
       listeners.add(listener)
       return () => {
@@ -63,22 +66,28 @@ export function useViewerSetting<T>(
   name: string,
   initial: T | (() => T),
   scope: 'item' | 'workspace' = 'item',
+  compatible?: (value: T) => boolean,
+  item?: string,
 ): [T, Dispatch<SetStateAction<T>>] {
   const comparison = useViewerComparison()
   const persistent = useContext(ViewerPersistenceContext)
   const [local, setLocal] = useState(initial)
   const owner = comparison ?? persistent
   const settings = owner?.settings
-  const key = `${scope === 'workspace' ? '@workspace' : (owner?.item ?? '')}:${name}`
+  const key = `${scope === 'workspace' ? '@workspace' : (item ?? owner?.item ?? '')}:${name}`
   const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
+  const stored = settings?.values.get(key) as T
+  const validateDefault = !comparison || comparison.controlsOwner
+  const invalidDefault = Boolean(validateDefault && settings?.seeded.has(key) && compatible && !compatible(stored))
   const snapshot = useCallback(
-    () => (settings?.values.has(key) ? (settings.values.get(key) as T) : local),
-    [settings, key, local],
+    () => (!invalidDefault && settings?.values.has(key) ? (settings.values.get(key) as T) : local),
+    [settings, key, local, invalidDefault],
   )
   const value = useSyncExternalStore(subscribe, snapshot, snapshot)
   useLayoutEffect(() => {
-    if (settings && !settings.values.has(key)) settings.set(key, local)
-  }, [settings, key, local])
+    if (settings && (!settings.values.has(key) || invalidDefault)) settings.set(key, local)
+    if (validateDefault) settings?.seeded.delete(key)
+  }, [settings, key, local, invalidDefault, validateDefault])
   const setValue = useCallback<Dispatch<SetStateAction<T>>>(
     (next) => {
       if (!settings) {

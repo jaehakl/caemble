@@ -31,14 +31,22 @@ export function MeshFieldResult({
   renderViewer?: (data: ReturnType<typeof createMeshFieldRenderData>, view: MeshFieldView) => ReactNode
 }) {
   const comparison = useViewerComparison()
-  const [view, setView] = useViewerSetting<MeshFieldView>('mesh.view', {
-    component: field.valueKind === 'stress' ? 'vonMises' : 'magnitude',
-    wireframe: true,
-    overlays: true,
-    clipAxis: -1,
-    clipFraction: 0.5,
-    deformationScale: 0,
-  })
+  const [view, setView] = useViewerSetting<MeshFieldView>(
+    'mesh.view',
+    {
+      component: field.valueKind === 'stress' ? 'vonMises' : 'magnitude',
+      wireframe: true,
+      overlays: true,
+      clipAxis: -1,
+      clipFraction: 0.5,
+      deformationScale: 0,
+    },
+    'item',
+    (value) =>
+      typeof value.component === 'number'
+        ? value.component < field.componentCount
+        : value.component !== 'vonMises' || field.valueKind === 'stress',
+  )
   const candidates = useMemo(
     () =>
       field.valueKind === 'stress'
@@ -52,6 +60,8 @@ export function MeshFieldResult({
   const [selectedDisplacement, setSelectedDisplacement] = useViewerSetting<string | null>(
     'mesh.selectedDisplacement',
     null,
+    'item',
+    (value) => value === null || candidates.some((candidate) => candidate.label === value),
   )
   const displacement =
     field.valueKind === 'displacement'
@@ -66,7 +76,12 @@ export function MeshFieldResult({
   const [manualScale, setManualScale] = useViewerSetting('mesh.manualScale', 1)
   const [frequencyHz, setFrequencyHz] = useViewerSetting('mesh.frequencyHz', field.spectrum?.frequencies[0] ?? 0)
   const [phaseDegrees, setPhaseDegrees] = useViewerSetting('mesh.phaseDegrees', 0)
-  const [frameIndex, setFrame] = useViewerSetting('mesh.frameIndex', 0)
+  const [frameIndex, setFrame] = useViewerSetting(
+    'mesh.frameIndex',
+    0,
+    'item',
+    (value) => value < (field.times?.length ?? 1),
+  )
   const frame = comparison ? frameIndex : Math.min(frameIndex, Math.max(0, (field.times?.length ?? 1) - 1))
   useEffect(() => {
     if (comparison) return

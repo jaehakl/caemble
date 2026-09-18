@@ -6,7 +6,7 @@ Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 
 
 `/`에 접속하면 로그인 상태에서는 `/workbench`, 비로그인 상태에서는 `/showcase`로 이동합니다. 두 주소는 로그인 여부와 관계없이 직접 열 수 있습니다. 특정 저장 버전은 `/workbench?experiment=ID`로 바로 엽니다. 기존 `/?experiment=ID`와 `/?help=...` 링크도 Workbench로 연결됩니다.
 
-Showcase는 접근 가능한 저장 Experiment와 공개 Demo를 4:3 이미지 카드로 표시합니다. 첫 진입 시 대표 Demo를 선택하며, 카드 선택 시 오른쪽 Viewer에서 형상과 가장 최근 기록 완료 Measurement를 확인할 수 있습니다. Showcase 탐색은 Workbench의 로컬 작업을 변경하지 않습니다. Catalog 예제는 Workbench 리본의 **Examples**에서 엽니다.
+Showcase는 접근 가능한 저장 Experiment와 공개 Demo를 4:3 이미지 카드로 표시합니다. 첫 진입 시 대표 Demo를 선택하며, 카드 선택 시 오른쪽 Viewer에서 형상과 초기 화면에 고정한 Measurement를 확인할 수 있습니다. 고정 설정이 없으면 가장 최근 기록 완료 Measurement를 표시합니다. Showcase 탐색은 Workbench의 로컬 작업을 변경하지 않습니다. Catalog 예제는 Workbench 리본의 **Examples**에서 엽니다.
 
 같은 namespace·Repository·key의 버전은 최신 버전 카드 하나로 묶입니다. 카드 하단 우측의 버전 배지를 누르면 이전 버전을 선택할 수 있습니다. 이름·설명·key 검색, Repository 다중 필터, 생성일·이름·Measurement 수 정렬을 지원하며 기본은 생성일 최신순입니다. 생성일과 Measurement 수는 대표 버전 기준이며 이전 버전의 수를 합산하지 않습니다.
 
@@ -16,7 +16,17 @@ Showcase는 접근 가능한 저장 Experiment와 공개 Demo를 4:3 이미지 �
 
 복원할 로컬 작업이나 URL로 지정한 Experiment가 없으면 **Experiment** 화면에서 첫 namespace의 첫 Experiment를 자동으로 엽니다. 저장된 Experiment가 없으면 첫 예제를 엽니다. 기존 로컬 작업과 저장된 선택은 재방문 시 복원됩니다.
 
-저장된 Experiment를 열면 결과가 기록된 Measurement 중 가장 최근 항목을 자동으로 불러옵니다. 해당 Measurement의 Vars·Material과 RecordedData가 적용되고 ray 경로 등 지원되는 결과가 Viewer에 표시됩니다. 기록된 결과가 없으면 Experiment만 표시하며 Solver를 자동 실행하지 않습니다.
+저장된 Experiment를 열면 초기 화면에 고정한 Measurement를 불러오며, 설정이 없거나 해당 Measurement가 삭제됐으면 결과가 기록된 Measurement 중 가장 최근 항목을 불러옵니다. 직접 선택했거나 로컬 작업에서 복원한 Measurement가 있으면 그 선택이 우선합니다. 해당 Measurement의 Vars·Material과 RecordedData가 적용되고 ray 경로 등 지원되는 결과가 Viewer에 표시됩니다. 기록된 결과가 없으면 Experiment만 표시하며 Solver를 자동 실행하지 않습니다.
+
+## 초기 화면과 대표이미지 수정
+
+Viewer의 **초기 화면·대표이미지** 메뉴에서 **현재 화면을 초기 화면으로 저장**을 누르면 현재 Measurement, 선택 데이터, 표시 옵션과 카메라를 한 묶음으로 저장합니다. 저장된 소스의 기록 완료 Measurement를 표시할 때 사용할 수 있으며, 임시 실행·Prediction 결과나 소스 편집 중에는 초기 화면을 저장할 수 없습니다.
+
+설정은 정확한 Experiment 버전에 속하며 새 버전을 만들지 않고 사후 수정할 수 있습니다. 일반 Experiment는 소유자와 관리자, Demo는 관리자만 변경할 수 있습니다. 새 버전에는 초기 화면 설정을 자동 복사하지 않습니다.
+
+Showcase와 Demo를 포함한 해당 Experiment의 각 Viewer가 처음 열릴 때 저장한 설정을 적용합니다. 이후 데이터 갱신이나 화면 확대는 사용자의 표시·카메라 조작을 되돌리지 않습니다. 다른 결과에 저장된 데이터나 일부 옵션이 없으면 해당 부분만 기본값을 사용합니다. **초기 화면 설정 해제**는 Measurement 고정과 Viewer 기본값을 함께 해제하며 다음 진입부터 최신 결과를 사용합니다.
+
+**대표이미지 변경**은 현재 Viewer를 캡처하고 4:3으로 잘라 저장합니다. 초기 화면 설정과 독립적으로 교체할 수 있고, 같은 버전의 Showcase 카드에도 반영됩니다. 캡처·저장에 실패하면 기존 이미지를 유지합니다.
 
 ## Experiment 레이아웃과 불러오기
 

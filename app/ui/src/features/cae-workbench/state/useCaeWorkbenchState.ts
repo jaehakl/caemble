@@ -1,4 +1,6 @@
 import type { CalculationDefinition } from '@/api'
+import type { ExperimentPresentationUpdate } from '@/contracts/viewerDefaults'
+import { experimentQueryKeys } from '@/features/experiment/queryKeys'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -428,6 +430,27 @@ export function useCaeWorkbenchState(
       const measurementSequence = measurementRequestSequence.current
       setSelectionRestoreStatus('restoring')
       try {
+        if (row.initial_measurement_id) {
+          const pinned = await queryClient.fetchQuery(
+            measurementsQueryOptions(queryScope, row.id, {
+              ...getListRequest('visible', [row.initial_measurement_id]),
+              filter: { experiment_id: [row.id, row.id] },
+              null_filter: { recorded_at: 'is_not_null' },
+              limit: 1,
+            }),
+          )
+          if (sequence !== requestSequence.current || measurementSequence !== measurementRequestSequence.current)
+            return row
+          const measurement = pinned.items[0]
+          if (
+            measurement?.id === row.initial_measurement_id &&
+            measurement.experiment_id === row.id &&
+            measurement.recorded_at
+          ) {
+            setPendingMeasurementId(measurement.id)
+            return row
+          }
+        }
         const response = await queryClient.fetchQuery(
           measurementsQueryOptions(queryScope, row.id, {
             ...getListRequest('visible'),
@@ -682,6 +705,22 @@ export function useCaeWorkbenchState(
       `caemble:experiment/${experimentRecord.namespace}/${experimentRecord.repository_slug}/${experimentRecord.experiment_key}@${experimentVersion}`)
     : null
   const sourceLocked = Boolean(experimentRecord?.sourceLocked)
+  const updatePresentation = useCallback(
+    async (payload: ExperimentPresentationUpdate) => {
+      if (!experimentId || !experimentManageable) throw new Error('Experiment 설정을 변경할 권한이 없습니다.')
+      const presentation = await dbTables.Experiment.updatePresentation(experimentId, payload)
+      dispatchEditing({ type: 'presentationUpdated', presentation })
+      queryClient.setQueryData<SavedExperiment>(experimentQueryKeys.detail(queryScope, experimentId), (current) =>
+        current ? { ...current, ...presentation } : current,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: experimentQueryKeys.all(queryScope) }),
+        invalidateExperimentSummaries(queryClient, queryScope, experimentId),
+      ])
+      return presentation
+    },
+    [experimentId, experimentManageable, queryClient, queryScope],
+  )
   const refreshExperimentUsage = useCallback(async () => {
     if (experimentId === null) return
     const usage = (await dbTables.Experiment.usage([experimentId])).items[0]
@@ -696,6 +735,21 @@ export function useCaeWorkbenchState(
   }, [experimentId, queryClient, queryScope])
 
   return {
+    updatePresentation,
+    viewerPresentation:
+      experimentManageable && experimentId
+        ? {
+            experimentId,
+            measurementId: selection.measurement?.id ?? null,
+            hasInitialView: Boolean(experimentRecord?.viewer_defaults),
+            canSaveInitialView:
+              experimentClean &&
+              Boolean(selection.measurement?.recorded_at) &&
+              !selection.loading &&
+              selectionRestoreStatus !== 'restoring',
+            update: updatePresentation,
+          }
+        : undefined,
     experiment,
     experimentRecord,
     experimentId,

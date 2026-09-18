@@ -143,6 +143,10 @@ class Experiment(TimestampMixin, Base):
     source_bundle: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result_contracts: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    initial_measurement_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("measurements.id", name="fk_experiment_initial_measurement", ondelete="SET NULL", use_alter=True), nullable=True,
+    )
+    viewer_defaults: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     source_hash: Mapped[str] = mapped_column(Text, nullable=False)
     code_embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(768),
@@ -153,6 +157,7 @@ class Experiment(TimestampMixin, Base):
     user: Mapped["User"] = relationship("User", back_populates="experiments")
     measurements: Mapped[List["Measurement"]] = relationship(
         back_populates="experiment",
+        foreign_keys="Measurement.experiment_id",
         passive_deletes=True,
     )
     calculations: Mapped[List["Calculation"]] = relationship(
@@ -269,7 +274,7 @@ class Measurement(TimestampMixin, Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="measurements")
-    experiment: Mapped["Experiment"] = relationship(back_populates="measurements")
+    experiment: Mapped["Experiment"] = relationship(back_populates="measurements", foreign_keys=[experiment_id])
     recorded_data: Mapped[List["RecordedData"]] = relationship(
         back_populates="measurement",
         cascade="all, delete-orphan",

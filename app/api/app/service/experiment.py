@@ -643,6 +643,8 @@ async def experiment_versions(
                 "name": row.name,
                 "description": row.description,
                 "thumbnail_url": row.thumbnail_url,
+                "initial_measurement_id": row.initial_measurement_id,
+                "viewer_defaults": row.viewer_defaults,
                 "source_bundle": row.source_bundle,
                 "source_hash": row.source_hash,
                 "repository": row.repository_slug,

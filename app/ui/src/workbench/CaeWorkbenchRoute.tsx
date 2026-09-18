@@ -390,6 +390,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
+          initialDefaults={workbench.experimentRecord?.viewer_defaults}
+          presentation={
+            workbench.viewerPresentation
+              ? {
+                  ...workbench.viewerPresentation,
+                  canSaveInitialView: workbench.viewerPresentation.canSaveInitialView && !isPrediction && !preview,
+                }
+              : undefined
+          }
           persistenceKey={
             isPrediction
               ? `prediction:${workbench.experimentId}:${workbench.experimentDocument.resultSessionKey}`
@@ -432,7 +441,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           recordedRules={
             isPrediction ? predictionResult?.preview.rules : (preview?.rules ?? workbench.selection.recordedRules)
           }
-          loading={isPrediction ? false : !preview && workbench.selection.loading}
+          loading={isPrediction ? false : !preview && (workbench.selection.loading || workbench.selectionRestoring)}
           downloadProgress={workbench.selection.downloadProgress}
           selectionQuery={viewerSelectionQuery}
           selectionSourceStatus={selectionSourceStatus}

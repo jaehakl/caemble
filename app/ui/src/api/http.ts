@@ -1,6 +1,6 @@
 export const API_URL = (import.meta.env?.VITE_API_BASE_URL?.trim() || '/api').replace(/\/+$/, '')
 
-export type HttpMethod = 'get' | 'post' | 'put' | 'delete'
+export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
 export type CsrfPolicy = 'auto' | 'required' | 'omit'
 export type ResponseValidator<T> = (body: unknown) => T
 export type RequestContext = Readonly<{

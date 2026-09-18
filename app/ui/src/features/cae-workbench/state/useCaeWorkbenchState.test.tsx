@@ -278,6 +278,65 @@ describe('Experiment automatic Measurement selection', () => {
     return { client, ...renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper }) }
   }
 
+  it('loads a pinned recorded Measurement without querying the latest result', async () => {
+    const { client, result } = setup()
+    const fetch = vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [mocks.measurement] } as never)
+    await act(async () => {
+      await result.current.loadExperiment({ ...savedExperiment(7), initial_measurement_id: 41 })
+    })
+    await waitFor(() => expect(result.current.selectionContext.measurementId).toBe(41))
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(41, 7)
+  })
+
+  it('uses latest recorded result when the pin has been deleted or has no results', async () => {
+    const { client, result } = setup()
+    const fetch = vi
+      .spyOn(client, 'fetchQuery')
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [mocks.measurement] } as never)
+    await act(async () => {
+      await result.current.loadExperiment({ ...savedExperiment(7), initial_measurement_id: 99 })
+    })
+    await waitFor(() => expect(result.current.selectionContext.measurementId).toBe(41))
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not treat a failed pinned query as deletion', async () => {
+    const { client, result } = setup()
+    const fetch = vi.spyOn(client, 'fetchQuery').mockRejectedValueOnce(new Error('offline'))
+    await act(async () => {
+      await result.current.loadExperiment({ ...savedExperiment(7), initial_measurement_id: 99 })
+    })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(mocks.loadBaseMeasurement).not.toHaveBeenCalled()
+    expect(result.current.selectionRestoring).toBe(false)
+  })
+
+  it('does not let a late pinned query replace an explicit Measurement', async () => {
+    const { client, result } = setup()
+    let resolve!: (value: unknown) => void
+    vi.spyOn(client, 'fetchQuery').mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        }) as never,
+    )
+    let opening!: Promise<SavedExperiment>
+    act(() => {
+      opening = result.current.loadExperiment({ ...savedExperiment(7), initial_measurement_id: 99 })
+    })
+    await act(async () => {
+      await result.current.selection.loadMeasurement(mocks.measurement)
+    })
+    await act(async () => {
+      resolve({ items: [{ ...mocks.measurement, id: 99 }] })
+      await opening
+    })
+    expect(result.current.selectionContext.measurementId).toBe(41)
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledTimes(1)
+  })
+
   it('requests the newest recorded Measurement with an ID tie break and restores its candidate', async () => {
     const { client, result } = setup()
     const fetchQuery = vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [mocks.measurement] } as never)

@@ -73,6 +73,8 @@ def _summary(
         "name": experiment.name,
         "description": experiment.description,
         "thumbnail_url": experiment.thumbnail_url,
+        "initial_measurement_id": experiment.initial_measurement_id,
+        "viewer_defaults": experiment.viewer_defaults,
         "source_bundle": experiment.source_bundle,
         "source_hash": experiment.source_hash,
         "repository": experiment.repository_slug,

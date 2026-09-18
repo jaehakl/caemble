@@ -260,6 +260,12 @@ describe('useCaePageSession', () => {
     let resolveCalculation!: (value: { id: number; experiment_id: number }) => void
     const fetchQuery = vi.spyOn(client, 'fetchQuery').mockImplementation((options) => {
       const queryKey = options.queryKey as readonly unknown[]
+      if (queryKey.includes('experiments'))
+        return Promise.resolve({
+          ...savedExperiment(7),
+          initial_measurement_id: 99,
+          viewer_defaults: { version: 1, selectedResult: '', settings: {}, camera: null },
+        }) as never
       return new Promise((resolve) => {
         if (queryKey.includes('measurements')) resolveMeasurement = resolve
         else if (queryKey.includes('calculations')) resolveCalculation = resolve
@@ -269,7 +275,7 @@ describe('useCaePageSession', () => {
     const workbench = createWorkbench()
     const { router } = renderSession({ client, initialUrl: '/', workbench })
 
-    await waitFor(() => expect(fetchQuery).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(fetchQuery).toHaveBeenCalledTimes(3))
     expect(screen.getByTestId('session-state')).toHaveTextContent('false|experiment')
     await act(async () => {
       resolveMeasurement({ id: 41, experiment_id: 7 })
@@ -277,7 +283,19 @@ describe('useCaePageSession', () => {
     })
 
     await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|measurement'))
-    expect(workbench.restoreDraft).toHaveBeenLastCalledWith(draft)
+    expect(workbench.restoreDraft).toHaveBeenLastCalledWith({
+      ...draft,
+      experiment: {
+        ...draft.experiment,
+        record: {
+          ...draft.experiment.record,
+          initial_measurement_id: 99,
+          viewer_defaults: { version: 1, selectedResult: '', settings: {}, camera: null },
+          thumbnail_url: undefined,
+          isDemo: undefined,
+        },
+      },
+    })
     await waitFor(() => expect(router.state.location.search).toBe('?experiment=7'))
   })
 

@@ -1,5 +1,6 @@
 import { recordedResultContractsSchema } from '../resultValidators'
 import { z } from 'zod'
+import { viewerDefaultsSchema } from '../viewerDefaults'
 import type {
   AvailableExperimentRecord,
   AvailableExperimentsResponse,
@@ -26,6 +27,8 @@ const experimentDerivedCountsSchema = z
 
 export const savedExperimentRecordSchema = z
   .object({
+    initial_measurement_id: databaseIdSchema.nullable().optional(),
+    viewer_defaults: viewerDefaultsSchema.nullable().catch(null).optional(),
     id: databaseIdSchema,
     created_at: z.string().nullable().optional(),
     updated_at: z.string().nullable().optional(),

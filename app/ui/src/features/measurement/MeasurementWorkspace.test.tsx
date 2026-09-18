@@ -448,3 +448,15 @@ describe('Measurement workspace integration', () => {
     expect(mocks.run).toHaveBeenCalledTimes(1)
   })
 })
+
+it('applies saved data selection after the actual Measurement loads, then keeps manual selection', async () => {
+  const load = deferred<(typeof rows)[number]>()
+  mocks.load.mockReturnValueOnce(load.promise)
+  const defaults = { version: 1 as const, selectedResult: 'result', settings: {}, camera: null }
+  render(view(true, { ...workbench, experimentRecord: { ...workbench.experimentRecord!, viewer_defaults: defaults } }))
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  await act(async () => load.resolve(rows[0]))
+  await waitFor(() => expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('result'))
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+})

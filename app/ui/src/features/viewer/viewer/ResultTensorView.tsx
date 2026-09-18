@@ -20,11 +20,21 @@ export function ResultTensorView({
   const members = rules.filter((rule) => rule.label === name || rule.label.startsWith(`${name}.`))
   const preferred = contract.visualization.valuePath ? `${name}.${contract.visualization.valuePath}` : name
   const [representation, setRepresentation] = useViewerSetting('tensor.representation', 'abs')
-  const [member, setMember] = useViewerSetting('tensor.member', preferred)
+  const [member, setMember] = useViewerSetting('tensor.member', preferred, 'item', (value) =>
+    members.some((rule) => rule.label === value),
+  )
   const rule = members.find((item) => item.label === member) ?? (comparison ? undefined : members[0])
-  const [indices, setIndices] = useViewerSetting<Record<number, number>>('tensor.indices', {})
-  const [axes, setAxes] = useViewerSetting<readonly number[] | null>('tensor.axes', null)
   const value = rule && data?.[rule.label]
+  const shape = isDataTensor(value) ? value.shape : []
+  const [indices, setIndices] = useViewerSetting<Record<number, number>>('tensor.indices', {}, 'item', (value) =>
+    Object.entries(value).every(([axis, index]) => index < (shape[Number(axis)] ?? 0)),
+  )
+  const [axes, setAxes] = useViewerSetting<readonly number[] | null>(
+    'tensor.axes',
+    null,
+    'item',
+    (value) => value === null || value.every((axis) => axis < shape.length),
+  )
   const result = useMemo(() => {
     try {
       if (!rule || !isDataTensor(value)) return { error: '기록된 데이터가 없습니다.' }

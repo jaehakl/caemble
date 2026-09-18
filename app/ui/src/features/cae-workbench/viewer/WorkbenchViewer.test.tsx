@@ -9,7 +9,7 @@ import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 
 vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
   BoxGridResult: ({ name }: { name: string }) => {
-    const [opacity, setOpacity] = useViewerSetting('fixture.opacity', 0.5)
+    const [opacity, setOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
     return (
       <div>
         Box Grid {name}
@@ -435,4 +435,52 @@ it('shows CAD during prediction, restores BoxGrid controls and respects a Geomet
   expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('saved')
   rerender(<WorkbenchViewer {...props} />)
   expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+})
+
+it('waits for data, prefers the saved result and settings, then preserves manual changes', () => {
+  const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
+  const defaults = {
+    version: 1 as const,
+    selectedResult: 'small',
+    settings: { 'small:box.geometryOpacity': 0.2 },
+    camera: null,
+  }
+  const { rerender } = render(<WorkbenchViewer {...props} loading initialDefaults={defaults} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  rerender(<WorkbenchViewer {...props} initialDefaults={defaults} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('small')
+  expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
+  fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.8' } })
+  rerender(
+    <WorkbenchViewer {...props} initialDefaults={{ ...defaults, settings: { 'small:box.geometryOpacity': 0.1 } }} />,
+  )
+  expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.8)
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'large' } })
+  rerender(<WorkbenchViewer {...props} initialDefaults={defaults} loading />)
+  rerender(<WorkbenchViewer {...props} initialDefaults={defaults} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+})
+
+it.each(['missing', ''])(
+  'uses normal selection for missing data and respects saved Geometry (%s)',
+  (selectedResult) => {
+    const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
+    render(<WorkbenchViewer {...props} initialDefaults={{ version: 1, selectedResult, settings: {}, camera: null }} />)
+    expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue(selectedResult === '' ? '' : 'large')
+  },
+)
+
+it('isolates the next Experiment and applies its own defaults', () => {
+  const props = gridSelectionProps({ small: [1, 1, 1], large: [3, 3, 3] })
+  const defaults = {
+    version: 1 as const,
+    selectedResult: 'small',
+    settings: { 'small:box.geometryOpacity': 0.2 },
+    camera: null,
+  }
+  const { rerender } = render(<WorkbenchViewer key="first" {...props} initialDefaults={defaults} />)
+  fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.8' } })
+  rerender(<WorkbenchViewer key="second" {...props} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('large')
+  expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.5)
 })

@@ -127,13 +127,25 @@ function BoxGridControls({
   const [component, setComponent] = useViewerSetting<number | 'magnitude' | 'arrows'>(
     'box.component',
     leaf.shape[6] === 1 ? 0 : 'magnitude',
+    'item',
+    (value) => typeof value !== 'number' || value < leaf.shape[6],
   )
-  const [reduce, setReduce] = useViewerSetting<Partial<Record<ProjectionAxis, ProjectionReduction>>>('box.reduce', {
-    ...(surfacePower
-      ? { x: { method: 'sum' as const }, y: { method: 'sum' as const }, z: { method: 'sum' as const } }
-      : {}),
-    frequency: sourceSampled ? { method: 'index', index: 0 } : { method: 'sum' },
-  })
+  const [reduce, setReduce] = useViewerSetting<Partial<Record<ProjectionAxis, ProjectionReduction>>>(
+    'box.reduce',
+    {
+      ...(surfacePower
+        ? { x: { method: 'sum' as const }, y: { method: 'sum' as const }, z: { method: 'sum' as const } }
+        : {}),
+      frequency: sourceSampled ? { method: 'index', index: 0 } : { method: 'sum' },
+    },
+    'item',
+    (value) =>
+      Object.entries(value).every(
+        ([axis, reduction]) =>
+          reduction.method !== 'index' ||
+          (reduction.index ?? 0) < leaf.shape[projectionAxes.indexOf(axis as ProjectionAxis)],
+      ),
+  )
   const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
   const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
   const [bins, setBins] = useViewerSetting<number | undefined>('box.bins', undefined)
@@ -148,9 +160,17 @@ function BoxGridControls({
         return 'off'
       }
     },
+    'item',
+    (value) =>
+      value === 'off' || (value === 'oscillation' ? leaf.shape[5] === 2 : leaf.shape[value === 'time' ? 3 : 4] > 1),
   )
   const [timeSeconds, setTimeSeconds] = useViewerSetting('box.timeSeconds', 0),
-    [frameIndex, setFrameIndex] = useViewerSetting('box.frameIndex', 0)
+    [frameIndex, setFrameIndex] = useViewerSetting(
+      'box.frameIndex',
+      0,
+      'item',
+      (value) => value < leaf.shape[animation === 'frequency' ? 4 : 3],
+    )
   const [durationOverride, setDurationOverride] = useViewerSetting<number | null>('box.durationSeconds', null)
   const [playing, setPlaying] = useViewerSetting('box.playing', false),
     [repeat, setRepeat] = useViewerSetting('box.repeat', true),

@@ -1,4 +1,5 @@
 import { readMeasurementResults } from './measurementResults'
+import { experimentPresentationSchema, type ExperimentPresentationUpdate } from '@/contracts/viewerDefaults'
 import type { CalculationUpsertResponse } from '@/contracts/api/calculation'
 import { externalizeObjects } from './objectStorage'
 import { calculationDataOutputSchema } from '@/contracts/api/calculationValidators'
@@ -195,6 +196,11 @@ export function createDbTables(client: CaembleClient) {
         }),
     },
     Experiment: {
+      updatePresentation: (id: number, payload: ExperimentPresentationUpdate) =>
+        request('patch', `/experiment/${id}/presentation`, payload, {
+          ...csrfRequired,
+          validate: (value) => experimentPresentationSchema.parse(value),
+        }),
       recordType: undefined as unknown as SavedExperimentRecord,
       listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
         request<GetListResponse<SavedExperimentRecord>>('post', '/experiment/list', payload, {

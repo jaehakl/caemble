@@ -16,7 +16,12 @@ export function MeshTransformResult({
   renderViewer: (data: MeshRenderData) => ReactNode
 }) {
   const comparison = useViewerComparison()
-  const [selectedTime, setTime] = useViewerSetting('meshTransform.time', motion.times[0])
+  const [selectedTime, setTime] = useViewerSetting(
+    'meshTransform.time',
+    motion.times[0],
+    'item',
+    (value) => value >= motion.times[0] && value <= motion.times[motion.times.length - 1],
+  )
   const minimum = motion.times[0]
   const maximum = motion.times[motion.times.length - 1]
   const time = comparison ? selectedTime : Math.max(minimum, Math.min(maximum, selectedTime))

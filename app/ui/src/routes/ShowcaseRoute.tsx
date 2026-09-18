@@ -68,6 +68,8 @@ function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           <div className="min-h-0 flex-1">
             {workbench.experimentId ? (
               <WorkbenchViewer
+                initialDefaults={workbench.experimentRecord?.viewer_defaults}
+                presentation={workbench.viewerPresentation}
                 key={`${workbench.experimentId}:${workbench.experimentDocument.resultSessionKey ?? ''}`}
                 experiment={workbench.experiment}
                 experimentDocument={workbench.experimentDocument}

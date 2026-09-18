@@ -223,6 +223,28 @@ export function useCaePageSession(
           if (draft && shouldRestoreDraft) {
             const experimentId = draft.selection.experimentId
             if (experimentId !== null) {
+              // Presentation can change independently of the locally retained source draft.
+              try {
+                const current = await queryClient.fetchQuery(experimentDetailQueryOptions(queryScope, experimentId))
+                if (cancelled) return
+                if (draft.experiment.record)
+                  draft = {
+                    ...draft,
+                    experiment: {
+                      ...draft.experiment,
+                      record: {
+                        ...draft.experiment.record,
+                        initial_measurement_id: current.initial_measurement_id,
+                        viewer_defaults: current.viewer_defaults,
+                        thumbnail_url: current.thumbnail_url,
+                        isDemo: current.isDemo,
+                      },
+                    },
+                  }
+              } catch {
+                if (cancelled) return
+                toast.info('Experiment의 최신 초기 화면 설정을 읽지 못해 로컬 설정을 사용합니다.')
+              }
               const requestedMeasurementId = draft.selection.measurementId
               const requestedCalculationId = draft.selection.calculationId
               const [measurementResult, calculationResult] = await Promise.allSettled([

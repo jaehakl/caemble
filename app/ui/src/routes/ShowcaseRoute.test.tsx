@@ -5,7 +5,13 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { Component } from './ShowcaseRoute'
 
-const mocks = vi.hoisted(() => ({ load: vi.fn().mockResolvedValue(null), available: vi.fn(), detach: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  load: vi.fn().mockResolvedValue(null),
+  available: vi.fn(),
+  detach: vi.fn(),
+  viewer: vi.fn(),
+  state: {} as Record<string, unknown>,
+}))
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({ isPending: false, user: null, isAuthenticated: false, queryScope: 'public' }),
 }))
@@ -17,9 +23,15 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
     loadExperiment: mocks.load,
     detachDeletedExperiment: mocks.detach,
     experimentId: null,
+    ...mocks.state,
   }),
 }))
-vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({ WorkbenchViewer: () => <div>Viewer</div> }))
+vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({
+  WorkbenchViewer: (props: unknown) => {
+    mocks.viewer(props)
+    return <div>Viewer</div>
+  },
+}))
 vi.mock('@/features/experiment/ExperimentShowcase', () => ({
   ExperimentShowcase: ({
     onEdit,
@@ -59,8 +71,25 @@ function mount() {
   )
 }
 beforeEach(() => {
+  mocks.state = {}
+  mocks.viewer.mockClear()
   mocks.load.mockReset().mockResolvedValue(null)
   mocks.available.mockResolvedValue({ mine: [], demos: [] })
+})
+
+it('passes public Demo defaults to its Viewer without management actions', () => {
+  const defaults = { version: 1, selectedResult: 'signal', settings: { 'signal:box.overlay': false }, camera: null }
+  mocks.state = {
+    experimentId: 4,
+    experimentRecord: { isDemo: true, viewer_defaults: defaults },
+    experimentDocument: { resultSessionKey: 1 },
+    selection: { measurement: { id: 8 }, loading: false },
+    selectionRestoring: false,
+  }
+  mount()
+  expect(mocks.viewer).toHaveBeenCalledWith(
+    expect.objectContaining({ initialDefaults: defaults, presentation: undefined, autoSelectResult: true }),
+  )
 })
 it('opens the exact representative Demo once in StrictMode', async () => {
   const demo = { id: 4, demoDefault: true }

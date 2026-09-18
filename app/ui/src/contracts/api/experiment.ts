@@ -71,6 +71,8 @@ export type ExperimentUsageResponse = Readonly<{
 }>
 
 export type SavedExperimentRecord = Readonly<{
+  initial_measurement_id?: number | null
+  viewer_defaults?: import('../viewerDefaults').ViewerDefaults | null
   thumbnail_url?: string | null
   id: number
   created_at?: string | null

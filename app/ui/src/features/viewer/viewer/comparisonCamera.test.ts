@@ -83,3 +83,10 @@ it('isolates camera snapshots and detaches removed renderers without losing the 
   camera.publish(source, pose)
   expect(apply).not.toHaveBeenCalled()
 })
+
+it('starts with a copied saved pose and applies it to each newly mounted renderer', () => {
+  const pose = { position: [3, 4, 5], target: [0, 0, 0], up: [0, 0, 1], fov: 0.8 }
+  const camera = createComparisonCamera(pose)
+  pose.position[0] = 99
+  expect(camera.current?.position[0]).toBe(3)
+})

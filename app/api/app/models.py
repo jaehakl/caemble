@@ -104,6 +104,8 @@ class ExperimentSourceBundle(BaseModel):
 
 class ExperimentBase(OwnedTimestampFields):
     thumbnail_url: Optional[str] = None
+    initial_measurement_id: Optional[int] = None
+    viewer_defaults: Optional[Dict[str, Any]] = None
     user_id: str
     namespace: str
     repository_slug: str

@@ -445,3 +445,23 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
   expect(screen.getByLabelText('범위 최댓값')).toHaveValue(123)
   expect(screen.getByLabelText('성분')).toHaveValue('1')
 })
+
+it('normalizes incompatible saved indices once without dropping other shared display settings', async () => {
+  const settings = createComparisonSettings({
+    'signal:box.kind': 'heatmap',
+    'signal:box.axes': ['time', 'x'],
+    'signal:box.component': 99,
+    'signal:box.geometryOpacity': 0.25,
+    'signal:box.animation': 'time',
+    'signal:box.frameIndex': 999,
+    'signal:box.reduce': { frequency: { method: 'index', index: 999 } },
+  })
+  render(<Pair settings={settings} times={3} />)
+  await waitFor(() => expect(settings.values.get('busy:actual')).toBe(false))
+  expect(settings.values.get('signal:box.component')).toBe('magnitude')
+  expect(settings.values.get('signal:box.frameIndex')).toBe(0)
+  expect(settings.values.get('signal:box.geometryOpacity')).toBe(0.25)
+  expect(settings.values.get('signal:box.kind')).toBe('heatmap')
+  expect(settings.values.get('signal:box.reduce')).toEqual({ frequency: { method: 'sum' } })
+  expect(screen.queryAllByRole('alert')).toHaveLength(0)
+})

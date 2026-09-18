@@ -240,3 +240,30 @@ it('retains example Calculations through edits and restoration and clears them o
     }).calculations,
   ).toEqual([])
 })
+
+it('updates only presentation metadata and ignores a late update for a different Experiment', () => {
+  const bundle = sourceBundle('saved source')
+  const document = createCadSourceDocument('experiment', bundle)
+  const state = {
+    ...initialExperimentEditingState,
+    record: savedExperiment(7, bundle),
+    document,
+    baselineBundle: bundle,
+    candidateVars: { width: 3 },
+    candidateMaterialSnapshot: materialSnapshot,
+    workspaceSession: 42,
+  }
+  const presentation = {
+    id: 7,
+    initial_measurement_id: 41,
+    thumbnail_url: '/new.webp',
+    viewer_defaults: { version: 1 as const, selectedResult: '', settings: {}, camera: null },
+  }
+  const next = experimentEditingReducer(state, { type: 'presentationUpdated', presentation })
+  expect(next).toEqual({ ...state, record: { ...state.record, ...presentation } })
+  expect(next.document).toBe(document)
+  expect(next.candidateVars).toBe(state.candidateVars)
+  expect(
+    experimentEditingReducer(state, { type: 'presentationUpdated', presentation: { ...presentation, id: 8 } }),
+  ).toBe(state)
+})

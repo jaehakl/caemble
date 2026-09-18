@@ -89,9 +89,13 @@ export function MeasurementWorkspace({
   const batchController = useRef<AbortController | null>(null)
   const [execution, setExecution] = useState<Record<string, ReviewedMeasurementProgress>>({})
   const [selectedResult, setSelectedResult] = useState('')
-  const [comparisonSettings] = useState(createComparisonSettings)
+  const [comparisonSettings] = useState(() =>
+    createComparisonSettings(workbench.experimentRecord?.viewer_defaults?.settings),
+  )
   const [controlsHost, setControlsHost] = useState<HTMLDivElement | null>(null)
-  const [camera] = useState(createComparisonCamera)
+  const [camera] = useState(() => createComparisonCamera(workbench.experimentRecord?.viewer_defaults?.camera))
+  const defaultResult = useRef(workbench.experimentRecord?.viewer_defaults?.selectedResult)
+  const resultSelectionMade = useRef(false)
   const [pcaRevision, setPcaRevision] = useState(0)
   const [projection, setProjection] = useState<MeasurementProjection | null>(null)
   const [pcaError, setPcaError] = useState('')
@@ -177,6 +181,22 @@ export function MeasurementWorkspace({
     ...actual.resultContracts,
     ...visualizationData(actual.visualizations ?? {}).contracts,
   }
+  const preferredResultAvailable =
+    defaultResult.current === '' || Boolean(comparisonContracts[defaultResult.current ?? ''])
+  useEffect(() => {
+    if (resultSelectionMade.current || workbench.selectionRestoring || actual.loading) return
+    if (workbench.selection.measurement?.recorded_at && !actual.measurement) return
+    if (!actual.measurement && !ready) return
+    resultSelectionMade.current = true
+    if (preferredResultAvailable && defaultResult.current !== undefined) setSelectedResult(defaultResult.current)
+  }, [
+    preferredResultAvailable,
+    actual.loading,
+    actual.measurement,
+    ready,
+    workbench.selectionRestoring,
+    workbench.selection.measurement?.recorded_at,
+  ])
   const actualHasSelectedData =
     Object.keys(actual.flatRecordedData ?? {}).some(
       (name) => name === selectedResult || name.startsWith(`${selectedResult}.`),
@@ -909,7 +929,10 @@ export function MeasurementWorkspace({
                   <select
                     aria-label="Viewer 결과 선택"
                     value={selectedResult}
-                    onChange={(event) => setSelectedResult(event.target.value)}
+                    onChange={(event) => {
+                      resultSelectionMade.current = true
+                      setSelectedResult(event.target.value)
+                    }}
                     className="min-w-0 flex-1"
                   >
                     <option value="">Geometry</option>
@@ -1008,6 +1031,18 @@ export function MeasurementWorkspace({
                         {actual.measurement || actual.loading ? (
                           <WorkbenchViewer
                             {...viewerBase}
+                            presentation={
+                              workbench.viewerPresentation
+                                ? {
+                                    ...workbench.viewerPresentation,
+                                    measurementId: actual.measurement?.id ?? null,
+                                    canSaveInitialView:
+                                      workbench.experimentClean &&
+                                      Boolean(actual.measurement?.recorded_at) &&
+                                      !actual.loading,
+                                  }
+                                : undefined
+                            }
                             comparison={comparison.actual}
                             experimentDocument={displayedActualDocument}
                             resultContracts={actual.resultContracts}

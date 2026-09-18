@@ -17,9 +17,20 @@ from service.experiment import (
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
+from service.experiment_presentation import PresentationUpdateRequest, update_presentation
 
 
 router = APIRouter(prefix="/experiment", tags=["experiment"])
+
+
+@router.patch("/{experiment_id}/presentation", dependencies=[Depends(require_web_csrf)])
+async def patch_presentation(
+    experiment_id: int,
+    request: PresentationUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    return await update_presentation(db, experiment_id, request, user=user)
 
 
 @router.get("/{experiment_id}/thumbnail")

@@ -17,10 +17,27 @@ export function ParticleSetResult({
   renderViewer: (data: MeshRenderData, showGeometry: boolean) => ReactNode
   canOverlayGeometry?: boolean
 }) {
-  const [time, setTime] = useViewerSetting('particles.time', particles.times[0])
-  const [attribute, setAttribute] = useViewerSetting('particles.attribute', 'material')
-  const [component, setComponent] = useViewerSetting<number | 'magnitude'>('particles.component', 0)
-  const [particleId, setParticleId] = useViewerSetting('particles.id', particles.particleIds[0])
+  const [time, setTime] = useViewerSetting(
+    'particles.time',
+    particles.times[0],
+    'item',
+    (value) => value >= particles.times[0] && value <= particles.times[particles.times.length - 1],
+  )
+  const [attribute, setAttribute] = useViewerSetting(
+    'particles.attribute',
+    'material',
+    'item',
+    (value) => value === 'material' || Boolean(particles.attributes[value]),
+  )
+  const [component, setComponent] = useViewerSetting<number | 'magnitude'>(
+    'particles.component',
+    0,
+    'item',
+    (value) => value === 'magnitude' || value < (particles.attributes[attribute]?.components.length || 1),
+  )
+  const [particleId, setParticleId] = useViewerSetting('particles.id', particles.particleIds[0], 'item', (value) =>
+    particles.particleIds.includes(value),
+  )
   const [pointSize, setPointSize] = useViewerSetting('particles.pointSize', 5)
   const [showGeometry, setShowGeometry] = useViewerSetting('particles.geometry', false)
   const frame = meshFrameAtTime(particles.times, time)

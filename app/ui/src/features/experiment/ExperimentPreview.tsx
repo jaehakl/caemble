@@ -6,6 +6,8 @@ export function ExperimentPreview({ workbench }: { workbench: CaeWorkbenchState 
     return <p className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Experiment를 선택하세요.</p>
   return (
     <WorkbenchViewer
+      initialDefaults={workbench.experimentRecord?.viewer_defaults}
+      presentation={workbench.viewerPresentation}
       key={`${workbench.workspaceSession}:${workbench.experimentDocument.resultSessionKey ?? ''}`}
       experiment={workbench.experiment}
       experimentDocument={workbench.experimentDocument}

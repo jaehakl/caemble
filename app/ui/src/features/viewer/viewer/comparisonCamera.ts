@@ -15,8 +15,8 @@ export type ComparisonRenderer = {
 }
 
 /** Camera lifetime follows the workspace, not the selected result renderer. */
-export function createComparisonCamera() {
-  let pose: CameraPose | null = null
+export function createComparisonCamera(initial?: CameraPose | null) {
+  let pose: CameraPose | null = initial ? structuredClone(initial) : null
   const renderers = new Map<object, ComparisonRenderer>()
   let snapshot: ComparisonRenderer[] = []
   const listeners = new Set<() => void>()
