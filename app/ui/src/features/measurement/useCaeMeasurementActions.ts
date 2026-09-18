@@ -166,6 +166,7 @@ export function useCaeMeasurementActions({
       nextOperation: 'generate-and-run' | 'save-and-run' | 'measurement',
       onBatchProgress?: (progress: CandidateBatchProgress) => void,
       onBatchState?: (batch: CaeBatch) => void,
+      onRecorded?: (measurementId: number) => void,
     ) => {
       if (active.current || operation === 'save' || operation === 'delete')
         throw new Error('다른 Measurement 작업이 진행 중입니다.')
@@ -330,6 +331,7 @@ export function useCaeMeasurementActions({
             calculated.add(measurementId)
             await invalidateMeasurementMutation(queryClient, queryScope, request.experiment_id, [measurementId])
             signal.throwIfAborted()
+            onRecorded?.(measurementId)
             const current = latest.current
             const selectedId = current.selection.measurement?.id ?? null
             if (
@@ -405,7 +407,11 @@ export function useCaeMeasurementActions({
     latest.current.onActivity?.({ source: 'cae', level: 'error', message })
   }, [])
   const runReviewed = useCallback(
-    async (input: ReviewedMeasurementInput, onProgress?: (progress: ReviewedMeasurementProgress) => void) => {
+    async (
+      input: ReviewedMeasurementInput,
+      onProgress?: (progress: ReviewedMeasurementProgress) => void,
+      onRecorded?: (measurementId: number) => void,
+    ) => {
       const identity = requireExperiment()
       const completion = await submit(
         {
@@ -423,6 +429,7 @@ export function useCaeMeasurementActions({
           const job = batch.jobs[0]
           if (job) onProgress?.({ measurementId: job.measurement_id, state: job.state, error: job.last_error })
         },
+        onRecorded,
       )
       if (!completion) throw new Error('CAE 결과를 찾을 수 없습니다.')
       return { ...completion, candidateId: input.candidateId }

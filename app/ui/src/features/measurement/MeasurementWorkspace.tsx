@@ -10,9 +10,9 @@ import type { SavedMeasurement } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { createComparisonSettings, type ViewerComparison } from '@/features/viewer/viewer/comparisonSettings'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
-import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
+import { useCadWorkspace, type CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
-import type { Vars } from '@/lib/cad/model/types'
+import type { RecordedData, RecordedDataRule, Vars } from '@/lib/cad/model'
 import { varsFingerprint, varsSchemaFingerprint } from '@/lib/cad/model/vars'
 import { materialVarsHash } from '@/lib/material/resolution'
 import { createCadSourceDocument } from '@/lib/cad/source'
@@ -20,7 +20,11 @@ import { measurementsQueryOptions } from './queryOptions'
 import { invalidateMeasurementMutation } from './queryInvalidation'
 import { useCaeDataSelection } from './useCaeDataSelection'
 import { useMeasurementForward } from './useMeasurementForward'
-import type { ReviewedMeasurementProgress } from './useCaeMeasurementActions'
+import type { ReviewedMeasurementInput, ReviewedMeasurementProgress } from './useCaeMeasurementActions'
+import {
+  MeasurementCandidatePreparation,
+  type MeasurementCandidatePreparationRequest,
+} from './MeasurementCandidatePreparation'
 import { MeasurementSplit } from './MeasurementSplit'
 import { MeasurementVarsEditor } from './MeasurementVarsEditor'
 import { MeasurementPcaChart } from './MeasurementPcaChart'
@@ -37,6 +41,14 @@ type Candidate = VarsPoint & {
   state: 'candidate' | 'running' | 'failed' | 'cancelled'
   error?: string
   measurementId?: number
+}
+type PreviewFrame = {
+  candidateId: string
+  document: CadDocumentController
+  vars: Readonly<Vars>
+  data?: RecordedData
+  rules?: readonly RecordedDataRule[]
+  error: string
 }
 const controlClass =
   'h-9 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45'
@@ -71,6 +83,10 @@ export function MeasurementWorkspace({
   const [algorithm, setAlgorithm] = useState<'random' | 'empty-lhs'>('random')
   const [error, setError] = useState('')
   const [operation, setOperation] = useState<string | null>(null)
+  const [previewFrame, setPreviewFrame] = useState<PreviewFrame | null>(null)
+  const [preparation, setPreparation] = useState<MeasurementCandidatePreparationRequest | null>(null)
+  const [recordedDocuments, setRecordedDocuments] = useState<Record<number, CadDocumentController>>({})
+  const batchController = useRef<AbortController | null>(null)
   const [execution, setExecution] = useState<Record<string, ReviewedMeasurementProgress>>({})
   const [selectedResult, setSelectedResult] = useState('')
   const [comparisonSettings] = useState(createComparisonSettings)
@@ -84,11 +100,12 @@ export function MeasurementWorkspace({
   const pcaSequence = useRef(0)
   const selectionSequence = useRef(0)
   const initialSelectionApplied = useRef(false)
-  const stopQueue = useRef(false)
   const mounted = useRef(true)
   const latest = useRef(workbench)
   latest.current = workbench
   const actual = useCaeDataSelection(workbench.experimentId, 'visible')
+  const actualRef = useRef(actual)
+  actualRef.current = actual
   const { loadMeasurement: loadActualMeasurement } = actual
   const recordedSource = useMemo(
     () =>
@@ -97,13 +114,18 @@ export function MeasurementWorkspace({
         : workbench.experiment,
     [workbench.experimentRecord?.source_bundle, workbench.experiment],
   )
-  const { experimentDocument: document } = useCadWorkspace(workbench.experiment, undefined, {
-    candidateVars: evaluatedVars ?? undefined,
-    resetKey: workbench.workspaceSession,
-    onActivity,
-  })
+  const { experimentDocument: editableDocument } = useCadWorkspace(
+    previewFrame ? null : workbench.experiment,
+    undefined,
+    {
+      candidateVars: evaluatedVars ?? undefined,
+      resetKey: workbench.workspaceSession,
+      onActivity,
+    },
+  )
+  const document = previewFrame?.document ?? editableDocument
   const { experimentDocument: actualDocument } = useCadWorkspace(
-    actual.measurement ? recordedSource : null,
+    actual.measurement && !recordedDocuments[actual.measurement.id] ? recordedSource : null,
     undefined,
     {
       candidateVars: actual.variables,
@@ -144,11 +166,14 @@ export function MeasurementWorkspace({
     measurements,
     vars,
     ready,
-    active,
+    active: active && !operation && !previewFrame,
     onActivity,
   })
+  const previewDocument = previewFrame?.document ?? document
+  const previewData = previewFrame ? previewFrame.data : forward.data
+  const displayedActualDocument = (actual.measurement && recordedDocuments[actual.measurement.id]) || actualDocument
   const comparisonContracts = {
-    ...document.simulationProgram?.resultContracts,
+    ...previewDocument.simulationProgram?.resultContracts,
     ...actual.resultContracts,
     ...visualizationData(actual.visualizations ?? {}).contracts,
   }
@@ -158,7 +183,7 @@ export function MeasurementWorkspace({
     ) || selectedResult.startsWith('@visualizations.')
   const controlsSide =
     actual.measurement &&
-    (!forward.data?.[selectedResult] || (actualHasSelectedData && !actual.resultErrors?.[selectedResult])) &&
+    (!previewData?.[selectedResult] || (actualHasSelectedData && !actual.resultErrors?.[selectedResult])) &&
     (!selectedResult || actual.resultContracts?.[selectedResult] || selectedResult.startsWith('@visualizations.'))
       ? 'actual'
       : 'preview'
@@ -167,7 +192,7 @@ export function MeasurementWorkspace({
       settings: comparisonSettings,
       item: selectedResult,
       controlsHost,
-      suspended: !active || !ready || forward.predicting || actual.loading,
+      suspended: !active || (!previewFrame && (!ready || forward.predicting)),
     }
     return {
       preview: {
@@ -191,8 +216,8 @@ export function MeasurementWorkspace({
     active,
     ready,
     forward.predicting,
-    actual.loading,
     controlsSide,
+    previewFrame,
   ])
   const topology = candidates.map((candidate) => candidate.id).join('|')
   const points = useMemo<VarsPoint[]>(
@@ -220,9 +245,19 @@ export function MeasurementWorkspace({
     mounted.current = true
     return () => {
       mounted.current = false
-      stopQueue.current = true
+      batchController.current?.abort()
     }
   }, [])
+  useEffect(() => {
+    setPreviewFrame(null)
+    setRecordedDocuments({})
+    setPreparation(null)
+    setOperation(null)
+    return () => {
+      batchController.current?.abort()
+      batchController.current = null
+    }
+  }, [contextKey, workbench.workspaceSession])
   useEffect(() => {
     const initial = workbench.selection.measurement
     if (initialSelectionApplied.current || !initial?.recorded_at) return
@@ -273,6 +308,7 @@ export function MeasurementWorkspace({
 
   const changeVars = useCallback(
     (next: Vars) => {
+      setPreviewFrame(null)
       selectionSequence.current += 1
       setVars(next)
       setError('')
@@ -299,6 +335,7 @@ export function MeasurementWorkspace({
   const selectPoint = useCallback(
     async (id: string, additive: boolean) => {
       if (!valid || busy) return
+      setPreviewFrame(null)
       const sequence = ++selectionSequence.current
       setSelected((ids) => {
         const next = additive ? new Set(ids) : new Set<string>()
@@ -341,6 +378,7 @@ export function MeasurementWorkspace({
 
   const generate = () => {
     if (!schema || !valid || busy) return
+    setPreviewFrame(null)
     selectionSequence.current += 1
     try {
       const existing = points.map((point) => point.vars)
@@ -430,48 +468,79 @@ export function MeasurementWorkspace({
       setError('실행할 후보 또는 Prepared Measurement를 선택하세요.')
       return
     }
-    stopQueue.current = false
+    const controller = new AbortController()
+    selectionSequence.current += 1
+    batchController.current = controller
+    const { signal } = controller
+    // Freeze the current view before starting any background work.
+    setPreviewFrame(
+      (frame) =>
+        frame ?? {
+          candidateId: currentId,
+          document: {
+            ...document,
+            handleRenderStart: () => {},
+            handleRenderEnd: () => {},
+            handleRenderError: () => {},
+          },
+          vars,
+          data: forward.data,
+          rules: forward.model?.rules,
+          error: forward.error,
+        },
+    )
     setOperation(`실행 0/${queue.length}`)
     setError('')
-    for (let index = 0; index < queue.length; index++) {
-      if (stopQueue.current || !mounted.current) break
-      const item = queue[index]
-      let recordedId: number | null = null
-      setOperation(`실행 ${index + 1}/${queue.length}`)
-      setCandidates((rows) =>
-        rows.map((row) => (row.id === item.candidateId ? { ...row, state: 'running', error: undefined } : row)),
-      )
-      try {
-        const completion = await latest.current.measurementActions.runReviewed(item, (progress) => {
-          if (!mounted.current) return
-          if (progress.state === 'succeeded') recordedId = progress.measurementId
-          setExecution((states) => ({ ...states, [item.candidateId]: progress }))
-          if (progress.measurementId)
-            setCandidates((rows) =>
-              rows.map((row) =>
-                row.id === item.candidateId ? { ...row, measurementId: progress.measurementId! } : row,
-              ),
-            )
-        })
-        if (!mounted.current) break
-        setCandidates((rows) => rows.filter((row) => row.id !== item.candidateId))
-        setSelected((ids) => {
-          const next = new Set(ids)
-          next.delete(item.candidateId)
-          next.add(`measurement:${completion.measurementId}`)
-          return next
-        })
-        if (currentIdRef.current === item.candidateId) {
-          setCurrentId(`measurement:${completion.measurementId}`)
-          await actual.loadMeasurement(completion.measurementId)
+    const evaluate = (input: ReviewedMeasurementInput) =>
+      new Promise<CadDocumentController>((resolve, reject) => {
+        signal.throwIfAborted()
+        const finish = (candidate?: CadDocumentController, cause?: unknown) => {
+          signal.removeEventListener('abort', abort)
+          if (mounted.current) setPreparation((current) => (current === request ? null : current))
+          if (candidate) resolve(candidate)
+          else reject(cause)
         }
-      } catch (cause) {
-        if (!mounted.current) break
-        const message = cause instanceof Error ? cause.message : String(cause)
-        setError(`${item.candidateId}: ${message}`)
-        if (recordedId) {
-          // CAE results remain valid when only the subsequent Calculation phase fails.
-          const measurementId = recordedId
+        const abort = () => finish(undefined, signal.reason)
+        const request: MeasurementCandidatePreparationRequest = {
+          input,
+          resolve: (candidate) => {
+            if (varsFingerprint(candidate.variables) !== varsFingerprint(input.vars)) {
+              finish(undefined, new Error('준비된 CAD의 Vars가 실행 후보와 다릅니다.'))
+            } else finish(candidate)
+          },
+          reject: (cause) => finish(undefined, cause),
+        }
+        signal.addEventListener('abort', abort, { once: true })
+        setPreparation(request)
+      })
+    type Prepared = { frame: PreviewFrame; cause?: never } | { frame?: never; cause: unknown }
+    const displayPreview = (frame: PreviewFrame) => {
+      if (signal.aborted) return
+      setPreviewFrame(frame)
+      setVars(frame.vars)
+      setEvaluatedVars(frame.vars)
+      setCurrentId(frame.candidateId)
+    }
+    const prepare = (item: ReviewedMeasurementInput, model: ReturnType<typeof forward.prepare>): Promise<Prepared> =>
+      Promise.all([evaluate(item), model])
+        .then(async ([candidate, trained]) => {
+          const prediction = await forward.predict(trained, candidate, item.vars, signal)
+          signal.throwIfAborted()
+          return { frame: { candidateId: item.candidateId, vars: item.vars, document: candidate, ...prediction } }
+        })
+        .catch((cause: unknown) => ({ cause }))
+    let model = forward.prepare(document, signal)
+    let pendingPreview = prepare(queue[0], model)
+    try {
+      for (let index = 0; index < queue.length; index++) {
+        signal.throwIfAborted()
+        const item = queue[index]
+        let recordedId: number | null = null
+        let recordedWork: Promise<unknown> | null = null
+        let frame: PreviewFrame | undefined
+        const onRecorded = (measurementId: number) => {
+          if (signal.aborted || recordedWork || !frame) return
+          recordedId = measurementId
           setCandidates((rows) => rows.filter((row) => row.id !== item.candidateId))
           setSelected((ids) => {
             const next = new Set(ids)
@@ -479,32 +548,109 @@ export function MeasurementWorkspace({
             next.add(`measurement:${measurementId}`)
             return next
           })
-          if (currentIdRef.current === item.candidateId) {
-            setCurrentId(`measurement:${measurementId}`)
-            await actual.loadMeasurement(measurementId).catch(() => null)
-          }
-          continue
+          setCurrentId((current) => (current === item.candidateId ? `measurement:${measurementId}` : current))
+          setPreviewFrame((current) =>
+            current?.candidateId === item.candidateId
+              ? { ...current, candidateId: `measurement:${measurementId}` }
+              : current,
+          )
+          const candidateDocument = frame.document
+          setRecordedDocuments((documents) => {
+            const displayedId = actualRef.current.measurement?.id
+            return {
+              ...(displayedId && documents[displayedId] ? { [displayedId]: documents[displayedId] } : {}),
+              [measurementId]: candidateDocument,
+            }
+          })
+          const loaded = actual
+            .loadMeasurement(measurementId, workbench.experimentId, { signal })
+            .catch((cause: unknown) => {
+              if (!signal.aborted)
+                setError(`실제 결과 표시 실패: ${cause instanceof Error ? cause.message : String(cause)}`)
+            })
+          model = forward.prepare(candidateDocument, signal)
+          if (queue[index + 1])
+            pendingPreview = prepare(queue[index + 1], model).then((prepared) => {
+              if (prepared.frame) displayPreview(prepared.frame)
+              return prepared
+            })
+          // Attach a rejection handler immediately: this work overlaps CalculationData.
+          recordedWork = Promise.all([loaded, model]).catch((cause: unknown) => {
+            if (!signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
+          })
         }
-        setExecution((states) => ({
-          ...states,
-          [item.candidateId]: {
-            measurementId: states[item.candidateId]?.measurementId ?? item.measurementId ?? null,
-            state: stopQueue.current ? 'cancelled' : 'failed',
-            error: message,
-          },
-        }))
-        setCandidates((rows) =>
-          rows.map((row) =>
-            row.id === item.candidateId
-              ? { ...row, state: stopQueue.current ? 'cancelled' : 'failed', error: message }
-              : row,
-          ),
-        )
+        setOperation(`준비 ${index + 1}/${queue.length} · CAD / Forward`)
+        try {
+          const prepared = await pendingPreview
+          signal.throwIfAborted()
+          if (!prepared.frame) throw prepared.cause
+          frame = prepared.frame
+          displayPreview(frame)
+          setOperation(`실행 ${index + 1}/${queue.length}`)
+          setCandidates((rows) =>
+            rows.map((row) => (row.id === item.candidateId ? { ...row, state: 'running', error: undefined } : row)),
+          )
+          const completion = await latest.current.measurementActions.runReviewed(
+            { ...item, materialSnapshot: frame.document.materialSnapshot ?? item.materialSnapshot },
+            (progress) => {
+              if (signal.aborted) return
+              if (progress.state === 'succeeded') recordedId = progress.measurementId
+              setExecution((states) => ({ ...states, [item.candidateId]: progress }))
+              if (progress.measurementId)
+                setCandidates((rows) =>
+                  rows.map((row) =>
+                    row.id === item.candidateId ? { ...row, measurementId: progress.measurementId! } : row,
+                  ),
+                )
+            },
+            onRecorded,
+          )
+          onRecorded(completion.measurementId)
+        } catch (cause) {
+          if (signal.aborted) throw cause
+          const message = cause instanceof Error ? cause.message : String(cause)
+          setError(`${item.candidateId}: ${message}`)
+          if (recordedId) onRecorded(recordedId)
+          else {
+            setExecution((states) => ({
+              ...states,
+              [item.candidateId]: {
+                measurementId: states[item.candidateId]?.measurementId ?? item.measurementId ?? null,
+                state: 'failed',
+                error: message,
+              },
+            }))
+            setCandidates((rows) =>
+              rows.map((row) => (row.id === item.candidateId ? { ...row, state: 'failed', error: message } : row)),
+            )
+          }
+        }
+        await recordedWork
+        signal.throwIfAborted()
+        if (!recordedId && queue[index + 1]) pendingPreview = prepare(queue[index + 1], model)
       }
-    }
-    if (mounted.current) {
-      setOperation(null)
-      void query.refetch()
+    } catch (cause) {
+      if (!signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (batchController.current === controller) {
+        batchController.current = null
+        if (mounted.current) {
+          setCandidates((rows) => rows.map((row) => (row.state === 'running' ? { ...row, state: 'cancelled' } : row)))
+          if (signal.aborted)
+            setExecution((states) =>
+              Object.fromEntries(
+                Object.entries(states).map(([id, progress]) => [
+                  id,
+                  ['succeeded', 'failed', 'cancelled'].includes(progress.state)
+                    ? progress
+                    : { ...progress, state: 'cancelled' },
+                ]),
+              ),
+            )
+          setOperation(null)
+          void query.refetch()
+        }
+      }
     }
   }
 
@@ -555,6 +701,14 @@ export function MeasurementWorkspace({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {preparation ? (
+        <MeasurementCandidatePreparation
+          key={preparation.input.candidateId}
+          request={preparation}
+          experiment={workbench.experiment}
+          onActivity={onActivity}
+        />
+      ) : null}
       {menubar}
       <div aria-label="Measurement 리본" className="shrink-0 overflow-x-auto border-b bg-muted/20 px-1 py-1">
         <div className="flex min-w-max items-stretch">
@@ -616,7 +770,7 @@ export function MeasurementWorkspace({
               <button
                 className={controlClass}
                 onClick={() => {
-                  stopQueue.current = true
+                  batchController.current?.abort()
                   latest.current.measurementActions.cancel()
                 }}
               >
@@ -628,7 +782,10 @@ export function MeasurementWorkspace({
             <button
               className={controlClass}
               disabled={!dataReadable || !ready || forward.building || busy}
-              onClick={() => void forward.build()}
+              onClick={() => {
+                setPreviewFrame(null)
+                void forward.build()
+              }}
             >
               {forward.building ? '모델 생성 중…' : forward.model ? '모델 업데이트' : 'Forward 모델 생성'}
             </button>
@@ -777,27 +934,39 @@ export function MeasurementWorkspace({
                   first={
                     <section aria-label="미리보기 Viewer" className="flex h-full min-h-0 flex-col">
                       <header className="shrink-0 border-b p-2 text-xs">
-                        <strong>미리보기 · 현재 Vars</strong>
+                        <strong>
+                          미리보기 ·{' '}
+                          {previewFrame
+                            ? previewFrame.candidateId.startsWith('measurement:')
+                              ? `Measurement #${previewFrame.candidateId.slice(12)}`
+                              : previewFrame.candidateId === 'draft'
+                                ? '편집 후보'
+                                : `후보 ${previewFrame.candidateId.slice(10, 18)}`
+                            : '현재 Vars'}
+                        </strong>
                         <span className="ml-2 text-muted-foreground">
-                          {!ready
-                            ? '구조 평가 중…'
-                            : forward.predicting
-                              ? 'Forward 갱신 중…'
-                              : forward.model
-                                ? 'Forward 예측'
-                                : '구조 · 모델을 생성하면 Output을 예측합니다.'}
+                          {previewFrame
+                            ? previewFrame.error || (previewFrame.data ? 'Forward 예측 · 실행 전' : 'CAD')
+                            : !ready
+                              ? '구조 평가 중…'
+                              : forward.predicting
+                                ? 'Forward 갱신 중…'
+                                : forward.model
+                                  ? 'Forward 예측'
+                                  : '구조 · 모델을 생성하면 Output을 예측합니다.'}
                         </span>
-                        {document.error ? (
+                        {previewDocument.error ? (
                           <p role="alert" className="text-destructive">
-                            {document.error.message}
+                            {previewDocument.error.message}
                           </p>
                         ) : null}
-                        {forward.error ? (
+                        {!previewFrame && forward.error ? (
                           <p role="alert" className="text-destructive">
                             {forward.error}
                           </p>
                         ) : null}
-                        {forward.model &&
+                        {!previewFrame &&
+                          forward.model &&
                           Object.values(forward.model.errors).map((message, index) => (
                             <p className="text-muted-foreground" key={index}>
                               {message}
@@ -808,13 +977,16 @@ export function MeasurementWorkspace({
                         <WorkbenchViewer
                           {...viewerBase}
                           comparison={comparison.preview}
-                          experimentDocument={document}
-                          resultContracts={document.simulationProgram?.resultContracts}
-                          recordedData={forward.data}
-                          recordedRules={forward.model?.rules}
-                          resultSourceHash={document.evaluatedSnapshot?.sourceHash}
-                          resultVarsHash={vars ? materialVarsHash(vars) : null}
-                          loading={!ready || forward.predicting}
+                          experimentDocument={previewDocument}
+                          resultContracts={previewDocument.simulationProgram?.resultContracts}
+                          recordedData={previewData}
+                          recordedRules={previewFrame ? previewFrame.rules : forward.model?.rules}
+                          resultSourceHash={previewDocument.evaluatedSnapshot?.sourceHash}
+                          resultVarsHash={
+                            (previewFrame?.vars ?? vars) ? materialVarsHash((previewFrame?.vars ?? vars)!) : null
+                          }
+                          loading={!previewFrame && (!ready || forward.predicting)}
+                          selectedResult={previewFrame && !previewFrame.data ? '' : selectedResult}
                         />
                       </div>
                     </section>
@@ -826,9 +998,9 @@ export function MeasurementWorkspace({
                         {actual.variables && varsFingerprint(actual.variables) !== currentKey ? (
                           <span className="ml-2 text-amber-700">비교 기준 · 현재 Vars와 다름</span>
                         ) : null}
-                        {actualDocument.error ? (
+                        {displayedActualDocument.error ? (
                           <p role="alert" className="text-destructive">
-                            {actualDocument.error.message}
+                            {displayedActualDocument.error.message}
                           </p>
                         ) : null}
                       </header>
@@ -837,7 +1009,7 @@ export function MeasurementWorkspace({
                           <WorkbenchViewer
                             {...viewerBase}
                             comparison={comparison.actual}
-                            experimentDocument={actualDocument}
+                            experimentDocument={displayedActualDocument}
                             resultContracts={actual.resultContracts}
                             recordedData={actual.flatRecordedData}
                             recordedRules={actual.recordedRules}
@@ -845,7 +1017,7 @@ export function MeasurementWorkspace({
                             visualizations={actual.visualizations}
                             resultSourceHash={actual.materialSnapshot?.sourceHash}
                             resultVarsHash={actual.materialSnapshot?.varsHash}
-                            loading={actual.loading}
+                            loading={actual.loading && !actual.measurement}
                             downloadProgress={actual.downloadProgress}
                           />
                         ) : (

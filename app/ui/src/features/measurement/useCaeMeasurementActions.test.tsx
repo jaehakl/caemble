@@ -186,6 +186,36 @@ beforeEach(() => {
 })
 
 describe('server-owned CAE measurement actions', () => {
+  it('notifies recorded data once after invalidation and before a delayed Calculation', async () => {
+    let finish: (value: typeof summary) => void = () => {}
+    mocks.calculate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const rendered = renderActions()
+    const recorded = vi.fn(() => {
+      expect(mocks.invalidate).toHaveBeenCalled()
+      expect(mocks.calculate).not.toHaveBeenCalled()
+    })
+    let run: ReturnType<typeof rendered.result.current.runReviewed>
+    act(() => {
+      run = rendered.result.current.runReviewed(
+        { candidateId: 'candidate:a', vars: { length: 23 } },
+        undefined,
+        recorded,
+      )
+    })
+    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(1))
+    expect(recorded).toHaveBeenCalledExactlyOnceWith(41)
+    expect(rendered.result.current.busy).toBe(true)
+    await act(async () => {
+      finish(summary)
+      await run
+    })
+    expect(recorded).toHaveBeenCalledTimes(1)
+  })
   it('runs reviewed Vars without regenerating them and preserves the candidate/result identity', async () => {
     const rendered = renderActions()
     const progress = vi.fn()

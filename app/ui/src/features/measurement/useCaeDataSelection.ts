@@ -54,8 +54,9 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     async (
       value: number | SavedMeasurement,
       expectedExperimentId: number | null = experimentId,
-      options: Readonly<{ expectedSelectionId?: number | null }> = {},
+      options: Readonly<{ expectedSelectionId?: number | null; signal?: AbortSignal }> = {},
     ) => {
+      if (options.signal?.aborted) return null
       const id = typeof value === 'number' ? value : value.id
       // A result event must not replace a newer selection still being fetched.
       if (options.expectedSelectionId !== undefined && requestedMeasurementId.current !== options.expectedSelectionId)
@@ -65,6 +66,10 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       cancelActiveQueries()
       setLoading(true)
       setDownloadProgress(null)
+      const abort = () => {
+        if (sequence === requestSequence.current) cancelActiveQueries()
+      }
+      options.signal?.addEventListener('abort', abort, { once: true })
       try {
         let row: SavedMeasurement
         if (typeof value === 'number') {
@@ -77,13 +82,13 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
         if (expectedExperimentId !== null && row.experiment_id !== expectedExperimentId) {
           throw new Error('현재 Experiment에 속한 Measurement가 아닙니다.')
         }
-        if (sequence !== requestSequence.current) return null
+        if (sequence !== requestSequence.current || options.signal?.aborted) return null
         const recordedDataOptions = measurementRecordedDataQueryOptions(queryScope, row.id, (progress) => {
-          if (sequence === requestSequence.current) setDownloadProgress(progress)
+          if (sequence === requestSequence.current && !options.signal?.aborted) setDownloadProgress(progress)
         })
         activeQueryKeys.current = [recordedDataOptions.queryKey]
         const recorded = await queryClient.fetchQuery(recordedDataOptions)
-        if (sequence !== requestSequence.current) return null
+        if (sequence !== requestSequence.current || options.signal?.aborted) return null
         setMeasurement(row)
         setRecordedDataTree(recorded.recorded_data)
         setResultContracts(recorded.result_contracts)
@@ -91,9 +96,10 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
         setResultErrors(recorded.result_errors ?? {})
         return row
       } catch (error: unknown) {
-        if (sequence !== requestSequence.current) return null
+        if (sequence !== requestSequence.current || options.signal?.aborted) return null
         throw error
       } finally {
+        options.signal?.removeEventListener('abort', abort)
         if (sequence === requestSequence.current) {
           activeQueryKeys.current = []
           setLoading(false)

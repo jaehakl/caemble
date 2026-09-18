@@ -57,6 +57,40 @@ describe('useCaeDataSelection', () => {
     mocks.readResults.mockReset()
   })
 
+  it('retains the previous result when a batch download finishes after cancellation', async () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    mocks.readResults.mockResolvedValue({ recorded_data: {}, result_contracts: {} })
+    const { result } = renderHook(() => useCaeDataSelection(10), { wrapper })
+    await act(async () => {
+      await result.current.loadMeasurement(1)
+    })
+    let finish!: (value: unknown) => void
+    mocks.readResults.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const controller = new AbortController()
+    let pending!: ReturnType<typeof result.current.loadMeasurement>
+    act(() => {
+      pending = result.current.loadMeasurement(2, 10, { signal: controller.signal })
+    })
+    await waitFor(() => expect(mocks.readResults).toHaveBeenCalledTimes(2))
+    expect(result.current.measurement?.id).toBe(1)
+    await act(async () => {
+      controller.abort()
+      expect(await pending).toBeNull()
+    })
+    expect(result.current.loading).toBe(false)
+    await act(async () => {
+      finish({ recorded_data: {}, result_contracts: {} })
+    })
+    expect(result.current.measurement?.id).toBe(1)
+  })
+
   it('keeps the public snapshot identity across an unrelated parent rerender', () => {
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
