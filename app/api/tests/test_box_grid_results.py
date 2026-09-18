@@ -25,7 +25,7 @@ from service.measurement_service import get_recorded_data, get_visualizations
 class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
     def test_surface_power_preserves_sampling_frequency_and_geometry_after_storage(self):
         with open_catalog() as catalog:
-            output = next(item for item in catalog.get_solver_manifest('ray-tracing', '5.0.0')['descriptor']['methods']['outputs']
+            output = next(item for item in catalog.get_solver_manifest('ray-tracing', '5.1.0')['descriptor']['methods']['outputs']
                           if item['methodId'] == 'ray.detector-power')
         schema = output['data']
         tensor = box_tensor((2, 1, 1, 1, 1, 1, 1))

@@ -7,6 +7,9 @@ or validation request, even when their own test source changed.
 from __future__ import annotations
 
 MODULE_TIERS = {
+    "tests/test_ray_imaging_smoke.py": "smoke",
+    "tests/test_ray_imaging_validation.py": "validation",
+    "tests/test_ray_paraxial.py": "lowcost",
     "tests/test_fdtd_parallel_smoke.py": "smoke",
     "tests/test_ray_batches.py": "lowcost",
     "tests/test_ray_parallel_smoke.py": "smoke",
@@ -157,6 +160,7 @@ MODULE_TIERS = {
 }
 
 FUNCTION_TIERS = {
+    "tests/test_ray_imaging_smoke.py::test_uncertain_dimensions_rebuild_geometry_and_lens_parameters": "lowcost",
     "tests/test_acoustic_fdtd.py::test_first_resistive_reflection_has_correct_delay_sign_and_point_eight_ratio": "validation",
     "tests/test_acoustic_fdtd.py::test_prescribed_flux_energy_work_and_passive_decay_after_source_ends": "validation",
     "tests/test_acoustic_fdtd.py::test_three_dimensional_energy_balance_including_impedance_edges_and_corners": "validation",

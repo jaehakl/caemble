@@ -1,7 +1,8 @@
 import { ViewerToolbar, type CameraView } from './ViewerToolbar'
 import { viewerScaleBar } from './scaleBar'
 import { useViewerComparison, useViewerSetting } from './comparisonSettings'
-import type { HeatmapRenderData } from './structuredField'
+import type { HeatmapRaster, HeatmapRenderData } from './structuredField'
+import { heatmapTiles } from './pointCloudData'
 import { measurements } from '@jscad/modeling'
 import { cameraClipping, fitCameraToBounds, panCamera } from './cameraClipping'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -73,6 +74,8 @@ type ReglRendererApi = {
 type ReglCommandBuilder = {
   (options: Record<string, unknown>): (props: Record<string, unknown>) => void
   prop: (name: string) => unknown
+  texture: (options: Record<string, unknown>) => { destroy: () => void }
+  limits: { maxTextureSize: number }
 }
 
 type JscadViewerProps = {
@@ -173,6 +176,99 @@ function drawRecordedMesh(regl: ReglCommandBuilder, transparent = false) {
     cull: { enable: false },
   })
 }
+
+function drawHeatmapRaster(regl: ReglCommandBuilder) {
+  const draw = regl({
+    primitive: 'triangles',
+    vert: `
+      precision highp float;
+      uniform mat4 view, projection;
+      attribute vec3 position;
+      attribute vec2 uv;
+      varying vec2 texCoord;
+      void main() {
+        texCoord = uv;
+        gl_Position = projection * view * vec4(position, 1.0);
+        gl_Position.z -= 1e-5 * gl_Position.w;
+      }
+    `,
+    frag: `
+      precision highp float;
+      uniform sampler2D pixels;
+      varying vec2 texCoord;
+      void main() { gl_FragColor = texture2D(pixels, texCoord); }
+    `,
+    attributes: {
+      position: regl.prop('positions'),
+      uv: [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0, 1],
+      ],
+    },
+    uniforms: { pixels: regl.prop('texture') },
+    elements: [
+      [0, 1, 2],
+      [0, 2, 3],
+    ],
+    depth: { enable: true, func: 'lequal', mask: true },
+    blend: { enable: false },
+    cull: { enable: false },
+  })
+  let current: HeatmapRaster | undefined
+  const tiles: { positions: number[][]; texture: { destroy: () => void } }[] = []
+  const clear = () => {
+    for (const tile of tiles) tile.texture.destroy()
+    tiles.length = 0
+    current = undefined
+  }
+  return {
+    clear,
+    draw: (props: Record<string, unknown>) => {
+      const raster = props.raster as HeatmapRaster
+      if (current !== raster) {
+        clear()
+        try {
+          for (const tile of heatmapTiles(raster, Math.min(2048, regl.limits.maxTextureSize))) {
+            const positions = [
+              [tile.x, tile.y],
+              [tile.x + tile.width, tile.y],
+              [tile.x + tile.width, tile.y + tile.height],
+              [tile.x, tile.y + tile.height],
+            ].map(([column, row]) =>
+              raster.origin.map(
+                (value, axis) =>
+                  value +
+                  (raster.columnVector[axis] * column) / raster.width +
+                  (raster.rowVector[axis] * row) / raster.height,
+              ),
+            )
+            tiles.push({
+              positions,
+              texture: regl.texture({
+                width: tile.width,
+                height: tile.height,
+                data: tile.data,
+                format: 'rgba',
+                type: 'uint8',
+                min: 'nearest',
+                mag: 'nearest',
+                wrap: 'clamp',
+                flipY: false,
+              }),
+            })
+          }
+          current = raster
+        } catch (error) {
+          clear()
+          throw error
+        }
+      }
+      for (const tile of tiles) draw(tile)
+    },
+  }
+}
 const cameraViewDirections = {
   default: [1, 1, 1],
   x: [1, 0, 0],
@@ -263,12 +359,20 @@ function JscadViewer({
     show: true,
     transparent: false,
   })
+  const rasterVisualsRef = useRef<Record<string, unknown>>({
+    drawCmd: 'drawHeatmapRaster',
+    show: true,
+    transparent: false,
+  })
+  const clearRasterRef = useRef<(() => void) | undefined>(undefined)
   const heatmapEntities = useMemo(
-    () =>
-      heatmapRenderData?.geometries.map((geometry) => ({
+    () => [
+      ...(heatmapRenderData?.geometries.map((geometry) => ({
         ...geometry,
         visuals: heatmapVisualsRef.current,
-      })) ?? [],
+      })) ?? []),
+      ...(heatmapRenderData?.raster ? [{ raster: heatmapRenderData.raster, visuals: rasterVisualsRef.current }] : []),
+    ],
     [heatmapRenderData],
   )
   const resultIdentity = JSON.stringify([
@@ -432,6 +536,7 @@ function JscadViewer({
     delete rayPathVisualsRef.current.cacheId
     delete meshVisualsRef.current.cacheId
     delete heatmapVisualsRef.current.cacheId
+    delete rasterVisualsRef.current.cacheId
 
     const perspectiveCamera = renderer.cameras.perspective
     const orbit = renderer.controls.orbit
@@ -470,6 +575,7 @@ function JscadViewer({
     rendererEntityCacheRef.current.clear()
     referenceEntitiesRef.current = []
 
+    let rasterCommand: ReturnType<typeof drawHeatmapRaster> | undefined
     const options = {
       camera,
       drawCommands: {
@@ -480,6 +586,11 @@ function JscadViewer({
         drawRayPaths,
         drawRecordedMesh: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, false),
         drawHeatmap: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, false),
+        drawHeatmapRaster: (regl: ReglCommandBuilder) => {
+          rasterCommand ??= drawHeatmapRaster(regl)
+          clearRasterRef.current = rasterCommand.clear
+          return rasterCommand.draw
+        },
       },
       entities: [],
       glOptions: { canvas, attributes: { preserveDrawingBuffer: true } },
@@ -537,10 +648,15 @@ function JscadViewer({
     return () => {
       canvas.removeEventListener('wheel', wheelHandler)
       resizeObserver.disconnect()
+      rasterCommand?.clear()
+      clearRasterRef.current = undefined
       renderRef.current = null
       optionsRef.current = null
     }
   }, [renderScene, savedCamera, publishCamera])
+
+  // Release textures even when the next view has no raster and never invokes its draw command.
+  useEffect(() => () => clearRasterRef.current?.(), [heatmapRenderData])
 
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return

@@ -19,6 +19,8 @@ const server = await createServer({
           `
       import React from 'react'; import { createRoot } from 'react-dom/client';
       import modeling from '@jscad/modeling';
+      import { ScalarPlot } from '/src/features/viewer/viewer/ScalarPlot.tsx';
+      import { createPointCloudData } from '/src/features/viewer/viewer/pointCloudData.ts';
       import { BoxGridResult } from '/src/features/viewer/viewer/BoxGridResult.tsx';
       import { WorkbenchViewer } from '/src/features/cae-workbench/viewer/WorkbenchViewer.tsx';
       import { materialVarsHash } from '/src/lib/material/resolution.ts';
@@ -94,6 +96,51 @@ const server = await createServer({
         window.leaf={dtype:'float64',shape,data:values,axes,tensorOrder:0,boxGrid,unit:'W'};
         root.render(<BoxGridResult key="pixels" name="signal" rules={[{...rule,result:{...rule.result,tensorOrder:0,unit:'W',axes:axes.map(({name,unit})=>({name,unit})),boxGrid}}]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={false} renderViewer={noop}/>);
       };
+
+      window.renderRasterQA=({overlay=false,width=1280,height=720,nonuniform=false,range=[0,1],values: supplied}={})=>{
+        const values=supplied ?? Array.from({length:width*height},(_,i)=>[1,width+3,511*width+511,512*width+512,width*height-1].includes(i)?1:0);
+        const plot={axes:[{name:'y',ticks:Array.from({length:height},(_,i)=>i+.5)},{name:'x',ticks:Array.from({length:width},(_,i)=>nonuniform?i*i+.5:i+.5)}],shape:[height,width],values,range};
+        const leaf={...window.leaf,boxGrid:{...grid,origin:[0,0,0],size:[width,height,1]}};
+        window.qaPlot=plot;
+        window.qaRaster=createPointCloudData(plot,{identity:'qa-raster',leaf,range,plane:{axis:2,coordinate:.5}}).raster;
+        root.render(<React.StrictMode>{overlay?<JscadViewer key="raster-qa" layers={[]} lengthUnit="m" heatmapRenderData={{identity:'qa-raster',geometries:[],raster:window.qaRaster,bounds:{min:[0,0,0],max:[width,height,1]}}} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>:<ScalarPlot key="raster-qa" plot={plot} kind="heatmap" range={range} unit="W"/>}</React.StrictMode>);
+      };
+      window.verifyNativeRaster=()=>{
+        const canvas=document.querySelector('canvas[aria-label="heatmap 차트"]');
+        const pixels=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+        const viewport=canvas.parentElement.parentElement, raster=window.qaRaster;
+        let checked=0,signals=0,mismatches=0;
+        const dpr=window.devicePixelRatio;
+        for(let row=0;row<raster.height;row++)for(let col=0;col<raster.width;col++){
+          const x=Math.floor((75+col+.5-viewport.scrollLeft)*dpr), y=Math.floor((25+raster.height-row-.5-viewport.scrollTop)*dpr);
+          if(x<0||y<0||x>=canvas.width||y>=canvas.height)continue;
+          checked++; const source=(row*raster.width+col)*4, target=(y*canvas.width+x)*4;
+          if(raster.rgba[source]||raster.rgba[source+1])signals++;
+          if([0,1,2,3].some(c=>pixels[target+c]!==raster.rgba[source+c]))mismatches++;
+        }
+        return {checked,signals,mismatches};
+      };
+
+      window.renderRecordedSensor=()=>{
+        const raster=window.recordedSumRaster;
+        const corners=[[0,0],[0,1],[1,0],[1,1]].map(([c,r])=>raster.origin.map((v,i)=>v+c*raster.columnVector[i]+r*raster.rowVector[i]));
+        const bounds={min:[0,1,2].map(i=>Math.min(...corners.map(p=>p[i]))),max:[0,1,2].map(i=>Math.max(...corners.map(p=>p[i])))};
+        root.render(<JscadViewer layers={[]} lengthUnit="mm" heatmapRenderData={{identity:'recorded-sensor',geometries:[],raster,bounds}} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>);
+      };
+      window.renderRecordedHeatmap=async()=>{
+        const {input,record}=await (await fetch('/recorded-heatmap-fixture')).json();
+        const {renderCanonicalGeometryScene}=await import('/src/lib/cad/execution/manifoldRender.ts');
+        const {deserializeCadScene}=await import('/src/lib/cad/execution/mesh.ts');
+        const {CadViewer}=await import('/src/features/viewer/viewer/CadViewer.tsx');
+        const presentation=input.presentation.experiment;
+        const serialized=await renderCanonicalGeometryScene(input.measurement.experiment.scene,{tree:presentation.tree,parts:presentation.materials});
+        const scene=deserializeCadScene(serialized);
+        root.render(<React.StrictMode><BoxGridResult key="recorded-heatmap" name={record.name}
+          rules={[{label:record.name,result:record.schema,methodId:'stored',parameters:{},target:[]}]} data={{[record.name]:record.value}}
+          displayUnit="mm" recordReference="samples['detectorPower']" canOverlayGeometry={true}
+          renderViewer={(data,geometryOpacity)=>{window.qaRaster=data.raster;return <CadViewer experiment={{scene,sceneHash:serialized.sceneHash}} heatmapRenderData={data} geometryOpacity={geometryOpacity} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>;}}/>
+        </React.StrictMode>);
+      };
       window.renderLargeBox=()=>{
         const shape=[24,24,12,4,4,2,3];
         const axes=window.leaf.axes.map((axis,i)=>({...axis,ticks:i<5?Array.from({length:shape[i]},(_,j)=>i<3?(j+.5)/shape[i]:j):axis.ticks}));
@@ -110,6 +157,24 @@ const server = await createServer({
       },
       configureServer(vite) {
         vite.middlewares.use(async (req, res, next) => {
+          if (req.url === '/recorded-heatmap-fixture' && process.env.CAEMBLE_VIEWER_HEATMAP_RESULT) {
+            const directory = path.resolve(process.env.CAEMBLE_VIEWER_HEATMAP_RESULT)
+            const manifest = JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8'))
+            const entry = manifest.records.find((record) => record.name === 'detectorPower')
+            const record = JSON.parse(await readFile(path.join(directory, entry.path), 'utf8'))
+            const buffers = await Promise.all(
+              record.attachments.map((attachment) => readFile(path.join(directory, attachment.path))),
+            )
+            record.value.storage = {
+              kind: 'base64',
+              data: Buffer.concat(buffers).toString('base64'),
+              byteLength: record.value.storage.byteLength,
+            }
+            const input = JSON.parse(await readFile(manifest.input, 'utf8'))
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify({ input, record }))
+            return
+          }
           if (req.url !== '/box-grid-fixture') return next()
           res.setHeader('Content-Type', 'text/html; charset=utf-8')
           res.end(
@@ -399,6 +464,13 @@ try {
     await sizedPage.evaluate(() => window.renderSizedCalculation([0, 0, 0, 0]))
     await sizedPage.getByText('0 / 4 표본 표시 · 0값 4개 숨김').waitFor()
     assert.deepEqual(await sizedPage.evaluate(() => window.pointPixelWidths()), [])
+    await sizedPage.evaluate(() =>
+      window.renderRasterQA({ width: 2, height: 2, values: [-1, 0, 1, 0], range: [-1, 1] }),
+    )
+    await sizedPage.getByRole('button', { name: '원본 크기', exact: true }).click()
+    await sizedPage.waitForFunction(
+      () => window.verifyNativeRaster().checked === 4 && window.verifyNativeRaster().mismatches === 0,
+    )
     await sizedContext.close()
   }
   await page.evaluate(() => window.renderPixel())
@@ -423,6 +495,184 @@ try {
   await page.getByLabel('주파수 표시 단위').selectOption('nm')
   await ready()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/pixel-profile.png' })
+
+  // Native mode must reproduce every source pixel, including impulses missed by the old strides.
+  await page.setViewportSize({ width: 2000, height: 1400 })
+  await page.evaluate(() => window.renderRasterQA())
+  await page.getByRole('button', { name: '원본 크기', exact: true }).click()
+  await page.waitForFunction(() => window.verifyNativeRaster().checked === 1280 * 720)
+  assert.deepEqual(await page.evaluate(() => window.verifyNativeRaster()), {
+    checked: 1280 * 720,
+    signals: 5,
+    mismatches: 0,
+  })
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap-native-sparse.png' })
+  await page.setViewportSize({ width: 800, height: 500 })
+  await page.evaluate(() => {
+    const c = document.querySelector('canvas[aria-label="heatmap 차트"]')
+    c.parentElement.parentElement.scrollTo(500, 250)
+  })
+  await page.waitForFunction(() => window.verifyNativeRaster().mismatches === 0)
+  assert.ok((await page.evaluate(() => window.verifyNativeRaster())).checked < 1280 * 720)
+  await page.getByRole('button', { name: '화면 맞춤', exact: true }).click()
+  await page.setViewportSize({ width: 2000, height: 1400 })
+  // Exercise both the 2048-pixel tile seam and the short final tile.
+  await page.evaluate(() =>
+    window.renderRasterQA({
+      width: 2051,
+      height: 3,
+      values: Array.from({ length: 2051 * 3 }, (_, i) => ([2047, 2048, 2050, 4100].includes(i) ? 1 : 0)),
+    }),
+  )
+  await page.getByRole('button', { name: '원본 크기', exact: true }).click()
+  await page.evaluate(() => {
+    document.querySelector('canvas[aria-label="heatmap 차트"]').parentElement.parentElement.scrollTo(500, 0)
+  })
+  await page.waitForFunction(
+    () => window.verifyNativeRaster().signals === 4 && window.verifyNativeRaster().mismatches === 0,
+  )
+  for (const values of [
+    [-1, 0, 1, 0],
+    [0, 0, 0, 0],
+  ]) {
+    await page.evaluate(
+      (values) =>
+        window.renderRasterQA({ width: 2, height: 2, values, range: values.some((v) => v) ? [-1, 1] : [0, 0] }),
+      values,
+    )
+    await page.waitForFunction(
+      () => window.verifyNativeRaster().checked === 4 && window.verifyNativeRaster().mismatches === 0,
+    )
+  }
+  await page.evaluate(() => window.renderRasterQA({ overlay: true }))
+  await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap-texture-sparse.png' })
+  await page.evaluate(() => window.renderRasterQA({ overlay: true, width: 2051, height: 3 }))
+  await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
+  await page.evaluate(() =>
+    window.renderRasterQA({ nonuniform: true, width: 3, height: 2, values: [0, 1, 0, 1, 0, 1] }),
+  )
+  await page.getByRole('button', { name: '화면 맞춤', exact: true }).click()
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap-nonuniform.png' })
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const canvas = document.querySelector('canvas[aria-label="heatmap 차트"]'),
+        ctx = canvas.getContext('2d')
+      // x ticks [.5,1.5,4.5] have edges [0,1,3,6]; row zero is the bottom row.
+      const colors = []
+      for (const row of [0, 1])
+        for (const x of [0.5, 2, 4.5])
+          colors.push([
+            ...ctx.getImageData(
+              Math.floor(75 + ((canvas.width - 100) * x) / 6),
+              Math.floor(25 + (canvas.height - 90) * (1 - (row + 0.5) / 2)),
+              1,
+              1,
+            ).data,
+          ])
+      return colors
+    }),
+    [
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+    ],
+  )
+  // Verify actual GPU texture orientation and exact colors, including zero and a negative value.
+  await page.evaluate(() =>
+    window.renderRasterQA({ overlay: true, width: 2, height: 2, values: [-1, 0, 0.5, 1], range: [-1, 1] }),
+  )
+  await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
+  assert.deepEqual(
+    await page.evaluate(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const canvas = document.querySelector('canvas'),
+        gl = canvas.getContext('webgl')
+      const pixels = new Uint8Array(canvas.width * canvas.height * 4)
+      gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+      let minX = canvas.width,
+        minY = canvas.height,
+        maxX = 0,
+        maxY = 0
+      for (let y = 0; y < canvas.height; y++)
+        for (let x = 0; x < canvas.width; x++) {
+          const i = (y * canvas.width + x) * 4,
+            rgb = pixels.subarray(i, i + 3)
+          if (Math.max(...rgb) - Math.min(...rgb) > 100) {
+            minX = Math.min(minX, x)
+            maxX = Math.max(maxX, x)
+            minY = Math.min(minY, y)
+            maxY = Math.max(maxY, y)
+          }
+        }
+      return [0.25, 0.75].flatMap((y) =>
+        [0.25, 0.75].map((x) => {
+          const i = (Math.floor(minY + (maxY - minY) * y) * canvas.width + Math.floor(minX + (maxX - minX) * x)) * 4
+          return [...pixels.subarray(i, i + 4)]
+        }),
+      )
+    }),
+    [
+      [0, 0, 255, 255],
+      [0, 255, 0, 255],
+      [128, 128, 0, 255],
+      [255, 0, 0, 255],
+    ],
+  )
+
+  if (process.env.CAEMBLE_VIEWER_HEATMAP_RESULT) {
+    await page.evaluate(() => window.renderRecordedHeatmap())
+    await ready()
+    await page.getByLabel('frequency 집계').selectOption('sum')
+    await ready()
+    await page.waitForFunction(() => window.qaRaster?.width === 1280)
+    const signals = await page.evaluate(() => {
+      let count = 0
+      const { rgba } = window.qaRaster
+      for (let i = 0; i < rgba.length; i += 4) if (rgba[i] || rgba[i + 1]) count++
+      return count
+    })
+    assert.equal(signals, 1303)
+    await page.evaluate(() => {
+      window.recordedSumRaster = window.qaRaster
+    })
+    await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
+    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-overlay.png' })
+    await page.getByLabel('Geometry 겹치기').uncheck()
+    await page.getByRole('button', { name: '원본 크기', exact: true }).click()
+    await page.waitForFunction(() => window.verifyNativeRaster().checked === 1280 * 720)
+    assert.deepEqual(await page.evaluate(() => window.verifyNativeRaster()), {
+      checked: 1280 * 720,
+      signals: 1303,
+      mismatches: 0,
+    })
+    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-native.png' })
+    await page.getByLabel('Geometry 겹치기').check()
+    await page.getByLabel('값 범위 고정').check()
+    await page.getByLabel('범위 최댓값').fill('0.05')
+    await ready()
+    await page.getByLabel('frequency 집계').selectOption('index')
+    await page.getByLabel('frequency index', { exact: true }).fill('2')
+    await ready()
+    await page.getByLabel('Geometry 겹치기').uncheck()
+    await page.getByRole('button', { name: '원본 크기', exact: true }).click()
+    await page.waitForFunction(() => window.verifyNativeRaster().mismatches === 0)
+    await page.getByLabel('Geometry 겹치기').check()
+    await page.getByLabel('Animation 모드').selectOption('frequency')
+    await page.getByRole('button', { name: '재생', exact: true }).click()
+    await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) > 0)
+    await page.getByRole('button', { name: '일시정지', exact: true }).click()
+    await ready()
+    await page.evaluate(() => window.renderRecordedSensor())
+    await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
+    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-sensor.png' })
+    console.log(
+      'Saved spectrometer Heatmap: 1303 signals, 921600 native pixels verified against overlay texture bytes.',
+    )
+  }
   if (process.env.CAEMBLE_VIEWER_RAY_RESULT) {
     const directory = path.resolve(process.env.CAEMBLE_VIEWER_RAY_RESULT)
     const manifest = JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8'))

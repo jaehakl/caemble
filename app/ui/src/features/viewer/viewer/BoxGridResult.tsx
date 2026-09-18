@@ -964,8 +964,10 @@ function BoxGridControls({
                         `${axis.name}: ${axis.ticks[0]} ~ ${axis.ticks[axis.ticks.length - 1]} ${axis.unit ?? ''}`,
                     )
                     .join(' · ')}{' '}
-                  · {renderData.displayedCount.toLocaleString()} / {result.scalar.values.length.toLocaleString()} 표본
-                  표시 (집계·복사는 전체 데이터)
+                  ·{' '}
+                  {kind === 'heatmap'
+                    ? `${renderData.displayedCount.toLocaleString()} 원본 픽셀 전체 표시 · 확대하여 작은 신호 확인`
+                    : `${renderData.displayedCount.toLocaleString()} / ${result.scalar.values.length.toLocaleString()} 표본 표시 (집계·복사는 전체 데이터)`}
                   {kind === 'cloud'
                     ? ` · 0값 ${renderData.hiddenZeroCount.toLocaleString()}개 숨김 · 점 면적 ∝ |값|`
                     : null}

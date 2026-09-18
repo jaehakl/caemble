@@ -697,7 +697,7 @@ miss나 mesh fallback으로 숨기지 않습니다. 위치 오차 범위와 이�
 fluence rate와 방향별 radiant flux density입니다. 검출기 표면의 흡수·종료는
 명시적인 경계조건이며 Output 요청 여부와 무관합니다.
 
-`ray-tracing 5.0.0`의 박막은 표면 경계조건으로 명시합니다.
+`ray-tracing 5.1.0`의 박막은 표면 경계조건으로 명시합니다.
 
 - `ray.thin-film-stack`의 대상 Material에서 `optics.thin-film-stack@1` 모델을 선택합니다.
 - 층 순서는 외부에서 내부이며 내부 입사 시 역순입니다. 실제 medium stack의 양쪽 매질을 사용합니다.

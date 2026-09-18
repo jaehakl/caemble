@@ -70,6 +70,7 @@ COMMON_TESTS = ("test_architecture_*", "test_solver_entries", "test_material_mod
 # Support ownership follows direct imports and child locators, including the
 # transitive structural/scalar consumers of the shared geometry and grid fixtures.
 TEST_SUPPORT_TESTS = {
+    "imaging_spectrometer_fixtures.py": ("test_ray_imaging*",),
     "cpu_benchmark.py": ("test_cpu_executor", "test_ray_parallel_smoke", "test_fdtd_parallel_smoke"),
     "ray_parallel_fixtures.py": ("test_ray_parallel_smoke", "test_ray_detector_smoke", "test_ray_grating", "test_ray_grating_smoke"),
     "fdtd_fixtures.py": ("test_fdtd_*",),

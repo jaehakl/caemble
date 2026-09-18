@@ -10,7 +10,7 @@ import { createComparisonSettings, ViewerComparisonContext, type ViewerCompariso
 import { createRenderParts } from './renderParts'
 import { primitives } from '@jscad/modeling'
 
-const mocks = vi.hoisted(() => ({ draw: vi.fn(), render: vi.fn() }))
+const mocks = vi.hoisted(() => ({ draw: vi.fn(), render: vi.fn(), texture: vi.fn(() => ({ destroy: vi.fn() })) }))
 
 vi.mock('@jscad/regl-renderer', async (importOriginal) => {
   const original = await importOriginal<{ default: object }>()
@@ -22,14 +22,14 @@ vi.mock('@jscad/regl-renderer', async (importOriginal) => {
         const drawCache = new Map<number, (props: object) => void>()
         const regl = Object.assign(
           vi.fn(() => mocks.draw),
-          { prop: (name: string) => name },
+          { prop: (name: string) => name, texture: mocks.texture, limits: { maxTextureSize: 2 } },
         )
         return (data: { entities?: { visuals: Record<string, unknown> }[] }) => {
           mocks.render(data)
           for (const entity of data.entities ?? []) {
             const { visuals } = entity
             const command = String(visuals.drawCmd ?? '')
-            if (command !== 'drawHeatmap') continue
+            if (command !== 'drawHeatmap' && command !== 'drawHeatmapRaster') continue
             let drawCmd: ((props: object) => void) | undefined
             if (visuals.cacheId) drawCmd = drawCache.get(visuals.cacheId as number)
             else {
@@ -104,7 +104,7 @@ it('registers recorded mesh and result chart commands as opaque depth-writing dr
   )
   const regl = Object.assign(
     vi.fn(() => vi.fn()),
-    { prop: (name: string) => name },
+    { prop: (name: string) => name, texture: mocks.texture, limits: { maxTextureSize: 2 } },
   )
   const options = vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
     drawCommands: Record<string, (builder: typeof regl, entity: object) => unknown>
@@ -590,5 +590,73 @@ it('shares X-ray, selection mode and source visibility while keeping selection f
   expect(screen.getAllByText('All Experiment geometry layers are hidden.')).toHaveLength(2)
   expect(screen.getByRole('button', { name: 'Toggle X-ray' })).toHaveAttribute('aria-pressed', 'true')
   for (const canvas of canvases) expect(canvas.className).toContain('cursor-crosshair')
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
+it('tiles nearest textures, refreshes their data, and releases them on view changes and StrictMode cleanup', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const raster = {
+    width: 3,
+    height: 3,
+    rgba: new Uint8Array(36).fill(255),
+    origin: [1, 2, 3],
+    columnVector: [3, 0, 0],
+    rowVector: [0, 3, 0],
+  }
+  const props = {
+    layers: [],
+    lengthUnit: 'm' as const,
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+  }
+  const data = { identity: 'raster', geometries: [], raster, bounds: { min: [1, 2, 3], max: [4, 5, 3] } }
+  const view = render(
+    <StrictMode>
+      <JscadViewer {...props} heatmapRenderData={data} />
+    </StrictMode>,
+  )
+  expect(props.onRenderError).not.toHaveBeenCalled()
+  const textures = () => mocks.texture.mock.results.map((result) => result.value)
+  expect(textures().filter((texture) => !texture.destroy.mock.calls.length)).toHaveLength(4)
+  expect(mocks.texture).toHaveBeenCalledWith(expect.objectContaining({ min: 'nearest', mag: 'nearest', flipY: false }))
+  expect(mocks.draw).toHaveBeenCalledWith(
+    expect.objectContaining({
+      positions: [
+        [3, 4, 3],
+        [4, 4, 3],
+        [4, 5, 3],
+        [3, 5, 3],
+      ],
+    }),
+  )
+  const old = textures()
+  view.rerender(
+    <StrictMode>
+      <JscadViewer {...props} heatmapRenderData={{ ...data, raster: { ...raster, rgba: new Uint8Array(36) } }} />
+    </StrictMode>,
+  )
+  for (const texture of old) expect(texture.destroy).toHaveBeenCalledTimes(1)
+  expect(textures().filter((texture) => !texture.destroy.mock.calls.length)).toHaveLength(4)
+  view.rerender(
+    <StrictMode>
+      <JscadViewer {...props} />
+    </StrictMode>,
+  )
+  for (const texture of textures()) expect(texture.destroy).toHaveBeenCalledTimes(1)
+  view.rerender(
+    <StrictMode>
+      <JscadViewer {...props} heatmapRenderData={data} />
+    </StrictMode>,
+  )
+  expect(textures().filter((texture) => !texture.destroy.mock.calls.length)).toHaveLength(4)
+  view.unmount()
+  for (const texture of textures()) expect(texture.destroy).toHaveBeenCalledTimes(1)
   expect(props.onRenderError).not.toHaveBeenCalled()
 })

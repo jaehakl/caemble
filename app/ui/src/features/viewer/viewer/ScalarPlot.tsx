@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScalarPlotData } from './boxGridViewData'
-import { plotColor } from './pointCloudData'
+import { heatmapEdges, heatmapPixels, heatmapTiles } from './pointCloudData'
 
 export function buildPlotHistogram(values: readonly number[], count?: number, domain?: readonly number[]) {
   let min = domain?.[0] ?? Infinity,
@@ -40,14 +40,41 @@ export function ScalarPlot({
   lockHistogramRange?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [nativeSize, setNativeSize] = useState(false)
   const [hover, setHover] = useState('')
+  const heatmapProbe = useRef<((x: number, y: number) => string) | undefined>(undefined)
   const targets = useRef<{ x: number; y: number; label: string }[]>([])
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    const viewport = viewportRef.current
+    if (!canvas || !viewport) return
+    const edges = kind === 'heatmap' ? plot.axes.map(({ ticks }) => heatmapEdges(ticks)) : []
+    const uniform = edges.every((axis) =>
+      axis.every(
+        (edge, i) =>
+          Math.abs(edge - axis[0] - ((axis[axis.length - 1] - axis[0]) * i) / (axis.length - 1)) <=
+          Math.abs(axis[axis.length - 1] - axis[0]) * 1e-9,
+      ),
+    )
+    const rgba = kind === 'heatmap' ? heatmapPixels(plot.values, range) : undefined
+    const tiles =
+      rgba && uniform
+        ? Array.from(heatmapTiles({ width: plot.shape[1], height: plot.shape[0], rgba }, 2048), (tile) => {
+            const image = document.createElement('canvas')
+            image.width = tile.width
+            image.height = tile.height
+            image
+              .getContext('2d')!
+              .putImageData(new ImageData(new Uint8ClampedArray(tile.data), tile.width, tile.height), 0, 0)
+            return { x: tile.x, y: tile.y, image }
+          })
+        : []
     const draw = () => {
-      const width = Math.max(320, canvas.clientWidth),
-        height = Math.max(220, canvas.clientHeight)
+      const width = Math.max(320, viewport.clientWidth),
+        height = Math.max(220, viewport.clientHeight)
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
       const ratio = window.devicePixelRatio || 1
       canvas.width = width * ratio
       canvas.height = height * ratio
@@ -55,12 +82,13 @@ export function ScalarPlot({
       if (!ctx) return
       ctx.scale(ratio, ratio)
       ctx.clearRect(0, 0, width, height)
-      const left = 75,
-        top = 25,
-        right = width - 25,
-        bottom = height - 65
-      const w = right - left,
-        h = bottom - top
+      const native = kind === 'heatmap' && nativeSize
+      const left = 75 - (native ? viewport.scrollLeft : 0),
+        top = 25 - (native ? viewport.scrollTop : 0),
+        w = native ? plot.shape[1] : width - 100,
+        h = native ? plot.shape[0] : height - 90,
+        right = left + w,
+        bottom = top + h
       ctx.font = '12px sans-serif'
       ctx.strokeStyle = '#64748b'
       ctx.fillStyle = '#334155'
@@ -70,6 +98,7 @@ export function ScalarPlot({
       ctx.lineTo(right, bottom)
       ctx.stroke()
       targets.current = []
+      heatmapProbe.current = undefined
       const tickText = (value: number) => Number(value.toPrecision(4)).toString()
       const axis = (min: number, max: number, vertical: boolean, label: string) => {
         ctx.fillStyle = '#334155'
@@ -85,11 +114,11 @@ export function ScalarPlot({
         ctx.textAlign = 'center'
         if (vertical) {
           ctx.save()
-          ctx.translate(15, top + h / 2)
+          ctx.translate(left - 60, top + h / 2)
           ctx.rotate(-Math.PI / 2)
           ctx.fillText(label, 0, 0)
           ctx.restore()
-        } else ctx.fillText(label, left + w / 2, height - 12)
+        } else ctx.fillText(label, left + w / 2, bottom + 53)
       }
       if (kind === 'histogram') {
         const histogram = buildPlotHistogram(plot.values, bins, range)
@@ -153,45 +182,64 @@ export function ScalarPlot({
       } else {
         const rows = plot.shape[0],
           columns = plot.shape[1]
-        const edges = plot.axes.map(({ ticks }) => {
-          if (ticks.length === 1) return [ticks[0] - 0.5, ticks[0] + 0.5]
-          return [
-            ticks[0] - (ticks[1] - ticks[0]) / 2,
-            ...ticks.slice(1).map((tick, i) => (ticks[i] + tick) / 2),
-            ticks[ticks.length - 1] + (ticks[ticks.length - 1] - ticks[ticks.length - 2]) / 2,
-          ]
-        })
-        const xSpan = edges[1][columns] - edges[1][0],
-          ySpan = edges[0][rows] - edges[0][0]
-        const rowStride = Math.max(1, Math.ceil(rows / 500)),
-          columnStride = Math.max(1, Math.ceil((columns * Math.ceil(rows / rowStride)) / 100_000))
-        for (let row = 0; row < rows; row += rowStride)
-          for (let column = 0; column < columns; column += columnStride) {
-            const color = plotColor(plot.values[row * columns + column], range)
-            ctx.fillStyle = `rgb(${color
-              .slice(0, 3)
-              .map((c) => c * 255)
-              .join(',')})`
-            const x = left + (w * (edges[1][column] - edges[1][0])) / xSpan,
-              y = bottom - (h * (edges[0][Math.min(rows, row + rowStride)] - edges[0][0])) / ySpan
-            const cellWidth = (w * (edges[1][Math.min(columns, column + columnStride)] - edges[1][column])) / xSpan
-            const cellHeight = (h * (edges[0][Math.min(rows, row + rowStride)] - edges[0][row])) / ySpan
-            ctx.fillRect(x, y, cellWidth + 0.5, cellHeight + 0.5)
-            targets.current.push({
-              x: x + cellWidth / 2,
-              y: y + cellHeight / 2,
-              label: `${plot.axes[0].name}=${plot.axes[0].ticks[row]}, ${plot.axes[1].name}=${plot.axes[1].ticks[column]} · ${plot.values[row * columns + column]} ${unit ?? ''}`,
-            })
-          }
+        const normalized = edges.map((axis) => axis.map((edge) => (edge - axis[0]) / (axis[axis.length - 1] - axis[0])))
+        ctx.imageSmoothingEnabled = false
+        if (uniform) {
+          ctx.save()
+          ctx.translate(left, bottom)
+          ctx.scale(w / columns, -h / rows)
+          for (const tile of tiles) ctx.drawImage(tile.image, tile.x, tile.y)
+          ctx.restore()
+        } else {
+          // Nonuniform axes retain their actual midpoint cell boundaries, without stride sampling.
+          for (let row = 0; row < rows; row++)
+            for (let column = 0; column < columns; column++) {
+              const offset = (row * columns + column) * 4
+              ctx.fillStyle = `rgb(${rgba![offset]},${rgba![offset + 1]},${rgba![offset + 2]})`
+              const x = left + w * normalized[1][column],
+                y = bottom - h * normalized[0][row + 1]
+              ctx.fillRect(
+                x,
+                y,
+                w * (normalized[1][column + 1] - normalized[1][column]),
+                h * (normalized[0][row + 1] - normalized[0][row]),
+              )
+            }
+        }
+        heatmapProbe.current = (x, y) => {
+          const coordinates = [(bottom - y) / h, (x - left) / w]
+          if (coordinates.some((value) => value < 0 || value >= 1)) return ''
+          const indices = normalized.map((axis, a) => {
+            let lo = 0,
+              hi = axis.length - 1
+            while (lo + 1 < hi) {
+              const mid = Math.floor((lo + hi) / 2)
+              if (axis[mid] <= coordinates[a]) lo = mid
+              else hi = mid
+            }
+            return lo
+          })
+          const [row, column] = indices
+          return `${plot.axes[0].name}=${plot.axes[0].ticks[row]}, ${plot.axes[1].name}=${plot.axes[1].ticks[column]} · ${plot.values[row * columns + column]} ${unit ?? ''}`
+        }
         axis(edges[1][0], edges[1][columns], false, `${plot.axes[1].name} (${plot.axes[1].unit ?? 'unitless'})`)
         axis(edges[0][0], edges[0][rows], true, `${plot.axes[0].name} (${plot.axes[0].unit ?? 'unitless'})`)
       }
     }
     const observer = new ResizeObserver(draw)
-    observer.observe(canvas)
+    observer.observe(viewport)
+    viewport.addEventListener('scroll', draw)
     draw()
-    return () => observer.disconnect()
-  }, [plot, kind, range, bins, unit, lockHistogramRange])
+    return () => {
+      observer.disconnect()
+      viewport.removeEventListener('scroll', draw)
+      heatmapProbe.current = undefined
+      for (const tile of tiles) {
+        tile.image.width = 0
+        tile.image.height = 0
+      }
+    }
+  }, [plot, kind, range, bins, unit, lockHistogramRange, nativeSize])
   return (
     <div className="flex h-full min-h-0 flex-col" data-result-visualization={kind}>
       {kind === 'line' ? (
@@ -209,33 +257,74 @@ export function ScalarPlot({
           )}
         </div>
       ) : null}
-      <canvas
-        ref={canvasRef}
-        className="min-h-0 w-full flex-1"
-        role="img"
-        aria-label={`${kind} 차트`}
-        onMouseLeave={() => setHover('')}
-        onMouseMove={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect(),
-            x = event.clientX - rect.left,
-            y = event.clientY - rect.top
-          let nearest: (typeof targets.current)[number] | undefined,
-            distance = Infinity
-          for (const target of targets.current) {
-            const delta = (target.x - x) ** 2 + (target.y - y) ** 2
-            if (delta < distance) {
-              nearest = target
-              distance = delta
-            }
+      {kind === 'heatmap' ? (
+        <div className="flex shrink-0 gap-2 px-3 py-1 text-xs" aria-label="Heatmap 보기 크기">
+          <button
+            className="rounded border px-2 py-1 aria-pressed:bg-slate-200"
+            type="button"
+            aria-pressed={!nativeSize}
+            onClick={() => setNativeSize(false)}
+          >
+            화면 맞춤
+          </button>
+          <button
+            className="rounded border px-2 py-1 aria-pressed:bg-slate-200"
+            type="button"
+            aria-pressed={nativeSize}
+            onClick={() => setNativeSize(true)}
+          >
+            원본 크기
+          </button>
+        </div>
+      ) : null}
+      <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto" onMouseLeave={() => setHover('')}>
+        <div
+          style={
+            kind === 'heatmap' && nativeSize
+              ? {
+                  width: Math.max(320, plot.shape[1] + 100),
+                  height: Math.max(220, plot.shape[0] + 90),
+                  minWidth: '100%',
+                  minHeight: '100%',
+                }
+              : { width: '100%', height: '100%' }
           }
-          setHover(nearest?.label ?? '')
-        }}
-      />
+        >
+          <canvas
+            ref={canvasRef}
+            className="sticky top-0 left-0 block"
+            role="img"
+            aria-label={`${kind} 차트`}
+            onMouseLeave={() => setHover('')}
+            onMouseMove={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect(),
+                x = event.clientX - rect.left,
+                y = event.clientY - rect.top
+              if (kind === 'heatmap') {
+                setHover(heatmapProbe.current?.(x, y) ?? '')
+                return
+              }
+              let nearest: (typeof targets.current)[number] | undefined,
+                distance = Infinity
+              for (const target of targets.current) {
+                const delta = (target.x - x) ** 2 + (target.y - y) ** 2
+                if (delta < distance) {
+                  nearest = target
+                  distance = delta
+                }
+              }
+              setHover(nearest?.label ?? '')
+            }}
+          />
+        </div>
+      </div>
       <div role="status" className="min-h-7 px-3 text-xs text-slate-600">
         {hover ||
           (kind === 'histogram'
             ? `${plot.values.length.toLocaleString()} 표본`
-            : `${plot.shape.join(' × ')} · 최대 100,000 표본${kind === 'line' ? ' / 200 lines' : ''} 표시 · 집계 및 복사는 전체 데이터 사용`)}
+            : kind === 'heatmap'
+              ? `${plot.shape.join(' × ')} · 모든 원본 픽셀 표시 · 축소 시 작은 신호는 원본 크기에서 확인`
+              : `${plot.shape.join(' × ')} · 최대 100,000 표본 / 200 lines 표시 · 집계 및 복사는 전체 데이터 사용`)}
       </div>
     </div>
   )

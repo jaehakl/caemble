@@ -10,7 +10,7 @@ from app.solvers.ray_tracing.outputs import PathCollector
 
 def test_path_sample_is_independent_of_batch_partition_and_completion_order(monkeypatch):
     def step(ray, *args):
-        collector = args[-2]
+        collector = args[-3]  # collector, thin films, equivalent lenses
         ray.turn += 1
         if ray.turn < ray.stop:
             if ray.turn == 1 and ray.identity % 3 == 0:
@@ -74,7 +74,7 @@ def test_zero_path_limit_does_not_hash_or_retain_paths(monkeypatch):
 
 def test_path_limit_does_not_stop_physical_accumulation(monkeypatch):
     def step(ray, *args):
-        collector = args[-2]
+        collector = args[-3]  # collector, thin films, equivalent lenses
         collector.detected_power += 1
         collector.finish(ray)
         return []

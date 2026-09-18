@@ -465,6 +465,25 @@ function validateCalls(
       if (group.missingMemberIds.length > 0) {
         addIssue(issues, targetPath, `references unresolved members: ${group.missingMemberIds.join(', ')}.`)
       }
+      if (method.methodId === 'ray.paraxial-lens' && isRecord(call.parameters)) {
+        const focalLength = call.parameters.focalLength
+        if (isRecord(focalLength) && focalLength.value === 0)
+          addIssue(issues, `${callPath}.parameters.focalLength`, 'paraxial lens focal length must be nonzero.')
+        const surfaces = scene.parts.filter((part) => group.geometryIds.includes(part.id))
+          .flatMap((part) => part.surfaces.map((surface) => surface.id))
+        const conflicts = calls.some((other, otherIndex) => otherIndex !== index && isRecord(other)
+          && Array.isArray(other.target) && other.target.some((reference) => {
+            if (typeof reference !== 'string') return false
+            if ((other.methodId === 'ray.paraxial-lens' || other.methodId === 'ray.hg-medium') && reference.startsWith(`${source}.geometry.`)) {
+              const selected = targetGroup(scene, 'geometry', reference.slice(`${source}.geometry.`.length))
+              return selected?.geometryIds.some((id) => group.geometryIds.includes(id))
+            }
+            if (!reference.startsWith(`${source}.surface.`)) return false
+            const selected = targetGroup(scene, 'surface', reference.slice(`${source}.surface.`.length))
+            return selected?.surfaceIds.some((id) => surfaces.includes(id))
+          }))
+        if (conflicts) addIssue(issues, targetPath, 'paraxial lens cannot overlap another lens or surface/volume optical condition.')
+      }
       if (method.methodId === 'ray.diffraction-grating' && isRecord(call.parameters)) {
         const incompatible = new Set(['ray.diffraction-grating', 'ray.absorbing-detector', 'ray.thin-film-stack', 'ray.abg-scatter', 'ray.lambertian-scatter'])
         const conflicts = calls.some((other, otherIndex) => otherIndex !== index && isRecord(other) && incompatible.has(String(other.methodId)) && Array.isArray(other.target) && other.target.some((reference) => {

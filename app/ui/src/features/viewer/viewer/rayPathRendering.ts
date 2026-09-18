@@ -37,6 +37,8 @@ export function createRayPathRenderGeometries(
       const rgb = wavelengthRgb(bundle.pathWavelength[path])
       for (let vertex = bundle.pathOffsets[path]; vertex < bundle.pathOffsets[path + 1] - 1; vertex++) {
         const segment = vertex - path
+        // Equivalent-lens transfer joins reference caps, not a physical internal ray.
+        if (bundle.segmentEvent[segment] === 12) continue
         const alpha =
           maximumPower > 0 ? Math.max(0.04, Math.sqrt(Math.max(0, bundle.segmentPower[segment]) / maximumPower)) : 0.04
         const first = positions.length / 3

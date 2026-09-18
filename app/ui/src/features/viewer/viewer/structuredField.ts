@@ -7,7 +7,18 @@ import { assertBoxGridData } from '@/contracts/boxGrid'
 export type HeatmapRenderData = Readonly<{
   identity: string
   geometries: readonly MeshRenderGeometry[]
+  raster?: HeatmapRaster
   bounds: Readonly<{ min: readonly number[]; max: readonly number[] }>
+}>
+
+/** Row zero starts at origin; vectors span the full cell boundaries in world coordinates. */
+export type HeatmapRaster = Readonly<{
+  width: number
+  height: number
+  rgba: Uint8Array
+  origin: readonly number[]
+  columnVector: readonly number[]
+  rowVector: readonly number[]
 }>
 
 export function structuredField(

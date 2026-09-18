@@ -1,12 +1,47 @@
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
 import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
 import type { ScalarPlotData } from './boxGridViewData'
-import type { HeatmapRenderData } from './structuredField'
+import type { HeatmapRaster, HeatmapRenderData } from './structuredField'
 import type { MeshRenderGeometry } from './meshFields'
 
 export function plotColor(value: number, range: readonly number[]): [number, number, number, number] {
   const t = range[1] === range[0] ? 0.5 : Math.max(0, Math.min(1, (value - range[0]) / (range[1] - range[0])))
   return [Math.max(0, 2 * t - 1), 1 - Math.abs(2 * t - 1), Math.max(0, 1 - 2 * t), 1]
+}
+
+/** Identical byte colors for Canvas and WebGL; scalar values are never aggregated or rescaled. */
+export function heatmapPixels(values: readonly number[], range: readonly number[]) {
+  const rgba = new Uint8Array(values.length * 4)
+  for (let i = 0; i < values.length; i++) {
+    const color = plotColor(values[i], range)
+    for (let c = 0; c < 4; c++) rgba[i * 4 + c] = Math.round(color[c] * 255)
+  }
+  return rgba
+}
+
+/** Limit allocation/upload dimensions without dropping cells at tile boundaries. */
+export function* heatmapTiles(raster: Pick<HeatmapRaster, 'width' | 'height' | 'rgba'>, maxSize: number) {
+  const limit = Math.max(1, Math.floor(maxSize))
+  for (let y = 0; y < raster.height; y += limit)
+    for (let x = 0; x < raster.width; x += limit) {
+      const width = Math.min(limit, raster.width - x),
+        height = Math.min(limit, raster.height - y)
+      const data = new Uint8Array(width * height * 4)
+      for (let row = 0; row < height; row++) {
+        const start = ((y + row) * raster.width + x) * 4
+        data.set(raster.rgba.subarray(start, start + width * 4), row * width * 4)
+      }
+      yield { x, y, width, height, data }
+    }
+}
+
+export function heatmapEdges(ticks: readonly number[]) {
+  if (ticks.length === 1) return [ticks[0] - 0.5, ticks[0] + 0.5]
+  return [
+    ticks[0] - (ticks[1] - ticks[0]) / 2,
+    ...ticks.slice(1).map((tick, i) => (ticks[i] + tick) / 2),
+    ticks[ticks.length - 1] + (ticks[ticks.length - 1] - ticks[ticks.length - 2]) / 2,
+  ]
 }
 
 /** Positions use Box local coordinates; vector components are in the recorded global XYZ basis. */
@@ -36,6 +71,7 @@ export function createPointCloudData(
     displayedCount = 0
   const bounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
   const geometries: MeshRenderGeometry[] = []
+  let raster: HeatmapRaster | undefined
   const zeroPositions: number[] = [],
     zeroColors: number[] = [],
     zeroSizes: number[] = []
@@ -76,7 +112,26 @@ export function createPointCloudData(
       : local
   const spatialSize = spatial ? Math.hypot(...options.leaf!.boxGrid.size) * factor : 1
   const arrowScale = (spatialSize * 0.08) / (Math.max(Math.abs(range[0]), Math.abs(range[1])) || 1)
-  for (let flat = 0; flat < plot.values.length; flat++) {
+  if (options.plane && spatial) {
+    const local = [0, 0, 0]
+    local[options.plane.axis] = options.plane.coordinate
+    const origin = world(local)
+    const vectors = spatialIndices.map((axis) => {
+      const end = [...local]
+      end[axis] = options.leaf!.boxGrid.size[axis]
+      return world(end).map((value, i) => value - origin[i])
+    })
+    raster = {
+      width: plot.shape[1],
+      height: plot.shape[0],
+      rgba: heatmapPixels(plot.values, range),
+      origin,
+      rowVector: vectors[0],
+      columnVector: vectors[1],
+    }
+    displayedCount = plot.values.length
+  }
+  for (let flat = 0; !raster && flat < plot.values.length; flat++) {
     const value = plot.values[flat]
     if (!options.plane && value === 0) continue
     if (eligibleIndex++ % stride !== 0) continue
@@ -97,32 +152,7 @@ export function createPointCloudData(
     })
     if (options.plane) point[options.plane.axis] = options.plane.coordinate
     const color = plotColor(plot.values[flat], range)
-    if (options.plane && spatial) {
-      const corners = [
-        [-1, -1],
-        [1, -1],
-        [1, 1],
-        [-1, -1],
-        [1, 1],
-        [-1, 1],
-      ]
-      for (const corner of corners) {
-        const local = [...point]
-        spatialIndices.forEach((axis, a) => {
-          const ticks = plot.axes[a].ticks,
-            i = index[a]
-          local[axis] =
-            corner[a] < 0
-              ? i === 0
-                ? 0
-                : (ticks[i - 1] + ticks[i]) / 2
-              : i === ticks.length - 1
-                ? options.leaf!.boxGrid.size[axis]
-                : (ticks[i + 1] + ticks[i]) / 2
-        })
-        vertex(world(local), color)
-      }
-    } else if (options.vectors) {
+    if (options.vectors) {
       const origin = world(point),
         direction = options.vectors.map((values) => values[flat])
       const magnitude = Math.hypot(...direction)
@@ -177,5 +207,5 @@ export function createPointCloudData(
     bounds.min = [0, 0, 0]
     bounds.max = [1, 1, 1]
   }
-  return { identity: options.identity, geometries, bounds, displayedCount, hiddenZeroCount }
+  return { identity: options.identity, geometries, raster, bounds, displayedCount, hiddenZeroCount }
 }

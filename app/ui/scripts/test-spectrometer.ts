@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { executeCompiledDocument } from '../src/lib/cad/execution/userModule'
+import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
 import { assertExperimentAuthoringSemantics } from '../src/lib/cad/simulation/authoringSemantics'
 import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
@@ -125,3 +125,61 @@ const measurement = JSON.parse(readFileSync(path.join(outputDirectory, 'measurem
 measurement.world.experiment = refinedScene
 writeFileSync(path.join(outputDirectory, 'measurement-refined.json'), JSON.stringify(measurement))
 console.log(`Spectrometer authoring and variable checks passed; canonical measurement: ${outputDirectory}`)
+
+const imager = examples.find((item) => item.key === 'transmission-imaging-spectrometer')!
+const imagerCompiled = compileCatalogExample(imager, catalog)
+const imagerVars = Object.fromEntries(
+  Object.entries(inspectCompiledDocument(imagerCompiled).varsSchema).map(([name, entry]) => [
+    name,
+    (entry.min + entry.max) / 2,
+  ]),
+)
+const imagerValues = executeCompiledDocument(imagerCompiled, imagerVars, imager.sourceBundle.files['simulate.py'])
+assertExperimentAuthoringSemantics(catalog, imagerValues)
+for (const issue of ['zero-focus', 'duplicate-lens', 'surface-overlap', 'bulk-overlap']) {
+  const invalid = structuredClone(imagerValues.simulationProgram.tasks.trace)
+  if (issue === 'zero-focus') invalid.config.boundaryConditions[0].parameters.focalLength.value = 0
+  else if (issue === 'duplicate-lens')
+    invalid.config.boundaryConditions.push(structuredClone(invalid.config.boundaryConditions[0]))
+  else if (issue === 'bulk-overlap')
+    invalid.config.boundaryConditions.push({
+      methodId: 'ray.hg-medium',
+      target: invalid.config.boundaryConditions[0].target,
+      parameters: { anisotropy: { value: 0 } },
+    })
+  else
+    invalid.config.boundaryConditions.push({
+      methodId: 'ray.absorbing-detector',
+      target: ['experiment.surface.lensConflict'],
+      parameters: {},
+    })
+  const scene =
+    issue === 'surface-overlap'
+      ? {
+          ...imagerValues.scene,
+          surfaceGroups: [
+            ...imagerValues.scene.surfaceGroups,
+            {
+              id: 'lensConflict',
+              name: 'lensConflict',
+              kind: 'surface' as const,
+              memberIds: [],
+              missingMemberIds: [],
+              geometryIds: [],
+              surfaceIds: imagerValues.scene.parts
+                .find((part) => part.id === 'objective.optics.body')!
+                .surfaces.map((surface) => surface.id),
+            },
+          ],
+        }
+      : imagerValues.scene
+  assert.throws(
+    () =>
+      assertExperimentAuthoringSemantics(catalog, {
+        ...imagerValues,
+        scene,
+        simulationProgram: { ...imagerValues.simulationProgram, tasks: { trace: invalid } },
+      }),
+    /nonzero|cannot overlap/,
+  )
+}

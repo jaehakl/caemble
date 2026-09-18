@@ -95,6 +95,16 @@ async def run_catalog_example(measurement, key, *, run_timeout=180, timings=None
             offsets, events = native['trace.paths.pathOffsets'], native['trace.paths.segmentEvent']
             paths = [events[first - i:end - i - 1].tolist() for i, (first, end) in enumerate(zip(offsets[:-1], offsets[1:]))]
             assert [11, 5] in paths and [11, 1, 5] in paths
+        if key == 'transmission-imaging-spectrometer':
+            power = recorded['detectorPower']
+            assert power.shape == (1280, 720, 1, 1, 5, 1, 1)
+            assert np.all(power.sum(axis=(0, 1, 2, 3, 5, 6)) > 0)
+            assert power.sum() == pytest.approx(run.trace[0]['observations']['detectedPower'])
+            profile = power[:, :, 0, 0, :, 0, 0].sum(axis=1)
+            centers = ((np.arange(1280) + .5) * .003) @ profile / profile.sum(axis=0)
+            assert centers[0] - centers[-1] == pytest.approx(2.5, abs=.025)
+            assert 12 in native['trace.paths.segmentEvent']
+            assert metadata['detectorPower']['boxGrid']['sampling'] == 'surface-integral'
         if key == 'pixel-monochromatic-response':
             power = recorded['detectorPower']
             launched = recorded['launchedPower']

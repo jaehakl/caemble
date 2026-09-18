@@ -230,7 +230,12 @@ export const manualDocuments: readonly DocumentPage[] = [
       title: 'Non-sequential Ray Tracing',
       summary: '광선의 비순차 추적, 적응형 박막 처리와 detector 결과를 구성하는 방법입니다.',
       keywords: [
-        'ray-tracing@0.4.0',
+        'ray-tracing@5.1.0',
+        'paraxial lens',
+        'Image Spectrometer',
+        '영상분광기',
+        '주평면',
+        'OV9281',
         'non-sequential',
         'point source',
         'area source',

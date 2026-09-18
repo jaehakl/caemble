@@ -44,6 +44,7 @@ from .thin_film import surface_films, film_layers
 from .materials import optical_material
 from .outputs import Detector, PathCollector, VolumeTally
 from .detector import DetectorTally
+from .paraxial import build_lenses
 
 EVENT_REFLECTION = 0
 EVENT_REFRACTION = 1
@@ -57,6 +58,7 @@ EVENT_POWER_CUTOFF = 8
 EVENT_MAX_BOUNCES = 9
 EVENT_ROULETTE = 10
 EVENT_DIFFRACTION = 11
+EVENT_PARAXIAL_TRANSFER = 12
 
 
 @dataclass(slots=True)
@@ -117,6 +119,7 @@ class PreparedTrace:
     films: dict
     tally_definitions: list
     detector_definitions: list = field(default_factory=list)
+    lenses: dict = field(default_factory=dict)
 
 
 def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies, detector_tallies=()):
@@ -138,7 +141,8 @@ def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tall
                          surface_scatter, bulk_scatter, gratings, maximum_interactions,
                          maximum_paths, minimum_power_fraction, seed, films,
                          [(t.key, t.grid, t.data, t.frequencies) for t in tallies],
-                         [(t.key, t.grid, t.data, t.frequencies, t.surface) for t in detector_tallies])
+                         [(t.key, t.grid, t.data, t.frequencies, t.surface) for t in detector_tallies],
+                         build_lenses(config, scene, solids))
 
 
 def initialize_trace(prepared):
@@ -170,7 +174,7 @@ def trace_batch(prepared: PreparedTrace, batch, cancellation=None) -> PathCollec
             prepared.detectors, prepared.surface_scatter, prepared.bulk_scatter,
             prepared.gratings, prepared.maximum_interactions,
             ray.source_power * prepared.minimum_power_fraction, prepared.seed,
-            collector, prepared.films,
+            collector, prepared.films, prepared.lenses,
         )
         queue.extend((branch, depth + 1, root, (*ancestry, index))
                      for index, branch in enumerate(branches))
@@ -248,6 +252,7 @@ def _trace_one(
     seed: int,
     collector: PathCollector,
     films: dict | None = None,
+    lenses: dict | None = None,
 ) -> list[Ray]:
     if not ray.vertices:
         ray.vertices.append(ray.origin.copy())
@@ -318,6 +323,33 @@ def _trace_one(
 
     if hit.crossing_kind == "touch":
         ray.origin = hit.position.copy()
+        return [ray]
+
+    lens = (lenses or {}).get(hit.metadata.root_id)
+    if lens is not None:
+        if ray.medium_stack:
+            raise ValueError('Paraxial lens requires air on both sides')
+        transfer = lens.transfer(hit.position, ray.direction) if hit.surface_ref.surface_index in (0, 2) else None
+        if transfer is None or lens.transmission == 0:
+            _segment(ray, hit.position, EVENT_ABSORPTION)
+            collector.finish(ray)
+            return []
+        position, direction = transfer
+        _segment(ray, hit.position, EVENT_REFRACTION)
+        # Parallel transport the polarization basis; the ideal lens has no diattenuation.
+        cross = np.cross(ray.direction, direction)
+        cosine = float(np.dot(ray.direction, direction))
+        sine = float(np.linalg.norm(cross))
+        if sine > 0:
+            axis = cross / sine
+            ray.basis = unit_vector(ray.basis * cosine + np.cross(axis, ray.basis) * sine
+                                   + axis * np.dot(axis, ray.basis) * (1 - cosine))
+        ray.stokes *= lens.transmission
+        # A marked jump, never a volume tally or a drawn physical internal ray.
+        _segment(ray, position, EVENT_PARAXIAL_TRANSFER)
+        ray.origin, ray.direction = position, direction
+        ray.last_hit = lens.exit_hit(hit, position, direction)
+        ray.interactions += 1
         return [ray]
 
     grating = gratings.get(hit.surface_ref)

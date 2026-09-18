@@ -8,12 +8,12 @@ import pytest
 from caemble_catalog import open_catalog
 
 
-@pytest.mark.parametrize('example', ['pixel-monochromatic-response', 'transmission-grating-response'])
+@pytest.mark.parametrize('example', ['pixel-monochromatic-response', 'transmission-grating-response', 'transmission-imaging-spectrometer'])
 def test_catalog_pixel_calculations_and_no_signal_diagnostics(tmp_path, example):
     repo = Path(__file__).resolve().parents[4]
     with open_catalog() as catalog:
         definitions = catalog.experiment(example)['calculations']
-        methods = {item['methodId']: item['data'] for item in catalog.get_solver_manifest('ray-tracing', '5.0.0')['descriptor']['methods']['outputs']}
+        methods = {item['methodId']: item['data'] for item in catalog.get_solver_manifest('ray-tracing', '5.1.0')['descriptor']['methods']['outputs']}
     geometry = {'origin': [0, 0, -.1], 'size': [2, 2, .2], 'rotation': np.eye(3).tolist(), 'lengthUnit': 'm',
                 'gridShape': [2, 2, 1], 'source': 'experiment', 'rootId': 'sensor'}
     axes = [{'name': name, 'ticks': ticks, **({'unit': unit} if unit else {})} for name,ticks,unit in
@@ -31,9 +31,10 @@ def test_catalog_pixel_calculations_and_no_signal_diagnostics(tmp_path, example)
     expected.update({'Reflected detected power': [4, 4], 'Transmitted detected power': [4, 4],
                      'Reflected optical arrival efficiency': [1, .5], 'Transmitted optical arrival efficiency': [1, .5],
                      'Transmitted centroid u': [1, 1.25]})
+    expected.update({'Geometric RMS width u': [.5, np.sqrt(.1875)], 'Monochrome sensor frame': [1, 2, 0, 5]})
     for zero in (False,True):
         fixture = tmp_path / f'input-{zero}.json'
-        names = ['detectorPower'] if example == 'pixel-monochromatic-response' else ['reflectedPower', 'transmittedPower']
+        names = ['reflectedPower', 'transmittedPower'] if example == 'transmission-grating-response' else ['detectorPower']
         fixture.write_text(json.dumps({**{name: {**signal, 'data': [0]*8 if zero else signal['data']} for name in names},
                                       'launchedPower': launched}), encoding='utf-8')
         for index,definition in enumerate(definitions):
@@ -42,7 +43,7 @@ def test_catalog_pixel_calculations_and_no_signal_diagnostics(tmp_path, example)
             output = tmp_path / f'output-{zero}-{index}.json'
             completed = subprocess.run(['node',str(repo/'app/ui/dist-cli/caemble.cjs'),'--repo',str(repo),'calculation','run',str(source),
                                         '--fixture',str(fixture),'--out',str(output)],cwd=repo,capture_output=True,text=True,encoding='utf-8',timeout=30)
-            invalid = zero and definition['name'] in {'Centroid u','Centroid v','Local wavelength sampling', 'Transmitted centroid u'}
+            invalid = zero and definition['name'] in {'Centroid u','Centroid v','Local wavelength sampling', 'Transmitted centroid u', 'Geometric RMS width u'}
             assert (completed.returncode != 0) == invalid, completed.stdout + completed.stderr
             if not invalid:
                 result = json.loads(output.read_text(encoding='utf-8'))['output']
