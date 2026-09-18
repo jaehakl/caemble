@@ -65,6 +65,15 @@ const server = await createServer({
         onFindSelectionSource={noop} onSelectionQueryChange={noop} onSelectionSourcePathsChange={noop} onToggleViewerExpanded={noop} selectionQuery={null} selectionSourceStatus={{}} viewerExpanded={false}
       />);
       window.renderBox();
+      window.renderPixel=()=>{
+        const shape=[2,2,1,1,2,1,1], values=[1,0,0,2,0,0,3,2];
+        const axes=['x','y','z','time','frequency','amplitudePhase','component'].map((name,i)=>({name,ticks:[[.5,1.5],[.5,1.5],[.1],[0],[299792458/600e-9,299792458/500e-9],['value'],['value']][i],unit:i<3?'m':i===3?'s':i===4?'Hz':undefined}));
+        const boxGrid={...grid,sampling:'surface-integral',configuration:undefined,weighting:undefined,frequencyKind:'source-sampled',components:['value'],channels:['value'],channelUnits:['W'],size:[2,2,.2],gridShape:shape.slice(0,3)};
+        const bytes=new Uint8Array(new Float64Array(values).buffer);
+        const tensor={shape,axes:axes.map(({ticks})=>({ticks})),boxGrid,storage:{kind:'base64',data:btoa(String.fromCharCode(...bytes)),byteLength:bytes.length}};
+        window.leaf={dtype:'float64',shape,data:values,axes,tensorOrder:0,boxGrid,unit:'W'};
+        root.render(<BoxGridResult key="pixels" name="signal" rules={[{...rule,result:{...rule.result,tensorOrder:0,unit:'W',axes:axes.map(({name,unit})=>({name,unit})),boxGrid}}]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={false} renderViewer={noop}/>);
+      };
       window.renderLargeBox=()=>{
         const shape=[24,24,12,4,4,2,3];
         const axes=window.leaf.axes.map((axis,i)=>({...axis,ticks:i<5?Array.from({length:shape[i]},(_,j)=>i<3?(j+.5)/shape[i]:j):axis.ticks}));
@@ -372,6 +381,28 @@ try {
     assert.deepEqual(await sizedPage.evaluate(() => window.pointPixelWidths()), [])
     await sizedContext.close()
   }
+  await page.evaluate(() => window.renderPixel())
+  await ready()
+  assert.equal(await page.getByRole('button', { name: 'Heatmap', exact: true }).getAttribute('aria-pressed'), 'true')
+  assert.equal(await page.getByLabel('표시 축 1', { exact: true }).inputValue(), 'y')
+  assert.equal(await page.getByLabel('표시 축 2', { exact: true }).inputValue(), 'x')
+  assert.equal(await page.getByLabel('frequency 집계').inputValue(), 'index')
+  assert.equal(await page.getByLabel('z 집계').inputValue(), 'sum')
+  assert.ok((await page.locator('body').innerText()).includes('600.00 nm'))
+  assert.ok((await page.locator('body').innerText()).includes('픽셀 적분 전력 [W]'))
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/pixel-image.png' })
+  await page.getByLabel('frequency index', { exact: true }).fill('1')
+  await ready()
+  assert.ok((await page.locator('body').innerText()).includes('500.00 nm'))
+  await page.getByLabel('주파수 표시 단위').selectOption('Hz')
+  await ready()
+  assert.ok((await page.locator('body').innerText()).includes('5.9958e+14 Hz'))
+  await page.getByRole('button', { name: 'Line Chart', exact: true }).click()
+  await ready()
+  assert.equal(await page.getByLabel('y 집계').inputValue(), 'sum')
+  await page.getByLabel('주파수 표시 단위').selectOption('nm')
+  await ready()
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/pixel-profile.png' })
   assert.deepEqual(errors, [])
   console.log(
     'Box Grid browser QA passed: four charts, code execution, playback, overlays, Scale bar, resize, Calculation 3D, mesh layout.',

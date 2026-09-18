@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import heapq
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,25 +20,45 @@ class Detector:
     surface_keys: set[SurfaceRef]
 
 
+@dataclass(order=True, slots=True)
+class RetainedPath:
+    priority: tuple
+    ray: Any = field(compare=False)
+
+
 @dataclass(slots=True)
 class PathCollector:
     maximum_paths: int
-    paths: list[Any] = field(default_factory=list)
     detected_power: float = 0.0
     tallies: list[Any] = field(default_factory=list)
-    path_orders: list[tuple] = field(default_factory=list)
     current_order: tuple = ()
     finish_index: int = 0
+    detector_tallies: list[Any] = field(default_factory=list)
+    seed: int = 0
+    retained: list[RetainedPath] = field(default_factory=list, init=False)
+
+    @property
+    def paths(self) -> list[Any]:
+        return [item.ray for item in sorted(self.retained, reverse=True)]
 
     def score(self, origin, direction, length, power, absorption, wavelength):
         for tally in self.tallies:
             tally.score(origin, direction, length, power, absorption, wavelength)
 
     def finish(self, ray: Any) -> None:
-        if len(self.paths) < self.maximum_paths and len(ray.vertices) >= 2:
-            self.paths.append(ray)
-            self.path_orders.append((*self.current_order, self.finish_index))
+        identity = (*self.current_order, self.finish_index)
         self.finish_index += 1
+        if self.maximum_paths == 0 or len(ray.vertices) < 2:
+            return
+        # Hash priorities sample complete paths without consuming optical random draws.
+        serialized = json.dumps((self.seed, identity), separators=(',', ':')).encode('ascii')
+        digest = hashlib.blake2b(serialized, digest_size=16, person=b'caemble-ray-path').digest()
+        priority = (int.from_bytes(digest, 'big'), identity)
+        candidate = RetainedPath(priority, ray)
+        if len(self.retained) < self.maximum_paths:
+            heapq.heappush(self.retained, candidate)
+        elif priority > self.retained[0].priority:
+            heapq.heapreplace(self.retained, candidate)
 
     def merge(self, other: PathCollector) -> None:
         from copy import deepcopy
@@ -43,12 +66,16 @@ class PathCollector:
         self.detected_power += other.detected_power
         for target, source in zip(self.tallies, other.tallies, strict=True):
             target.values += source.values
-        selected = sorted(zip(self.path_orders + other.path_orders, self.paths + other.paths),
-                          key=lambda item: item[0])[:self.maximum_paths]
-        owned = {id(path) for path in self.paths}
-        self.path_orders = [order for order, _ in selected]
-        # Batch values are borrowed from the execution service until next yield.
-        self.paths = [path if id(path) in owned else deepcopy(path) for _, path in selected]
+        for target, source in zip(self.detector_tallies, other.detector_tallies, strict=True):
+            target.values += source.values
+        for item in other.retained:
+            if self.maximum_paths == 0:
+                break
+            if len(self.retained) < self.maximum_paths:
+                heapq.heappush(self.retained, deepcopy(item))
+            elif item.priority > self.retained[0].priority:
+                # Batch arrays are borrowed until the next yield; retained paths own copies.
+                heapq.heapreplace(self.retained, deepcopy(item))
 
     def bundle(self) -> BundleValue:
         vertices: list[np.ndarray[Any, Any]] = []
@@ -158,4 +185,4 @@ def build_volume_tallies(config, descriptor, wavelengths):
         frequencies = np.array([0.0])
     definitions = {item["methodId"]: item for item in descriptor["methods"]["outputs"]}
     return [VolumeTally(rule["key"], BoxGrid(rule["boxGrid"]), definitions[rule["methodId"]]["data"], frequencies)
-            for rule in config["outputs"]]
+            for rule in config["outputs"] if rule['methodId'] in {'ray.fluence-rate', 'ray.radiant-flux-density'}]

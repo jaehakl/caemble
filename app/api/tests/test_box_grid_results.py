@@ -23,6 +23,27 @@ from service.measurement_service import get_recorded_data, get_visualizations
 
 
 class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
+    def test_surface_power_preserves_sampling_frequency_and_geometry_after_storage(self):
+        with open_catalog() as catalog:
+            output = next(item for item in catalog.get_solver_manifest('ray-tracing', '4.1.0')['descriptor']['methods']['outputs']
+                          if item['methodId'] == 'ray.detector-power')
+        schema = output['data']
+        tensor = box_tensor((2, 1, 1, 1, 1, 1, 1))
+        tensor['boxGrid'].update(schema['boxGrid'])
+        tensor['axes'][-2:] = [{'ticks':['value']},{'ticks':['value']}]
+        tensor['axes'][4] = {'ticks':[5e14], 'unit':'Hz'}
+        tensor['storage'] = {'kind':'attachments','ids':['power'],'byteLength':16}
+        saved = persist_record(schema, tensor, {'power':struct.pack('<dd',2.,3.)})
+        queried = json.loads(json.dumps(saved))
+        validate_box_grid_tensor(schema, queried)
+        self.assertEqual(queried['boxGrid'], tensor['boxGrid'])
+        self.assertEqual(queried['axes'], tensor['axes'])
+        self.assertEqual(queried['provenance'], tensor['provenance'])
+        changed = copy.deepcopy(queried)
+        changed['boxGrid']['sampling'] = 'cell-average'
+        with self.assertRaises(ValueError):
+            validate_box_grid_tensor(schema, changed)
+
     async def test_candidate_result_metadata_survives_storage_and_requery(self):
         metadata_schema = {
             "pressureOffset": {"dtype": "float64", "quantityKind": "Pressure", "unit": "Pa"},

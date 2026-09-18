@@ -71,7 +71,7 @@ COMMON_TESTS = ("test_architecture_*", "test_solver_entries", "test_material_mod
 # transitive structural/scalar consumers of the shared geometry and grid fixtures.
 TEST_SUPPORT_TESTS = {
     "cpu_benchmark.py": ("test_cpu_executor", "test_ray_parallel_smoke", "test_fdtd_parallel_smoke"),
-    "ray_parallel_fixtures.py": ("test_ray_parallel_smoke",),
+    "ray_parallel_fixtures.py": ("test_ray_parallel_smoke", "test_ray_detector_smoke"),
     "fdtd_fixtures.py": ("test_fdtd_*",),
     "batch_fixtures.py": ("test_cpu_executor",),
     "fixtures/continuous-geometry.json": ("test_continuous_geometry",),

@@ -4,8 +4,8 @@ import { assertBoxGridData } from '@/contracts/boxGrid'
 import type { CanonicalGeometryNodeV2, CanonicalGeometrySceneDraftV2 } from '../evaluation/canonicalTypes'
 import { createDataTensor, persistDataTensor } from '../model/dataTensor'
 import type { DataSchema } from '../model/descriptor'
-import { resolveBoxGridGeometry } from './boxGrid'
-import type { KernelOutputRequest } from './kernelContract'
+import { resolveBoxGridGeometry, validateDetectorBox } from './boxGrid'
+import type { KernelOutputRequest, KernelTaskConfig } from './kernelContract'
 
 const box: CanonicalGeometryNodeV2 = {
   kind: 'primitive',
@@ -39,6 +39,85 @@ const profile = {
 } as const
 
 describe('Box target resolution', () => {
+  it('requires a complete absorbing face and a matching center plane for surface integration', () => {
+    const detectorScene: CanonicalGeometrySceneDraftV2 = {
+      ...scene(box),
+      surfaceGroups: [
+        {
+          id: 'detector',
+          name: 'detector',
+          kind: 'surface',
+          memberIds: ['box/surface/5'],
+          selectors: [{ rootId: 'box', sourceNodeId: 'box', surfaceIndex: 5 }],
+          missingMemberIds: [],
+        },
+      ],
+    }
+    const config: KernelTaskConfig = {
+      parameters: {},
+      outputs: [],
+      initializations: [{ methodId: 'ray.domain', target: ['experiment.geometry.probe'], parameters: {} }],
+      boundaryConditions: [
+        { methodId: 'ray.absorbing-detector', target: ['experiment.surface.detector'], parameters: {} },
+      ],
+    }
+    const output: KernelOutputRequest = {
+      ...request,
+      parameters: { gridShape: [2, 4, 1], surface: 'experiment.surface.detector' },
+    }
+    const grid = {
+      ...resolveBoxGridGeometry(request, { experiment: detectorScene, task: detectorScene }, 'mm'),
+      origin: [-1, -2, 2.9] as const,
+      size: [2, 4, 0.2] as const,
+      gridShape: [2, 4, 1] as const,
+    }
+    expect(() => validateDetectorBox(output, grid, detectorScene, config)).not.toThrow()
+    expect(() => validateDetectorBox(output, { ...grid, size: [1, 4, 0.2] }, detectorScene, config)).toThrow(
+      /full detector face/,
+    )
+    expect(() => validateDetectorBox(output, { ...grid, origin: [-1, -2, 3] }, detectorScene, config)).toThrow(
+      /z-cell center/,
+    )
+    expect(() => validateDetectorBox(output, grid, detectorScene, { ...config, boundaryConditions: [] })).toThrow(
+      /absorbing detector/,
+    )
+    expect(() =>
+      validateDetectorBox(
+        { ...output, parameters: { ...output.parameters, surface: 'experiment.surface.missing' } },
+        grid,
+        detectorScene,
+        config,
+      ),
+    ).toThrow(/one detector surface/)
+    const boolean = {
+      ...detectorScene,
+      roots: [
+        {
+          ...detectorScene.roots[0],
+          node: { kind: 'boolean' as const, nodeId: 'cut', operation: 'subtract' as const, children: [box, box] },
+        },
+      ],
+    }
+    expect(() => validateDetectorBox(output, grid, boolean, config)).toThrow(/uncut Box face/)
+    const curved = {
+      ...detectorScene,
+      roots: [{ ...detectorScene.roots[0], node: { ...box, primitive: 'sphere' as const, parameters: { radius: 1 } } }],
+    }
+    expect(() => validateDetectorBox(output, grid, curved, config)).toThrow(/uncut Box face/)
+    const multiple = {
+      ...detectorScene,
+      surfaceGroups: [
+        {
+          ...detectorScene.surfaceGroups[0],
+          selectors: [
+            ...detectorScene.surfaceGroups[0].selectors,
+            { rootId: 'box', sourceNodeId: 'box', surfaceIndex: 4 },
+          ],
+        },
+      ],
+    }
+    expect(() => validateDetectorBox(output, grid, multiple, config)).toThrow(/one detector surface/)
+  })
   it('composes rotation, translation and scale in local axes without using a world bounding box', () => {
     const task = scene({
       kind: 'transform',

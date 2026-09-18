@@ -82,11 +82,11 @@ interface CalculationInputLeaf {
   readonly unit?: string
   readonly boxGrid: {
     readonly version: 1
-    readonly sampling: 'point' | 'cell-average' | 'aggregate'
+    readonly sampling: 'point' | 'cell-average' | 'surface-integral' | 'aggregate'
     readonly components: readonly string[]
     readonly channels: readonly ['value'] | readonly ['amplitude', 'phase']
     readonly channelUnits: readonly string[]
-    readonly frequencyKind?: 'modal' | 'sampled'
+    readonly frequencyKind?: 'modal' | 'sampled' | 'source-sampled'
     readonly configuration?: 'reference' | 'current'
     readonly weighting?: 'material-volume'
     readonly origin: readonly [number, number, number]

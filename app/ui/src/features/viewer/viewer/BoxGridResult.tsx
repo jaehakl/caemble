@@ -20,7 +20,7 @@ import {
   type ProjectionAxis,
   type ProjectionReduction,
 } from '@/lib/calculation/boxGridProject'
-import { boxGridVectorComponents, type calculateBoxGridView } from './boxGridViewData'
+import { boxGridVectorComponents, opticalPlotData, type calculateBoxGridView } from './boxGridViewData'
 import { createPointCloudData } from './pointCloudData'
 import { ScalarPlot } from './ScalarPlot'
 import { PlotProbe } from './PointCloudPlot'
@@ -112,20 +112,27 @@ function BoxGridControls({
 }) {
   const comparison = useViewerComparison()
   const comparing = Boolean(comparison)
+  const surfacePower = leaf.boxGrid.sampling === 'surface-integral'
+  const sourceSampled = leaf.boxGrid.frequencyKind === 'source-sampled'
+  const [wavelengthDisplay, setWavelengthDisplay] = useViewerSetting('box.wavelength', true)
+  const labels = surfacePower ? { ...axisLabels, x: 'u', y: 'v', frequency: '입력 파장 / 주파수' } : axisLabels
   const longest = useMemo(
     () =>
       [...projectionAxes].sort((a, b) => leaf.shape[projectionAxes.indexOf(b)] - leaf.shape[projectionAxes.indexOf(a)]),
     [leaf],
   )
-  const [kind, setKind] = useViewerSetting<PlotKind>('box.kind', 'cloud')
-  const [axes, setAxes] = useViewerSetting<ProjectionAxis[]>('box.axes', ['x', 'y', 'z'])
+  const [kind, setKind] = useViewerSetting<PlotKind>('box.kind', surfacePower ? 'heatmap' : 'cloud')
+  const [axes, setAxes] = useViewerSetting<ProjectionAxis[]>('box.axes', surfacePower ? ['y', 'x'] : ['x', 'y', 'z'])
   const [representation, setRepresentation] = useViewerSetting<'amplitude' | 'phase'>('box.representation', 'amplitude')
   const [component, setComponent] = useViewerSetting<number | 'magnitude' | 'arrows'>(
     'box.component',
     leaf.shape[6] === 1 ? 0 : 'magnitude',
   )
   const [reduce, setReduce] = useViewerSetting<Partial<Record<ProjectionAxis, ProjectionReduction>>>('box.reduce', {
-    frequency: { method: 'sum' },
+    ...(surfacePower
+      ? { x: { method: 'sum' as const }, y: { method: 'sum' as const }, z: { method: 'sum' as const } }
+      : {}),
+    frequency: sourceSampled ? { method: 'index', index: 0 } : { method: 'sum' },
   })
   const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
   const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
@@ -408,15 +415,35 @@ function BoxGridControls({
             : leaf.boxGrid.size[normal] / 2,
       }
     }
-    return createPointCloudData(result.scalar, {
-      identity: `${name}:${kind}:${axes.join(',')}`,
-      leaf: spatial ? leaf : undefined,
-      displayUnit,
-      vectors: component === 'arrows' && arrowsAllowed ? result.vectors : undefined,
-      plane,
-      range,
-    })
-  }, [result, kind, overlay, axes, reduce, leaf, name, spatial, displayUnit, component, arrowsAllowed, range, axesKey])
+    return createPointCloudData(
+      spatial ? result.scalar : opticalPlotData(result.scalar, sourceSampled && wavelengthDisplay, surfacePower),
+      {
+        identity: `${name}:${kind}:${axes.join(',')}`,
+        leaf: spatial ? leaf : undefined,
+        displayUnit,
+        vectors: component === 'arrows' && arrowsAllowed ? result.vectors : undefined,
+        plane,
+        range,
+      },
+    )
+  }, [
+    result,
+    kind,
+    overlay,
+    axes,
+    reduce,
+    leaf,
+    name,
+    spatial,
+    displayUnit,
+    component,
+    arrowsAllowed,
+    range,
+    axesKey,
+    sourceSampled,
+    wavelengthDisplay,
+    surfacePower,
+  ])
   const unit = animation !== 'oscillation' && representation === 'phase' ? 'rad' : leaf.unit
   const changeKind = (next: PlotKind) => {
     if (next === kind) return
@@ -427,7 +454,11 @@ function BoxGridControls({
     setFixed(null)
     const nextAxes =
       next === 'line'
-        ? ((leaf.shape[3] >= leaf.shape[4] ? ['frequency', 'time'] : ['time', 'frequency']) as ProjectionAxis[])
+        ? ((surfacePower
+            ? ['frequency', 'x']
+            : leaf.shape[3] >= leaf.shape[4]
+              ? ['frequency', 'time']
+              : ['time', 'frequency']) as ProjectionAxis[])
         : longest.slice(0, next === 'cloud' ? 3 : 2)
     setAxes(nextAxes)
     setComponent(
@@ -575,7 +606,7 @@ function BoxGridControls({
                   >
                     {projectionAxes.map((value) => (
                       <option key={value} value={value} disabled={axes.includes(value) && axis !== value}>
-                        {axisLabels[value]} · {leaf.shape[projectionAxes.indexOf(value)]}
+                        {labels[value]} · {leaf.shape[projectionAxes.indexOf(value)]}
                       </option>
                     ))}
                   </select>
@@ -612,7 +643,7 @@ function BoxGridControls({
                     axisIndex = projectionAxes.indexOf(axis)
                   return (
                     <label key={axis}>
-                      {axisLabels[axis]}{' '}
+                      {labels[axis]}{' '}
                       <select
                         aria-label={`${axis} 집계`}
                         disabled={animation === axis}
@@ -853,6 +884,31 @@ function BoxGridControls({
       </ViewerControls>
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-3 py-2 text-xs text-slate-600" role="status">
         <strong>{name}</strong>
+        {sourceSampled ? (
+          <label>
+            입력 파장별 응답 ·{' '}
+            <select
+              aria-label="주파수 표시 단위"
+              value={wavelengthDisplay ? 'nm' : 'Hz'}
+              onChange={(event) => setWavelengthDisplay(event.target.value === 'nm')}
+            >
+              <option value="nm">nm</option>
+              <option value="Hz">Hz</option>
+            </select>
+            {frequencyIndex !== undefined
+              ? ` · ${wavelengthDisplay ? (299792458e9 / boxGridFrequenciesHz(leaf)[frequencyIndex]).toPrecision(5) : boxGridFrequenciesHz(leaf)[frequencyIndex].toPrecision(5)} ${wavelengthDisplay ? 'nm' : 'Hz'}`
+              : ''}
+          </label>
+        ) : null}
+        {surfacePower ? (
+          <span>
+            픽셀 적분 전력 [W] · 기하광학 응답 ·{' '}
+            {['x', 'y', 'z']
+              .filter((axis) => !axes.includes(axis as ProjectionAxis))
+              .map((axis) => `${labels[axis as ProjectionAxis]} ${reduce[axis as ProjectionAxis]?.method ?? 'mean'}`)
+              .join(' · ')}
+          </span>
+        ) : null}
         {leaf.boxGrid.configuration ? (
           <span>{leaf.boxGrid.configuration === 'reference' ? '기준 배치' : '현재 배치'}</span>
         ) : null}
@@ -902,8 +958,8 @@ function BoxGridControls({
                   )}
                 </div>
                 <div className="px-3 py-1 text-xs">
-                  {result.scalar.axes
-                    .map(
+                  {opticalPlotData(result.scalar, sourceSampled && wavelengthDisplay, surfacePower)
+                    .axes.map(
                       (axis) =>
                         `${axis.name}: ${axis.ticks[0]} ~ ${axis.ticks[axis.ticks.length - 1]} ${axis.unit ?? ''}`,
                     )
@@ -918,7 +974,7 @@ function BoxGridControls({
             ) : null
           ) : (
             <ScalarPlot
-              plot={result.scalar}
+              plot={opticalPlotData(result.scalar, sourceSampled && wavelengthDisplay, surfacePower)}
               kind={kind}
               range={range}
               bins={bins}

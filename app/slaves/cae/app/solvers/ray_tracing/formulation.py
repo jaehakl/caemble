@@ -43,6 +43,7 @@ from .grating import diffracted_direction
 from .thin_film import surface_films, film_layers
 from .materials import optical_material
 from .outputs import Detector, PathCollector, VolumeTally
+from .detector import DetectorTally
 
 EVENT_REFLECTION = 0
 EVENT_REFRACTION = 1
@@ -115,9 +116,10 @@ class PreparedTrace:
     seed: int
     films: dict
     tally_definitions: list
+    detector_definitions: list = field(default_factory=list)
 
 
-def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies):
+def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies, detector_tallies=()):
     config = context.config
     maximum_interactions = _integer(config["parameters"]["maxInteractions"])
     maximum_paths = _integer(config["parameters"]["maxPaths"])
@@ -139,7 +141,8 @@ def prepare_trace(context, scene, collision_scene, solids, detectors, seed, tall
     return PreparedTrace(collision_scene, context.world, context.descriptor, detector_by_surface,
                          surface_scatter, bulk_scatter, gratings, maximum_interactions,
                          maximum_paths, minimum_power_fraction, seed, films,
-                         [(t.key, t.grid, t.data, t.frequencies) for t in tallies])
+                         [(t.key, t.grid, t.data, t.frequencies) for t in tallies],
+                         [(t.key, t.grid, t.data, t.frequencies, t.surface) for t in detector_tallies])
 
 
 def initialize_trace(prepared):
@@ -154,8 +157,9 @@ def initialize_trace(prepared):
 
 def trace_batch(prepared: PreparedTrace, batch, cancellation=None) -> PathCollector:
     offset, launched = batch
-    collector = PathCollector(prepared.maximum_paths,
-                              tallies=[VolumeTally(*definition) for definition in prepared.tally_definitions])
+    collector = PathCollector(prepared.maximum_paths, seed=prepared.seed,
+                              tallies=[VolumeTally(*definition) for definition in prepared.tally_definitions],
+                              detector_tallies=[DetectorTally(*definition) for definition in prepared.detector_definitions])
     queue = deque((ray, 0, offset + index, ()) for index, ray in enumerate(launched))
     while queue:
         if cancellation is not None:
@@ -186,19 +190,21 @@ async def trace_rays(
     detectors: list[Detector],
     seed: int,
     tallies: list[Any] | None = None,
+    detector_tallies: list[Any] | None = None,
 ) -> PathCollector:
     from contextlib import aclosing
     from time import perf_counter
 
     started = perf_counter()
     tallies = [] if tallies is None else tallies
-    prepared = prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies)
-    collector = PathCollector(prepared.maximum_paths, tallies=tallies)
+    detector_tallies = [] if detector_tallies is None else detector_tallies
+    prepared = prepare_trace(context, scene, collision_scene, solids, detectors, seed, tallies, detector_tallies)
+    collector = PathCollector(prepared.maximum_paths, seed=seed, tallies=tallies, detector_tallies=detector_tallies)
     batches = ((offset, launched[offset:offset + 128]) for offset in range(0, len(launched), 128))
     workers = 1
     if context.execution is not None and len(launched) >= 512:
         # Per-worker tally plus up to two outstanding transfer/result arrays.
-        private_bytes = 3 * sum(t.values.nbytes for t in tallies)
+        private_bytes = 3 * sum(t.values.nbytes for t in [*tallies, *detector_tallies])
         workers = context.execution.batch_workers((len(launched) + 127) // 128, private_bytes)
     preparation_seconds = perf_counter() - started
     completed = 0
@@ -304,6 +310,9 @@ def _trace_one(
     if detector_hits:
         _segment(ray, hit.position, EVENT_DETECTOR)
         collector.detected_power += float(ray.stokes[0])
+        for tally in collector.detector_tallies:
+            if tally.surface == hit.surface_ref:
+                tally.score_hit(hit.position, float(ray.stokes[0]), ray.wavelength)
         collector.finish(ray)
         return []
     if ray.interactions >= maximum_interactions:
@@ -499,7 +508,7 @@ async def launch_sources(
     scene: dict[str, Any],
     solids: dict[str, AnalyticSolid],
     seed: int,
-) -> tuple[list[Ray], float]:
+) -> tuple[list[Ray], dict[float, float]]:
     rules = [
         rule
         for rule in config["initializations"]
@@ -512,7 +521,7 @@ async def launch_sources(
     ]
     rays: list[Ray] = []
     source_solids = dict(solids)
-    total_power = 0.0
+    launched_power = {}
     source_index = 0
     for rule_index, rule in enumerate(rules):
         parameters = rule["parameters"]
@@ -573,8 +582,9 @@ async def launch_sources(
                 )
             )
             source_index += 1
-        total_power += flux
-    return rays, total_power
+        frequency = 299792458.0 / wavelength
+        launched_power[frequency] = launched_power.get(frequency, 0.0) + flux
+    return rays, launched_power
 
 
 def _surface_scatter(

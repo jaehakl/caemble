@@ -3,11 +3,11 @@ export const BOX_GRID_AXES = ['x', 'y', 'z', 'time', 'frequency', 'amplitudePhas
 export type BoxGridVector = readonly [number, number, number]
 export type BoxGridProfile = Readonly<{
   version: 1
-  sampling: 'point' | 'cell-average' | 'aggregate'
+  sampling: 'point' | 'cell-average' | 'surface-integral' | 'aggregate'
   components: readonly string[]
   channels: readonly ['value'] | readonly ['amplitude', 'phase']
   channelUnits: readonly string[]
-  frequencyKind?: 'modal' | 'sampled'
+  frequencyKind?: 'modal' | 'sampled' | 'source-sampled'
   configuration?: 'reference' | 'current'
   weighting?: 'material-volume'
 }>
@@ -28,7 +28,7 @@ export type BoxGridData = BoxGridProfile & BoxGridGeometry
 export function assertBoxGridProfile(value: unknown): asserts value is BoxGridProfile {
   if (!value || typeof value !== 'object') throw new Error('A Box Grid profile is required.')
   const profile = value as BoxGridProfile
-  if (profile.version !== 1 || !['point', 'cell-average', 'aggregate'].includes(profile.sampling))
+  if (profile.version !== 1 || !['point', 'cell-average', 'surface-integral', 'aggregate'].includes(profile.sampling))
     throw new Error('Unsupported Box Grid profile.')
   if (
     !Array.isArray(profile.components) ||
@@ -47,7 +47,7 @@ export function assertBoxGridProfile(value: unknown): asserts value is BoxGridPr
     (profile.channels.length === 2 && profile.channelUnits[1] !== 'rad')
   )
     throw new Error('Box Grid channel units must include phase in radians.')
-  if (profile.frequencyKind !== undefined && !['modal', 'sampled'].includes(profile.frequencyKind))
+  if (profile.frequencyKind !== undefined && !['modal', 'sampled', 'source-sampled'].includes(profile.frequencyKind))
     throw new Error('Unsupported Box Grid frequency meaning.')
   if (profile.configuration !== undefined && !['reference', 'current'].includes(profile.configuration))
     throw new Error('Unsupported Box Grid observation configuration.')
@@ -83,6 +83,8 @@ export function assertBoxGridData(value: unknown, shape?: readonly number[]): as
   }
   if (grid.sampling === 'aggregate' && grid.gridShape.some((length) => length !== 1))
     throw new Error('Aggregate Outputs require gridShape=[1,1,1].')
+  if (grid.sampling === 'surface-integral' && grid.gridShape[2] !== 1)
+    throw new Error('Surface-integral Outputs require one z cell.')
   if (
     shape &&
     (shape.length !== 7 ||

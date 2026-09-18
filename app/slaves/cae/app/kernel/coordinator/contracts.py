@@ -92,6 +92,8 @@ def validate_artifact_payload(
             raise ValueError(f"{path} must have x/y/z/time/frequency/amplitudePhase/component dimensions")
         if profile["sampling"] == "aggregate" and shape != (1, 1, 1):
             raise ValueError(f"{path} aggregate outputs require gridShape [1, 1, 1]")
+        if profile["sampling"] == "surface-integral" and shape[2] != 1:
+            raise ValueError(f"{path} surface-integral outputs require one z cell")
         axes = value.get("axes")
         if not isinstance(axes, (list, tuple)) or len(axes) != 7:
             raise ValueError(f"{path} requires all seven coordinate axes")

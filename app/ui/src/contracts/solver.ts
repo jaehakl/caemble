@@ -121,6 +121,7 @@ export type KernelArtifactDataSpec = (KernelDataSpec | KernelStructuredBundleSpe
 
 export type KernelValueSpec = KernelDataSpec &
   Readonly<{
+    reference?: KernelTargetDescriptor
     minimum?: number
     maximum?: number
     exclusiveMinimum?: boolean

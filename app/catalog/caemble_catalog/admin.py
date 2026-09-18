@@ -527,7 +527,7 @@ def validate_output_contracts(catalog: Catalog, descriptor: dict[str, Any]) -> N
             raise CatalogError(f"{label} requires a real-valued Box Grid Tensor contract")
         if [axis.get("name") for axis in axes] != ["x", "y", "z", "time", "frequency", "amplitudePhase", "component"]:
             raise CatalogError(f"{label} requires the fixed seven Box Grid axes")
-        if profile.get("sampling") not in {"point", "cell-average", "aggregate"} or profile.get("frequencyKind") not in {None, "sampled", "modal"}:
+        if profile.get("sampling") not in {"point", "cell-average", "surface-integral", "aggregate"} or profile.get("frequencyKind") not in {None, "sampled", "modal", "source-sampled"}:
             raise CatalogError(f"{label} has an unsupported sampling convention")
         if profile.get("configuration") not in {None, "reference", "current"} or profile.get("weighting") not in {None, "material-volume"}:
             raise CatalogError(f"{label} has an unsupported observation configuration or weighting")
@@ -554,6 +554,21 @@ def validate_output_contracts(catalog: Catalog, descriptor: dict[str, Any]) -> N
         grid = method["parameters"].get("gridShape", {}).get("data", {})
         if grid.get("dtype") != "int32" or grid.get("axes") != [{"length": 3}] or grid.get("minimum") != 1:
             raise CatalogError(f"{label} requires positive integer gridShape [nx, ny, nz]")
+        if profile['sampling'] == 'surface-integral' and axes[2].get('length') != 1:
+            raise CatalogError(f'{label} surface integrals require one z cell')
+        if profile.get('frequencyKind') == 'source-sampled':
+            if channels != ['value']:
+                raise CatalogError(f'{label} source samples require real value channels')
+        for name, parameter in method['parameters'].items():
+            reference = parameter['data'].get('reference')
+            if reference is None:
+                continue
+            if (parameter['data'].get('dtype') != 'string' or reference.get('source') not in {'experiment', 'task', 'either'}
+                    or reference.get('kind') not in {'geometry', 'surface'}
+                    or reference.get('minimumTargets') != 1 or reference.get('maximumTargets') != 1
+                    or not isinstance(reference.get('minimumResolved'), int) or reference['minimumResolved'] < 1
+                    or not isinstance(reference.get('maximumResolved'), int) or reference['maximumResolved'] < reference['minimumResolved']):
+                raise CatalogError(f'{label} parameter {name} has an invalid group reference descriptor')
 
 
 def publish_draft(source: Path, destination: Path) -> dict[str, Any]:

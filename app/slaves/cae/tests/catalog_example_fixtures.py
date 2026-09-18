@@ -82,6 +82,15 @@ async def run_catalog_example(measurement, key, *, run_timeout=180, timings=None
                 assert packet["kind"] == "complete", packet
                 break
         await run.task
+        if key == 'pixel-monochromatic-response':
+            power = recorded['detectorPower']
+            launched = recorded['launchedPower']
+            assert power.shape == (96, 32, 1, 1, 1, 1, 1)
+            assert launched.shape == (1, 1, 1, 1, 1, 1, 1)
+            assert .55 < power.sum() < .7
+            assert launched.item() == 1
+            assert metadata['detectorPower']['boxGrid']['sampling'] == 'surface-integral'
+            assert metadata['detectorPower']['boxGrid']['frequencyKind'] == 'source-sampled'
         if key in {"steady-microheater", "feedback-microheater"}:
             # simulate.py must retire all numeric/native artifacts before the
             # host closes the run, leaving only its retained empty State root.

@@ -126,6 +126,8 @@ export function resolveProgramBoxGrids(
         )
         const data = { ...method.data.boxGrid, ...geometry }
         assertBoxGridData(data)
+        if (method.data.boxGrid.sampling === 'surface-integral')
+          validateDetectorBox(output, geometry, canonicalGeometrySceneDraft(scene), config)
         grids.set(`${name}.${output.key}`, data)
         return { ...output, boxGrid: geometry }
       })
@@ -143,4 +145,100 @@ export function resolveProgramBoxGrids(
     }),
   )
   return Object.freeze({ ...program, tasks, boxGrids, visualizationContracts })
+}
+
+export function validateDetectorBox(
+  output: KernelOutputRequest,
+  grid: BoxGridGeometry,
+  scene: CanonicalGeometrySceneDraftV2,
+  config: KernelTaskConfig,
+) {
+  const raw = output.parameters.surface
+  const reference = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw
+  const group =
+    typeof reference === 'string' && reference.startsWith('experiment.surface.')
+      ? scene.surfaceGroups.find((group) => `experiment.surface.${group.name}` === reference)
+      : undefined
+  if (!group || group.selectors.length !== 1 || group.missingMemberIds.length)
+    throw new CadModelError(`Output ${output.key} requires one detector surface.`)
+  const selected = group.selectors[0]
+  const sameSurface = (other: typeof selected) =>
+    other.rootId === selected.rootId &&
+    other.sourceNodeId === selected.sourceNodeId &&
+    other.surfaceIndex === selected.surfaceIndex
+  const absorbing = config.boundaryConditions.some(
+    (rule) =>
+      rule.methodId === 'ray.absorbing-detector' &&
+      rule.target.some((target) =>
+        scene.surfaceGroups.find((group) => `experiment.surface.${group.name}` === target)?.selectors.some(sameSurface),
+      ),
+  )
+  const inDomain = config.initializations.some(
+    (rule) =>
+      rule.methodId === 'ray.domain' &&
+      rule.target.some((target) =>
+        scene.geometryGroups
+          .find((group) => `experiment.geometry.${group.name}` === target)
+          ?.rootIds.includes(selected.rootId),
+      ),
+  )
+  if (!absorbing || !inDomain)
+    throw new CadModelError(`Output ${output.key} requires an absorbing detector in ray.domain.`)
+  const root = scene.roots.find((root) => root.id === selected.rootId)!
+  let node = root.node
+  while (node.kind === 'transform' || node.kind === 'instance') node = node.child
+  if (node.kind !== 'primitive' || node.primitive !== 'box' || node.nodeId !== selected.sourceNodeId)
+    throw new CadModelError(`Output ${output.key} requires an uncut Box face.`)
+  const bodyScene = {
+    ...scene,
+    geometryGroups: [
+      {
+        id: 'detector-body',
+        name: 'detector-body',
+        kind: 'geometry' as const,
+        memberIds: [root.id],
+        rootIds: [root.id],
+        missingMemberIds: [],
+      },
+    ],
+  }
+  const body = resolveBoxGridGeometry(
+    { ...output, target: ['experiment.geometry.detector-body'], parameters: { gridShape: [1, 1, 1] } },
+    { experiment: bodyScene, task: bodyScene },
+    grid.lengthUnit,
+  )
+  const normal = Math.floor(selected.surfaceIndex / 2),
+    high = selected.surfaceIndex % 2
+  const tangents = [0, 1, 2].filter((axis) => axis !== normal)
+  const corners = [0, 1, 2, 3].map((index) => {
+    const local = [0, 0, 0]
+    local[normal] = high * body.size[normal]
+    local[tangents[0]] = (index >> 1) * body.size[tangents[0]]
+    local[tangents[1]] = (index & 1) * body.size[tangents[1]]
+    const world = body.origin.map(
+      (origin, row) => origin + body.rotation[row].reduce((sum, value, column) => sum + value * local[column], 0),
+    )
+    return [0, 1, 2].map((column) =>
+      world.reduce((sum, value, row) => sum + (value - grid.origin[row]) * grid.rotation[row][column], 0),
+    )
+  })
+  const tolerance =
+    128 *
+    Number.EPSILON *
+    Math.max(...body.size, ...body.origin.map(Math.abs), ...grid.size, ...grid.origin.map(Math.abs))
+  for (const [u, v] of [
+    [0, 0],
+    [0, 1],
+    [1, 0],
+    [1, 1],
+  ]) {
+    if (
+      !corners.some(
+        (corner) =>
+          Math.hypot(corner[0] - u * grid.size[0], corner[1] - v * grid.size[1], corner[2] - grid.size[2] / 2) <=
+          tolerance,
+      )
+    )
+      throw new CadModelError(`Output ${output.key} Box must cover the full detector face at its z-cell center.`)
+  }
 }

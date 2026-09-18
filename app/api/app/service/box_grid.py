@@ -27,7 +27,7 @@ def validate_box_grid_schema(schema: dict) -> None:
         raise ValueError("Box Grid axes must be x, y, z, time, frequency, amplitudePhase, component.")
     if not isinstance(grid, dict) or grid.get("version") != 1 or GEOMETRY_FIELDS.intersection(grid) or "geometry" in grid:
         raise ValueError("Box Grid schema version 1 is required; candidate geometry belongs to the tensor.")
-    if grid.get("sampling") not in {"point", "cell-average", "aggregate"}:
+    if grid.get("sampling") not in {"point", "cell-average", "surface-integral", "aggregate"}:
         raise ValueError("Unsupported Box Grid sampling convention.")
     components, channels, units = grid.get("components"), grid.get("channels"), grid.get("channelUnits")
     if not isinstance(components, list) or not components or any(not isinstance(item, str) or not item for item in components) or len(set(components)) != len(components):
@@ -38,7 +38,7 @@ def validate_box_grid_schema(schema: dict) -> None:
         raise ValueError("Every Box Grid channel requires a unit.")
     if len(channels) == 2 and units[1] != "rad":
         raise ValueError("Box Grid phase is measured in radians.")
-    if grid.get("frequencyKind") not in {None, "modal", "sampled"}:
+    if grid.get("frequencyKind") not in {None, "modal", "sampled", "source-sampled"}:
         raise ValueError("Unsupported Box Grid frequency kind.")
     if grid.get("configuration") not in {None, "reference", "current"}:
         raise ValueError("Unsupported Box Grid observation configuration.")
@@ -85,6 +85,8 @@ def validate_box_grid_tensor(schema: dict, tensor: dict) -> None:
         raise ValueError("Recorded Box Grid rotation must be orthonormal.")
     if grid["sampling"] == "aggregate" and shape[:3] != [1, 1, 1]:
         raise ValueError("Aggregate Outputs require gridShape [1, 1, 1].")
+    if grid["sampling"] == "surface-integral" and shape[2] != 1:
+        raise ValueError("Surface-integral Outputs require one z cell.")
     validate_result_provenance(tensor.get("provenance"))
     if "metadata" in schema:
         validate_result_metadata(schema["metadata"], tensor.get("metadata"))

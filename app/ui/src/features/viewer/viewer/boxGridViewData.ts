@@ -30,6 +30,25 @@ export function boxGridVectorComponents(leaf: CalculationInputLeaf) {
   )
   return indices.every((index) => index >= 0) && new Set(indices).size === 3 ? indices : undefined
 }
+
+/** Display conversion only: permute values with ticks, preserving raw RecordedData. */
+export function opticalPlotData(plot: ScalarPlotData, wavelength: boolean, surface: boolean): ScalarPlotData {
+  const frequencyAxis = plot.axes.findIndex((axis) => axis.name === 'frequency')
+  let values = plot.values
+  const axes = plot.axes.map((axis, index) => {
+    if (surface && (axis.name === 'x' || axis.name === 'y')) return { ...axis, name: axis.name === 'x' ? 'u' : 'v' }
+    if (!wavelength || index !== frequencyAxis) return axis
+    const ticks = axis.ticks.map((frequency) => 299792458e9 / frequency)
+    const order = ticks.map((_, index) => index).sort((a, b) => ticks[a] - ticks[b])
+    const stride = plot.shape.slice(index + 1).reduce((a, b) => a * b, 1)
+    values = plot.values.map((_, offset) => {
+      const sample = Math.floor(offset / stride) % order.length
+      return plot.values[offset + (order[sample] - sample) * stride]
+    })
+    return { ...axis, name: '입력 파장', ticks: order.map((index) => ticks[index]), unit: 'nm' }
+  })
+  return { ...plot, axes, values }
+}
 export type BoxGridViewRequest = {
   leaf: CalculationInputLeaf
   options: BoxGridProjectionOptions

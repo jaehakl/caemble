@@ -414,6 +414,22 @@ function validateCalls(
       addIssue(issues, `${callPath}.target`, 'must be an array.')
       return
     }
+    for (const [name, parameter] of Object.entries(method.parameters)) {
+      const reference = parameter.data.reference
+      if (!reference || !isRecord(call.parameters)) continue
+      const supplied = call.parameters[name]
+      const value = isRecord(supplied) ? supplied.value : supplied
+      const match = typeof value === 'string' ? /^(experiment|task)\.(geometry|surface)\.(.+)$/u.exec(value) : null
+      const referencePath = `${callPath}.parameters.${name}`
+      if (!match || (reference.source !== 'either' && match[1] !== reference.source) || match[2] !== reference.kind) {
+        addIssue(issues, referencePath, 'must reference the declared scene and group kind.')
+        continue
+      }
+      const group = targetGroup(scenes[match[1] as 'experiment' | 'task'], reference.kind, match[3])
+      const count = group ? (reference.kind === 'geometry' ? group.geometryIds.length : group.surfaceIds.length) : 0
+      if (!group || group.missingMemberIds.length || count < reference.minimumResolved || count > reference.maximumResolved)
+        addIssue(issues, referencePath, 'must resolve to the declared number of existing group members.')
+    }
     if (call.target.length < method.target.minimumTargets || call.target.length > method.target.maximumTargets) {
       addIssue(
         issues,

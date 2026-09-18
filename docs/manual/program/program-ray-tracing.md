@@ -12,7 +12,7 @@ Fiber는 Line/Arc 경로와 물리적 호 길이의 반지름 profile을 그대�
 
 CurvedEdgeCylinder는 전 영역에서 양의 반지름을 갖는 정칙 형상을 사용하세요. 내부·외부나 법선을 정의할 수 없는 특이 형상, 또는 수치적으로 해결하지 못한 교차는 형상과 구간을 포함한 오류로 종료합니다. 삼각형 계산으로 자동 전환하지 않습니다. Float64 연산과 근 찾기·광선 표본 오차는 남으며, 표시용 분할 수는 계산 정확도를 조절하는 설정이 아닙니다.
 
-[Continuous Ray Optics 예제](/doc?help=examples&item=caemble:experiment/caemble/verified/continuous-ray-optics@1.0.0)는 비구면 렌즈, 굽은 taper Fiber와 Boolean 절삭 곡면을 함께 보여 줍니다.
+[Continuous Ray Optics 예제](/doc?help=examples&item=caemble:experiment/caemble/verified/continuous-ray-optics@1.0.1)는 비구면 렌즈, 굽은 taper Fiber와 Boolean 절삭 곡면을 함께 보여 줍니다.
 
 ### 광원과 산란
 
@@ -22,7 +22,7 @@ CurvedEdgeCylinder는 전 영역에서 양의 반지름을 갖는 정칙 형상�
 
 ### 표면 박막 적층
 
-`ray-tracing 4.0.0`은 `boundaryConditions`의 `ray.thin-film-stack`을 `experiment.surface.<group>`에 적용합니다. 대상 solid의 Material에서 `optics.thin-film-stack@1` 모델을 선택하세요. `layers`는 순서 있는 목록이며 각 층은 단위를 가진 `thickness`와 `samples: [{ frequency, n, k }, …]`를 갖습니다. 표본 하나는 일정 광학 상수입니다. 모델 입력과 선택은 기존 Material snapshot 경로를 따릅니다.
+`ray-tracing 4.1.0`은 `boundaryConditions`의 `ray.thin-film-stack`을 `experiment.surface.<group>`에 적용합니다. 대상 solid의 Material에서 `optics.thin-film-stack@1` 모델을 선택하세요. `layers`는 순서 있는 목록이며 각 층은 단위를 가진 `thickness`와 `samples: [{ frequency, n, k }, …]`를 갖습니다. 표본 하나는 일정 광학 상수입니다. 모델 입력과 선택은 기존 Material snapshot 경로를 따릅니다.
 
 층 순서는 solid 외부에서 내부 방향입니다. 내부에서 입사하면 역순으로 계산하고, 입사·출사 굴절률은 실제 경계의 medium stack에서 정합니다. 각 층은 엄격히 `0 < thickness < 50 µm`여야 합니다. `50 µm` 이상은 오류이며 별도 solid로 작성해야 합니다. Geometry scale은 명시된 박막 두께를 바꾸지 않습니다.
 
@@ -32,7 +32,29 @@ CurvedEdgeCylinder는 전 영역에서 양의 반지름을 갖는 정칙 형상�
 
 ### Detector와 ray path
 
-수치 output은 Box 내부의 fluence rate와 radiant flux density입니다. `ray.fluence-rate`는 방향을 합한 스칼라, `ray.radiant-flux-density`는 방향 성분을 가진 벡터를 기록하며 둘 다 Box target과 `gridShape`를 받습니다. 흡수 검출면의 detected power는 실행 observation으로 확인합니다. 경로는 자동 시각화로 포함되므로 outputs나 `recordedData`에 선언하지 않습니다. Task가 반복 실행되면 마지막 성공 invocation의 경로 snapshot을 표시합니다. Catalog의 polyline 계약이 경로 구성 데이터와 표시 방식을 결정합니다. 다른 Solver의 mesh field와도 같은 Viewer에서 선택하거나 Overlay할 수 있으며 Calculation·Analysis·Prediction 입력에는 포함하지 않습니다.
+체적 수치 output에는 Box 내부의 fluence rate와 radiant flux density가 있습니다. `ray.fluence-rate`는 방향을 합한 스칼라, `ray.radiant-flux-density`는 방향 성분을 가진 벡터를 기록하며 둘 다 Box target과 `gridShape`를 받습니다. 검출면 픽셀 전력과 입력 전력은 아래의 별도 수치 Output으로 기록합니다. 전체 흡수 검출면의 detected power는 실행 observation으로도 확인합니다. 경로는 자동 시각화로 포함되므로 outputs나 `recordedData`에 선언하지 않습니다. Task가 반복 실행되면 마지막 성공 invocation의 경로 snapshot을 표시합니다. Catalog의 polyline 계약이 경로 구성 데이터와 표시 방식을 결정합니다. 다른 Solver의 mesh field와도 같은 Viewer에서 선택하거나 Overlay할 수 있으며 Calculation·Analysis·Prediction 입력에는 포함하지 않습니다.
+
+### 픽셀 전력과 입력 파장별 응답
+
+**Pixel Monochromatic Response** 예제는 정지한 슬릿부터 검출면까지의 기하광학 응답을 보여 줍니다. 현재 Output 선언·Geometry·Calculation 원본은 [Catalog 예제](/doc?help=examples&item=caemble:experiment/caemble/verified/pixel-monochromatic-response@1.0.0)에서 확인하세요.
+
+흡수 경계조건은 광선을 종료하고, 픽셀 Output은 그 검출 직전의 광학적 전력을 누적합니다. Output을 추가하거나 픽셀 수·관측 두께·`maxPaths`를 바꿔도 광선의 물리적 동작은 바뀌지 않습니다. `maxPaths: 0`은 경로 미저장이며 수치 기록은 계속 생성합니다. 여러 Output이 같은 면을 관측해도 전체 detected power를 중복 집계하지 않습니다.
+
+픽셀 Output은 잘리지 않은 직사각형 Box 한 면 전체를 지원합니다. 관측 Box는 같은 Geometry 정의에서 만들고 z 셀 중심을 수광면에 맞춥니다. 관측 Box 자체는 충돌 그룹에서 제외하세요. 이동·회전·픽셀 수·피치는 한 정의에서 공유하고, 유효 크기는 픽셀 수×피치로 계산합니다. 곡면·부분 영역·Boolean 절삭 면은 이 Output으로 관측할 수 없습니다. 기존 흡수 검출면은 계속 일반 표면에 사용할 수 있습니다.
+
+픽셀 값의 sampling은 표면 셀 적분입니다. 단위는 W이며 W/m², 체적 평균이나 광선 개수가 아닙니다. 공간 셀을 **합산**하면 총 검출 전력이 됩니다. 평균은 픽셀당 평균 전력으로 다른 연산입니다. 내부 경계의 hit는 높은 인덱스 픽셀에, 양쪽 최외곽 경계는 끝 픽셀에 포함하고 실제 영역 밖 hit는 버립니다. 저장 좌표는 Box local `[0,size]`의 픽셀 중심이며 Viewer에서 x/y를 u/v로 읽습니다.
+
+입력 전력 Output은 같은 호출의 모든 광원 전력을 파장별로 합산합니다. 관측 Box는 기록 좌표만 제공하며 광원을 공간 필터링하지 않습니다. 도달 효율은 기록된 픽셀 합을 같은 파장의 기록된 입력 전력으로 나눕니다. 현재 편집 중인 source에서 분모를 복원하지 않습니다.
+
+frequency축은 실제 입력 파장별 기여이며 연속 스펙트럼 밀도 W/Hz·W/nm나 센서의 보정된 분광 채널이 아닙니다. Viewer의 Hz/nm 표시는 같은 데이터의 좌표 변환입니다. 프로파일에서 나머지 공간 축을 sum으로 집계하고 파장을 선택하세요. 합산 방향과 W 단위를 확인하며 원시 신호를 smoothing하지 않습니다.
+
+기본 예제는 중앙 위치의 단색 조건입니다. 특성화할 때는 예제에서 별도 source를 만들고 `sensor.ts`의 `inputWavelengths`를 세 파장으로 고정합니다. `slitPosition` 범위를 넓힌 뒤 세 위치를 각각 Candidate로 **미리 빌드**하고 기존 실행 기능을 사용하세요. 각 Measurement는 그 위치의 세 파장을 frequency축에 기록합니다. 위치를 time·component축에 넣거나 `simulate.py`에서 Task를 추가하지 않습니다. CLI에서 고정 Candidate는 `experiment build <source> --mode candidate --vars <vars.json> --out <artifact>`로 빌드하고 동일 artifact를 `experiment test` 또는 `batch submit`에 사용합니다.
+
+예제 Calculation은 총전력·도달 효율·u/v 합산 프로파일·전력 가중 중심을 제공합니다. 중심은 무신호에서 평가 오류가 되며 0이나 NaN으로 대체하지 않습니다. 국소 파장 샘플링 Calculation은 인접 파장 사이의 `pitch / |Δcentroid/Δλ|`를 계산합니다. 단일 파장, 무신호 또는 거의 영인 분산에서는 평가할 수 없습니다. 다중 피크나 회절 차수 중첩을 하나의 역보정식으로 해석하지 마세요.
+
+nm/pixel은 기하광학적 파장 샘플링 간격이며 최종 분광 분해능이 아닙니다. QE·전자 잡음·회절 PSF·공차·보정은 포함하지 않습니다. 대물광학계나 물체 공간의 성능을 검증한 결과도 아닙니다. [Ansys 분광기 구현 문서](https://optics.ansys.com/hc/en-us/articles/42661705172243-How-to-build-a-spectrometer-implementation)는 픽셀 크기와 회절의 영향을 함께 검토합니다.
+
+Prediction에서는 픽셀 수와 입력 파장 표본을 고정한 채 광학계 설계 변수만 바꾸세요. 단색 기본 실행과 다파장 특성화 결과는 같은 학습 묶음에 섞지 않습니다. 저장 결과와 현재 Geometry가 다르면 기존 Viewer가 overlay를 차단합니다. Calculation과 Prediction은 광선 경로 없이 수치 Record만 사용합니다.
 
 [Catalog 예제에서 Folded Ray-Tracing Bench의 source와 현재 Solver 계약 확인하기](/doc?help=examples)
 
