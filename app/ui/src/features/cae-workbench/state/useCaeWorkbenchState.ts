@@ -57,14 +57,16 @@ function createExperimentDocument(sourceBundle: ExperimentSourceBundle) {
   return createCadSourceDocument('experiment', sourceBundle)
 }
 
-export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback }>
+export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback; predictionMode?: boolean }>
 export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling'
 
 export function useCaeWorkbenchState(
   user: UserData | null,
   authenticated: boolean,
-  { onActivity }: UseCaeWorkbenchStateOptions = {},
+  { onActivity, predictionMode = false }: UseCaeWorkbenchStateOptions = {},
 ) {
+  const [predictionRecords, setPredictionRecords] = useState<readonly string[]>([])
+  const [predictionGeometryRequired, setPredictionGeometryRequired] = useState(false)
   const queryClient = useQueryClient()
   const queryScope = privateQueryScope(user)
   const [editing, dispatchEditing] = useReducer(experimentEditingReducer, initialExperimentEditingState)
@@ -273,6 +275,8 @@ export function useCaeWorkbenchState(
   }, [])
 
   const { experimentDocument } = useCadWorkspace(experiment, handleExperimentChange, {
+    predictionRecords: predictionMode ? predictionRecords : undefined,
+    geometryRequired: predictionMode && predictionGeometryRequired,
     candidateVars: candidateVars ?? undefined,
     candidateVarsPending: pendingMeasurementId !== null || selectionRestoreStatus === 'restoring',
     candidateProvenance:
@@ -735,6 +739,8 @@ export function useCaeWorkbenchState(
   }, [experimentId, queryClient, queryScope])
 
   return {
+    setPredictionRecords,
+    setPredictionGeometryRequired,
     updatePresentation,
     viewerPresentation:
       experimentManageable && experimentId

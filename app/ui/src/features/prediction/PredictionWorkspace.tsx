@@ -230,6 +230,7 @@ export function PredictionWorkspace({
   const [setup, setSetup] = useState<PredictionSetup>(defaultSetup)
   const [setupDraft, setSetupDraft] = useState<PredictionSetup>(defaultSetup)
   const [setupAppliedRevision, setSetupAppliedRevision] = useState(0)
+  const handledSetupRevision = useRef(0)
   const [setupOpen, setSetupOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailsDirection, setDetailsDirection] = useState<PredictionDirection>('forward')
@@ -273,8 +274,32 @@ export function PredictionWorkspace({
   const varsSchema = workbench.experimentDocument.varsSchema as VarsSchema | null
   const candidateVars = workbench.candidateVars
   const currentCandidateFingerprint = candidateFingerprint(candidateVars)
+  const selectedCalculations = useMemo(
+    () =>
+      contextExperimentMatches
+        ? context.calculations.filter((calculation) => setup.calculationIds.includes(calculation.id))
+        : [],
+    [context, contextExperimentMatches, setup.calculationIds],
+  )
+  const requiredPredictionRecords = useMemo(() => {
+    const ids = new Set(selectedCalculations.flatMap((calculation) => calculation.experiment_record_ids))
+    return contextExperimentMatches
+      ? context.experimentRecords
+          .filter((record) => ids.has(record.id))
+          .map((record) => record.name)
+          .sort()
+      : []
+  }, [context, contextExperimentMatches, selectedCalculations])
+  const setPredictionRecords = workbench.setPredictionRecords
+  useEffect(() => {
+    if (active) setPredictionRecords?.(requiredPredictionRecords)
+  }, [active, requiredPredictionRecords, setPredictionRecords])
   const candidateEvaluationReady = Boolean(
-    workbench.experimentDocument.status === 'Ready' &&
+    (workbench.experimentDocument.predictionCandidate === undefined ||
+      (workbench.experimentDocument.predictionCandidate &&
+        JSON.stringify(workbench.experimentDocument.predictionCandidate.records) ===
+          JSON.stringify(requiredPredictionRecords))) &&
+    (workbench.experimentDocument.predictionCandidate ? true : workbench.experimentDocument.status === 'Ready') &&
     workbench.experimentDocument.successfulRevision === workbench.experimentDocument.revision &&
     workbench.experimentDocument.variables &&
     candidateFingerprint(workbench.experimentDocument.variables) === currentCandidateFingerprint,
@@ -308,13 +333,6 @@ export function PredictionWorkspace({
     workbench.experimentRecord?.source_hash ?? null,
   ])
   const sourceIdentityRef = useRef(sourceIdentity)
-  const selectedCalculations = useMemo(
-    () =>
-      contextExperimentMatches
-        ? context.calculations.filter((calculation) => setup.calculationIds.includes(calculation.id))
-        : [],
-    [context, contextExperimentMatches, setup.calculationIds],
-  )
   const selectedCalculationContractFingerprint = predictionFingerprint(
     selectedCalculations.map((calculation) => [calculation.id, calculation.source_hash, calculation.output_layout]),
   )
@@ -343,7 +361,7 @@ export function PredictionWorkspace({
           !runtime.transactionIsCurrent(transaction) ||
           viewerContextRef.current !== expectedContext ||
           candidateFingerprintRef.current !== expectedFingerprint ||
-          document.status !== 'Ready' ||
+          (!document.predictionCandidate && document.status !== 'Ready') ||
           document.successfulRevision !== document.revision ||
           candidateFingerprint(document.variables) !== expectedFingerprint
         )
@@ -353,7 +371,7 @@ export function PredictionWorkspace({
           varsFingerprint: expectedFingerprint,
           contextKey: expectedContext,
           transaction,
-          sourceHash: document.evaluatedSnapshot?.sourceHash ?? null,
+          sourceHash: document.predictionCandidate?.sourceHash ?? document.evaluatedSnapshot?.sourceHash ?? null,
           varsHash: materialVarsHash(vars),
           preview,
         })
@@ -757,7 +775,9 @@ export function PredictionWorkspace({
     onProfile: rememberProfile,
     recordedData: workbench.experimentDocument.simulationProgram?.recordedData ?? Object.freeze({}),
     candidateBoxGrids: workbench.experimentDocument.simulationProgram?.boxGrids,
-    candidateReady: candidateEvaluationReady,
+    candidateReady:
+      candidateEvaluationReady &&
+      requiredPredictionRecords.every((name) => workbench.experimentDocument.simulationProgram?.boxGrids?.[name]),
     resultContracts: workbench.experimentDocument.simulationProgram?.resultContracts,
     runtime,
     selectedCalculations,
@@ -777,7 +797,7 @@ export function PredictionWorkspace({
         !context ||
         context.experimentId !== experimentId ||
         !setup.calculationIds.length ||
-        document.status !== 'Ready' ||
+        (!document.predictionCandidate && document.status !== 'Ready') ||
         document.successfulRevision !== document.revision ||
         candidateFingerprint(document.variables) !== expectedFingerprint ||
         candidateFingerprintRef.current !== expectedFingerprint ||
@@ -801,7 +821,7 @@ export function PredictionWorkspace({
         if (
           !predictionForwardResultIsCurrent({
             candidateReady:
-              completedDocument.status === 'Ready' &&
+              (completedDocument.predictionCandidate ? true : completedDocument.status === 'Ready') &&
               completedDocument.successfulRevision === completedDocument.revision &&
               candidateFingerprint(completedDocument.variables) === expectedFingerprint,
             currentCandidateFingerprint: candidateFingerprintRef.current,
@@ -914,15 +934,15 @@ export function PredictionWorkspace({
           while (true) {
             if (!runtime.transactionIsCurrent(transaction)) return
             const document = experimentDocumentRef.current
-            if (document.status === 'Error') throw new Error('Inverse Candidate의 Geometry 평가에 실패했습니다.')
+            if (document.status === 'Error') throw new Error('Inverse Candidate의 Prediction 입력 준비에 실패했습니다.')
             if (
-              document.status === 'Ready' &&
+              (document.predictionCandidate ? true : document.status === 'Ready') &&
               document.successfulRevision === document.revision &&
               candidateFingerprint(document.variables) === nextFingerprint
             )
               break
             if (Date.now() >= deadline)
-              throw new Error('Inverse Candidate의 Geometry 평가를 기다리는 시간이 초과되었습니다.')
+              throw new Error('Inverse Candidate의 Prediction 입력 준비를 기다리는 시간이 초과되었습니다.')
             await new Promise((resolve) => setTimeout(resolve, 50))
           }
           const surrogate = await forwardOutputsRef.current(
@@ -1086,7 +1106,8 @@ export function PredictionWorkspace({
     if (direction === 'forward' && forwardRefreshState === 'updating')
       return '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
     if (busy) return '진행 중인 작업이 있습니다.'
-    if (!workbench.experimentDocument.materialSnapshot) return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
+    if (!workbench.experimentDocument.predictionCandidate && !workbench.experimentDocument.materialSnapshot)
+      return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
     if (workbench.experimentDocument.draftTaskNames.length > 0) {
       return 'Solver가 선택되지 않은 Draft Task가 있어 검증할 수 없습니다.'
     }
@@ -1116,6 +1137,7 @@ export function PredictionWorkspace({
     workbench.calculationDataActions.busy,
     workbench.experimentDocument.draftTaskNames,
     workbench.experimentDocument.materialSnapshot,
+    workbench.experimentDocument.predictionCandidate,
     workbench.experimentClean,
     workbench.measurementActions.busy,
     workbench.experimentManageable,
@@ -1755,13 +1777,28 @@ export function PredictionWorkspace({
   }, [cancelCurrent, clearModelCaches, dataStaleRef, freshnessPendingRef, runtime, setupDraft, setupDraftError])
 
   useEffect(() => {
-    if (!setupAppliedRevision || !context) return
+    if (
+      !setupAppliedRevision ||
+      !context ||
+      !candidateEvaluationReady ||
+      handledSetupRevision.current === setupAppliedRevision
+    )
+      return
+    handledSetupRevision.current = setupAppliedRevision
     if (direction === 'inverse') {
       void initializeMissingInverseTargets()
     } else if (candidateVars) {
       void runForward(candidateVars)
     }
-  }, [setupAppliedRevision])
+  }, [
+    setupAppliedRevision,
+    context,
+    candidateEvaluationReady,
+    direction,
+    initializeMissingInverseTargets,
+    candidateVars,
+    runForward,
+  ])
 
   const calculateMissing = useCallback(async () => {
     if (

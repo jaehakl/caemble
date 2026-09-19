@@ -29,7 +29,7 @@ import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer
 import { createRuntimeConsoleStore, RuntimeConsoleSummary, RuntimeConsoleView } from '@/features/runtime-console'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { useSelectionSourceNavigation } from '@/features/cae-workbench/viewer/useSelectionSourceNavigation'
-import { WorkbenchShellProvider } from '@/workbench/state/workbenchShellStore'
+import { useWorkbenchShell, WorkbenchShellProvider } from '@/workbench/state/workbenchShellStore'
 import { CalculationWorkbenchContainer } from '@/workbench/CalculationWorkbenchContainer'
 import { WorkbenchShellContainer } from '@/workbench/WorkbenchShellContainer'
 import type { AnalysisCommand } from '@/features/analysis/AnalysisPage'
@@ -71,7 +71,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const location = useLocation()
   const navigate = useNavigate()
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
-  const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
+  const predictionMode = useWorkbenchShell((state) => state.layout.activeSection === 'prediction')
+  const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, {
+    onActivity: runtimeConsole.append,
+    predictionMode,
+  })
   const preflight = usePreflight(
     workbench.experiment,
     workbench.experimentDocument,
@@ -377,7 +381,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     predictionViewer !== null &&
     predictionViewer.experimentId === workbench.experimentId &&
     predictionViewer.varsFingerprint === varsFingerprint(workbench.candidateVars) &&
-    predictionViewer.sourceHash === workbench.experimentDocument.evaluatedSnapshot?.sourceHash
+    predictionViewer.sourceHash ===
+      (workbench.experimentDocument.predictionCandidate?.sourceHash ??
+        workbench.experimentDocument.evaluatedSnapshot?.sourceHash)
       ? predictionViewer
       : null
   const predictionContracts = Object.fromEntries(
@@ -390,6 +396,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
+          onGeometryRequiredChange={isPrediction ? workbench.setPredictionGeometryRequired : undefined}
           initialDefaults={workbench.experimentRecord?.viewer_defaults}
           presentation={
             workbench.viewerPresentation

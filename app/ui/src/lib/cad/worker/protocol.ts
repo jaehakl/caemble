@@ -40,6 +40,22 @@ export type CadEvaluationRequest = CadRequestIdentity &
     vars: Readonly<Record<string, Tensor>>
   }>
 
+export type CadPredictionRequest = CadRequestIdentity &
+  Readonly<{
+    type: 'prepare-prediction'
+    catalog: CatalogRuntimeSlice
+    pythonSource: string
+    vars: Readonly<Record<string, Tensor>>
+    records: readonly string[]
+  }>
+export type CadPredictionResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'prediction-preparation-success'
+        snapshot: import('../execution/snapshotTypes').PredictionCandidateSnapshot
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'prediction-preparation-error'>)
+
 export type CadGeometryPreviewRequest = CadRequestIdentity &
   Readonly<{
     type: 'preview-geometry'
@@ -89,8 +105,19 @@ type CadErrorResponse<Type extends string> = Readonly<{
   stack?: string
 }>
 
-export type CadWorkerRequest = CadPreparationRequest | CadInspectionRequest | CadEvaluationRequest | CadGeometryPreviewRequest
-export type CadWorkerResponse = CadPreparationResponse | CadInspectionResponse | CadEvaluationResponse | CadGeometryPreviewResponse
+export type CadWorkerRequest =
+  CadPredictionRequest | CadPreparationRequest | CadInspectionRequest | CadEvaluationRequest | CadGeometryPreviewRequest
+export type CadWorkerResponse =
+  | CadPredictionResponse
+  | CadPreparationResponse
+  | CadInspectionResponse
+  | CadEvaluationResponse
+  | CadGeometryPreviewResponse
 
-export type CadPreparationRequest = CadRequestIdentity & import('@/lib/cae/build').CaePreparationRequest & Readonly<{type:'prepare'}>
-export type CadPreparationResponse = (CadResponseIdentity & Readonly<{type:'preparation-success'; input:import('@/lib/cae/artifact').BuiltArtifactInput}>) | (CadResponseIdentity & CadErrorResponse<'preparation-error'>)
+export type CadPreparationRequest = CadRequestIdentity &
+  import('@/lib/cae/build').CaePreparationRequest &
+  Readonly<{ type: 'prepare' }>
+export type CadPreparationResponse =
+  | (CadResponseIdentity &
+      Readonly<{ type: 'preparation-success'; input: import('@/lib/cae/artifact').BuiltArtifactInput }>)
+  | (CadResponseIdentity & CadErrorResponse<'preparation-error'>)

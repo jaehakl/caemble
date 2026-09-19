@@ -10,6 +10,7 @@ import {
   evaluateCompiledGeometryModule,
   executeCompiledDocument,
   inspectCompiledDocument,
+  prepareCompiledPrediction,
 } from '../execution/userModule'
 import { CadModelError } from '../model/core'
 import { assertExperimentAuthoringSemantics } from '../simulation/authoringSemantics'
@@ -52,6 +53,19 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
         sourceHash: request.compiledDocument.sourceHash,
         varsSchema: inspection.varsSchema,
       }
+    } else if (request.type === 'prepare-prediction') {
+      response = {
+        type: 'prediction-preparation-success',
+        requestId: request.requestId,
+        revision: request.revision,
+        documentType: 'experiment',
+        snapshot: prepareCompiledPrediction(
+          request.compiledDocument,
+          request.vars,
+          request.pythonSource,
+          request.records,
+        ),
+      }
     } else if (request.type === 'evaluate') {
       const evaluated = executeCompiledDocument(request.compiledDocument, request.vars, request.pythonSource)
       assertExperimentAuthoringSemantics(request.catalog, evaluated)
@@ -87,13 +101,15 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
         : undefined
     response = {
       type:
-        request.type === 'prepare'
-          ? 'preparation-error'
-          : request.type === 'inspect'
-            ? 'inspection-error'
-            : request.type === 'evaluate'
-              ? 'evaluation-error'
-              : 'geometry-preview-error',
+        request.type === 'prepare-prediction'
+          ? 'prediction-preparation-error'
+          : request.type === 'prepare'
+            ? 'preparation-error'
+            : request.type === 'inspect'
+              ? 'inspection-error'
+              : request.type === 'evaluate'
+                ? 'evaluation-error'
+                : 'geometry-preview-error',
       requestId: request.requestId,
       revision: request.revision,
       documentType: request.type === 'preview-geometry' ? 'geometry' : 'experiment',

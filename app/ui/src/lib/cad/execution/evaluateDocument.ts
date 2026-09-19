@@ -3,6 +3,7 @@ import {
   evaluateInIsolatedRunner,
   inspectInIsolatedRunner,
   previewGeometryInIsolatedRunner,
+  preparePredictionInIsolatedRunner,
 } from '@/platform/isolated-runner/client'
 import {
   assertCadEvaluationRequest,
@@ -28,6 +29,8 @@ import type {
   CadGeometryPreviewResponse,
 } from '../worker/protocol'
 import type { EvaluatedExperimentSnapshot } from './snapshot'
+import type { PredictionCandidateSnapshot } from './snapshotTypes'
+import type { CadPredictionRequest, CadPredictionResponse } from '../worker/protocol'
 import type { VarsSchemaEntry } from '../model/vars'
 import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
@@ -181,6 +184,38 @@ export async function evaluateDocument(
     (callbacks) => evaluateInIsolatedRunner(request, callbacks),
     (response, resolve, reject) => {
       if (response.type === 'evaluation-success') resolve(response.snapshot)
+      else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
+    },
+  )
+}
+
+export async function preparePredictionDocument(
+  input: CadEvaluationInput,
+  records: readonly string[],
+  options: EvaluateDocumentOptions,
+): Promise<PredictionCandidateSnapshot> {
+  const catalog = await resolveCatalogRuntimeSlice(input.document.sourceBundle, options)
+  installCatalogRuntimeSlice(catalog)
+  const compiledDocument = await compileCadDocument(input.document, {
+    catalogRevision: catalog.catalogRevision,
+    catalog,
+  })
+  registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
+  const request: CadPredictionRequest = {
+    type: 'prepare-prediction',
+    catalog,
+    compiledDocument,
+    records,
+    pythonSource: input.document.sourceBundle.files[EXPERIMENT_SIMULATION_PATH],
+    vars: input.vars,
+    requestId: `prediction-${crypto.randomUUID()}`,
+    revision: 0,
+  }
+  return timeoutPromise<CadPredictionResponse, PredictionCandidateSnapshot>(
+    options,
+    (callbacks) => preparePredictionInIsolatedRunner(request, callbacks),
+    (response, resolve, reject) => {
+      if (response.type === 'prediction-preparation-success') resolve(response.snapshot)
       else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
     },
   )

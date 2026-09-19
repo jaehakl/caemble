@@ -21,7 +21,9 @@ Workbench를 처음 열면 **Prediction**에서 시작합니다. 왼쪽 위 Expe
 
 ### Prediction Viewer
 
-Vars 변경 후 CAD 평가가 끝나면 새 구조를 먼저 표시합니다. 이전 BoxGrid는 숨기고 갱신 상태를 표시하며, 현재 Vars의 Forward RecordedData가 준비되면 Calculation 완료를 기다리지 않고 BoxGrid를 표시합니다. 선택한 Calculation에 필요한 Record만 예측합니다. Inverse로 찾은 Vars도 같은 방식으로 표시하고 입력한 Target은 유지합니다.
+Vars를 변경해도 선택한 결과 뷰와 마지막 정상 예측을 유지하며, 이전 결과 표시 중임과 갱신 상태를 안내합니다. 현재 Vars의 Forward RecordedData가 준비되면 Calculation 완료를 기다리지 않고 BoxGrid를 교체합니다. Geometry 겹치기에는 결과와 source·Vars가 일치하는 형상만 사용합니다. 선택한 Calculation에 필요한 Record만 예측합니다. Inverse로 찾은 Vars도 같은 방식으로 표시하고 입력한 Target은 유지합니다.
+
+Geometry가 필요 없는 표시 설정에서는 예측에 필요한 Record 계약과 현재 Vars의 BoxGrid 위치·크기·변환·격자 정보만 준비합니다. 전체 CAD 평가, JSCAD solid·Boolean 연산, Manifold render mesh 생성과 Geometry 렌더링은 생략합니다. 필요한 선언 함수와 메타데이터 해석은 실행합니다. Geometry 뷰나 겹치기를 다시 켜면 최신 Candidate의 형상을 준비하고, 같은 입력의 준비 결과는 재사용합니다. Save & Run에서는 표시 설정과 관계없이 실행에 필요한 전체 평가·재료 검증·빌드를 수행합니다.
 
 첫 결과는 기존 Viewer 기본 규칙으로 BoxGrid를 선택합니다. 이후에는 선택했던 BoxGrid·Geometry, 표시 설정과 카메라를 유지합니다. 갱신 중 Geometry를 선택했다면 예측이 도착해도 Geometry를 유지합니다. Prediction에서는 저장된 Measurement나 임시 Preflight 결과를 대신 표시하지 않습니다. Calculation이 실패해도 성공한 BoxGrid 예측은 남으며, 예측 실패·취소·Experiment 또는 탭 전환 뒤 늦게 도착한 응답은 표시하지 않습니다.
 

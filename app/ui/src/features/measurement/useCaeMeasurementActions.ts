@@ -81,6 +81,7 @@ export function useCaeMeasurementActions({
   const [batch, setBatch] = useState<CaeBatch | null>(null)
   const [samplingTotal, setSamplingTotal] = useState<number | null>(null)
   const [automaticCalculationData, setAutomaticCalculationData] = useState(false)
+  const candidatePreparation = useRef<AbortController | null>(null)
   const calculating = useRef(false)
   calculating.current = automaticCalculationData
   const sequence = useRef(0)
@@ -98,6 +99,7 @@ export function useCaeMeasurementActions({
 
   const detach = useCallback(() => {
     if (calculating.current) latest.current.calculationDataActions.cancel()
+    candidatePreparation.current?.abort()
     active.current?.controller.abort()
     active.current = null
     setOperation(null)
@@ -107,6 +109,7 @@ export function useCaeMeasurementActions({
   }, [])
   useEffect(
     () => () => {
+      candidatePreparation.current?.abort()
       active.current?.controller.abort()
       active.current = null
     },
@@ -157,6 +160,26 @@ export function useCaeMeasurementActions({
       ...identity,
       vars: experimentDocument.variables,
       material_snapshot: experimentDocument.materialSnapshot,
+    }
+  }, [experimentDocument, requireExperiment])
+
+  const prepareCandidate = useCallback(async () => {
+    const identity = requireExperiment()
+    candidatePreparation.current?.abort()
+    const abort = new AbortController()
+    candidatePreparation.current = abort
+    setOperation('save-and-run')
+    setStage('Candidate 평가 준비')
+    try {
+      const prepared = await experimentDocument.ensureFullEvaluation!(abort.signal)
+      abort.signal.throwIfAborted()
+      return { ...identity, vars: prepared.variables, material_snapshot: prepared.materialSnapshot }
+    } catch (cause) {
+      setOperation(null)
+      setStage(null)
+      throw cause
+    } finally {
+      if (candidatePreparation.current === abort) candidatePreparation.current = null
     }
   }, [experimentDocument, requireExperiment])
 
@@ -437,9 +460,10 @@ export function useCaeMeasurementActions({
     [experimentDocument.evaluationTimeoutMs, requireExperiment, submit],
   )
   const saveAndRunCurrentAsync = useCallback(async (): Promise<SaveAndRunCompletion> => {
+    const candidate = experimentDocument.ensureFullEvaluation ? await prepareCandidate() : requireCandidate()
     const result = await submit(
       {
-        ...requireCandidate(),
+        ...candidate,
         request_id: crypto.randomUUID(),
         mode: 'candidate',
         evaluation_timeout_ms: experimentDocument.evaluationTimeoutMs,
@@ -448,7 +472,13 @@ export function useCaeMeasurementActions({
     )
     if (!result) throw new Error('CAE 결과를 찾을 수 없습니다.')
     return result
-  }, [experimentDocument.evaluationTimeoutMs, requireCandidate, submit])
+  }, [
+    experimentDocument.evaluationTimeoutMs,
+    experimentDocument.ensureFullEvaluation,
+    prepareCandidate,
+    requireCandidate,
+    submit,
+  ])
   const saveAndRunCurrent = useCallback(() => {
     void saveAndRunCurrentAsync().catch(reportFailure)
   }, [reportFailure, saveAndRunCurrentAsync])
@@ -569,7 +599,7 @@ export function useCaeMeasurementActions({
     setOperation('save')
     setError(null)
     try {
-      const candidate = requireCandidate()
+      const candidate = experimentDocument.ensureFullEvaluation ? await prepareCandidate() : requireCandidate()
       const { id } = await dbTables.Measurement.create(candidate)
       await invalidateMeasurementMutation(queryClient, queryScope, candidate.experiment_id, [id])
       if (latest.current.experimentId === candidate.experiment_id)
@@ -581,7 +611,15 @@ export function useCaeMeasurementActions({
     } finally {
       setOperation(null)
     }
-  }, [operation, queryClient, queryScope, reportFailure, requireCandidate])
+  }, [
+    operation,
+    queryClient,
+    queryScope,
+    reportFailure,
+    requireCandidate,
+    prepareCandidate,
+    experimentDocument.ensureFullEvaluation,
+  ])
   const deleteMeasurements = useCallback(
     async (rows: readonly SavedMeasurement[]) => {
       if (operation || active.current) return false
@@ -603,7 +641,11 @@ export function useCaeMeasurementActions({
   )
   const cancel = useCallback(() => {
     const run = active.current
-    if (!run) return
+    candidatePreparation.current?.abort()
+    if (!run) {
+      detach()
+      return
+    }
     run.cancelRequested = true
     if (run.batchId)
       void caeBatches

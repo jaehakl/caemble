@@ -150,14 +150,15 @@ export function applyTransforms(
 
   return parts.map((part, index) => {
     let geometry = part.geometry
-    if (shouldScale)
+    if (geometry !== undefined && shouldScale)
       geometry = cadTransform(
         cadFromValues(values.scale[0], 0, 0, 0, 0, values.scale[1], 0, 0, 0, 0, values.scale[2], 0, 0, 0, 0, 1),
         geometry,
       )
-    if (shouldRotate) geometry = cadTransform(xyzEulerMatrix(values.rotation!), geometry)
-    if (legacyRotationMatrix !== undefined) geometry = cadTransform(legacyRotationMatrix, geometry)
-    if (shouldTranslate) geometry = cadTranslate([...values.position], geometry)
+    if (geometry !== undefined && shouldRotate) geometry = cadTransform(xyzEulerMatrix(values.rotation!), geometry)
+    if (geometry !== undefined && legacyRotationMatrix !== undefined)
+      geometry = cadTransform(legacyRotationMatrix, geometry)
+    if (geometry !== undefined && shouldTranslate) geometry = cadTranslate([...values.position], geometry)
     const transformNodeId = `${nodeId ?? part.canonicalNode.nodeId}/${instanceId ? '$instance' : '$transform'}-${index + 1}`
     return {
       ...part,

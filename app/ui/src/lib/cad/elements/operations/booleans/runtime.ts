@@ -28,6 +28,41 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
     surfacePolicy: 'derive',
     evaluate(node, context) {
       const childParts = node.children.map((child) => context.evaluate(child, context.inheritedMaterials))
+      if (context.metadataOnly) {
+        if (manifest.tag === 'subtract') {
+          const cutters = childParts.slice(1).flatMap((parts) => parts.map((part) => part.canonicalNode))
+          return childParts[0].map((part, index) => ({
+            ...part,
+            canonicalNode: {
+              kind: 'boolean' as const,
+              nodeId: `${context.nodeId}/$result-${index + 1}`,
+              operation: 'subtract' as const,
+              children: [part.canonicalNode, ...cutters],
+            },
+          }))
+        }
+        const parts = childParts.flat()
+        const children: CanonicalGeometryNodeV2[] =
+          manifest.tag === 'union'
+            ? parts.map((part) => part.canonicalNode)
+            : childParts.map((operand, index) =>
+                operand.length === 1
+                  ? operand[0].canonicalNode
+                  : {
+                      kind: 'boolean',
+                      nodeId: `${context.nodeId}/$operand-${index + 1}`,
+                      operation: 'union',
+                      children: operand.map((part) => part.canonicalNode),
+                    },
+              )
+        return [
+          {
+            geometry: undefined,
+            ...matchingMaterial(parts),
+            canonicalNode: { kind: 'boolean' as const, nodeId: context.nodeId, operation: manifest.tag, children },
+          },
+        ]
+      }
       if (manifest.tag === 'subtract') {
         const snapEpsilon = Math.max(...childParts[0].map((part) => measurements.measureEpsilon(part.geometry))) * 2
         const decomposedParts = childParts.map((parts) =>

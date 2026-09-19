@@ -18,6 +18,15 @@ export type EvaluatedExperimentSnapshot = Readonly<{
 }>
 
 export type EvaluatedDocumentSnapshot = EvaluatedExperimentSnapshot
+/** Prediction inputs are not a validated, executable or renderable CAD snapshot. */
+export type PredictionCandidateSnapshot = Readonly<{
+  geometrySources: readonly ('experiment' | 'task')[]
+  sourceHash: string
+  variables: Readonly<Vars>
+  varsSchema: Readonly<Record<string, VarsSchemaEntry>>
+  records: readonly string[]
+  simulationProgram: SimulationProgramManifest
+}>
 export type MeasurementExperimentSnapshot = Readonly<
   Omit<EvaluatedExperimentSnapshot, 'renderScene' | 'taskRenderScenes'>
 >

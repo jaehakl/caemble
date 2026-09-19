@@ -124,7 +124,7 @@ function measurement(id: number): SavedMeasurement {
     calculation_data_count: 0,
   }
 }
-function renderActions(selected: SavedMeasurement | null = null) {
+function renderActions(selected: SavedMeasurement | null = null, candidateDocument = document) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: PropsWithChildren) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -150,7 +150,7 @@ function renderActions(selected: SavedMeasurement | null = null) {
           cancel: mocks.cancelCalculation,
         } as unknown as CalculationDataActions,
         experimentClean: true,
-        experimentDocument: document,
+        experimentDocument: candidateDocument,
         experimentId: 10,
         experimentSourceHash: sourceHash,
         onGenerateCandidate: mocks.generate,
@@ -710,4 +710,38 @@ describe('server-owned CAE measurement actions', () => {
     })
     expect(mocks.calculate).not.toHaveBeenCalled()
   })
+})
+
+it('prepares a hidden Geometry candidate before Save & Run, then submits its fresh material snapshot', async () => {
+  const ensureFullEvaluation = vi.fn(async () => ({ variables: { length: 25 }, materialSnapshot }))
+  const rendered = renderActions(null, { ...document, materialSnapshot: null, ensureFullEvaluation })
+  await act(async () => {
+    await rendered.result.current.saveAndRunCurrentAsync()
+  })
+  expect(ensureFullEvaluation).toHaveBeenCalledTimes(1)
+  expect(mocks.create).toHaveBeenCalledWith(
+    expect.objectContaining({ vars: { length: 25 }, material_snapshot: materialSnapshot }),
+  )
+})
+
+it('cancels on-demand Candidate preparation without submitting a batch', async () => {
+  const ensureFullEvaluation = vi.fn(
+    (signal?: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+      }),
+  )
+  const rendered = renderActions(null, { ...document, materialSnapshot: null, ensureFullEvaluation })
+  let completion!: Promise<unknown>
+  act(() => {
+    completion = rendered.result.current.saveAndRunCurrentAsync().catch((error) => error)
+  })
+  expect(rendered.result.current.busy).toBe(true)
+  await act(async () => {
+    rendered.result.current.cancel()
+    await completion
+  })
+  expect(await completion).toMatchObject({ name: 'AbortError' })
+  expect(mocks.create).not.toHaveBeenCalled()
+  expect(rendered.result.current.busy).toBe(false)
 })

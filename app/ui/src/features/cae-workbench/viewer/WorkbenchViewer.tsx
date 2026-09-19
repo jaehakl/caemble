@@ -11,6 +11,7 @@ import {
   ViewerComparisonContext,
   useViewerComparison,
   useViewerSetting,
+  useViewerSettingValue,
   ViewerControls,
   type ViewerComparison,
 } from '@/features/viewer/viewer/comparisonSettings'
@@ -42,6 +43,8 @@ function usesExperimentCoordinates(visualization: NonNullable<RecordedResultCont
 }
 
 export type WorkbenchViewerProps = {
+  onGeometryRequiredChange?: (required: boolean) => void
+  pendingExperimentDocument?: CadDocumentController
   initialDefaults?: ViewerDefaults | null
   presentation?: ViewerPresentationActions
   calculationSource?: string
@@ -84,6 +87,21 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
     })
   }
   const persistent = sessions.current.get(sessionKey)
+  const predictionPrevious = useRef<WorkbenchViewerProps | null>(null)
+  if (
+    predictionPrevious.current?.persistenceKey !== props.persistenceKey ||
+    predictionPrevious.current?.experiment !== props.experiment
+  )
+    predictionPrevious.current = null
+  if (
+    props.persistenceKey &&
+    !props.resultPlaceholder &&
+    props.recordedData &&
+    Object.keys(props.resultContracts ?? {}).length
+  ) {
+    predictionPrevious.current = props
+  }
+  const pending = props.resultPlaceholder ? predictionPrevious.current : null
   const previous = useRef<WorkbenchViewerProps | null>(null)
   const name = props.selectedResult ?? ''
   const visualName = name.startsWith('@visualizations.')
@@ -111,9 +129,12 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
           <div className={`h-full min-h-0 ${unavailable ? 'invisible' : ''}`}>
             <ViewerContent
               {...props}
-              recordedData={retained?.recordedData ?? props.recordedData}
-              recordedRules={retained?.recordedRules ?? props.recordedRules}
-              resultContracts={retained?.resultContracts ?? props.resultContracts}
+              pendingExperimentDocument={pending?.experimentDocument}
+              resultSourceHash={pending?.resultSourceHash ?? props.resultSourceHash}
+              resultVarsHash={pending?.resultVarsHash ?? props.resultVarsHash}
+              recordedData={pending?.recordedData ?? retained?.recordedData ?? props.recordedData}
+              recordedRules={pending?.recordedRules ?? retained?.recordedRules ?? props.recordedRules}
+              resultContracts={pending?.resultContracts ?? retained?.resultContracts ?? props.resultContracts}
               visualizations={retained?.visualizations ?? props.visualizations}
               resultErrors={unavailable && retained ? retained.resultErrors : props.resultErrors}
             />
@@ -131,6 +152,8 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
 }
 
 function ViewerContent({
+  onGeometryRequiredChange,
+  pendingExperimentDocument,
   initialDefaults,
   presentation,
   calculationSource,
@@ -213,28 +236,59 @@ function ViewerContent({
   const selectedMotion = transforms.motions.find((motion) => motion.label === selectedView)
   const selectedParticles = particles.particles.find((value) => value.label === selectedView)
   const selectedContract = resultContracts?.[selectedView]
+  const displayedDocument = selectedView && pendingExperimentDocument ? pendingExperimentDocument : experimentDocument
+  const [experimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
+  const [taskVisible] = useViewerSetting('taskVisible', true, 'workspace')
+  const boxOverlay = useViewerSettingValue('box.overlay', true, selectedView)
+  const selectedTensor = recordedData?.[selectedView]
+  const surfaceGrid = isDataTensor(selectedTensor) && selectedTensor.boxGrid?.sampling === 'surface-integral'
+  const boxKind = useViewerSettingValue('box.kind', surfaceGrid ? 'heatmap' : 'cloud', selectedView)
+  const defaultBoxAxes = useMemo(() => (surfaceGrid ? ['y', 'x'] : ['x', 'y', 'z']), [surfaceGrid])
+  const boxAxes = useViewerSettingValue<readonly string[]>('box.axes', defaultBoxAxes, selectedView)
+  const explicitGeometry =
+    selectedView === '' &&
+    (selectionMade.current.has(scope) || (!resultPlaceholder && !autoSelectResult) || initialSelection.current === '')
+  const availableGeometrySources = experimentDocument.predictionCandidate?.geometrySources
+  const visibleGeometry = availableGeometrySources
+    ? (experimentVisible && availableGeometrySources.includes('experiment')) ||
+      (taskVisible && availableGeometrySources.includes('task'))
+    : (experimentVisible && Boolean(experimentDocument.scene)) ||
+      (taskVisible && Object.keys(experimentDocument.taskScenes ?? {}).length > 0)
+  const geometryRequired =
+    visibleGeometry &&
+    (explicitGeometry ||
+      Boolean(
+        selectedContract?.visualization.kind === 'box-grid' &&
+        boxOverlay &&
+        (boxKind === 'cloud' || boxKind === 'heatmap') &&
+        boxAxes.every((axis) => ['x', 'y', 'z'].includes(axis)),
+      ))
+  useEffect(() => {
+    onGeometryRequiredChange?.(geometryRequired)
+  }, [geometryRequired, onGeometryRequiredChange])
+  useEffect(() => () => onGeometryRequiredChange?.(false), [onGeometryRequiredChange])
   const viewerDocument = useMemo(
     () =>
       experiment
         ? {
-            scene: experimentDocument.scene,
-            sceneHash: experimentDocument.sceneHash,
-            taskScenes: experimentDocument.taskScenes,
-            taskSceneHashes: experimentDocument.taskSceneHashes,
+            scene: displayedDocument.scene,
+            sceneHash: displayedDocument.sceneHash,
+            taskScenes: displayedDocument.taskScenes,
+            taskSceneHashes: displayedDocument.taskSceneHashes,
           }
         : null,
     [
       experiment,
-      experimentDocument.scene,
-      experimentDocument.sceneHash,
-      experimentDocument.taskSceneHashes,
-      experimentDocument.taskScenes,
+      displayedDocument.scene,
+      displayedDocument.sceneHash,
+      displayedDocument.taskSceneHashes,
+      displayedDocument.taskScenes,
     ],
   )
 
-  const snapshot = experimentDocument.evaluatedSnapshot
+  const snapshot = displayedDocument.evaluatedSnapshot
   const frameBlockedReason =
-    !snapshot || !experimentDocument.scene
+    !snapshot || !displayedDocument.scene
       ? 'Geometry가 준비되지 않았습니다. 평가가 끝난 뒤 Geometry 겹치기를 사용할 수 있습니다.'
       : !resultSourceHash || !resultVarsHash
         ? '결과의 source/Vars 비교 정보가 없어 Geometry 겹치기를 사용할 수 없습니다.'
@@ -322,7 +376,7 @@ function ViewerContent({
       ? '이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.'
       : undefined)
   const canOverlayGeometry = !geometryBlockedReason
-  const sceneDocument = !resultPlaceholder && selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
+  const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
   const recordReference = useMemo(() => {
     if (!calculationSource) return undefined
     try {
@@ -382,6 +436,9 @@ function ViewerContent({
         </p>
       ) : null}
       <CadViewer
+        availableSources={
+          onGeometryRequiredChange ? experimentDocument.predictionCandidate?.geometrySources : undefined
+        }
         activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
         experiment={
           deformationScale > 0 || selectedMotion || (selectedParticles && !showParticleGeometry) ? null : sceneDocument
@@ -518,7 +575,13 @@ function ViewerContent({
           </ViewerControls>
           {resultPlaceholder ? (
             <p role="status" className="p-2 text-xs">
+              {selectedContract ? '이전 예측 결과 표시 중 · ' : ''}
               {resultPlaceholder}
+            </p>
+          ) : null}
+          {experimentDocument.geometryError ? (
+            <p role="alert" className="p-2 text-xs">
+              Geometry 준비 실패 · {experimentDocument.geometryError}
             </p>
           ) : null}
           {!resultPlaceholder && !canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
@@ -527,9 +590,7 @@ function ViewerContent({
             </p>
           ) : null}
           <div ref={localCaptureRef} className="min-h-0 flex-1 overflow-auto">
-            {resultPlaceholder ? (
-              renderScene()
-            ) : selectedView && !selectedContract ? (
+            {resultPlaceholder && !selectedContract && !explicitGeometry ? null : selectedView && !selectedContract ? (
               <p role="alert" className="p-3 text-red-700">
                 {selectedView}: 새 실행에 선택한 결과가 없습니다.
               </p>
@@ -567,8 +628,12 @@ function ViewerContent({
                 rules={recordedRules}
                 data={recordedData}
                 displayUnit={displayUnit}
-                canOverlayGeometry={canOverlayGeometry}
-                geometryBlockedReason={geometryBlockedReason}
+                canOverlayGeometry={
+                  onGeometryRequiredChange
+                    ? Boolean(selectedContract && usesExperimentCoordinates(selectedContract.visualization))
+                    : canOverlayGeometry
+                }
+                geometryBlockedReason={onGeometryRequiredChange ? undefined : geometryBlockedReason}
                 renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
                 recordReference={recordReference}
               />

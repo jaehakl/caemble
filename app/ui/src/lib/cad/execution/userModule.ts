@@ -1,10 +1,20 @@
 import type { CompiledCadDocument, CompiledCadSource } from '../compiler/types'
-import { evaluateCadScene } from '../evaluation/evaluator'
+import { evaluateCadMetadata, evaluateCadScene } from '../evaluation/evaluator'
+import { resolveProgramBoxGridMetadata } from '../simulation/boxGrid'
+import type { PredictionCandidateSnapshot } from './snapshotTypes'
 import { resolveProgramBoxGrids } from '../simulation/boxGrid'
 import { Fragment, h } from '../evaluation/jsx'
 import type { CadScene } from '../evaluation/types'
 import { cadPrimitiveAuthoringBindings } from '../elements/generated'
-import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material, MaterialInteraction, radians } from '../model/core'
+import {
+  CadModelError,
+  evaluateWithVars,
+  isFloatDType,
+  Mat,
+  Material,
+  MaterialInteraction,
+  radians,
+} from '../model/core'
 import { defineTask, experiment, ExperimentDefinition, TaskDefinition, type ExternalVars } from '../model/definition'
 import { convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
@@ -155,7 +165,9 @@ export function loadCompiledSource(compiledSource: CompiledCadSource) {
   return loadCompiledCode(compiledSource.code)
 }
 
-type CompiledMaterialRuntime = Readonly<Record<string, Material | MaterialInteraction | ((...parameters: unknown[]) => Material)>>
+type CompiledMaterialRuntime = Readonly<
+  Record<string, Material | MaterialInteraction | ((...parameters: unknown[]) => Material)>
+>
 
 type CompiledModuleLoader = Readonly<{
   load: (path: string) => Readonly<Record<string, unknown>>
@@ -206,7 +218,9 @@ function compiledMaterialRuntime(loader: CompiledModuleLoader): CompiledMaterial
       Object.entries(exports).map(([name, value]) => {
         if (value instanceof Material || value instanceof MaterialInteraction) return [name, value]
         if (typeof value !== 'function' || value === Material) {
-          throw new CadModelError(`Material export ${name} must be a Material, MaterialInteraction or Material factory.`)
+          throw new CadModelError(
+            `Material export ${name} must be a Material, MaterialInteraction or Material factory.`,
+          )
         }
         const factory = (...parameters: unknown[]) => {
           const material = value(...parameters)
@@ -308,21 +322,28 @@ export function evaluateDocumentEntry(
     const registered = [...new Set(interactions)].map((item) => item.evaluate(variables))
     const names = new Set<string>()
     const pairs = new Set<string>()
-    const materials = [...scene.parts, ...Object.values(taskScenes).flatMap((item) => item.parts)]
-      .flatMap((part) => part.material ? [part.material] : [])
+    const materials = [...scene.parts, ...Object.values(taskScenes).flatMap((item) => item.parts)].flatMap((part) =>
+      part.material ? [part.material] : [],
+    )
     const used = new Set(materials.map((material) => material.name))
     for (const interaction of registered) {
       const pair = JSON.stringify([...interaction.between].sort())
       if (names.has(interaction.name) || pairs.has(pair))
-        throw new CadModelError(`MaterialInteraction ${interaction.name}: names and material pairs must be unique (${pair}).`)
+        throw new CadModelError(
+          `MaterialInteraction ${interaction.name}: names and material pairs must be unique (${pair}).`,
+        )
       names.add(interaction.name)
       pairs.add(pair)
     }
     resolveMaterialSnapshot([...materials, ...registered.flatMap((item) => item.endpoints)])
     return Object.freeze({
-      interactions: Object.freeze(Object.fromEntries(registered
-        .filter((item) => item.between.every((name) => used.has(name)))
-        .map((item) => [item.name, { between: item.between, models: item.models }]))),
+      interactions: Object.freeze(
+        Object.fromEntries(
+          registered
+            .filter((item) => item.between.every((name) => used.has(name)))
+            .map((item) => [item.name, { between: item.between, models: item.models }]),
+        ),
+      ),
       kind: 'experiment' as const,
       sourceHash,
       variables,
@@ -344,7 +365,12 @@ export function executeCompiledCode(
   return evaluateDocumentEntry(loadCompiledCode(jsCode), sourceHash, vars, pythonSource, taskDefinitions)
 }
 
-export function executeCompiledDocument(compiled: CompiledCadDocument, vars: ExternalVars, pythonSource?: string, profile?: GeometryEvaluationProfile) {
+export function executeCompiledDocument(
+  compiled: CompiledCadDocument,
+  vars: ExternalVars,
+  pythonSource?: string,
+  profile?: GeometryEvaluationProfile,
+) {
   const loader = compiledModuleLoader(compiled)
   const materials = compiledMaterialRuntime(loader)
   const entry = compiledExperimentEntry(loader)
@@ -360,6 +386,67 @@ export function executeCompiledDocument(compiled: CompiledCadDocument, vars: Ext
     profile,
     Object.values(materials).filter((value): value is MaterialInteraction => value instanceof MaterialInteraction),
   )
+}
+
+export function prepareCompiledPrediction(
+  compiled: CompiledCadDocument,
+  vars: ExternalVars,
+  pythonSource: string,
+  records: readonly string[],
+): PredictionCandidateSnapshot {
+  const loader = compiledModuleLoader(compiled)
+  compiledMaterialRuntime(loader)
+  const entry = compiledExperimentEntry(loader)
+  const tasks = taskDefinitionsFromCompiled(compiled, loader)
+  const variables = entry.resolveExternal(vars)
+  return evaluateWithVars(variables, () => {
+    const { manifest } = entry.createProgramRuntime(variables, pythonSource, tasks)
+    const requiredOutputs = records.map((name) => {
+      const contract = manifest.resultContracts[name]
+      if (!contract) throw new CadModelError(`RecordedData ${name} has no Output contract.`)
+      const config = manifest.tasks[contract.task].config as import('../simulation/kernelContract').KernelTaskConfig
+      const output = config.outputs.find((value) => value.key === contract.output)
+      if (!output) throw new CadModelError(`RecordedData ${name} has no Output.`)
+      return { task: contract.task, output }
+    })
+    const needsExperiment = requiredOutputs.some(
+      ({ output }) =>
+        output.target.some((target) => target.startsWith('experiment.')) || output.parameters.surface !== undefined,
+    )
+    const scene = evaluateCadMetadata(
+      needsExperiment ? entry.evaluateResolvedGeometry(variables) : [],
+      { geometryGroup: entry.geometryGroup, surfaceGroup: entry.surfaceGroup },
+      'Experiment',
+      entry.lengthUnit,
+    )
+    const taskScenes = Object.fromEntries(
+      Object.entries(tasks).map(([name, task]) => {
+        const needed = requiredOutputs.some(
+          (value) => value.task === name && value.output.target.some((target) => target.startsWith('task.')),
+        )
+        return [
+          name,
+          evaluateCadMetadata(
+            needed ? (task.evaluateResolvedGeometry(variables) ?? []) : [],
+            { geometryGroup: task.geometryGroup, surfaceGroup: task.surfaceGroup },
+            `Task ${JSON.stringify(name)}`,
+            task.lengthUnit ?? entry.lengthUnit,
+          ),
+        ]
+      }),
+    )
+    return Object.freeze({
+      sourceHash: compiled.sourceHash,
+      variables,
+      varsSchema: entry.varsSchema,
+      records,
+      geometrySources: Object.freeze([
+        'experiment' as const,
+        ...(Object.values(tasks).some((task) => task.geometryFactory) ? ['task' as const] : []),
+      ]),
+      simulationProgram: resolveProgramBoxGridMetadata(manifest, scene, taskScenes, records),
+    })
+  })
 }
 
 export function evaluateCompiledGeometryModule(

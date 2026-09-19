@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   buildMeasurement: vi.fn(),
   deserializeCadScene: vi.fn(),
   evaluateDocument: vi.fn(),
+  preparePredictionDocument: vi.fn(),
   fetchCatalogRuntimeSlice: vi.fn(),
   inspectDocument: vi.fn(),
   resolveDocumentMaterials: vi.fn(),
@@ -20,6 +21,8 @@ vi.mock('@/lib/cad/compiler/monacoCompiler', () => {
   class CadCompilationError extends Error {}
   return { CadCompilationError }
 })
+
+vi.mock('@/lib/cad/execution/evaluateDocument', () => ({ preparePredictionDocument: mocks.preparePredictionDocument }))
 
 vi.mock('@/lib/cad/execution', () => {
   class CadDocumentEvaluationError extends Error {}
@@ -84,6 +87,14 @@ function evaluatedSnapshot(sourceHash: string): EvaluatedExperimentSnapshot {
 }
 
 beforeEach(() => {
+  mocks.preparePredictionDocument.mockReset().mockImplementation(async ({ vars }, records) => ({
+    sourceHash: 'source',
+    variables: vars,
+    varsSchema: {},
+    records,
+    geometrySources: ['experiment'],
+    simulationProgram: { tasks: {}, recordedData: {}, resultContracts: {}, boxGrids: {} },
+  }))
   mocks.applyMaterialSnapshot.mockReset().mockImplementation((scene) => scene)
   mocks.buildMeasurement.mockReset().mockImplementation((snapshot, resolution) => ({
     experiment: snapshot,
@@ -163,4 +174,127 @@ it('stops measurement construction when material resolution fails', async () => 
   expect(result.current.experimentDocument.error?.message).toContain('Material resolution failed')
   expect(mocks.buildMeasurement).not.toHaveBeenCalled()
   expect(result.current.experimentDocument.measurement).toBeNull()
+})
+
+describe('prediction preparation without Geometry', () => {
+  it('rejects an execution callback captured before the Candidate changed', async () => {
+    const { result, rerender } = renderHook(
+      ({ vars }) =>
+        useCadWorkspace(firstExperiment, undefined, {
+          candidateVars: vars,
+          predictionRecords: [],
+        }),
+      { initialProps: { vars: firstCandidateVars } },
+    )
+    await waitFor(() =>
+      expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(firstCandidateVars),
+    )
+    const previous = result.current.experimentDocument.ensureFullEvaluation!
+    rerender({ vars: secondCandidateVars })
+    await waitFor(() =>
+      expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(secondCandidateVars),
+    )
+    await expect(previous()).rejects.toMatchObject({ name: 'AbortError' })
+    expect(mocks.evaluateDocument).not.toHaveBeenCalled()
+  })
+  it('skips full evaluation, material resolution and mesh deserialization across Vars changes, and reuses metadata', async () => {
+    const { result, rerender } = renderHook(
+      ({ vars }) =>
+        useCadWorkspace(firstExperiment, undefined, {
+          candidateVars: vars,
+          predictionRecords: [],
+          geometryRequired: false,
+        }),
+      { initialProps: { vars: firstCandidateVars } },
+    )
+    await waitFor(() =>
+      expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(firstCandidateVars),
+    )
+    rerender({ vars: secondCandidateVars })
+    await waitFor(() =>
+      expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(secondCandidateVars),
+    )
+    rerender({ vars: firstCandidateVars })
+    await waitFor(() =>
+      expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(firstCandidateVars),
+    )
+    expect(mocks.preparePredictionDocument).toHaveBeenCalledTimes(2)
+    expect(mocks.inspectDocument).toHaveBeenCalledTimes(1)
+    expect(mocks.evaluateDocument).not.toHaveBeenCalled()
+    expect(mocks.resolveDocumentMaterials).not.toHaveBeenCalled()
+    expect(mocks.buildMeasurement).not.toHaveBeenCalled()
+    expect(mocks.deserializeCadScene).not.toHaveBeenCalled()
+    expect(result.current.experimentDocument.evaluatedSnapshot).toBeNull()
+    expect(result.current.experimentDocument.validatedRevision).toBe(-1)
+  })
+
+  it('prepares the latest geometry only when requested and reuses it when toggled again', async () => {
+    mocks.evaluateDocument.mockImplementation(async ({ vars }) => ({ ...evaluatedSnapshot('source'), variables: vars }))
+    const { result, rerender } = renderHook(
+      ({ vars, visible }) =>
+        useCadWorkspace(firstExperiment, undefined, {
+          candidateVars: vars,
+          predictionRecords: [],
+          geometryRequired: visible,
+        }),
+      { initialProps: { vars: firstCandidateVars, visible: false } },
+    )
+    await waitFor(() => expect(result.current.experimentDocument.predictionCandidate).not.toBeNull())
+    rerender({ vars: secondCandidateVars, visible: false })
+    await waitFor(() =>
+      expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(secondCandidateVars),
+    )
+    rerender({ vars: secondCandidateVars, visible: true })
+    await waitFor(() =>
+      expect(result.current.experimentDocument.evaluatedSnapshot?.variables).toEqual(secondCandidateVars),
+    )
+    rerender({ vars: secondCandidateVars, visible: false })
+    rerender({ vars: secondCandidateVars, visible: true })
+    expect(mocks.evaluateDocument).toHaveBeenCalledTimes(1)
+    expect(mocks.preparePredictionDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it('prepares an executable candidate on demand even while Geometry is hidden', async () => {
+    mocks.evaluateDocument.mockImplementation(async ({ vars }) => ({ ...evaluatedSnapshot('source'), variables: vars }))
+    const { result } = renderHook(() =>
+      useCadWorkspace(firstExperiment, undefined, {
+        candidateVars: firstCandidateVars,
+        predictionRecords: [],
+      }),
+    )
+    await waitFor(() => expect(result.current.experimentDocument.predictionCandidate).not.toBeNull())
+    await act(async () => {
+      const prepared = await result.current.experimentDocument.ensureFullEvaluation!()
+      expect(prepared.variables).toEqual(firstCandidateVars)
+      expect(prepared.materialSnapshot).toBeTruthy()
+    })
+    expect(mocks.buildMeasurement).toHaveBeenCalledTimes(1)
+    expect(mocks.preparePredictionDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels hidden geometry work and rejects a late result without invalidating prediction inputs', async () => {
+    let resolve!: (value: EvaluatedExperimentSnapshot) => void
+    mocks.evaluateDocument.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        }),
+    )
+    const { result, rerender } = renderHook(
+      ({ visible }) =>
+        useCadWorkspace(firstExperiment, undefined, {
+          candidateVars: firstCandidateVars,
+          predictionRecords: [],
+          geometryRequired: visible,
+        }),
+      { initialProps: { visible: true } },
+    )
+    await waitFor(() => expect(mocks.evaluateDocument).toHaveBeenCalledTimes(1))
+    const signal = mocks.evaluateDocument.mock.calls[0][1].signal as AbortSignal
+    rerender({ visible: false })
+    expect(signal.aborted).toBe(true)
+    await act(async () => resolve(evaluatedSnapshot('late')))
+    expect(result.current.experimentDocument.evaluatedSnapshot).toBeNull()
+    expect(result.current.experimentDocument.predictionCandidate?.variables).toEqual(firstCandidateVars)
+  })
 })

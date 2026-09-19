@@ -44,17 +44,14 @@ src/features/runtime-console/types.ts
 src/features/viewer/persistence/saveDefinition.ts
 src/features/viewer/persistence/SaveDefinitionDialog.tsx
 src/features/viewer/viewer/recordedData.ts
-src/features/viewer/workspace/useCadWorkspace.ts
 src/lib/cad/compiler/catalogTypeEnvironment.ts
 src/lib/cad/compiler/semanticHash.ts
 src/lib/cad/elements/operations/array/definition.ts
 src/lib/cad/elements/operations/transforms/runtime.ts
-src/lib/cad/evaluation/evaluator.ts
 src/lib/cad/execution/manifoldRender.ts
 src/lib/cad/execution/mesh.ts
 src/lib/cad/execution/meshSerialization.ts
 src/lib/cad/execution/runtimeDiagnostics.ts
-src/lib/cad/execution/userModule.ts
 src/lib/cad/model/core.ts
 src/lib/cad/model/dataTensor.ts
 src/lib/cad/model/definition.ts
@@ -68,7 +65,6 @@ src/lib/cad/simulation/kernelContract/types.ts
 src/lib/cad/source/document.ts
 src/lib/cad/source/moduleResolution.ts
 src/lib/cad/source/sourceAnalysis.ts
-src/lib/cad/worker/protocol.ts
 src/lib/calculation/declarations.ts
 src/lib/calculation/dependencies.ts
 src/lib/calculation/index.ts

@@ -12,6 +12,7 @@ import type { PolylineBundle } from '@/lib/cad/model'
 export type { CadViewerDocument } from './cadViewerContent'
 
 export type CadViewerProps = {
+  availableSources?: readonly CadViewerSource[]
   experiment: CadViewerDocument | null
   activeExperimentTaskName?: string | null
   onRenderEnd: (sources: readonly CadViewerSource[]) => void
@@ -32,6 +33,7 @@ export type CadViewerProps = {
 }
 
 export function CadViewer({
+  availableSources,
   activeExperimentTaskName = null,
   experiment,
   onRenderEnd,
@@ -69,7 +71,7 @@ export function CadViewer({
   return (
     <section aria-label="3D CAD Viewer" className="h-full min-h-[360px] min-w-0 lg:min-h-0 lg:overflow-hidden">
       <JscadViewer
-        availableSources={content.availableSources}
+        availableSources={availableSources ?? content.availableSources}
         emptyMessage={content.emptyMessage}
         layers={content.layers}
         lengthUnit={displayUnit ?? content.lengthUnit}
@@ -84,7 +86,11 @@ export function CadViewer({
         geometryOpacity={geometryOpacity}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
-        visibleSources={content.visibleSources}
+        visibleSources={
+          availableSources
+            ? availableSources.filter((source) => (source === 'experiment' ? experimentVisible : taskVisible))
+            : content.visibleSources
+        }
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}
         onRenderStart={handleRenderStart}

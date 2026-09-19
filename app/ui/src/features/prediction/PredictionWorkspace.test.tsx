@@ -16,6 +16,7 @@ import type { PredictionRecordedPreview } from './usePredictionModels'
 
 const mocks = vi.hoisted(() => ({
   manageable: true,
+  predictionOnly: false,
   calculateMeasurement: vi.fn(),
   calculateMissing: () => {},
   calculationSource: 'calculation-source',
@@ -185,7 +186,11 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
     experimentClean: true,
     experimentDocument: {
       draftTaskNames: [],
-      materialSnapshot: {},
+      materialSnapshot: mocks.predictionOnly ? null : {},
+      predictionCandidate: mocks.predictionOnly
+        ? { sourceHash: 'prediction-source', variables: candidate, records: [] }
+        : undefined,
+      geometryPending: mocks.predictionOnly,
       revision: 1,
       status: deferCandidateEvaluation && candidate.x !== evaluatedCandidate.x ? 'Evaluating' : 'Ready',
       successfulRevision: 1,
@@ -260,6 +265,7 @@ async function renderWorkspace(deferCandidateEvaluation = false) {
 beforeEach(() => {
   mocks.viewerState.mockReset()
   mocks.manageable = true
+  mocks.predictionOnly = false
   mocks.calculateMeasurement.mockReset()
   mocks.runCandidates.mockReset()
   mocks.nextSample.mockReset()
@@ -503,7 +509,7 @@ it('publishes RecordedData before Calculation, rejects old Vars callbacks, and r
       }),
   )
   await renderWorkspace(true)
-  expect(pending).toHaveLength(1)
+  await waitFor(() => expect(pending).toHaveLength(1))
   await act(async () => pending[0].publish(recordedPreview))
   expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: recordedPreview }))
   fireEvent.click(screen.getByRole('button', { name: 'Change Candidate' }))
@@ -526,6 +532,7 @@ it.each(['Cancel', 'Leave Prediction', 'Change Experiment'])(
   async (action) => {
     mocks.forwardOutputs.mockImplementation(() => new Promise(() => {}))
     await renderWorkspace()
+    await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalled())
     const publish = mocks.forwardOutputs.mock.calls[0][2]
     fireEvent.click(screen.getByRole('button', { name: action }))
     await act(async () => publish(recordedPreview))
@@ -556,4 +563,23 @@ it('blocks Save & Run and Sampling until a Vars draft is valid', async () => {
   expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: false, canSample: false }))
   fireEvent.click(screen.getByRole('button', { name: 'Discard Vars draft' }))
   expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true, canSample: true }))
+})
+
+it('predicts and enables Save & Run from metadata while Geometry and material snapshots are absent', async () => {
+  mocks.predictionOnly = true
+  mocks.forwardOutputs.mockImplementation(async (_vars, _transaction, publish) => {
+    publish(recordedPreview)
+    return predictionResult('forward', 10)
+  })
+  await renderWorkspace()
+  await waitFor(() =>
+    expect(mocks.viewerState).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sourceHash: 'prediction-source', preview: recordedPreview }),
+    ),
+  )
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true })),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  await waitFor(() => expect(mocks.saveAndRun).toHaveBeenCalledTimes(1))
 })

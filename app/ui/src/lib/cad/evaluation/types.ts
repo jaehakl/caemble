@@ -128,6 +128,8 @@ export type CadElementManifest<Tag extends string = string> = Readonly<{
 }>
 
 export type CadElementEvaluationContext = Readonly<{
+  /** Resolve identities and canonical parameters without constructing solids. */
+  metadataOnly?: boolean
   nodeId: string
   inheritedMaterials: Map<string, MaterialBinding>
   evaluate: (

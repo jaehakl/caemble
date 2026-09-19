@@ -62,6 +62,20 @@ export function useViewerComparison() {
   return useContext(ViewerComparisonContext)
 }
 
+/** Observe a control's setting without seeding its defaults before the control mounts. */
+export function useViewerSettingValue<T>(name: string, fallback: T, item: string): T {
+  const comparison = useViewerComparison()
+  const persistent = useContext(ViewerPersistenceContext)
+  const settings = (comparison ?? persistent)?.settings
+  const key = `${item}:${name}`
+  const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
+  const snapshot = useCallback(
+    () => (settings?.values.has(key) ? (settings.values.get(key) as T) : fallback),
+    [settings, key, fallback],
+  )
+  return useSyncExternalStore(subscribe, snapshot, snapshot)
+}
+
 /** Standalone viewers keep local state; comparisons share result settings by item and toolbar settings by workspace. */
 export function useViewerSetting<T>(
   name: string,

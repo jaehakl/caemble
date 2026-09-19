@@ -1,3 +1,5 @@
+import { preparePredictionDocument } from '@/lib/cad/execution/evaluateDocument'
+import type { PredictionCandidateSnapshot } from '@/lib/cad/execution/snapshotTypes'
 import { measurementMaterialSnapshot } from '@/lib/cad/execution/measurement'
 import { readMeasurementMaterialSnapshot } from '../persistence/contracts'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -57,6 +59,12 @@ function stableInput(value: unknown) {
 }
 
 export type CadDocumentController = Readonly<{
+  predictionCandidate?: PredictionCandidateSnapshot | null
+  geometryPending?: boolean
+  geometryError?: string | null
+  ensureFullEvaluation?: (
+    signal?: AbortSignal,
+  ) => Promise<Readonly<{ variables: Readonly<Vars>; materialSnapshot: MeasurementMaterialSnapshot }>>
   candidateGeneration: number
   completedCandidateGeneration: number
   compiledSource: null
@@ -107,6 +115,8 @@ export type CandidateVarsRegeneratedEvent = Readonly<{
 }>
 
 export type UseCadWorkspaceOptions = Readonly<{
+  predictionRecords?: readonly string[]
+  geometryRequired?: boolean
   candidateVars?: Readonly<Vars>
   candidateVarsPending?: boolean
   candidateProvenance?: CandidateProvenance
@@ -127,6 +137,8 @@ export function useCadWorkspace(
   experiment: ExperimentSourceDocument | null | undefined,
   onExperimentChange: ((document: ExperimentSourceDocument) => void) | undefined,
   {
+    predictionRecords,
+    geometryRequired = false,
     candidateVars,
     candidateVarsPending = false,
     candidateProvenance = 'editable',
@@ -136,6 +148,18 @@ export function useCadWorkspace(
     onCandidateVarsRegenerated,
   }: UseCadWorkspaceOptions = {},
 ) {
+  const [predictionCandidate, setPredictionCandidate] = useState<PredictionCandidateSnapshot | null>(null)
+  const [geometryPending, setGeometryPending] = useState(false)
+  const [geometryError, setGeometryError] = useState<string | null>(null)
+  const fullEvaluationRef = useRef<{
+    revision: number
+    abort: AbortController
+    promise: Promise<Readonly<{ variables: Readonly<Vars>; materialSnapshot: MeasurementMaterialSnapshot }>>
+    execution: boolean
+    settled: boolean
+  } | null>(null)
+  const predictionRecordsKey = JSON.stringify(predictionRecords ?? null)
+  const predictionCacheRef = useRef(new Map<string, PredictionCandidateSnapshot>())
   const [lifecycle, dispatchLifecycle] = useReducer(cadWorkspaceLifecycleReducer, initialCadWorkspaceLifecycleState)
   const { error, status } = lifecycle
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
@@ -205,6 +229,8 @@ export function useCadWorkspace(
   successfulRevisionRef.current = successfulRevision
 
   const varsKey = useMemo(() => stableInput(candidateVars ?? null), [candidateVars])
+  const currentInputRef = useRef({ experiment, varsKey, resetKey })
+  currentInputRef.current = { experiment, varsKey, resetKey }
   const materialsKey = useMemo(() => stableInput(persistedMaterialSnapshot), [persistedMaterialSnapshot])
   const cachedCandidate = candidateCacheRef.current
   const editableMaterialEcho = editableMaterialEchoRef.current
@@ -226,7 +252,13 @@ export function useCadWorkspace(
       : materialsKey
 
   useEffect(() => {
+    const requestedRecords = JSON.parse(predictionRecordsKey) as readonly string[] | null
     activeEvaluationRef.current?.abort()
+    fullEvaluationRef.current?.abort.abort()
+    fullEvaluationRef.current = null
+    setGeometryPending(false)
+    setGeometryError(null)
+    setPredictionCandidate(null)
     const requestRevision = revisionRef.current + 1
     revisionRef.current = requestRevision
     setRevision(requestRevision)
@@ -243,6 +275,7 @@ export function useCadWorkspace(
       editableMaterialEchoRef.current = null
       lastSchemaFingerprintRef.current = null
       preparedDocumentRef.current = null
+      predictionCacheRef.current.clear()
       setEvaluatedSnapshot(null)
       setResultSessionKey(null)
     }
@@ -373,7 +406,11 @@ export function useCadWorkspace(
           return generated
         }
         let nextVars: Readonly<Vars>
-        if (candidateProvenance === 'persisted-measurement' && candidateVarsPending && sessionCandidateVars === undefined) {
+        if (
+          candidateProvenance === 'persisted-measurement' &&
+          candidateVarsPending &&
+          sessionCandidateVars === undefined
+        ) {
           statusRef.current = 'Checking'
           dispatchLifecycle({ type: 'candidatePending' })
           return
@@ -382,7 +419,8 @@ export function useCadWorkspace(
         } else if (candidateProvenance === 'persisted-measurement') {
           candidateCacheRef.current = null
           try {
-            if (sessionCandidateVars === undefined) throw new Error('The saved Measurement does not contain Candidate vars.')
+            if (sessionCandidateVars === undefined)
+              throw new Error('The saved Measurement does not contain Candidate vars.')
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
             nextVars = normalizeVars(normalizedSchema, sessionCandidateVars, 'Measurement')
           } catch (cause: unknown) {
@@ -405,6 +443,53 @@ export function useCadWorkspace(
           } catch {
             nextVars = generateCandidateVars('invalid-candidate')
           }
+        }
+        if (requestedRecords !== null) {
+          const cacheKey = JSON.stringify([
+            inspection.sourceHash,
+            catalog.catalogRevision,
+            nextVars,
+            predictionRecordsKey,
+          ])
+          let candidate = predictionCacheRef.current.get(cacheKey)
+          if (!candidate) {
+            candidate = await preparePredictionDocument(
+              { document: evaluationDocument, vars: nextVars },
+              requestedRecords,
+              { catalog, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
+            )
+            if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+            predictionCacheRef.current.set(cacheKey, candidate)
+            if (predictionCacheRef.current.size > 4)
+              predictionCacheRef.current.delete(predictionCacheRef.current.keys().next().value!)
+          }
+          setPredictionCandidate(candidate)
+          setResultSessionKey(resetKey)
+          setVariables(candidate.variables)
+          setVarsSchema(candidate.varsSchema)
+          setSimulationProgram(candidate.simulationProgram)
+          setDraftTaskNames(catalogDraftTaskNames(catalog, candidate.simulationProgram))
+          if (explicitGeneration) {
+            completedCandidateGenerationRef.current = generation
+            setCompletedCandidateGeneration(generation)
+            setSuccessfulCandidateGeneration(generation)
+          }
+          successfulRevisionRef.current = requestRevision
+          setSuccessfulRevision(requestRevision)
+          statusRef.current = 'Ready'
+          dispatchLifecycle({ type: 'evaluationSucceeded' })
+          emitRuntimeActivity(onActivityRef.current, {
+            source: 'cad',
+            level: 'info',
+            phase: 'prediction.prepared',
+            message: 'Prediction 입력이 준비되었습니다. Geometry solid와 render mesh 생성은 생략했습니다.',
+            details: {
+              revision: requestRevision,
+              sourceHash: candidate.sourceHash,
+              recordCount: requestedRecords.length,
+            },
+          })
+          return
         }
         statusRef.current = 'Evaluating'
         dispatchLifecycle({ type: 'evaluationStarted' })
@@ -447,7 +532,9 @@ export function useCadWorkspace(
         })
         const resolution = await resolveDocumentMaterials(
           snapshot,
-          candidateProvenance === 'persisted-measurement' && !explicitGeneration ? readMeasurementMaterialSnapshot(sessionMaterialSnapshot) : null,
+          candidateProvenance === 'persisted-measurement' && !explicitGeneration
+            ? readMeasurementMaterialSnapshot(sessionMaterialSnapshot)
+            : null,
           catalog,
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
@@ -585,11 +672,149 @@ export function useCadWorkspace(
     materialDependencyKey,
     resetKey,
     candidateDependencyKey,
+    predictionRecordsKey,
   ])
+
+  const prepareFullCandidate = useCallback(
+    (execution: boolean) => {
+      const currentRevision = revisionRef.current
+      const input = currentInputRef.current
+      if (
+        currentRevision !== revision ||
+        input.experiment !== experiment ||
+        input.varsKey !== varsKey ||
+        input.resetKey !== resetKey
+      ) {
+        return Promise.reject(new DOMException('Stale CAD evaluation', 'AbortError'))
+      }
+      const existing = fullEvaluationRef.current
+      if (existing?.revision === currentRevision && !existing.abort.signal.aborted) {
+        existing.execution ||= execution
+        return existing.promise
+      }
+      const prepared = preparedDocumentRef.current
+      if (
+        !experiment ||
+        !predictionCandidate ||
+        !prepared ||
+        prepared.document !== experiment ||
+        successfulRevisionRef.current !== currentRevision ||
+        stableInput(predictionCandidate.variables) !== varsKey
+      ) {
+        return Promise.reject(new Error('현재 Candidate의 Prediction 입력이 준비되지 않았습니다.'))
+      }
+      const abort = new AbortController()
+      setGeometryPending(true)
+      setGeometryError(null)
+      const promise = (async () => {
+        const snapshot = await evaluateDocument(
+          { document: experiment, vars: predictionCandidate.variables },
+          {
+            catalog: prepared.catalog,
+            signal: abort.signal,
+            timeoutMs: evaluationTimeoutRef.current,
+          },
+        )
+        if (abort.signal.aborted || revisionRef.current !== currentRevision)
+          throw new DOMException('Stale CAD evaluation', 'AbortError')
+        const resolution = await resolveDocumentMaterials(snapshot, null, prepared.catalog)
+        if (abort.signal.aborted || revisionRef.current !== currentRevision)
+          throw new DOMException('Stale CAD evaluation', 'AbortError')
+        const built = buildMeasurement(snapshot, resolution)
+        const materials = measurementMaterialSnapshot(built)
+        setEvaluatedSnapshot(snapshot)
+        setScene(applyMaterialSnapshot(deserializeCadScene(snapshot.renderScene), resolution.materialSnapshot))
+        setTaskScenes(
+          Object.freeze(
+            Object.fromEntries(
+              Object.entries(snapshot.taskRenderScenes).map(([name, value]) => [
+                name,
+                applyMaterialSnapshot(deserializeCadScene(value), resolution.taskMaterialSnapshots[name]),
+              ]),
+            ),
+          ),
+        )
+        setBuiltMeasurement(built)
+        editableMaterialEchoRef.current = Object.freeze({
+          document: experiment,
+          resetKey,
+          dependencyKey: materialDependencyKey,
+          outputKey: stableInput(materials),
+        })
+        setMaterialSnapshot(materials)
+        setMaterialWarnings(resolution.warnings)
+        validatedDocumentRef.current = experiment
+        validatedCandidateDependencyKeyRef.current = candidateDependencyKey
+        validatedGenerationRef.current = generation
+        validatedResetKeyRef.current = resetKey
+        setValidatedRevision(currentRevision)
+        return { variables: snapshot.variables, materialSnapshot: materials }
+      })()
+        .catch((cause: unknown) => {
+          if (!abort.signal.aborted && revisionRef.current === currentRevision) {
+            setGeometryError(cause instanceof Error ? cause.message : String(cause))
+          }
+          if (fullEvaluationRef.current?.abort === abort) fullEvaluationRef.current = null
+          throw cause
+        })
+        .finally(() => {
+          if (fullEvaluationRef.current?.abort === abort) fullEvaluationRef.current.settled = true
+          if (
+            revisionRef.current === currentRevision &&
+            (!fullEvaluationRef.current || fullEvaluationRef.current.abort === abort)
+          )
+            setGeometryPending(false)
+        })
+      fullEvaluationRef.current = { revision: currentRevision, abort, promise, execution, settled: false }
+      return promise
+    },
+    [
+      experiment,
+      predictionCandidate,
+      varsKey,
+      candidateDependencyKey,
+      generation,
+      resetKey,
+      materialDependencyKey,
+      revision,
+    ],
+  )
+  const ensureFullEvaluation = useCallback(
+    async (signal?: AbortSignal) => {
+      signal?.throwIfAborted()
+      const promise = prepareFullCandidate(true)
+      const pending = fullEvaluationRef.current
+      const cancel = () => pending?.abort.abort()
+      signal?.addEventListener('abort', cancel, { once: true })
+      try {
+        const result = await promise
+        signal?.throwIfAborted()
+        return result
+      } finally {
+        signal?.removeEventListener('abort', cancel)
+      }
+    },
+    [prepareFullCandidate],
+  )
+  useEffect(() => {
+    if (
+      predictionRecordsKey === 'null' ||
+      !geometryRequired ||
+      !predictionCandidate ||
+      stableInput(predictionCandidate.variables) !== varsKey
+    )
+      return
+    void prepareFullCandidate(false).catch(() => undefined)
+    return () => {
+      const pending = fullEvaluationRef.current
+      if (pending && !pending.execution && !pending.settled) pending.abort.abort()
+    }
+  }, [predictionRecordsKey, geometryRequired, predictionCandidate, varsKey, prepareFullCandidate])
 
   useEffect(
     () => () => {
       activeEvaluationRef.current?.abort()
+      fullEvaluationRef.current?.abort.abort()
     },
     [],
   )
@@ -702,6 +927,10 @@ export function useCadWorkspace(
   )
   const runIsBusy = ['Checking', 'Compiling', 'Evaluating', 'Resolving Materials', 'Rendering'].includes(status)
   const experimentDocument: CadDocumentController = {
+    predictionCandidate: predictionRecords === undefined ? undefined : ownsCurrentSession ? predictionCandidate : null,
+    geometryPending,
+    geometryError,
+    ensureFullEvaluation: predictionRecords === undefined ? undefined : ensureFullEvaluation,
     candidateGeneration: generation,
     completedCandidateGeneration,
     compiledSource: null,

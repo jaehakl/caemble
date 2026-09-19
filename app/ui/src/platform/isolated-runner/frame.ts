@@ -45,13 +45,15 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
       nonce,
       response: {
         type:
-          operation === 'prepare'
-            ? 'preparation-error'
-            : operation === 'inspect'
-              ? 'inspection-error'
-              : operation === 'evaluate'
-                ? 'evaluation-error'
-                : 'geometry-preview-error',
+          operation === 'prepare-prediction'
+            ? 'prediction-preparation-error'
+            : operation === 'prepare'
+              ? 'preparation-error'
+              : operation === 'inspect'
+                ? 'inspection-error'
+                : operation === 'evaluate'
+                  ? 'evaluation-error'
+                  : 'geometry-preview-error',
         requestId: request.requestId,
         revision: request.revision,
         documentType: operation === 'preview-geometry' ? 'geometry' : 'experiment',

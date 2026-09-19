@@ -160,7 +160,8 @@ function runInIsolatedRunner<Request extends CadWorkerRequest, Response extends 
             event.data.response.revision !== request.revision ||
             (event.data.response.type === 'inspection-success' &&
               event.data.response.sourceHash !== request.compiledDocument.sourceHash) ||
-            (event.data.response.type === 'evaluation-success' &&
+            ((event.data.response.type === 'evaluation-success' ||
+              event.data.response.type === 'prediction-preparation-success') &&
               event.data.response.snapshot.sourceHash !== request.compiledDocument.sourceHash) ||
             (event.data.response.type === 'geometry-preview-success' &&
               event.data.response.sourceHash !== request.compiledDocument.sourceHash)
@@ -232,6 +233,13 @@ export function previewGeometryInIsolatedRunner(
 export function prepareInIsolatedRunner(
   request: import('@/lib/cad/worker/protocol').CadPreparationRequest,
   callbacks: RunnerCallbacks<import('@/lib/cad/worker/protocol').CadPreparationResponse>,
+) {
+  return runInIsolatedRunner(request, callbacks)
+}
+
+export function preparePredictionInIsolatedRunner(
+  request: import('@/lib/cad/worker/protocol').CadPredictionRequest,
+  callbacks: RunnerCallbacks<import('@/lib/cad/worker/protocol').CadPredictionResponse>,
 ) {
   return runInIsolatedRunner(request, callbacks)
 }

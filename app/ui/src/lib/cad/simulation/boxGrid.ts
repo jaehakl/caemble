@@ -83,6 +83,31 @@ export function resolveProgramBoxGrids(
   scene: CadScene,
   taskScenes: Readonly<Record<string, CadScene>>,
 ): SimulationProgramManifest {
+  return resolveProgramBoxGridMetadata(
+    program,
+    canonicalGeometrySceneDraft(scene),
+    Object.fromEntries(
+      Object.entries(taskScenes).map(([name, taskScene]) => [name, canonicalGeometrySceneDraft(taskScene)]),
+    ),
+  )
+}
+
+export function resolveProgramBoxGridMetadata(
+  program: SimulationProgramManifest,
+  scene: CanonicalGeometrySceneDraftV2,
+  taskScenes: Readonly<Record<string, CanonicalGeometrySceneDraftV2>>,
+  records?: readonly string[],
+): SimulationProgramManifest {
+  const required =
+    records === undefined
+      ? undefined
+      : new Set(
+          records.flatMap((name) => {
+            const contract = program.resultContracts[name]
+            if (!contract) throw new CadModelError(`RecordedData ${name} has no Output contract.`)
+            return [`${contract.task}.${contract.output}`]
+          }),
+        )
   const catalog = activeCatalogRuntimeSlice()
   const grids = new Map<string, BoxGridData>()
   const visualizationContracts: Record<
@@ -113,21 +138,21 @@ export function resolveProgramBoxGrids(
         }),
       )
       const outputs = config.outputs.map((output) => {
+        if (required && !required.has(`${name}.${output.key}`)) return output
         const method = descriptor.methods.outputs.find((item) => item.methodId === output.methodId)
         if (!method || !('boxGrid' in method.data) || !method.data.boxGrid)
           throw new CadModelError(`Output ${name}.${output.key} has no Box Grid contract.`)
         const geometry = resolveBoxGridGeometry(
           output,
           {
-            experiment: canonicalGeometrySceneDraft(scene),
-            task: canonicalGeometrySceneDraft(taskScenes[name]),
+            experiment: scene,
+            task: taskScenes[name],
           },
           descriptor.referenceLengthUnit,
         )
         const data = { ...method.data.boxGrid, ...geometry }
         assertBoxGridData(data)
-        if (method.data.boxGrid.sampling === 'surface-integral')
-          validateDetectorBox(output, geometry, canonicalGeometrySceneDraft(scene), config)
+        if (method.data.boxGrid.sampling === 'surface-integral') validateDetectorBox(output, geometry, scene, config)
         grids.set(`${name}.${output.key}`, data)
         return { ...output, boxGrid: geometry }
       })
@@ -138,11 +163,13 @@ export function resolveProgramBoxGrids(
     }),
   )
   const boxGrids = Object.fromEntries(
-    Object.entries(program.resultContracts).map(([name, contract]) => {
-      const grid = grids.get(`${contract.task}.${contract.output}`)
-      if (!grid) throw new CadModelError(`RecordedData ${name} must reference a Box Grid Output.`)
-      return [name, grid]
-    }),
+    Object.entries(program.resultContracts)
+      .filter(([name]) => records === undefined || records.includes(name))
+      .map(([name, contract]) => {
+        const grid = grids.get(`${contract.task}.${contract.output}`)
+        if (!grid) throw new CadModelError(`RecordedData ${name} must reference a Box Grid Output.`)
+        return [name, grid]
+      }),
   )
   return Object.freeze({ ...program, tasks, boxGrids, visualizationContracts })
 }

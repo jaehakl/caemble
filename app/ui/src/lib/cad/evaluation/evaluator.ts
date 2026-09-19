@@ -5,7 +5,7 @@ import { flattenValues, Fragment, isCadNode } from './jsx'
 import { applyTransforms, normalizeTransforms } from './transforms'
 import { applyCadSceneGroups, type CadSceneGroupOptions } from './groups'
 import { canonicalPrimitiveNode } from './canonicalPrimitive'
-import { canonicalSurfaceMemberEntries, registerCanonicalGeometryScene } from './canonical'
+import { canonicalGeometrySceneDraft, canonicalSurfaceMemberEntries, registerCanonicalGeometryScene } from './canonical'
 import type { CanonicalGeometryRootV2 } from './canonicalTypes'
 import type {
   CadScene,
@@ -20,6 +20,7 @@ import { normalizeUcumUnit, type UcumUnit } from '../model/units'
 import type { GeometryEvaluationProfile } from './precision'
 
 type EvaluationState = {
+  metadataOnly: boolean
   nodes: Map<string, CadSceneTreeNode>
   explicitIdsByParent: Map<string, Set<string>>
   localIdsByParent: Map<string, Set<string>>
@@ -86,7 +87,9 @@ function resolveMaterials(value: unknown, inherited: Map<string, MaterialBinding
       return
     }
     if (!(material instanceof Material)) {
-      throw new CadModelError(`Geometry material role ${JSON.stringify(role)} must contain a Material instance or undefined.`)
+      throw new CadModelError(
+        `Geometry material role ${JSON.stringify(role)} must contain a Material instance or undefined.`,
+      )
     }
     bindings.set(role, bindingByExposedMaterial.get(material) ?? createMaterialBinding(role, material))
   })
@@ -134,7 +137,9 @@ function resolveGeometryId(value: unknown, label: string, parentId: string, stat
   }
   const siblingIds = state.localIdsByParent.get(parentId) ?? new Set<string>()
   if (siblingIds.has(value)) {
-    throw new CadModelError(`Geometry id ${JSON.stringify(value)} must be unique within parent ${JSON.stringify(parentId || state.rootLabel)}.`)
+    throw new CadModelError(
+      `Geometry id ${JSON.stringify(value)} must be unique within parent ${JSON.stringify(parentId || state.rootLabel)}.`,
+    )
   }
   siblingIds.add(value)
   state.localIdsByParent.set(parentId, siblingIds)
@@ -264,14 +269,14 @@ function evaluateNode(
     const binding = materialBinding(inheritedMaterials, 'body')
 
     const canonicalNode = canonicalPrimitiveNode(definition.tag, globalId!, resolvedProps, state.profile)
-    const geometry = definition.createGeometry(resolvedProps)
+    const geometry = state.metadataOnly ? undefined : definition.createGeometry(resolvedProps)
     parts = [
       {
         geometry,
         canonicalNode,
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
-        surfaces: definition.createSurfaces(geometry, resolvedProps),
+        surfaces: state.metadataOnly ? [] : definition.createSurfaces(geometry, resolvedProps),
         ownerNodeKey: elementOwnerNodeKey!,
         resultNodeKey: nodeKey,
       },
@@ -280,6 +285,7 @@ function evaluateNode(
     reserveExplicitSiblingIds(children, elementIdentityParent, state)
     let childIndex = 0
     parts = definition.evaluate(node, {
+      metadataOnly: state.metadataOnly,
       nodeId: globalId ?? nodeKey,
       inheritedMaterials,
       evaluate: (child, materials = inheritedMaterials, trace) => {
@@ -308,7 +314,9 @@ function evaluateNode(
 
     if (definition.surfacePolicy === 'derive') {
       parts = parts.map((part) => {
-        const derived = deriveGeometrySurfaces(part.geometry)
+        const derived = state.metadataOnly
+          ? { geometry: undefined, surfaces: [] }
+          : deriveGeometrySurfaces(part.geometry)
         return {
           ...part,
           geometry: derived.geometry,
@@ -323,17 +331,19 @@ function evaluateNode(
   return applyTransforms(parts, transformValues, `${globalId ?? nodeKey}/$element-transform`)
 }
 
-export function evaluateCadScene(
+function evaluateScene(
   root: unknown,
   groupOptions: CadSceneGroupOptions = {},
   rootLabel = 'Experiment',
   rawLengthUnit: UcumUnit = 'm',
   profile?: GeometryEvaluationProfile,
+  metadataOnly = false,
 ): CadScene {
   const lengthUnit = normalizeUcumUnit(rawLengthUnit, `${rootLabel} scene lengthUnit`)
   const rootKey = rootLabel.toLowerCase()
   const tree: CadSceneTreeNode = { key: rootKey, label: rootLabel, children: [] }
   const state: EvaluationState = {
+    metadataOnly,
     nodes: new Map([[tree.key, tree]]),
     explicitIdsByParent: new Map(),
     localIdsByParent: new Map(),
@@ -417,7 +427,7 @@ export function evaluateCadScene(
         : {
             material: {
               name: part.material.name,
-                    },
+            },
           }),
       node: part.canonicalNode,
     })
@@ -463,4 +473,19 @@ export function evaluateCadScene(
 
 export function evaluateCad(root: unknown): CadScenePart[] {
   return evaluateCadScene(root).parts
+}
+
+export function evaluateCadScene(
+  root: unknown,
+  groups: CadSceneGroupOptions = {},
+  label = 'Experiment',
+  lengthUnit: UcumUnit = 'm',
+  profile?: GeometryEvaluationProfile,
+): CadScene {
+  return evaluateScene(root, groups, label, lengthUnit, profile)
+}
+
+/** Metadata scenes never escape as renderable CadScenes. */
+export function evaluateCadMetadata(root: unknown, groups: CadSceneGroupOptions, label: string, lengthUnit: UcumUnit) {
+  return canonicalGeometrySceneDraft(evaluateScene(root, groups, label, lengthUnit, undefined, true))
 }

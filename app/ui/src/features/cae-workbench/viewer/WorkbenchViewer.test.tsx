@@ -29,9 +29,15 @@ function currentResult() {
 vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
   BoxGridResult: ({ name }: { name: string }) => {
     const [opacity, setOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
+    const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
+    const [experimentVisible, setExperimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
+    const [taskVisible, setTaskVisible] = useViewerSetting('taskVisible', true, 'workspace')
     return (
       <div>
         Box Grid {name}
+        <button onClick={() => setOverlay(!overlay)}>Toggle overlay</button>
+        <button onClick={() => setExperimentVisible(!experimentVisible)}>Toggle experiment</button>
+        <button onClick={() => setTaskVisible(!taskVisible)}>Toggle task</button>
         <input
           aria-label="Grid opacity"
           value={opacity}
@@ -425,15 +431,16 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   expect(screen.getByText('Geometry preview')).toBeInTheDocument()
 })
 
-it('shows CAD during prediction, restores BoxGrid controls and respects a Geometry choice while pending', () => {
+it('retains the previous result during prediction, preserves BoxGrid controls and respects a Geometry choice while pending', () => {
   const props = { ...gridSelectionProps({ field: [2, 2, 1] }), persistenceKey: 'prediction:1' }
   const { rerender } = render(<WorkbenchViewer {...props} />)
   expect(currentResult()).toBe('field')
   fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.2' } })
   const pending = { ...props, recordedData: undefined, resultContracts: {}, resultPlaceholder: 'Predicting new Vars' }
   rerender(<WorkbenchViewer {...pending} />)
-  expect(screen.getByText('Geometry preview')).toBeInTheDocument()
-  expect(screen.queryByText('Box Grid field')).not.toBeInTheDocument()
+  expect(screen.queryByText('Geometry preview')).not.toBeInTheDocument()
+  expect(screen.getByText('Box Grid field')).toBeInTheDocument()
+  expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
   expect(currentResult()).toBe('field')
   rerender(<WorkbenchViewer {...props} />)
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
@@ -494,4 +501,54 @@ it('isolates the next Experiment and applies its own defaults', () => {
   rerender(<WorkbenchViewer key="second" {...props} />)
   expect(currentResult()).toBe('large')
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.5)
+})
+
+it('requests Geometry only for the selected visible view and keeps that demand through prediction updates', () => {
+  const required = vi.fn()
+  const props = {
+    ...gridSelectionProps({ field: [2, 2, 1] }),
+    persistenceKey: 'prediction:1',
+    onGeometryRequiredChange: required,
+  }
+  props.experimentDocument = { scene: {}, taskScenes: { wave: {} } } as unknown as typeof props.experimentDocument
+  const { rerender } = render(<WorkbenchViewer {...props} />)
+  expect(required).toHaveBeenLastCalledWith(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle overlay' }))
+  expect(required).toHaveBeenLastCalledWith(false)
+  const count = required.mock.calls.length
+  rerender(<WorkbenchViewer {...props} recordedData={undefined} resultContracts={{}} resultPlaceholder="Updating" />)
+  expect(required).toHaveBeenCalledTimes(count)
+  expect(screen.getByText('Box Grid field')).toBeInTheDocument()
+  rerender(<WorkbenchViewer {...props} />)
+  expect(required).toHaveBeenCalledTimes(count)
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle overlay' }))
+  expect(required).toHaveBeenLastCalledWith(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle task' }))
+  expect(required).toHaveBeenLastCalledWith(false)
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
+  expect(required).toHaveBeenLastCalledWith(true)
+})
+
+it('does not build Geometry before the first prediction determines its view, and respects saved overlay settings', () => {
+  const required = vi.fn()
+  const props = {
+    ...gridSelectionProps({ field: [2, 2, 1] }),
+    persistenceKey: 'prediction:1',
+    onGeometryRequiredChange: required,
+    initialDefaults: {
+      version: 1 as const,
+      selectedResult: 'field',
+      settings: { 'field:box.overlay': false },
+      camera: null,
+    },
+  }
+  const { rerender } = render(
+    <WorkbenchViewer {...props} recordedData={undefined} resultContracts={{}} resultPlaceholder="Updating" />,
+  )
+  expect(required).toHaveBeenLastCalledWith(false)
+  expect(screen.queryByText('Geometry preview')).not.toBeInTheDocument()
+  rerender(<WorkbenchViewer {...props} />)
+  expect(required).not.toHaveBeenCalledWith(true)
+  expect(currentResult()).toBe('field')
 })
