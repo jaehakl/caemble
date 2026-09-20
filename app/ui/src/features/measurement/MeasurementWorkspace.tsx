@@ -167,6 +167,13 @@ export function MeasurementWorkspace({
   const busy = operation !== null || workbench.measurementActions.busy || workbench.calculationDataActions.busy
   const persistable =
     authenticated && workbench.experimentClean && workbench.experimentManageable && !document.draftTaskNames.length
+  const selectedPrepared = measurements.filter(
+    (row) =>
+      !row.recorded_at &&
+      (selected.has(`measurement:${row.id}`) ||
+        candidates.some((candidate) => selected.has(candidate.id) && candidate.measurementId === row.id)),
+  )
+  const canDeletePrepared = authenticated && workbench.experimentManageable && selectedPrepared.length > 0 && !busy
   const forward = useMeasurementForward({
     experimentId: workbench.experimentId,
     contextKey,
@@ -432,6 +439,61 @@ export function MeasurementWorkspace({
     setCandidates((rows) => [...rows, candidate])
     setCurrentId(candidate.id)
     setSelected(new Set([candidate.id]))
+  }
+  const deletePrepared = async () => {
+    if (!canDeletePrepared) return
+    if (
+      !window.confirm(
+        `선택한 Prepared Measurement ${selectedPrepared.length.toLocaleString()}개를 영구 삭제할까요?\n${selectedPrepared.map((row) => `#${row.id}`).join(', ')}\n연결된 임시 후보도 함께 제거됩니다.`,
+      )
+    )
+      return
+    const session = workbench.workspaceSession
+    const experimentId = workbench.experimentId
+    const deletedIds = new Set(selectedPrepared.map((row) => row.id))
+    const removedPoints = new Set([
+      ...selectedPrepared.map((row) => `measurement:${row.id}`),
+      ...candidates.filter((row) => row.measurementId && deletedIds.has(row.measurementId)).map((row) => row.id),
+    ])
+    setOperation('삭제 중')
+    setError('')
+    try {
+      const deleted = await workbench.measurementActions.deleteMeasurements(selectedPrepared)
+      if (
+        !mounted.current ||
+        latest.current.workspaceSession !== session ||
+        latest.current.experimentId !== experimentId
+      )
+        return
+      if (!deleted) return
+      selectionSequence.current += 1
+      setCandidates((rows) => rows.filter((row) => !removedPoints.has(row.id)))
+      setExecution((states) =>
+        Object.fromEntries(
+          Object.entries(states).filter(
+            ([id, progress]) => !removedPoints.has(id) && !deletedIds.has(progress.measurementId ?? -1),
+          ),
+        ),
+      )
+      setSelected((ids) => new Set([...ids].filter((id) => !removedPoints.has(id))))
+      setCurrentId((id) => (removedPoints.has(id) ? 'draft' : id))
+      setPreviewFrame((frame) => (frame && removedPoints.has(frame.candidateId) ? null : frame))
+      await query.refetch()
+    } catch (cause) {
+      if (
+        mounted.current &&
+        latest.current.workspaceSession === session &&
+        latest.current.experimentId === experimentId
+      )
+        setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (
+        mounted.current &&
+        latest.current.workspaceSession === session &&
+        latest.current.experimentId === experimentId
+      )
+        setOperation(null)
+    }
   }
   const save = async () => {
     if (
@@ -789,7 +851,7 @@ export function MeasurementWorkspace({
             >
               전체 후보 Run
             </button>
-            {operation && operation !== '저장 중' ? (
+            {operation && operation !== '저장 중' && operation !== '삭제 중' ? (
               <button
                 className={controlClass}
                 onClick={() => {
@@ -829,9 +891,9 @@ export function MeasurementWorkspace({
           실행·저장에는 로그인과 저장된 편집 가능한 Experiment가 필요합니다.
         </p>
       ) : null}
-      {error || query.isError ? (
+      {error || workbench.measurementActions.error || query.isError ? (
         <p role="alert" className="border-b px-3 py-1 text-xs text-destructive">
-          {error || 'Measurement를 불러오지 못했습니다.'}
+          {error || workbench.measurementActions.error || 'Measurement를 불러오지 못했습니다.'}
         </p>
       ) : null}
       <div className="min-h-0 flex-1">
@@ -865,6 +927,13 @@ export function MeasurementWorkspace({
                       }}
                     >
                       선택 후보 삭제
+                    </button>
+                    <button
+                      className={controlClass}
+                      disabled={!canDeletePrepared}
+                      onClick={() => void deletePrepared()}
+                    >
+                      선택 Prepared 삭제
                     </button>
                     {pcaBusy ? <span>계산 중…</span> : null}
                   </header>

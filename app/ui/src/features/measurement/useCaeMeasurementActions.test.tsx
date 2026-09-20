@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   execution: vi.fn(),
   retry: vi.fn(),
   save: vi.fn(),
+  deleteRows: vi.fn(),
   calculate: vi.fn(),
   cancelCalculation: vi.fn(),
   invalidate: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock('@/api/cae', () => ({
     retry: mocks.retry,
   },
 }))
-vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save } } }))
+vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save, deleteRows: mocks.deleteRows } } }))
 vi.mock('@/features/cae/CaeBatchProvider', () => ({
   useCaeBatches: () => ({
     batches: mocks.batches,
@@ -186,6 +187,26 @@ beforeEach(() => {
 })
 
 describe('server-owned CAE measurement actions', () => {
+  it('reports a rejected deletion and clears that error on a successful retry', async () => {
+    const message = 'Cancel active CAE jobs before deleting their Measurements.'
+    mocks.deleteRows.mockRejectedValueOnce(new ApiError(409, message, null)).mockResolvedValueOnce(undefined)
+    const rendered = renderActions(measurement(41))
+    await act(async () => {
+      expect(await rendered.result.current.deleteMeasurements([measurement(41)])).toBe(false)
+    })
+    expect(rendered.result.current.error).toBe(message)
+    expect(rendered.result.current.busy).toBe(false)
+    expect(mocks.invalidate).not.toHaveBeenCalled()
+    await act(async () => {
+      expect(await rendered.result.current.deleteMeasurements([measurement(41)])).toBe(true)
+    })
+    expect(mocks.deleteRows).toHaveBeenNthCalledWith(1, [41])
+    expect(mocks.deleteRows).toHaveBeenNthCalledWith(2, [41])
+    expect(mocks.invalidate).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'user:first', 10, [41])
+    expect(rendered.result.current.error).toBeNull()
+    expect(rendered.result.current.busy).toBe(false)
+  })
+
   it('notifies recorded data once after invalidation and before a delayed Calculation', async () => {
     let finish: (value: typeof summary) => void = () => {}
     mocks.calculate.mockImplementation(

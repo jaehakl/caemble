@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   predict: vi.fn(),
   evaluate: vi.fn(),
   load: vi.fn(),
+  deleteMeasurements: vi.fn(),
+  confirm: vi.fn(),
 }))
 const schema = { x: { shape: [], min: 0, max: 1 } }
 const snapshot = {
@@ -26,10 +28,11 @@ const snapshot = {
   experiment: { materials: {} },
   tasks: {},
 }
-const rows = [
+const initialRows = [
   { id: 1, experiment_id: 10, vars: { x: 0.25 }, material_snapshot: snapshot, recorded_at: '2026-09-13' },
   { id: 2, experiment_id: 10, vars: { x: 0.8 }, material_snapshot: snapshot, recorded_at: null },
 ]
+let rows = [...initialRows]
 vi.mock('@/api', () => ({ getListRequest: () => ({}), dbTables: { Measurement: { create: mocks.save } } }))
 vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'public' }))
 vi.mock('./queryOptions', () => ({
@@ -141,13 +144,19 @@ const workbench = {
   candidateVars: { x: 0.25 },
   experimentDocument: { varsSchema: schema },
   selection: { measurement: rows[0], variables: rows[0].vars },
-  measurementActions: { runReviewed: mocks.run, cancel: mocks.cancel },
+  measurementActions: { runReviewed: mocks.run, cancel: mocks.cancel, deleteMeasurements: mocks.deleteMeasurements },
   calculationDataActions: {},
 } as unknown as CaeWorkbenchState
-function view(active = true, state = workbench) {
+function view(active = true, state = workbench, authenticated = true) {
   return (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MeasurementWorkspace workbench={state} authenticated dataReadable active={active} menubar={<nav>Tabs</nav>} />
+      <MeasurementWorkspace
+        workbench={state}
+        authenticated={authenticated}
+        dataReadable
+        active={active}
+        menubar={<nav>Tabs</nav>}
+      />
     </QueryClientProvider>
   )
 }
@@ -160,7 +169,14 @@ function deferred<T>() {
 }
 beforeEach(() => {
   vi.clearAllMocks()
-  rows.splice(2)
+  rows = [...initialRows]
+  mocks.confirm.mockReturnValue(true)
+  vi.stubGlobal('confirm', mocks.confirm)
+  mocks.deleteMeasurements.mockImplementation(async (selected: typeof rows) => {
+    const ids = new Set(selected.map((row) => row.id))
+    rows = rows.filter((row) => !ids.has(row.id))
+    return true
+  })
   mocks.evaluate.mockResolvedValue(undefined)
   mocks.load.mockImplementation(async (value) =>
     typeof value === 'number' ? (rows.find((row) => row.id === value) ?? rows[0]) : value,
@@ -184,6 +200,139 @@ beforeEach(() => {
 })
 
 describe('Measurement workspace integration', () => {
+  it('deletes a selected Prepared measurement despite invalid Vars and preserves the current Vars', async () => {
+    render(view())
+    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'measurement:2' } })
+    await waitFor(() =>
+      expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer Vars')).toHaveTextContent('0.8'),
+    )
+    fireEvent.change(screen.getByLabelText('x', { exact: true }), { target: { value: '2' } })
+    expect(screen.getByText('선택 Run')).toBeDisabled()
+    expect(screen.getByText('선택 후보 삭제')).toBeDisabled()
+    expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled()
+    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('1개'))
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('#2'))
+    await waitFor(() => expect(screen.queryByRole('option', { name: '#2 · Prepared' })).not.toBeInTheDocument())
+    expect(mocks.deleteMeasurements).toHaveBeenCalledExactlyOnceWith([initialRows[1]])
+    expect(screen.getByLabelText('점 선택')).toHaveValue('draft')
+    expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer Vars')).toHaveTextContent('0.8')
+    expect(screen.getByRole('option', { name: '#1 · Recorded' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Measurement #2 · prepared' })).not.toBeInTheDocument(),
+    )
+  })
+
+  it.each(['candidate', 'mixed'] as const)(
+    'deletes the Prepared linked to a failed candidate with %s selection and removes both points',
+    async (selection) => {
+      mocks.run.mockImplementationOnce(async (input, progress) => {
+        rows = [...rows, { ...initialRows[1], id: 100, vars: input.vars }]
+        progress({ measurementId: 100, state: 'failed', error: 'Solver failed' })
+        throw new Error('Solver failed')
+      })
+      render(view())
+      await waitFor(() => expect(screen.getByRole('button', { name: '후보 생성' })).toBeEnabled())
+      fireEvent.change(screen.getByLabelText('후보 생성 개수 N'), { target: { value: '1' } })
+      fireEvent.click(screen.getByRole('button', { name: '후보 생성' }))
+      await waitFor(() => expect(screen.getByText('선택 Run')).toBeEnabled())
+      fireEvent.click(screen.getByText('선택 Run'))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Measurement #100 · prepared' })).toBeInTheDocument(),
+      )
+      await waitFor(() => expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled())
+      const candidateVars = mocks.run.mock.calls[0][0].vars
+      mocks.confirm.mockReturnValueOnce(false)
+      fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+      expect(mocks.deleteMeasurements).not.toHaveBeenCalled()
+      expect(screen.getByRole('option', { name: /후보 1 · failed/ })).toBeInTheDocument()
+      if (selection === 'mixed') {
+        fireEvent.keyDown(screen.getByRole('button', { name: 'Measurement #100 · prepared' }), {
+          key: 'Enter',
+          ctrlKey: true,
+        })
+        fireEvent.keyDown(screen.getByRole('button', { name: 'Measurement #1 · recorded' }), {
+          key: 'Enter',
+          ctrlKey: true,
+        })
+      }
+      fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+      await waitFor(() => expect(screen.queryByRole('option', { name: '#100 · Prepared' })).not.toBeInTheDocument())
+      expect(mocks.deleteMeasurements).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ id: 100 })])
+      expect(screen.queryByRole('option', { name: /후보 1 · failed/ })).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('button', { name: '후보 1 · failed' })).not.toBeInTheDocument())
+      expect(screen.queryByRole('button', { name: 'Measurement #100 · prepared' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      if (selection === 'candidate') {
+        expect(screen.getByLabelText('점 선택')).toHaveValue('draft')
+        expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer Vars').textContent).toBe(
+          JSON.stringify(candidateVars),
+        )
+      } else {
+        expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1')
+        expect(screen.getByRole('button', { name: 'Measurement #1 · recorded' })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        )
+      }
+      expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+      expect(screen.getByText('선택 후보 삭제')).toBeDisabled()
+    },
+  )
+
+  it('keeps the selection and data when Prepared deletion is cancelled or rejected', async () => {
+    mocks.confirm.mockReturnValueOnce(false)
+    mocks.deleteMeasurements.mockResolvedValueOnce(false)
+    const rendered = render(view())
+    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'measurement:2' } })
+    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+    expect(mocks.deleteMeasurements).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:2')
+    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+    await waitFor(() => expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled())
+    rendered.rerender(
+      view(true, {
+        ...workbench,
+        measurementActions: {
+          ...workbench.measurementActions,
+          error: 'Cancel active CAE jobs before deleting their Measurements.',
+        },
+      }),
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Cancel active CAE jobs')
+    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:2')
+    expect(screen.getByRole('option', { name: '#2 · Prepared' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Measurement #2 · prepared' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('disables Prepared deletion for Recorded selection, missing permission, and busy operations', async () => {
+    const rendered = render(view())
+    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'measurement:2' } })
+    expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled()
+    rendered.rerender(view(true, workbench, false))
+    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    rendered.rerender(view(true, { ...workbench, experimentManageable: false }))
+    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    for (const action of ['measurementActions', 'calculationDataActions'] as const) {
+      rendered.rerender(view(true, { ...workbench, [action]: { ...workbench[action], busy: true } }))
+      expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    }
+    rendered.rerender(view())
+    const completion = deferred<boolean>()
+    mocks.deleteMeasurements.mockReturnValueOnce(completion.promise)
+    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    expect(screen.getByText('선택 Run')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument()
+    await act(async () => completion.resolve(false))
+    expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled()
+    expect(mocks.deleteMeasurements).toHaveBeenCalledTimes(1)
+  })
+
   it('retains both frames through three candidates and publishes actual results before Calculation finishes', async () => {
     const cad = Array.from({ length: 3 }, () => deferred<void>())
     const training = Array.from({ length: 4 }, () => deferred<{ session: null; error: string }>())

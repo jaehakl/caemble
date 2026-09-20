@@ -624,6 +624,7 @@ export function useCaeMeasurementActions({
     async (rows: readonly SavedMeasurement[]) => {
       if (operation || active.current) return false
       setOperation('delete')
+      setError(null)
       try {
         const ids = rows.map((row) => row.id)
         await dbTables.Measurement.deleteRows(ids)
