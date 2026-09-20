@@ -2,6 +2,7 @@ import base64
 import hashlib
 from types import SimpleNamespace
 import unittest
+from uuid import UUID
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
@@ -9,9 +10,50 @@ from models import CalculationDataOutput
 from storage.contracts import ObjectReference
 from storage.service import CHUNK_BYTES, bind_objects, finish_upload, object_refs, reference, signed_parts, validate_manifest
 from cae.recording import persist_record
+from models import RoleEnum, UserData
+from storage.router import read
 
 
 class ObjectStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_download_keeps_experiment_visibility_check(self):
+        row = self.row()
+        row.bound = True
+        db = SimpleNamespace(get=AsyncMock(return_value=row))
+        user = UserData(id="other", roles=[RoleEnum.user])
+        with patch("storage.router.require_experiment_read", AsyncMock(side_effect=HTTPException(404, "Private Experiment"))) as access, patch(
+            "storage.router.download_parts", AsyncMock()
+        ) as download:
+            with self.assertRaises(HTTPException) as failure:
+                await read(UUID(row.id), db, user)
+            self.assertEqual(failure.exception.status_code, 404)
+            access.assert_awaited_once_with(db, row.experiment_id, user)
+            download.assert_not_awaited()
+
+    async def test_download_rejects_unbound_foreign_and_deleted_owner_objects(self):
+        for deleted in (False, True):
+            row = self.row()
+            row.bound = deleted
+            if deleted:
+                row.measurement_id = None
+            db = SimpleNamespace(get=AsyncMock(return_value=row))
+            user = UserData(id="owner" if deleted else "other", roles=[RoleEnum.user])
+            with self.subTest(deleted=deleted), patch("storage.router.download_parts", AsyncMock()) as download:
+                with self.assertRaises(HTTPException) as failure:
+                    await read(UUID(row.id), db, user)
+                self.assertEqual(failure.exception.status_code, 404)
+                download.assert_not_awaited()
+
+    async def test_authorized_owner_can_download(self):
+        row = self.row()
+        db = SimpleNamespace(get=AsyncMock(return_value=row))
+        user = UserData(id="owner", roles=[RoleEnum.user])
+        with patch("storage.router.require_experiment_read", AsyncMock()) as access, patch(
+            "storage.router.download_parts", AsyncMock(return_value={"parts": []})
+        ) as download:
+            self.assertEqual(await read(UUID(row.id), db, user), {"parts": []})
+            access.assert_awaited_once_with(db, row.experiment_id, user)
+            download.assert_awaited_once()
+
     def row(self, data=b"test", encoding="base64"):
         digest = hashlib.sha256(data).hexdigest()
         return SimpleNamespace(id="11111111-1111-4111-8111-111111111111", user_id="owner", experiment_id=1,

@@ -35,6 +35,7 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   calculation init <dir> | list --experiment <id> | pull <id> --out <dir> | check <source.js>
   calculation run <source.js> --fixture <input.json> | --result <local-run> | --measurement <id>
   calculation push <dir> --experiment <id> --measurement <id>
+  calculation delete <id...> --experiment <id>
   calculation-data missing|run|export --experiment <id> [--calculation <id>] [--measurement <id>]
   measurement inspect <id> | data inspect|slice|export <resource> <id> [--offset N --count N]
   data export --result <local-result> --out <empty-directory>

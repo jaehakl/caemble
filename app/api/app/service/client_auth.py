@@ -1,5 +1,7 @@
 """Caemble access keys authorize owner-scoped authoring and execution APIs."""
 
+import re
+
 from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +26,9 @@ async def authenticate_caemble(request: Request, db: AsyncSession, authorization
     principal.require_scope("caemble")
     path = request.url.path.rstrip("/")
     first = path.lstrip("/").split("/", 1)[0]
-    if first not in CAEMBLE_RESOURCES and path != "/auth/me" and not path.startswith(("/web/jobs", "/web/launchers")):
+    # The storage router still enforces object ownership and Experiment visibility.
+    object_download = request.scope.get("method") == "GET" and re.fullmatch(r"/storage/objects/[^/]+", path) is not None
+    if first not in CAEMBLE_RESOURCES and not object_download and path != "/auth/me" and not path.startswith(("/web/jobs", "/web/launchers")):
         raise HTTPException(403, "Caemble keys cannot access account, key-management, or administration APIs.")
     user = await db.scalar(select(User).options(
         selectinload(User.user_roles).selectinload(UserRole.role),

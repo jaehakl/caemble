@@ -126,6 +126,29 @@ export async function calculationCommand(group: string, command: string, context
       { signal },
     )
   }
+  if (command === 'delete') {
+    const experimentId = Number(options.experiment)
+    const ids = [...new Set(args.map(Number))]
+    if (!Number.isSafeInteger(experimentId) || experimentId < 1)
+      throw new CliError('calculation delete requires a positive integer --experiment.')
+    if (!ids.length || ids.some((id) => !Number.isSafeInteger(id) || id < 1))
+      throw new CliError('calculation delete requires positive integer IDs.')
+    const tables = createDbTables(context.client())
+    for (let offset = 0; offset < ids.length; offset += 50) {
+      const selected = ids.slice(offset, offset + 50)
+      const rows = await tables.Calculation.listRows(
+        { ...getListRequest(), experiment_id: experimentId, selected_ids: selected, limit: 50 },
+        { signal },
+      )
+      for (const id of selected) {
+        if (!rows.items.some((row) => row.id === id && row.experiment_id === experimentId))
+          throw new CliError(`Calculation ${id} was not found in Experiment ${experimentId}.`, 1)
+      }
+    }
+    signal.throwIfAborted()
+    await tables.Calculation.deleteRows(ids)
+    return { experiment_id: experimentId, deleted_ids: ids }
+  }
   if (command === 'pull') {
     const id = Number(args[0])
     const row = (

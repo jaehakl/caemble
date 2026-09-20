@@ -21,6 +21,34 @@ from service.data_tools import VisibleDataError, slice_recorded_tensor
 
 
 class ClientContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_authoring_key_allows_only_storage_object_downloads(self):
+        db = AsyncMock()
+        principal = Principal("key", "owner", frozenset({"caemble"}))
+        user = UserData(id="owner", roles=[RoleEnum.admin])
+        object_path = "/storage/objects/11111111-1111-4111-8111-111111111111"
+        with patch("service.client_auth.authenticate_db_authorization", AsyncMock(return_value=principal)), patch(
+            "service.client_auth.user_data", return_value=user
+        ):
+            for path in (object_path, object_path + "/"):
+                actual = await authenticate_caemble(Request({"type": "http", "method": "GET", "path": path, "headers": []}), db, "Bearer csk_test")
+                self.assertEqual(actual.roles, [RoleEnum.user])
+            denied = [(method, object_path) for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")]
+            denied += [("GET", path) for path in ("/storage", "/storage/objects", object_path + "/extra", "/storage/other")]
+            denied += [("POST", "/storage/uploads"), ("POST", "/storage/uploads/id/complete")]
+            for method, path in denied:
+                with self.subTest(method=method, path=path), self.assertRaises(HTTPException) as failure:
+                    await authenticate_caemble(Request({"type": "http", "method": method, "path": path, "headers": []}), db, "Bearer csk_test")
+                self.assertEqual(failure.exception.status_code, 403)
+
+    async def test_storage_download_requires_caemble_scope(self):
+        for scope in ("client", "launcher"):
+            with self.subTest(scope=scope), patch(
+                "service.client_auth.authenticate_db_authorization",
+                AsyncMock(return_value=Principal("key", "owner", frozenset({scope}))),
+            ), self.assertRaises(HTTPException) as failure:
+                await authenticate_caemble(Request({"type": "http", "method": "GET", "path": "/storage/objects/id", "headers": []}), AsyncMock(), "Bearer csk_test")
+            self.assertEqual(failure.exception.status_code, 403)
+
     async def test_admin_account_key_is_owner_scoped_and_cannot_manage_keys(self):
         db = AsyncMock()
         principal = Principal("key", "owner", frozenset({"caemble"}))

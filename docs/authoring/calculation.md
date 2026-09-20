@@ -55,6 +55,14 @@ Each run with --out writes the result envelope plus adjacent .input.json and .so
 
 push is a server write and performs a fresh preflight using the required server --measurement; offline success cannot replace this step. The Measurement must belong to the target Experiment and have recorded data. A stale revision returns a conflict: pull/reconcile before saving again. To persist calculated results for saved Calculation/Measurement pairs, inspect calculation-data missing --experiment <id> first, then explicitly calculation-data run --experiment <id> --calculation <id> --measurement <id>. This last command writes CalculationData.
 
+## Delete Calculations
+
+Use `calculation delete <id...> --experiment <id>` to delete explicitly selected Calculations.
+The CLI verifies that every ID is a positive integer and belongs to the selected Experiment before deleting any rows.
+Back up sources with `calculation pull` and saved results with `calculation-data export` first:
+deletion also removes the associated CalculationData. Success returns `experiment_id` and `deleted_ids`;
+missing IDs, Experiment mismatches and API failures return a nonzero exit code.
+
 ## Complex RecordedData
 
 Complex physical quantities are stored as real amplitude/phase channels on axis 5,
