@@ -328,8 +328,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           embedded
           experimentId={workbench.experimentId}
           settingsContainer={analysisSettingsContainer}
+          selectedMeasurementId={workbench.selection.measurement?.id ?? null}
           tab={page.analysisTab}
           onRequestLogin={requestAccount}
+          onSelectMeasurement={(measurementId) =>
+            page.runSafely(async () => {
+              const row = await workbench.selection.loadMeasurement(measurementId, workbench.experimentId)
+              if (row && preflight.result) preflight.clear()
+            })
+          }
           onTabChange={setAnalysisTab}
         />
       </Suspense>

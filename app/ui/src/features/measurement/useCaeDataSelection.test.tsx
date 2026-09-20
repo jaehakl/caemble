@@ -143,6 +143,28 @@ describe('useCaeDataSelection', () => {
     expect(result.current.loading).toBe(false)
   })
 
+  it('retains the committed Measurement and results when the next load fails', async () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    mocks.readResults.mockResolvedValue({ recorded_data: {}, result_contracts: {} })
+    const { result } = renderHook(() => useCaeDataSelection(10, 'visible'), { wrapper })
+    await act(async () => {
+      await result.current.loadMeasurement(1)
+    })
+    const previous = result.current.flatRecordedData
+    const error = new Error('Result download failed')
+    mocks.readResults.mockRejectedValueOnce(error)
+
+    await act(async () => {
+      await expect(result.current.loadMeasurement(2)).rejects.toThrow(error)
+    })
+
+    expect(result.current.measurement?.id).toBe(1)
+    expect(result.current.flatRecordedData).toBe(previous)
+    expect(result.current.loading).toBe(false)
+  })
+
   it('does not let a completion refresh supersede the user selection still being fetched', async () => {
     mocks.readResults.mockResolvedValue({ recorded_data: {}, result_contracts: {} })
     const wrapper = ({ children }: PropsWithChildren) => (

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
+import type { AnalysisWorkspaceProps } from '@/features/analysis/AnalysisPage'
 
 const mocks = vi.hoisted(() => ({
   measurement: null as { id: number; recorded_at: string | null } | null,
@@ -13,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   isDemo: false,
   manageable: false,
   restoring: false,
+  preview: false,
+  clearPreview: vi.fn(),
+  loadMeasurement: vi.fn(),
+  reportError: vi.fn(),
 }))
 
 vi.mock('@/features/auth/use-auth', () => ({
@@ -20,6 +25,7 @@ vi.mock('@/features/auth/use-auth', () => ({
 }))
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
+    experimentId: 7,
     experimentDocument: { resultSessionKey: 'session' },
     experimentIsDemo: mocks.isDemo,
     experimentManageable: mocks.manageable,
@@ -27,10 +33,11 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
     workspaceSession: {},
     selection: {
       recordedData: {},
-      flatRecordedData: { savedMeasurement: 'sentinel' },
+      flatRecordedData: { savedMeasurement: 'sentinel', ...(mocks.measurement ? { id: mocks.measurement.id } : {}) },
       recordedSchemas: {},
       recordedRules: {},
       measurement: mocks.measurement,
+      loadMeasurement: mocks.loadMeasurement,
     },
     selectionContext: { calculationId: null },
     measurementActions: {},
@@ -42,7 +49,13 @@ vi.mock('./useCaePageSession', async () => {
   return {
     useCaePageSession: () => {
       const [layout, setLayout] = useState(defaultWorkbenchLayoutState)
-      return { ...layout, layout, setLayout, initialized: true }
+      return {
+        ...layout,
+        layout,
+        setLayout,
+        initialized: true,
+        runSafely: (run: () => unknown) => void Promise.resolve().then(run).catch(mocks.reportError),
+      }
     },
   }
 })
@@ -131,8 +144,32 @@ vi.mock('@/features/prediction/PredictionWorkspace', () => ({
   },
 }))
 vi.mock('@/features/analysis/AnalysisPage', () => ({
-  AnalysisWorkspace: ({ settingsContainer }: { settingsContainer: HTMLDivElement | null }) =>
-    settingsContainer ? createPortal(<section>Analysis settings</section>, settingsContainer) : null,
+  AnalysisWorkspace: ({ settingsContainer, onSelectMeasurement, selectedMeasurementId }: AnalysisWorkspaceProps) => (
+    <>
+      {settingsContainer ? createPortal(<section>Analysis settings</section>, settingsContainer) : null}
+      {[41, 42].map((id) => (
+        <button key={id} aria-pressed={selectedMeasurementId === id} onClick={() => onSelectMeasurement?.(id)}>
+          Measurement #{id}
+        </button>
+      ))}
+    </>
+  ),
+}))
+vi.mock('@/features/measurement/usePreflight', () => ({
+  usePreflight: () => {
+    const [preview, setPreview] = useState(mocks.preview)
+    return {
+      busy: false,
+      status: '',
+      error: null,
+      viewerEpoch: 0,
+      result: preview ? { experiment: {}, payload: {}, data: { preview: 'sentinel' }, errors: {} } : null,
+      clear: () => {
+        mocks.clearPreview()
+        setPreview(false)
+      },
+    }
+  },
 }))
 vi.mock('@/features/cae-workbench/dialogs', () => ({ ConfirmWorkbenchDialog: () => null }))
 vi.mock('@/features/cae-workbench/editors', () => ({
@@ -185,6 +222,8 @@ beforeEach(() => {
   mocks.isDemo = false
   mocks.manageable = false
   mocks.restoring = false
+  mocks.preview = false
+  mocks.loadMeasurement.mockReset()
 })
 
 describe('Workbench section navigation', () => {
@@ -234,6 +273,69 @@ describe('Workbench section navigation', () => {
 })
 
 describe('Workbench Viewer result updates', () => {
+  it.each([41, 42])(
+    'loads Analysis Measurement #%s and replaces a temporary preview only after success',
+    async (id) => {
+      mocks.measurement = { id: 41, recorded_at: null }
+      mocks.preview = true
+      let finish!: (row: { id: number; recorded_at: null }) => void
+      mocks.loadMeasurement.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = (row) => {
+              mocks.measurement = row
+              resolve(row)
+            }
+          }),
+      )
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter>
+            <CaeWorkbenchRoute />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'analysis' }))
+      const point = await screen.findByRole('button', { name: `Measurement #${id}` })
+      fireEvent.click(point)
+      await waitFor(() => expect(mocks.loadMeasurement).toHaveBeenCalledWith(id, 7))
+      expect(screen.getByRole('button', { name: 'Measurement #41' })).toHaveAttribute('aria-pressed', 'true')
+      expect(mocks.viewerProps.recordedData).toEqual({ preview: 'sentinel' })
+      expect(mocks.clearPreview).not.toHaveBeenCalled()
+
+      await act(async () => finish({ id, recorded_at: null }))
+      await waitFor(() => expect(mocks.viewerProps.recordedData).toEqual({ savedMeasurement: 'sentinel', id }))
+      expect(mocks.clearPreview).toHaveBeenCalledTimes(1)
+      expect(point).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('Analysis settings')).toBeInTheDocument()
+      expect(mocks.viewerProps.autoSelectResult).toBe(true)
+    },
+  )
+
+  it.each(['failed', 'superseded'])('retains the selected Measurement and preview for a %s load', async (outcome) => {
+    mocks.measurement = { id: 41, recorded_at: null }
+    mocks.preview = true
+    const error = new Error('Measurement loading failed')
+    if (outcome === 'failed') mocks.loadMeasurement.mockRejectedValue(error)
+    else mocks.loadMeasurement.mockResolvedValue(null)
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'analysis' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Measurement #42' }))
+    await waitFor(() => expect(mocks.loadMeasurement).toHaveBeenCalledWith(42, 7))
+    if (outcome === 'failed') await waitFor(() => expect(mocks.reportError).toHaveBeenCalledWith(error))
+    else expect(mocks.reportError).not.toHaveBeenCalled()
+    expect(mocks.clearPreview).not.toHaveBeenCalled()
+    expect(mocks.viewerProps.recordedData).toEqual({ preview: 'sentinel' })
+    expect(screen.getByRole('button', { name: 'Measurement #41' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Measurement #42' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('updates selected Measurements through the existing Viewer instance', () => {
     const queryClient = new QueryClient()
     const route = () => (

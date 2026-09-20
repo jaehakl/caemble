@@ -27,7 +27,9 @@ export type AnalysisWorkspaceProps = {
   experimentId: number | null
   embedded?: boolean
   onRequestLogin?: () => void
+  onSelectMeasurement?: (measurementId: number) => void
   onTabChange?: (tab: AnalysisTab) => void
+  selectedMeasurementId?: number | null
   settingsContainer?: Element | null
   tab?: AnalysisTab
 }
@@ -147,12 +149,16 @@ type ScatterPoint = Readonly<{
 
 function ScatterPlot({
   label,
+  onSelectMeasurement,
   points,
+  selectedMeasurementId,
   xLabel,
   yLabel,
 }: {
   label: string
+  onSelectMeasurement?: (measurementId: number) => void
   points: readonly ScatterPoint[]
+  selectedMeasurementId?: number | null
   xLabel: string
   yLabel: string
 }) {
@@ -179,7 +185,12 @@ function ScatterPlot({
   const colors = ['#ea580c', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4f46e5']
   return (
     <div className="overflow-x-auto">
-      <svg aria-label={label} className="h-[380px] w-full min-w-[560px]" role="img" viewBox="0 0 730 390">
+      <svg
+        aria-label={label}
+        className="h-[380px] w-full min-w-[560px]"
+        role={onSelectMeasurement ? 'group' : 'img'}
+        viewBox="0 0 730 390"
+      >
         {ticks.map((ratio) => {
           const x = left + ratio * (right - left)
           const y = bottom - ratio * (bottom - top)
@@ -205,20 +216,55 @@ function ScatterPlot({
         })}
         <line stroke="currentColor" strokeOpacity="0.35" x1={left} x2={right} y1={bottom} y2={bottom} />
         <line stroke="currentColor" strokeOpacity="0.35" x1={left} x2={left} y1={top} y2={bottom} />
-        {finite.map((point, index) => (
-          <circle
-            cx={scaleX(point.x)}
-            cy={scaleY(point.y)}
-            fill={colors[(point.cluster ?? 0) % colors.length]}
-            key={`${point.measurementId ?? index}-${index}`}
-            opacity="0.76"
-            r={point.outlier ? 5 : 3.8}
-            stroke={point.outlier ? '#111827' : 'white'}
-            strokeWidth={point.outlier ? 1.5 : 0.7}
-          >
-            <title>{`${point.measurementId ? `Measurement #${point.measurementId} · ` : ''}${formatNumber(point.x)}, ${formatNumber(point.y)}${point.outlier ? ' · 이상치' : ''}`}</title>
-          </circle>
-        ))}
+        {finite.map((point, index) => {
+          const measurementId = point.measurementId
+          const interactive = measurementId != null && onSelectMeasurement !== undefined
+          const selected = measurementId != null && measurementId === selectedMeasurementId
+          const description = `${measurementId != null ? `Measurement #${measurementId} · ` : ''}${formatNumber(point.x)}, ${formatNumber(point.y)}${point.outlier ? ' · 이상치' : ''}`
+          return (
+            <g
+              aria-label={interactive ? description : undefined}
+              aria-pressed={interactive ? selected : undefined}
+              className={interactive ? 'group cursor-pointer outline-none' : undefined}
+              key={`${measurementId ?? index}-${index}`}
+              onClick={interactive ? () => onSelectMeasurement(measurementId) : undefined}
+              onKeyDown={
+                interactive
+                  ? (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onSelectMeasurement(measurementId)
+                      }
+                    }
+                  : undefined
+              }
+              role={interactive ? 'button' : undefined}
+              tabIndex={interactive ? 0 : undefined}
+              transform={`translate(${scaleX(point.x)} ${scaleY(point.y)})`}
+            >
+              <title>{description}</title>
+              {interactive ? <circle aria-hidden="true" fill="transparent" r="9" /> : null}
+              <circle
+                aria-hidden="true"
+                className={cn(
+                  'stroke-foreground group-focus-visible:opacity-100',
+                  selected ? 'opacity-100' : 'opacity-0',
+                )}
+                fill="none"
+                pointerEvents="none"
+                r="8"
+                strokeWidth="2"
+              />
+              <circle
+                fill={colors[(point.cluster ?? 0) % colors.length]}
+                opacity="0.76"
+                r={point.outlier ? 5 : 3.8}
+                stroke={point.outlier ? '#111827' : 'white'}
+                strokeWidth={point.outlier ? 1.5 : 0.7}
+              />
+            </g>
+          )
+        })}
         <text
           className="fill-foreground"
           fontSize="12"
@@ -433,7 +479,9 @@ export function AnalysisWorkspace({
   experimentId,
   embedded = false,
   onRequestLogin,
+  onSelectMeasurement,
   onTabChange,
+  selectedMeasurementId,
   settingsContainer,
   tab: controlledTab,
 }: AnalysisWorkspaceProps) {
@@ -687,7 +735,9 @@ export function AnalysisWorkspace({
                   <>
                     <ScatterPlot
                       label={`${columnLabel(exploreInput)}와 ${columnLabel(exploreTarget)} 산점도`}
+                      onSelectMeasurement={onSelectMeasurement}
                       points={relationshipPlot.points}
+                      selectedMeasurementId={selectedMeasurementId}
                       xLabel={`${columnLabel(exploreInput)}${exploreInput?.unit ? ` (${exploreInput.unit})` : ''}`}
                       yLabel={`${columnLabel(exploreTarget)}${exploreTarget?.unit ? ` (${exploreTarget.unit})` : ''}`}
                     />
@@ -886,6 +936,8 @@ export function AnalysisWorkspace({
                     <CardContent>
                       <ScatterPlot
                         label="PCA 2D projection"
+                        onSelectMeasurement={onSelectMeasurement}
+                        selectedMeasurementId={selectedMeasurementId}
                         points={mining.points.map((point) => ({
                           x: point.pc1,
                           y: point.pc2,
