@@ -67,6 +67,7 @@ vi.mock('./useCaeDataSelection', () => ({
       variables: row?.vars,
       materialSnapshot: row?.material_snapshot,
       loadMeasurement,
+      clearMeasurement: () => setRow(null),
       recordedRules: [],
       flatRecordedData: row ? { result: `actual:${row.vars.x}` } : {},
       resultContracts: { result: { visualization: { kind: 'box-grid' } } },
@@ -200,6 +201,39 @@ beforeEach(() => {
 })
 
 describe('Measurement workspace integration', () => {
+  it('deletes a Recorded measurement and clears its displayed results only after success', async () => {
+    mocks.confirm.mockReturnValueOnce(false)
+    mocks.deleteMeasurements.mockResolvedValueOnce(false)
+    render(view(true, { ...workbench, experimentIsDemo: true }))
+    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    await waitFor(() =>
+      expect(within(screen.getByLabelText('실제 결과 Viewer')).getByLabelText('Viewer data')).toHaveTextContent(
+        'actual:0.25',
+      ),
+    )
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
+    expect(mocks.deleteMeasurements).not.toHaveBeenCalled()
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('Recorded Measurement 1개'))
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('RecordedData도 함께 삭제'))
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('공개 Demo 데이터에 즉시 반영'))
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
+    await waitFor(() => expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled())
+    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1')
+    expect(within(screen.getByLabelText('실제 결과 Viewer')).getByLabelText('Viewer data')).toHaveTextContent(
+      'actual:0.25',
+    )
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
+    await waitFor(() => expect(screen.queryByRole('option', { name: '#1 · Recorded' })).not.toBeInTheDocument())
+    expect(mocks.deleteMeasurements).toHaveBeenLastCalledWith([initialRows[0]])
+    expect(screen.getByLabelText('점 선택')).toHaveValue('draft')
+    expect(screen.getByText('Recorded Measurement를 선택하면 실제 결과를 표시합니다.')).toBeInTheDocument()
+    expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer Vars')).toHaveTextContent('0.25')
+    expect(screen.getByRole('option', { name: '#2 · Prepared' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Measurement #1 · recorded' })).not.toBeInTheDocument(),
+    )
+  })
+
   it('deletes a selected Prepared measurement despite invalid Vars and preserves the current Vars', async () => {
     render(view())
     await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
@@ -210,8 +244,8 @@ describe('Measurement workspace integration', () => {
     fireEvent.change(screen.getByLabelText('x', { exact: true }), { target: { value: '2' } })
     expect(screen.getByText('선택 Run')).toBeDisabled()
     expect(screen.getByText('선택 후보 삭제')).toBeDisabled()
-    expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled()
-    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+    expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled()
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
     expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('1개'))
     expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('#2'))
     await waitFor(() => expect(screen.queryByRole('option', { name: '#2 · Prepared' })).not.toBeInTheDocument())
@@ -241,10 +275,10 @@ describe('Measurement workspace integration', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Measurement #100 · prepared' })).toBeInTheDocument(),
       )
-      await waitFor(() => expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled())
+      await waitFor(() => expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled())
       const candidateVars = mocks.run.mock.calls[0][0].vars
       mocks.confirm.mockReturnValueOnce(false)
-      fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+      fireEvent.click(screen.getByText('선택 Measurement 삭제'))
       expect(mocks.deleteMeasurements).not.toHaveBeenCalled()
       expect(screen.getByRole('option', { name: /후보 1 · failed/ })).toBeInTheDocument()
       if (selection === 'mixed') {
@@ -257,9 +291,13 @@ describe('Measurement workspace integration', () => {
           ctrlKey: true,
         })
       }
-      fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+      fireEvent.click(screen.getByText('선택 Measurement 삭제'))
       await waitFor(() => expect(screen.queryByRole('option', { name: '#100 · Prepared' })).not.toBeInTheDocument())
-      expect(mocks.deleteMeasurements).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ id: 100 })])
+      expect(mocks.deleteMeasurements).toHaveBeenCalledExactlyOnceWith(
+        selection === 'mixed'
+          ? [initialRows[0], expect.objectContaining({ id: 100 })]
+          : [expect.objectContaining({ id: 100 })],
+      )
       expect(screen.queryByRole('option', { name: /후보 1 · failed/ })).not.toBeInTheDocument()
       await waitFor(() => expect(screen.queryByRole('button', { name: '후보 1 · failed' })).not.toBeInTheDocument())
       expect(screen.queryByRole('button', { name: 'Measurement #100 · prepared' })).not.toBeInTheDocument()
@@ -270,13 +308,11 @@ describe('Measurement workspace integration', () => {
           JSON.stringify(candidateVars),
         )
       } else {
-        expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1')
-        expect(screen.getByRole('button', { name: 'Measurement #1 · recorded' })).toHaveAttribute(
-          'aria-pressed',
-          'true',
-        )
+        expect(screen.getByLabelText('점 선택')).toHaveValue('draft')
+        expect(screen.queryByRole('option', { name: '#1 · Recorded' })).not.toBeInTheDocument()
+        expect(screen.getByText('Recorded Measurement를 선택하면 실제 결과를 표시합니다.')).toBeInTheDocument()
       }
-      expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+      expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
       expect(screen.getByText('선택 후보 삭제')).toBeDisabled()
     },
   )
@@ -287,11 +323,11 @@ describe('Measurement workspace integration', () => {
     const rendered = render(view())
     await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
     fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'measurement:2' } })
-    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
     expect(mocks.deleteMeasurements).not.toHaveBeenCalled()
     expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:2')
-    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
-    await waitFor(() => expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled())
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
+    await waitFor(() => expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled())
     rendered.rerender(
       view(true, {
         ...workbench,
@@ -307,29 +343,31 @@ describe('Measurement workspace integration', () => {
     expect(screen.getByRole('button', { name: 'Measurement #2 · prepared' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('disables Prepared deletion for Recorded selection, missing permission, and busy operations', async () => {
+  it('disables Measurement deletion without selection, permission, or while busy', async () => {
     const rendered = render(view())
     await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
-    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'draft' } })
+    expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
     fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'measurement:2' } })
-    expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled()
+    expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled()
     rendered.rerender(view(true, workbench, false))
-    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
     rendered.rerender(view(true, { ...workbench, experimentManageable: false }))
-    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
     for (const action of ['measurementActions', 'calculationDataActions'] as const) {
       rendered.rerender(view(true, { ...workbench, [action]: { ...workbench[action], busy: true } }))
-      expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+      expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
     }
     rendered.rerender(view())
     const completion = deferred<boolean>()
     mocks.deleteMeasurements.mockReturnValueOnce(completion.promise)
-    fireEvent.click(screen.getByText('선택 Prepared 삭제'))
-    expect(screen.getByText('선택 Prepared 삭제')).toBeDisabled()
+    fireEvent.click(screen.getByText('선택 Measurement 삭제'))
+    expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
     expect(screen.getByText('선택 Run')).toBeDisabled()
     expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument()
     await act(async () => completion.resolve(false))
-    expect(screen.getByText('선택 Prepared 삭제')).toBeEnabled()
+    expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled()
     expect(mocks.deleteMeasurements).toHaveBeenCalledTimes(1)
   })
 

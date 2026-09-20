@@ -167,13 +167,13 @@ export function MeasurementWorkspace({
   const busy = operation !== null || workbench.measurementActions.busy || workbench.calculationDataActions.busy
   const persistable =
     authenticated && workbench.experimentClean && workbench.experimentManageable && !document.draftTaskNames.length
-  const selectedPrepared = measurements.filter(
+  const selectedMeasurements = measurements.filter(
     (row) =>
-      !row.recorded_at &&
-      (selected.has(`measurement:${row.id}`) ||
-        candidates.some((candidate) => selected.has(candidate.id) && candidate.measurementId === row.id)),
+      selected.has(`measurement:${row.id}`) ||
+      candidates.some((candidate) => selected.has(candidate.id) && candidate.measurementId === row.id),
   )
-  const canDeletePrepared = authenticated && workbench.experimentManageable && selectedPrepared.length > 0 && !busy
+  const canDeleteMeasurements =
+    authenticated && workbench.experimentManageable && selectedMeasurements.length > 0 && !busy
   const forward = useMeasurementForward({
     experimentId: workbench.experimentId,
     contextKey,
@@ -440,25 +440,26 @@ export function MeasurementWorkspace({
     setCurrentId(candidate.id)
     setSelected(new Set([candidate.id]))
   }
-  const deletePrepared = async () => {
-    if (!canDeletePrepared) return
+  const deleteSelectedMeasurements = async () => {
+    if (!canDeleteMeasurements) return
+    const recordedCount = selectedMeasurements.filter((row) => row.recorded_at).length
     if (
       !window.confirm(
-        `선택한 Prepared Measurement ${selectedPrepared.length.toLocaleString()}개를 영구 삭제할까요?\n${selectedPrepared.map((row) => `#${row.id}`).join(', ')}\n연결된 임시 후보도 함께 제거됩니다.`,
+        `선택한 Measurement ${selectedMeasurements.length.toLocaleString()}개를 영구 삭제할까요?\n${selectedMeasurements.map((row) => `#${row.id}`).join(', ')}\nRecorded Measurement ${recordedCount.toLocaleString()}개에 연결된 RecordedData도 함께 삭제됩니다.\n연결된 임시 후보도 함께 제거됩니다.${workbench.experimentIsDemo ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
       )
     )
       return
     const session = workbench.workspaceSession
     const experimentId = workbench.experimentId
-    const deletedIds = new Set(selectedPrepared.map((row) => row.id))
+    const deletedIds = new Set(selectedMeasurements.map((row) => row.id))
     const removedPoints = new Set([
-      ...selectedPrepared.map((row) => `measurement:${row.id}`),
+      ...selectedMeasurements.map((row) => `measurement:${row.id}`),
       ...candidates.filter((row) => row.measurementId && deletedIds.has(row.measurementId)).map((row) => row.id),
     ])
     setOperation('삭제 중')
     setError('')
     try {
-      const deleted = await workbench.measurementActions.deleteMeasurements(selectedPrepared)
+      const deleted = await workbench.measurementActions.deleteMeasurements(selectedMeasurements)
       if (
         !mounted.current ||
         latest.current.workspaceSession !== session ||
@@ -478,6 +479,14 @@ export function MeasurementWorkspace({
       setSelected((ids) => new Set([...ids].filter((id) => !removedPoints.has(id))))
       setCurrentId((id) => (removedPoints.has(id) ? 'draft' : id))
       setPreviewFrame((frame) => (frame && removedPoints.has(frame.candidateId) ? null : frame))
+      setRecordedDocuments((documents) =>
+        Object.fromEntries(Object.entries(documents).filter(([id]) => !deletedIds.has(Number(id)))),
+      )
+      if (
+        deletedIds.has(actualRef.current.measurement?.id ?? -1) ||
+        (actualRef.current.loading && removedPoints.has(currentId))
+      )
+        actualRef.current.clearMeasurement()
       await query.refetch()
     } catch (cause) {
       if (
@@ -930,10 +939,10 @@ export function MeasurementWorkspace({
                     </button>
                     <button
                       className={controlClass}
-                      disabled={!canDeletePrepared}
-                      onClick={() => void deletePrepared()}
+                      disabled={!canDeleteMeasurements}
+                      onClick={() => void deleteSelectedMeasurements()}
                     >
-                      선택 Prepared 삭제
+                      선택 Measurement 삭제
                     </button>
                     {pcaBusy ? <span>계산 중…</span> : null}
                   </header>
