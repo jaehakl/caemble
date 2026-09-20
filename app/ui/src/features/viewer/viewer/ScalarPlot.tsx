@@ -309,12 +309,13 @@ export function ScalarPlot({
                   minWidth: '100%',
                   minHeight: '100%',
                 }
-              : { width: '100%', height: '100%' }
+              : { width: '100%', height: '100%', minWidth: 320, minHeight: 220 }
           }
         >
           <canvas
             ref={canvasRef}
-            className="sticky top-0 left-0 block"
+            // Rounded client dimensions must not overflow a fractional-sized viewport and toggle its scrollbars.
+            className="sticky top-0 left-0 block max-h-full max-w-full"
             role="img"
             aria-label={`${kind} 차트`}
             onMouseLeave={() => setHover('')}

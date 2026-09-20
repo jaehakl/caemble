@@ -109,6 +109,11 @@ const server = await createServer({
         root.render(<BoxGridResult key="pixels" name="signal" rules={[{...rule,result:{...rule.result,tensorOrder:0,unit:'W',axes:axes.map(({name,unit})=>({name,unit})),boxGrid}}]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={false} renderViewer={noop}/>);
       };
 
+      window.renderScalarQA=(kind)=>root.render(<ScalarPlot key={kind} kind={kind} plot={{
+        axes:[{name:'y',ticks:[0,1]},{name:'x',ticks:[0,1,2]}],
+        shape:[2,3],values:[0,1,2,3,4,5],range:[0,5]
+      }}/>);
+
       window.renderRasterQA=({overlay=false,width=1280,height=720,nonuniform=false,range=[0,1],values: supplied}={})=>{
         const values=supplied ?? Array.from({length:width*height},(_,i)=>[1,width+3,511*width+511,512*width+512,width*height-1].includes(i)?1:0);
         const plot={axes:[{name:'y',ticks:Array.from({length:height},(_,i)=>i+.5)},{name:'x',ticks:Array.from({length:width},(_,i)=>nonuniform?i*i+.5:i+.5)}],shape:[height,width],values,range};
@@ -203,7 +208,11 @@ const server = await createServer({
 let browser
 try {
   await server.listen()
-  browser = await chromium.launch({ headless: true, args: ['--enable-unsafe-swiftshader'] })
+  browser = await chromium.launch({
+    headless: true,
+    ignoreDefaultArgs: ['--hide-scrollbars'],
+    args: ['--enable-unsafe-swiftshader'],
+  })
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     permissions: ['clipboard-read', 'clipboard-write'],
@@ -212,6 +221,89 @@ try {
     errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/box-grid-fixture`)
+  const layoutPage = await context.newPage()
+  layoutPage.on('pageerror', (error) => errors.push(error.message))
+  await layoutPage.goto(`http://127.0.0.1:${server.httpServer.address().port}/box-grid-fixture`)
+  await layoutPage.waitForFunction(() => typeof window.renderScalarQA === 'function')
+  const stableChartLayout = async (label) => {
+    const samples = await layoutPage.evaluate(async () => {
+      const canvas = document.querySelector('canvas[role="img"]')
+      const viewport = canvas.parentElement.parentElement
+      const samples = []
+      for (let frame = 0; frame < 30; frame++) {
+        await new Promise(requestAnimationFrame)
+        if (frame < 10) continue
+        samples.push({
+          width: viewport.clientWidth,
+          height: viewport.clientHeight,
+          scrollWidth: viewport.scrollWidth,
+          scrollHeight: viewport.scrollHeight,
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height,
+        })
+      }
+      return samples
+    })
+    assert.equal(new Set(samples.map((sample) => JSON.stringify(sample))).size, 1, `${label}: layout oscillates`)
+    return samples[0]
+  }
+  for (const kind of ['heatmap', 'line', 'histogram']) {
+    await layoutPage.evaluate((kind) => window.renderScalarQA(kind), kind)
+    await layoutPage.getByRole('img', { name: `${kind} 차트`, exact: true }).waitFor()
+    for (const zoom of [1, 1.25, 1.5]) {
+      for (const [width, height] of [
+        [500.5, 350.5],
+        [280.5, 210.5],
+        [600.75, 400.75],
+      ]) {
+        await layoutPage.evaluate(
+          ({ zoom, width, height }) => {
+            Object.assign(document.getElementById('fixture').style, {
+              zoom: String(zoom),
+              width: `${width}px`,
+              height: `${height}px`,
+            })
+          },
+          { zoom, width, height },
+        )
+        const layout = await stableChartLayout(`${kind}, zoom ${zoom}, ${width}×${height}`)
+        if (width < 320) {
+          assert.ok(layout.scrollWidth >= 320 && layout.scrollHeight >= 220, 'Small panels retain minimum chart size')
+          assert.ok(layout.scrollWidth > layout.width && layout.scrollHeight > layout.height)
+        } else {
+          assert.equal(layout.scrollWidth, layout.width, 'Fit mode should not create horizontal overflow')
+          assert.equal(layout.scrollHeight, layout.height, 'Fit mode should not create vertical overflow')
+        }
+      }
+      if (zoom === 1) {
+        await layoutPage.getByRole('img', { name: `${kind} 차트`, exact: true }).hover()
+        await layoutPage.waitForFunction(() => document.querySelector('[role="status"]').textContent.trim())
+        await stableChartLayout(`${kind} with hover value`)
+        await layoutPage.mouse.move(0, 0)
+      }
+    }
+  }
+  await layoutPage.evaluate(() => window.renderRasterQA({ width: 800, height: 600 }))
+  await layoutPage.getByRole('button', { name: '원본 크기', exact: true }).click()
+  const nativeLayout = await stableChartLayout('Native heatmap')
+  assert.equal(nativeLayout.scrollWidth, 900)
+  assert.equal(nativeLayout.scrollHeight, 690)
+  await layoutPage.evaluate(() => {
+    document.querySelector('canvas[role="img"]').parentElement.parentElement.scrollTo(200, 150)
+  })
+  await stableChartLayout('Scrolled native heatmap')
+  assert.deepEqual(
+    await layoutPage.evaluate(() => {
+      const viewport = document.querySelector('canvas[role="img"]').parentElement.parentElement
+      return [viewport.scrollLeft, viewport.scrollTop]
+    }),
+    [200, 150],
+  )
+  await layoutPage.getByRole('button', { name: '화면 맞춤', exact: true }).click()
+  const fitLayout = await stableChartLayout('Return to fit mode')
+  assert.equal(fitLayout.scrollWidth, fitLayout.width)
+  assert.equal(fitLayout.scrollHeight, fitLayout.height)
+  await layoutPage.close()
   const ready = () =>
     page
       .getByRole('button', { name: '변환 코드 복사', exact: true })
