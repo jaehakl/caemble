@@ -1,10 +1,23 @@
-# Non-sequential Ray Tracing
+# 광선 추적: 광원부터 검출 결과까지
 
-Catalog의 `ray-tracing`은 미리 정한 표면 순서를 따르지 않고, 광선이 기하와 만나는 순서대로 반사·굴절·산란·흡수를 추적하는 non-sequential solver입니다. 다중 반사, stray light, 바플과 혼탁 매질을 포함한 광학계에 사용하세요.
+카탈로그의 `ray-tracing`은 광선이 실제 형상과 만나는 순서에 따라 반사·굴절·산란·흡수를 계산합니다. 이 방식을 **비순차 광선 추적(non-sequential ray tracing)**이라고 합니다. 미리 정한 광학면 순서에 갇히지 않아 다중 반사, 불필요한 빛(stray light), 차광 구조와 혼탁 매질을 포함한 광학계를 살펴볼 수 있습니다.
+
+## 처음 읽는 분을 위한 순서
+
+먼저 [Task 작성](program-task.md)과 [재료 모델 연결](program-materials.md)을 확인하고, [공식 광학 예제](/doc?help=examples)를 열어 소스와 이 문서를 나란히 읽어 보세요.
+
+1. 형상과 광원 위치, 광선이 충돌할 영역을 확인합니다.
+2. 재료의 광학 모델과 반사·산란·박막 등 필요한 경계조건을 확인합니다.
+3. 어디에서 어떤 수치를 기록할지 정하고 검출 결과를 살펴봅니다.
+4. 픽셀 전력이나 분광기 예제가 필요하면 아래의 해당 절로 이동합니다.
+
+광선 경로는 빛이 지나간 길을 이해하는 데 사용하고, 전력·효율은 기록된 수치 결과로 확인하세요. 표시된 경로가 전체 광선을 뜻하는 것은 아닙니다. 아래의 광학 입력과 제한은 선택한 Solver의 [현재 규격](/doc?help=solvers) 및 예제 소스와 함께 확인해 주세요.
+
+## 광학계 구성과 결과 읽기
 
 ### 연속 형상과 표시 해상도
 
-Ray tracing은 Primitive의 연속 표면에서 교점과 외향법선을 계산합니다. Box, Sphere, Cylinder·원뿔대, Ellipsoid, Paraboloid, Hyperboloid, AsphericCylinder, Fiber, CurvedEdgeCylinder 및 이들의 Transform·Instance·Boolean 조합을 지원합니다. Viewer용 tessellation 설정을 바꿔도 같은 seed의 광원 표본, 교점, 법선과 광학 결과는 바뀌지 않습니다.
+광선 추적은 기본 형상 요소(Primitive)의 연속 표면에서 교점과 바깥쪽 법선을 계산합니다. Box, Sphere, Cylinder·원뿔대, Ellipsoid, Paraboloid, Hyperboloid, AsphericCylinder, Fiber, CurvedEdgeCylinder 및 이들의 변환·인스턴스·Boolean 조합을 지원합니다. Viewer의 표시용 분할(tessellation)을 바꿔도 같은 난수 seed의 광원 표본, 교점, 법선과 광학 결과는 바뀌지 않습니다.
 
 표면 그룹은 기존 숫자 surface slot을 사용합니다. Boolean 내부에 가려진 면에서는 충돌이나 방출이 발생하지 않으며 절삭면의 법선은 최종 solid 바깥을 향합니다. 표면 광원은 변환 후 실제 면적에 비례해 표본을 생성하고, 점광원은 최종 연속 형상의 bounds 중심에 놓입니다.
 
@@ -151,3 +164,7 @@ CLI에서는 `doctor` 후 `experiment init <새 디렉터리> --example transmis
 5. 고정·차광 전후의 선 위치·선폭을 비교합니다. 알려진 좁은 발광선으로 중앙과 슬릿 양끝을 보정하고, 같은 노출·게인에서 암영상과 흰색 기준영상을 취득합니다.
 
 포화·약한 기준 신호를 제외하고 상대 스펙트럼을 비교합니다. 등가 모델의 선폭이나 nm/pixel이 실물의 5–15 nm 분광 해상도 목표를 달성했다는 뜻은 아닙니다. 최종 판정은 파장과 슬릿 위치별 실측 선폭·반복성으로 합니다.
+
+## 결과를 더 살펴보려면
+
+공간·파장 축과 성분을 선택하는 방법은 [결과 기록과 Viewer](program-domain-recording.md), 기록된 전력으로 수치를 계산하는 방법은 [Calculation 안내](../workbench/workbench-calculation.md)를 참고하세요. 조건을 바꾸기 전에는 현재 입력과 결과를 저장해 두고, 같은 단위·파장·집계 방식으로 비교해 보세요.

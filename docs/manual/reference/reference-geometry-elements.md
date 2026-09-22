@@ -1,8 +1,14 @@
-# Primitive 선택과 operation 규칙
+# 기본 형상과 조합 연산 선택하기
 
-표현할 수 있다면 `Box`, `Cylinder`, `Sphere`부터 사용하세요. Primitive는 `@caemble/core`에서 PascalCase로 import하고 operation은 lowercase JSX tag로 작성합니다. 곡선에는 `CurvedEdgeCylinder`, `Fiber`, `AsphericCylinder`, `Ellipsoid`, `Hyperboloid`, `Paraboloid`를 사용할 수 있습니다. 각 prop의 type, 필수 여부, 기본값, 제약, 기준 원점, surface 의미와 실행 가능한 예제는 [Geometry Catalog](/doc?help=geometry)가 공식 원본입니다.
+형상은 기본 요소를 배치하고 합치거나 빼는 방식으로 만듭니다. 처음에는 `Box`, `Cylinder`, `Sphere`로 표현할 수 있는지부터 살펴보세요. [Geometry 기본 구조](reference-geometry-skeleton.md)를 알고 있다면 이 문서에서 필요한 요소와 조합 방법을 찾을 수 있습니다.
 
-| Operation   | child 계약                                              | 핵심 규칙                                                             |
+## 기본 요소 고르기
+
+기본 형상 요소(Primitive)는 `@caemble/core`에서 PascalCase 이름으로 가져오고, 조합 연산은 소문자 JSX 태그로 작성합니다. 곡선이 필요하면 `CurvedEdgeCylinder`, `Fiber`, `AsphericCylinder`, `Ellipsoid`, `Hyperboloid`, `Paraboloid`를 살펴보세요. 속성의 타입, 필수 여부, 기본값, 제약, 기준 원점, 표면 번호와 실행 가능한 예제는 [형상 카탈로그](/doc?help=geometry)에서 확인합니다.
+
+## 여러 형상 조합하기
+
+| 연산   | 필요한 자식 요소                                              | 핵심 규칙                                                             |
 | ----------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
 | `translate` | 1개 이상                                                | `offset` Vec3로 child group을 상대 이동                               |
 | `rotate`    | 1개 이상                                                | `axis`와 radian `angle`로 오른손 axis-angle 회전                      |
@@ -12,9 +18,11 @@
 | `intersect` | 2개 이상                                                | 모든 child의 공통 체적만 유지                                         |
 | `array`     | 정확히 1개의 identified intrinsic 또는 `Geometry` child | `shape`, `period`, 선택적 `axes`와 canonical `inject`로 instance 생성 |
 
-Boolean child 순서는 source 계약의 일부입니다. ring은 큰 cylinder 하나로 근사하지 말고, 큰 cylinder에서 더 높고 작은 cylinder를 빼서 실제 annular solid를 만드세요. 0 두께, 음수 크기, NaN/Infinity, 퇴화한 축처럼 유효하지 않은 입력은 evaluator가 거부합니다.
+Boolean 연산에서는 자식 요소의 순서도 결과를 결정합니다. 고리를 만들려면 큰 Cylinder에서 더 높고 반경이 작은 Cylinder를 빼 실제 구멍을 표현하세요. 두께 0, 음수 크기, NaN/Infinity, 방향을 정할 수 없는 축처럼 유효하지 않은 입력은 평가 단계에서 거부됩니다.
 
-Material은 root에서 역할 map으로 주입하고 leaf에서 `body`로 remap합니다. 생략하면 parent map을 상속하고, 명시하면 교체하며, `materials={{}}`는 상속을 지웁니다. 자세한 모델 입력과 역할 계약은 [Material과 Model Parameter](/doc?help=manual&item=program-materials)을 참고하세요.
+재료는 상위 형상에서 역할별로 전달하고, 실제 부품에서 `body` 역할에 연결합니다. 생략하면 부모의 재료 맵을 물려받고, 명시하면 교체하며, `materials={{}}`는 상속을 지웁니다. 자세한 내용은 [재료 연결 안내](/doc?help=manual&item=program-materials)를 참고하세요.
+
+## 곡면과 경로의 상세 규칙
 
 ### 연속 형상과 길이 단위
 
@@ -42,3 +50,7 @@ Fiber의 mesh 설정은 `tessellation: { pathSegments: 128, radialSegments: 12 }
 ### 이전 입력 이관
 
 CAD `<shell>`과 `curvedSurfaceSphere`, Fiber callback·`basePath`·`helix`·`fourier`·`envelopePower`·기존 sampling 전용 입력은 제거되었습니다. 별칭이나 자동 변환은 제공하지 않습니다. 저장된 source를 새 계약으로 수정하고 UI·CLI·worker가 공유하는 canonical v2로 다시 빌드하세요. 구조해석 shell 요소는 유지합니다. 입체 재료층은 명시적 solid Boolean으로, 광학 박막은 [표면 박막 경계조건](/doc?help=manual&item=program-ray-tracing)으로 작성합니다. 반경 차이는 일정 거리 offset을 뜻하지 않습니다.
+
+## 작성한 형상 확인하기
+
+Viewer에서 예상한 체적과 구멍이 보이는지, 기준 원점과 재료가 맞는지 확인하세요. 이후 [형상 변환](reference-geometry-transforms.md)으로 배치를 조절하고 [ID와 그룹](reference-geometry-identity.md)으로 해석 대상을 지정할 수 있습니다.

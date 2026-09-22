@@ -196,5 +196,23 @@
     "section": "troubleshooting",
     "anchor": "troubleshooting-runtime-results",
     "aliases": []
+  },
+  {
+    "id": "workbench-showcase",
+    "section": "workbench",
+    "anchor": "workbench-showcase",
+    "aliases": []
+  },
+  {
+    "id": "workbench-measurement",
+    "section": "workbench",
+    "anchor": "workbench-measurement",
+    "aliases": []
+  },
+  {
+    "id": "workbench-save",
+    "section": "workbench",
+    "anchor": "workbench-save",
+    "aliases": []
   }
 ]

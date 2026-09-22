@@ -26,6 +26,15 @@ unsupported.
 `features/help/HelpWorkspace.tsx` presents task guides and lazy catalog views.
 Browser back and forward navigation changes content within the standalone route.
 
+`documentation/navigation.ts` defines the shared reading groups for the home page,
+sidebar and previous/next links. Every public page belongs to exactly one group.
+`documentation/headings.ts` supplies the same heading IDs to the rendered body,
+outline and tests. When renaming or moving a heading, add its old document ID and
+anchor to `documentation/anchorRedirects.ts`; the route replaces that address in
+browser history. Keep the existing entries in `heading-anchors.fixture.json` so
+shared section links stay covered by regression tests. Relative Markdown links
+are rendered as canonical `/doc` URLs, including when opened in a new tab.
+
 `public.ts` registers authoring and manual pages for the web. `development.ts`
 registers development and operations pages for CLI access. Do not import that
 second registry into the browser. CLI `docs show` accepts a document ID, while

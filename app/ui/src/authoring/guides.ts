@@ -16,8 +16,8 @@ export type AuthoringGuide = Readonly<{
 export const authoringGuides: readonly AuthoringGuide[] = [
   {
     id: 'experiment',
-    title: 'Develop and test an Experiment source bundle',
-    summary: 'Read the live contract, edit the complete bundle, build locally, then run and inspect recorded results.',
+    title: 'CLI로 Experiment 작성하고 실행하기',
+    summary: '실행 가능한 예제에서 시작해 소스를 검사하고, 로컬 해석과 결과 확인을 거쳐 서버에 저장합니다.',
     sourcePaths: [
       'docs/authoring/experiment.md',
       'AGENTS.md',
@@ -42,9 +42,9 @@ export const authoringGuides: readonly AuthoringGuide[] = [
   },
   {
     id: 'calculation',
-    title: 'Develop and validate a Calculation',
+    title: 'CLI로 Calculation 작성하고 검증하기',
     summary:
-      'Use precise JavaScript and fixed record dependencies, execute against a reproducible input snapshot, then save the validated contract.',
+      '기록된 수치로 후처리 코드를 작성하고, 정답이 있는 예제와 실제 데이터로 검증한 뒤 정의와 결과를 저장합니다.',
     sourcePaths: [
       'docs/authoring/calculation.md',
       'app/ui/src/lib/calculation/declarations.ts',
@@ -70,9 +70,9 @@ export const authoringGuides: readonly AuthoringGuide[] = [
   },
   {
     id: 'solver',
-    title: 'Develop a Solver in the existing CAE architecture',
+    title: 'CLI로 Solver 개발하고 검증하기',
     summary:
-      'Use the live Catalog Draft workflow and ABI 3 implementation, then validate a complete Experiment through the common builder.',
+      '기존 CAE 구조와 ABI 3에 맞춰 Solver를 구현하고, Catalog Draft와 전체 실험 예제로 입력·수치 결과를 검증합니다.',
     sourcePaths: [
       'docs/authoring/solver.md',
       'docs/development/solver-development.md',

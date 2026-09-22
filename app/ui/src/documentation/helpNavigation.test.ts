@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { helpHref, readHelpLocation } from './helpNavigation'
 import { searchDocsKnowledge } from './knowledge'
+import { documentHeadings } from './headings'
 
 describe('Help addresses and search', () => {
   it('builds canonical Documentation addresses', () => {
@@ -32,5 +33,16 @@ describe('Help addresses and search', () => {
         },
       ]).map((p) => p.id),
     ).toEqual(['test'])
+  })
+
+  it('builds unique Korean heading anchors and ignores headings in code fences', () => {
+    const content = ['## 첫 단계', '```tsx', '## 코드 안의 제목', '~~~', '```', '### 첫 단계', '#### `값` 확인'].join(
+      '\n',
+    )
+    expect(documentHeadings(content)).toEqual([
+      { id: '첫-단계', title: '첫 단계', level: 2, line: 1 },
+      { id: '첫-단계-1', title: '첫 단계', level: 3, line: 6 },
+      { id: '값-확인', title: '값 확인', level: 4, line: 7 },
+    ])
   })
 })

@@ -14,7 +14,10 @@ export function documentHeadings(content: string): DocumentHeading[] {
     const match = !fence && /^(#{2,4})\s+(.+)/.exec(line)
     if (!match) return []
     const title = match[2].replace(/[`*_]/g, '').trim()
-    const base = title.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-')
+    const base = title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+      .replace(/\s/g, '-')
     const count = seen.get(base) ?? 0
     seen.set(base, count + 1)
     return [{ id: `${base}${count ? `-${count}` : ''}`, title, level: match[1].length, line: index + 1 }]

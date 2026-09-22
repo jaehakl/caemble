@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import { HelpWorkspace } from '@/features/help/HelpWorkspace'
-import { readHelpLocation } from '@/documentation/helpNavigation'
+import { helpHref, readHelpLocation } from '@/documentation/helpNavigation'
+import { documentationAnchorRedirects } from '@/documentation/anchorRedirects'
 
 export function DocumentationPage() {
   const location = useLocation()
@@ -17,6 +18,12 @@ export function DocumentationPage() {
     },
     [navigate],
   )
+
+  const redirect =
+    helpLocation.kind === 'manual' && helpLocation.item && helpLocation.anchor
+      ? documentationAnchorRedirects[helpLocation.item]?.[helpLocation.anchor]
+      : undefined
+  if (redirect) return <Navigate to={helpHref('manual', redirect.item, redirect.anchor)} replace />
 
   return (
     <main className="h-full min-h-0 overflow-hidden">

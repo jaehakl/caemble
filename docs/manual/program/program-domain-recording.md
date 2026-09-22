@@ -1,12 +1,28 @@
-# Catalog 기반 RecordedData와 Viewer
+# 해석 결과를 기록하고 Viewer에서 확인하기
 
-Experiment의 `recordedData`는 `결과이름: { task, output }`으로 선언합니다. `task`는 Task 파일의 이름이고 `output`은 해당 Task가 요청한 Box Grid output의 `key`입니다. 각 output은 Experiment 또는 해당 Task의 Box 하나를 target으로 지정하고 `gridShape`를 필수로 받습니다. 결과 이름은 자유롭게 정하며 수동 dtype/group schema는 지원하지 않습니다.
+해석을 마치면 공간에 따른 수치를 읽거나, 메쉬와 광선 경로를 보거나, 결과를 계산하고 싶을 수 있습니다. 이 문서에서는 **수치 기록**, **자동 시각화**, **다음 Solver에 전달할 데이터**의 차이를 먼저 살펴봅니다. 기본 선언은 [experiment.tsx](program-definition.md), 실행과 기록 문법은 [simulate.py](program-simulate.md)를 참고하세요.
 
-공통 빌드는 Catalog output의 7차원 tensor schema와 표시 계약을 해석하고, Task·output·Solver 버전·Catalog revision을 결과 계약에 고정합니다. 같은 Experiment에서 여러 Solver의 결과를 함께 선언할 수 있습니다. 실행 순서와 데이터 전달은 `simulate.py`의 `sim.run`, `sim.record`, `sim.release`가 소유합니다. `sim.record(name, artifact)`에는 선언한 Task/output에서 생성된 live Box Grid artifact를 전달해야 합니다. Solver 사이에 전달할 native field/domain은 Task의 `config.exports`로 요청하며 기록할 수 없습니다.
+## 어떤 결과를 남겨야 하나요
+
+| 하고 싶은 일 | 사용할 결과 |
+| --- | --- |
+| 수치를 저장하고 Calculation·Analysis·Prediction에 활용 | `recordedData`에 선언해 기록한 Box Grid |
+| 계산 메쉬, 광선 경로, 입자의 움직임 확인 | Solver가 별도로 제공하는 자동 시각화 |
+| 한 Solver의 물리 데이터를 다음 Solver로 전달 | Task의 `config.exports`로 요청한 native 데이터 |
+
+Box Grid는 Box 안의 지정된 격자 위치에서 값을 기록하는 방식입니다. 표시용 메쉬와 같은 데이터라고 생각하지 않도록 구분해 주세요.
+
+## 결과 선언과 저장
+
+Experiment의 `recordedData`는 `결과이름: { task, output }` 형태로 선언합니다. `task`는 Task 파일의 이름이고 `output`은 그 Task에서 요청한 Box Grid 출력의 `key`입니다. 각 출력은 Experiment 또는 해당 Task의 Box 하나를 대상으로 지정하고 `gridShape`를 반드시 받습니다. 결과 이름은 자유롭게 정할 수 있지만 `dtype`이나 그룹 형식을 직접 선언하지는 않습니다.
+
+공통 빌드는 카탈로그 출력의 7차원 텐서 형식과 표시 규칙을 해석하고, Task·출력·Solver 버전·카탈로그 revision을 결과 규격에 고정합니다. 같은 Experiment에서 여러 Solver의 결과를 함께 선언할 수 있습니다. 실행 순서와 데이터 전달은 `simulate.py`의 `sim.run`, `sim.record`, `sim.release`로 제어합니다. `sim.record(name, artifact)`에는 선언한 Task와 출력에서 생성되었고 아직 해제하지 않은 Box Grid 데이터를 전달해야 합니다. Solver 사이에 전달할 native field/domain은 Task의 `config.exports`로 요청하며 최종 수치 결과로 기록할 수 없습니다.
 
 Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고정된 결과 계약이 함께 제공됩니다. 저장 결과를 열 때 최신 Catalog나 편집 중인 소스로 재해석하지 않습니다. Measurement가 있는 Experiment의 source와 계약은 변경할 수 없으므로 새 버전을 만드세요. 표준 전환 시 과거 결과·결과 계약·Calculation preflight는 초기화되며 source, Measurement vars와 material snapshot은 보존됩니다. 과거 결과를 새 축으로 자동 변환하지 않습니다.
 
-메쉬·ray path는 Solver가 자동으로 제공하는 별도 시각화 데이터입니다. outputs나 `recordedData`에 선언하지 않으며 Calculation·Analysis·Prediction 입력에 포함하지 않습니다. 반복 실행에서는 Task마다 마지막 성공 invocation의 전체 시각화 snapshot을 저장하고, 시간 이력은 그 snapshot 안에 유지합니다. Viewer의 결과 선택 영역에서 Geometry, Box Grid와 자동 시각화를 선택합니다. renderer는 결과 이름이 아닌 저장된 semantic kind로 결정합니다.
+## Viewer에서 결과 선택하기
+
+메쉬·광선 경로는 Solver가 자동으로 제공하는 별도 시각화 데이터입니다. `outputs`나 `recordedData`에 선언하지 않으며 Calculation·Analysis·Prediction 입력에 포함하지 않습니다. 반복 실행에서는 Task마다 마지막으로 성공한 호출의 전체 시각화 스냅샷을 저장하고, 시간 이력도 그 안에 유지합니다. Viewer의 결과 선택 영역에서 형상(Geometry), Box Grid, 자동 시각화를 선택하세요. 표시 방식은 결과 이름이 아니라 저장된 데이터의 의미에 따라 결정됩니다.
 
 - `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 실제 크기 1×의 변형 표시를, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
 - `polyline`: 계약에 연결된 정점과 offset으로 경로를 구성합니다. 여러 결과를 독립적으로 선택할 수 있습니다.
@@ -15,7 +31,9 @@ Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고�
 
 초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변위가 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.
 
-Box Grid 데이터는 float32 또는 float64이며 축 순서는 항상 `[x, y, z, time, frequency, amplitudePhase, component]`입니다. 사용하지 않는 축도 길이 1로 보존합니다. 실수는 `value` 채널 하나, 복소수는 `amplitude`, `phase` 두 채널로 저장하며 위상 단위는 rad입니다. 각 RecordedData의 ExperimentRecord ID는 Calculation dependency로 사용합니다. 자동 시각화는 별도 `/measurement/{id}/visualizations` 조회와 CLI export에 포함됩니다.
+## 수치 데이터의 축 읽기
+
+Box Grid 데이터는 float32 또는 float64이며 축 순서는 항상 `[x, y, z, time, frequency, amplitudePhase, component]`입니다. 앞의 세 축은 공간, 그다음은 시간·주파수, 마지막 두 축은 채널·성분입니다. 사용하지 않는 축도 길이 1로 보존합니다. 실수는 `value` 채널 하나, 복소수는 `amplitude`, `phase` 두 채널로 저장하며 위상 단위는 rad입니다. 각 RecordedData의 ExperimentRecord ID는 Calculation이 사용할 결과를 연결하는 데 쓰입니다. 자동 시각화는 별도 `/measurement/{id}/visualizations` 조회와 CLI 내보내기에 포함됩니다.
 
 [Catalog 공식 예제](/doc?help=examples)에서 현재 Box Grid outputs와 자동 mesh·ray 시각화의 실행 소스를 확인하세요.
 
@@ -119,3 +137,7 @@ Bucket에 저장하고 완료 후 24시간이 지나면 서버가 정리합니�
 Gold FCC Array에서는 주파수·성분과 3D 단면을, Structural 예제에서는 변형과
 시간 재생을 확인하세요. 데이터 교체 시 재생은 정지하고 범위를 벗어난 축·프레임은
 보정됩니다. Experiment·Measurement 전환 시 임시 Viewer 상태는 초기화됩니다.
+
+## 다음 작업으로 이어가기
+
+화면에서 원하는 결과를 찾았다면 [Viewer 조작 안내](../workbench/workbench-viewer-selection.md)에서 축·성분·표시 방식을 자세히 확인해 보세요. 수치를 계산하려면 [Calculation](../workbench/workbench-calculation.md), 여러 조건의 경향을 비교하려면 [Analysis](../workbench/workbench-analysis.md)로 이어갈 수 있습니다.

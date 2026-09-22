@@ -1,17 +1,39 @@
-# Analysis: Explore, Mining과 Data
+# Analysis로 변수와 결과의 관계 살펴보기
 
-**Analysis**는 현재 Experiment에서 CalculationData가 하나 이상 저장된 Measurement만 분석합니다. Measurement의 숫자 input vars와 Model Parameter는 feature로 유지하고, 저장된 CalculationData만 target으로 사용합니다. RecordedData는 Analysis에서 조회하거나 사용하지 않습니다. 중앙 3D Viewer와 Console은 그대로 유지되며, 오른쪽 Analysis 결과와 왼쪽 탭별 설정은 각각 스크롤할 수 있습니다.
+**Analysis**에서는 여러 실행의 조건과 결과를 한눈에 비교할 수 있습니다. 어떤 변수가 결과와 함께 달라지는지 찾거나, 비슷한 조건을 묶어 보고, 선택한 데이터를 CSV로 내보낼 때 사용합니다.
+
+## 분석 전에 준비하기
+
+현재 Experiment에서 **CalculationData가 하나 이상 저장된 Measurement**만 분석에 들어갑니다. Solver 결과인 RecordedData만 있다면 먼저 [Calculation에서 후처리 결과를 저장](workbench-calculation.md#후처리-결과-저장)하세요. Calculation의 미리보기만으로는 분석 데이터가 추가되지 않습니다.
+
+변수와 재료 모델의 숫자 파라미터는 분석할 입력 항목(feature)이고, 저장된 CalculationData는 결과 항목(target)입니다. Analysis는 RecordedData를 직접 읽거나 분석하지 않습니다.
+
+## 목적에 맞는 화면 고르기
+
+| 화면 | 알아볼 수 있는 것 | 처음 해 볼 일 |
+| --- | --- | --- |
+| **Explore** | 변수 하나와 결과 하나가 함께 변하는 정도 | 자동 선택된 조합의 산점도와 표본 수 확인 |
+| **Mining** | 여러 입력 항목의 공통 패턴과 특이한 표본 | 관련 있는 항목 2개 이상 선택 |
+| **Data** | 값의 분포와 실제 데이터 행 | 필요한 열을 골라 표와 CSV 확인 |
+
+중앙 3D Viewer와 Console은 유지됩니다. 왼쪽 설정과 오른쪽 분석 결과는 각각 스크롤할 수 있습니다.
 
 ### Explore
 
-Analysis에 들어오면 사용할 수 있는 숫자 input vars와 숫자 CalculationData target의 모든 조합을 계산합니다. scalar CalculationData는 원값을 사용하고 rank 1–2 결과는 모든 원소의 `mean`과 표본 `std` 열로 요약합니다. 원소가 하나인 tensor의 `std`는 0이며 빈 tensor는 결측값입니다. Model Parameter는 기본 상관 순위에 포함하지 않습니다. `|Pearson r|`이 큰 순서로 정렬하고, 같으면 `|Spearman ρ|`와 안정적인 key 순서를 사용합니다. 1위 조합이 자동으로 선택되며 검색 가능한 두 선택기나 순위 행으로 다른 조합을 고를 수 있습니다.
+사용 가능한 숫자 변수와 숫자 CalculationData의 모든 조합을 비교합니다. 숫자 하나인 결과는 원값을 사용하고, 1~2차원 배열은 전체 원소의 평균(`mean`)과 표본 표준편차(`std`)로 요약합니다. 원소가 하나면 표준편차는 0이며 빈 배열은 결측값입니다. 재료 모델 파라미터는 기본 상관 순위에 넣지 않습니다.
 
-Pearson과 Spearman은 완전한 input/target 값 쌍이 3개 이상이고 두 축이 상수가 아닐 때만 계산합니다. `n`은 실제 계산에 사용한 완전한 쌍의 수입니다. 산점도의 점에 포인터를 올리면 Measurement ID와 좌표를 확인할 수 있습니다.
+직선에 가까운 관계를 보는 **Pearson r**의 절댓값이 큰 순서로 정렬합니다. 같으면 순위 변화의 관계를 보는 **Spearman ρ**의 절댓값과 안정적인 key 순서를 사용합니다. 첫 번째 조합이 자동 선택되며 검색 가능한 두 선택기나 순위 행으로 다른 조합을 고를 수 있습니다.
+
+두 값이 모두 있는 표본이 3개 이상이고 각 축의 값이 모두 같지 않을 때만 상관계수를 계산합니다. 화면의 **n**은 실제 계산에 쓰인 값 쌍의 수입니다. 산점도에 포인터를 올리면 Measurement ID와 좌표를 확인할 수 있습니다. 높은 상관은 함께 변하는 경향을 뜻하므로 실제 형상과 물리적 관계도 함께 살펴보세요.
 
 ### Mining
 
-**Mining**은 2–50개 feature를 표준화해 PCA projection, 자동 K-Means, principal-component loadings와 reconstruction anomaly를 계산합니다. Explore 선택과는 독립적이며 검색, source 그룹, 전체 선택과 초기화를 사용할 수 있습니다.
+**Mining**에서는 2~50개의 입력 항목을 선택합니다. 값의 크기 차이를 표준화한 뒤 PCA로 주요 변화를 요약하고, 자동 K-Means로 비슷한 표본을 묶습니다. 각 항목이 주성분에 기여하는 정도와 재구성 오차로 본 특이한 표본도 확인할 수 있습니다.
+
+Explore에서 고른 항목과 독립적으로 설정합니다. 검색이나 source 그룹으로 항목을 찾고 전체 선택·초기화를 사용할 수 있습니다. 먼저 비교하려는 의미가 분명한 소수의 항목으로 시작하세요.
 
 ### Data와 CSV
 
-**Data**에는 histogram, scalar profile과 100행 데이터 표가 있습니다. 표와 **선택 데이터 CSV**는 Data 설정에서 선택한 feature 및 CalculationData 요약 열만 사용하며 CalculationData 원본 tensor 배열은 포함하지 않습니다.
+**Data**에는 분포를 보여 주는 Histogram, 스칼라값의 변화와 100행 데이터 표가 있습니다. Data 설정에서 필요한 입력 항목과 CalculationData 요약 열을 선택하세요. **선택 데이터 CSV**로 같은 선택을 내보낼 수 있습니다.
+
+표와 CSV는 선택한 항목 및 요약 열을 사용합니다. CalculationData의 원본 텐서 배열 전체를 내보내는 기능은 아닙니다.

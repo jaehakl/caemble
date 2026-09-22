@@ -4,6 +4,10 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { documents, searchDocuments } from './index'
 import navigation from './navigation.fixture.json'
+import legacyHeadings from './heading-anchors.fixture.json'
+import { documentationAnchorRedirects } from './anchorRedirects'
+import { documentHeadings } from './headings'
+import { documentationGroups } from './navigation'
 import { publicDocuments } from './public'
 import { documentBody, manualBody } from './body'
 import { authoringGuides } from '@/authoring/guides'
@@ -33,6 +37,9 @@ describe('shared documentation sources', () => {
     for (const document of documents) {
       const markdown = readFileSync(path.join(repo, document.sourcePath), 'utf8')
       expect(markdown.split(/\r?\n/)[0], document.id).toBe(`# ${document.title}`)
+      expect([document.title, document.summary, ...document.keywords].join(' '), document.id).not.toMatch(
+        /\uFFFD|\?{2,}/,
+      )
       expect(document.content).toBe(
         document.sourcePath.startsWith('docs/manual/') ? manualBody(markdown) : documentBody(markdown),
       )
@@ -45,6 +52,37 @@ describe('shared documentation sources', () => {
       for (const file of guide.sourcePaths) expect(existsSync(path.join(repo, file)), file).toBe(true)
       for (const id of guide.referenceIds) expect(getAuthoringReference(id), id).toBeDefined()
     }
+  })
+
+  it('keeps every previous heading reachable after rewriting or splitting a document', () => {
+    for (const [id, anchors] of Object.entries(legacyHeadings)) {
+      for (const anchor of anchors) {
+        const target = documentationAnchorRedirects[id]?.[anchor] ?? { item: id, anchor }
+        const page = publicDocuments.find((document) => document.id === target.item)
+        expect(page, `${id}#${anchor}`).toBeDefined()
+        expect(
+          documentHeadings(page!.content).map((heading) => heading.id),
+          `${id}#${anchor}`,
+        ).toContain(target.anchor)
+      }
+    }
+    for (const redirects of Object.values(documentationAnchorRedirects)) {
+      for (const target of Object.values(redirects)) {
+        expect(
+          documentationAnchorRedirects[target.item]?.[target.anchor],
+          'Redirects should resolve in one step',
+        ).toBeUndefined()
+        const page = publicDocuments.find((document) => document.id === target.item)
+        expect(page).toBeDefined()
+        expect(documentHeadings(page!.content).map((heading) => heading.id)).toContain(target.anchor)
+      }
+    }
+  })
+
+  it('provides one reading group for every public document without missing destinations', () => {
+    const ids = documentationGroups.flatMap((group) => [...group.ids])
+    expect(new Set(ids).size).toBe(ids.length)
+    expect([...ids].sort()).toEqual(publicDocuments.map((page) => page.id).sort())
   })
 
   it('keeps runtime fragments live and repository-only documents out of the web manual', () => {

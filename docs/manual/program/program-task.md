@@ -1,12 +1,36 @@
-# tasks/*.tsx: solver task 선언
+# tasks/*.tsx: 해석 작업 설정하기
 
-`defineTask({...})`는 `kernel: { name, version }`, Task 전용 `lengthUnit`과 `geometry`, 그리고 `config({ vars })`를 선언합니다. Task Geometry는 Experiment Geometry와 별도 scene으로 평가·Build·렌더링되며 서로 겹친다는 이유로 CSG 형상을 바꾸지 않습니다. 광원·충돌체·경계조건 등의 물리적 역할과 상호작용은 Solver 계약이 정합니다.
+Task는 Solver가 수행할 해석 작업 하나를 뜻합니다. `tasks/<name>.tsx`에서 사용할 Solver, 해석 대상과 조건, 필요한 출력을 설정합니다. [변수와 결과 선언](program-definition.md), [재료 연결](program-materials.md)을 먼저 살펴보고 공식 예제의 Task 파일을 함께 열어 보세요.
+
+## Task를 읽는 순서
+
+`defineTask({...})`에는 `kernel: { name, version }`, Task 전용 `lengthUnit`과 `geometry`, 그리고 `config({ vars })`를 선언합니다. 다음 순서로 확인하면 설정을 이해하기 쉽습니다.
+
+1. `kernel`에서 Solver의 이름과 정확한 버전을 확인합니다.
+2. `geometry`와 대상 그룹에서 공통 실험 형상과 Task 전용 형상을 구분합니다.
+3. `config`에서 계산 설정, 초기조건·경계조건, 출력·데이터 전달 설정을 확인합니다.
+
+Task 형상은 Experiment 형상과 별도의 장면(scene)으로 평가·빌드·표시됩니다. 둘이 겹친다는 이유만으로 CSG 형상이 바뀌지는 않습니다. 광원·충돌체·경계조건의 물리적 역할과 상호작용은 Solver의 규칙에 따릅니다.
 
 Catalog에는 Solver 이름마다 현재 버전 하나와 그 버전에 맞는 예제를 제공합니다. 제거된 Solver 버전을 참조하는 Experiment는 오류가 나며 자동으로 새 버전을 선택하지 않습니다. 기존 source를 고치려면 현재 예제와 계약을 기준으로 새 Experiment Version을 만드세요.
 
-`parameters`, `initializations`, `boundaryConditions`, `outputs`, `exports`의 이름과 occurrence는 [Physics Catalog](/doc?help=solvers)의 현재 계약이 단일 원본입니다. 수치 output의 target은 `experiment.geometry.*` 또는 `task.geometry.*`에서 Box 하나로 resolve되어야 하며 `parameters.gridShape`를 필수로 받습니다. 회전된 Box도 사용할 수 있습니다. 초기화·경계조건·native export는 각 method가 요구하는 geometry 또는 surface target을 사용합니다. 연성용 native 값은 `config.exports`로 요청하고 mesh·ray 표시는 자동 시각화로 제공받습니다.
+## 계산 조건과 출력 구분하기
+
+`parameters`, `initializations`, `boundaryConditions`, `outputs`, `exports`의 정확한 이름과 허용 횟수는 [Physics Catalog](/doc?help=solvers)의 현재 규격에서 확인하세요.
+
+| 설정 | 확인할 내용 |
+| --- | --- |
+| `parameters` | Solver 전체에 적용할 계산 설정 |
+| `initializations` | 계산 영역과 초기 상태 등 해석을 준비하는 조건 |
+| `boundaryConditions` | 지정한 형상·표면에 적용할 물리 조건 |
+| `outputs` | Measurement에 기록할 수치 결과 |
+| `exports` | 다른 Solver에 전달할 중간 데이터 |
+
+수치 출력의 대상은 `experiment.geometry.*` 또는 `task.geometry.*`에서 Box 하나로 연결되어야 하며 `parameters.gridShape`를 반드시 지정합니다. 회전된 Box도 사용할 수 있습니다. 초기화·경계조건·native export는 각 메서드가 요구하는 형상 또는 표면 대상을 사용합니다. Solver 사이에 전달할 native 값은 `config.exports`로 요청하고, 메쉬·광선 경로는 자동 시각화로 제공받습니다.
 
 [Catalog 예제에서 Electro-Thermal Notched Bar의 현재 Task source 확인하기](/doc?help=examples)
+
+## 사용할 재료 모델 확인하기
 
 Material 역할마다 `modelGroups`에 선언된 그룹을 모두 확인합니다. 각 필수 그룹 안에서는 `oneOf`에 포함된 모델 인스턴스 하나를 선택합니다. 호환 인스턴스가 여러 개이면 `config({ vars })`의 `materialModels[role][materialName][groupKey]`에 선택한 인스턴스 이름을 지정하세요. 그룹·Material·인스턴스 이름이 틀리거나 선택한 모델이 호환되지 않으면 오류가 납니다.
 
@@ -51,3 +75,5 @@ world 기준입니다. 부착점만 형상 원점 기준 body-local 좌표를 �
 각 body의 실제 호출 종료 상태와 질량특성을 제공하고, 자동 시각화는 기준
 CSG mesh를 배율 1로 이동·회전합니다. [현재 강체 예제와 정확한 Task 설정은
 Catalog에서 확인하세요](/doc?help=examples).
+
+설정을 마쳤다면 [simulate.py](program-simulate.md)에서 Task 실행 순서를 연결하세요. 실행 전에 [Viewer에서 형상과 표면 확인](../workbench/workbench-viewer-selection.md)을 거치면 의도한 곳에 조건이 적용되는지 점검하기 쉽습니다.
