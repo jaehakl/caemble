@@ -1,13 +1,17 @@
 import { ViewerLayout, ViewerToolMenu } from '@/features/viewer/viewer/ViewerTools'
 import { ViewerControls } from '@/features/viewer/viewer/comparisonSettings'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
-import { Layers } from 'lucide-react'
+import { Layers, Plus, Play, Square, Sparkles, BrainCircuit } from 'lucide-react'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import { ComparisonToolbar } from '@/features/viewer/viewer/ComparisonToolbar'
-import { WorkbenchRibbonGroup } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
+import {
+  WorkbenchRibbon,
+  WorkbenchRibbonButton,
+  WorkbenchRibbonGroup,
+} from '@/features/cae-workbench/chrome/WorkbenchRibbon'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { dbTables, getListRequest } from '@/api'
+import { useQuery } from '@tanstack/react-query'
+import { getListRequest } from '@/api'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { SavedMeasurement } from '@/features/cae-workbench/types'
@@ -21,7 +25,6 @@ import { varsFingerprint, varsSchemaFingerprint } from '@/lib/cad/model/vars'
 import { materialVarsHash } from '@/lib/material/resolution'
 import { createCadSourceDocument } from '@/lib/cad/source'
 import { measurementsQueryOptions } from './queryOptions'
-import { invalidateMeasurementMutation } from './queryInvalidation'
 import { useCaeDataSelection } from './useCaeDataSelection'
 import { useMeasurementForward } from './useMeasurementForward'
 import type { ReviewedMeasurementInput, ReviewedMeasurementProgress } from './useCaeMeasurementActions'
@@ -72,7 +75,6 @@ export function MeasurementWorkspace({
   menubar: ReactNode
   onActivity?: RuntimeActivityCallback
 }) {
-  const queryClient = useQueryClient()
   const queryScope = usePrivateQueryScope()
   const [vars, setVars] = useState<Readonly<Vars> | null>(
     workbench.candidateVars ?? workbench.selection.variables ?? workbench.experimentDocument.variables,
@@ -504,39 +506,6 @@ export function MeasurementWorkspace({
         setOperation(null)
     }
   }
-  const save = async () => {
-    if (
-      !persistable ||
-      !ready ||
-      !valid ||
-      busy ||
-      !vars ||
-      !document.materialSnapshot ||
-      !workbench.experimentId ||
-      currentId.startsWith('measurement:')
-    )
-      return
-    const savedId = currentId
-    setOperation('저장 중')
-    setError('')
-    try {
-      const result = await dbTables.Measurement.create({
-        experiment_id: workbench.experimentId,
-        experiment_source_hash: sourceHash,
-        vars,
-        material_snapshot: document.materialSnapshot,
-      })
-      await invalidateMeasurementMutation(queryClient, queryScope, workbench.experimentId, [result.id])
-      if (!mounted.current) return
-      setCandidates((rows) => rows.filter((row) => row.id !== savedId))
-      setCurrentId(`measurement:${result.id}`)
-      setSelected(new Set([`measurement:${result.id}`]))
-    } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (mounted.current) setOperation(null)
-    }
-  }
   const run = async (all: boolean) => {
     if (!persistable || !ready || !valid || busy || !vars) return
     const ids = all
@@ -804,97 +773,108 @@ export function MeasurementWorkspace({
         />
       ) : null}
       {menubar}
-      <div aria-label="Measurement 리본" className="shrink-0 overflow-x-auto border-b bg-muted/20 px-1 py-1">
-        <div className="flex min-w-max items-stretch">
-          <WorkbenchRibbonGroup label="후보 생성">
-            <select
-              aria-label="후보 생성 방식"
-              className={controlClass}
-              value={algorithm}
-              onChange={(event) => setAlgorithm(event.target.value as typeof algorithm)}
-            >
-              <option value="random">Random</option>
-              <option value="empty-lhs">빈 구간 LHS</option>
-            </select>
-            <input
-              aria-label="후보 생성 개수 N"
-              className={`${controlClass} w-16`}
-              type="number"
-              min={1}
-              step={1}
-              value={count}
-              onChange={(event) => setCount(event.target.value)}
-            />
-            <button
-              className={controlClass}
-              disabled={!schema || busy || !valid || query.isFetching}
-              onClick={generate}
-            >
-              후보 생성
-            </button>
-            <button className={controlClass} disabled={!vars || busy || !valid} onClick={addCandidate}>
-              후보 추가
-            </button>
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="저장">
-            <button
-              className={controlClass}
-              disabled={!persistable || !ready || !valid || busy || currentId.startsWith('measurement:')}
-              onClick={() => void save()}
-            >
-              Prepared 저장
-            </button>
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="시뮬레이션 실행">
-            <button
-              className={`${controlClass} border-primary bg-primary text-primary-foreground hover:bg-primary/90`}
-              disabled={!persistable || !ready || !valid || busy}
-              onClick={() => void run(false)}
-            >
-              선택 Run
-            </button>
-            <button
-              className={controlClass}
-              disabled={!persistable || !ready || !valid || busy || (!candidates.length && currentId !== 'draft')}
-              onClick={() => void run(true)}
-            >
-              전체 후보 Run
-            </button>
-            {operation && operation !== '저장 중' && operation !== '삭제 중' ? (
-              <button
-                className={controlClass}
-                onClick={() => {
-                  batchController.current?.abort()
-                  latest.current.measurementActions.cancel()
-                }}
-              >
-                취소
-              </button>
-            ) : null}
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Forward 모델">
-            <button
-              className={controlClass}
-              disabled={!dataReadable || !ready || forward.building || busy}
-              onClick={() => {
-                setPreviewFrame(null)
-                void forward.build()
-              }}
-            >
-              {forward.building ? '모델 생성 중…' : forward.model ? '모델 업데이트' : 'Forward 모델 생성'}
-            </button>
-            <span className="text-xs text-muted-foreground">
-              {operation ??
-                workbench.measurementActions.stage ??
-                (forward.outdated
-                  ? '새 데이터 · 모델 업데이트 필요'
-                  : forward.model
-                    ? 'Forward 모델 준비됨'
-                    : 'Forward 모델 없음')}
-            </span>
-          </WorkbenchRibbonGroup>
-        </div>
-      </div>
+      <WorkbenchRibbon
+        activeSectionId="measurement"
+        panels={[
+          {
+            sectionId: 'measurement',
+            label: 'Measurement',
+            content: (
+              <>
+                <WorkbenchRibbonGroup label="샘플 생성">
+                  <div className="flex h-[72px] flex-col justify-center gap-1">
+                    <select
+                      aria-label="샘플 생성 방식"
+                      className="h-6 rounded-sm border border-border bg-background px-2 text-xs"
+                      value={algorithm}
+                      onChange={(event) => setAlgorithm(event.target.value as typeof algorithm)}
+                    >
+                      <option value="random">Random</option>
+                      <option value="empty-lhs">빈 구간 LHS</option>
+                    </select>
+                    <input
+                      aria-label="샘플 생성 개수 N"
+                      className="h-6 w-20 rounded-sm border border-border bg-background px-2 text-xs"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={count}
+                      onChange={(event) => setCount(event.target.value)}
+                    />
+                  </div>
+                  <WorkbenchRibbonButton
+                    size="large"
+                    icon={<Sparkles />}
+                    label="샘플 생성"
+                    disabled={!schema || busy || !valid || query.isFetching}
+                    onClick={generate}
+                  />
+                  <div className="grid h-[72px] grid-rows-3 items-center">
+                    <WorkbenchRibbonButton
+                      icon={<Plus />}
+                      label="샘플 추가"
+                      disabled={!vars || busy || !valid}
+                      onClick={addCandidate}
+                    />
+                  </div>
+                </WorkbenchRibbonGroup>
+                <WorkbenchRibbonGroup label="시뮬레이션 실행">
+                  {operation && operation !== '저장 중' && operation !== '삭제 중' ? (
+                    <WorkbenchRibbonButton
+                      size="large"
+                      icon={<Square />}
+                      label="취소"
+                      onClick={() => {
+                        batchController.current?.abort()
+                        latest.current.measurementActions.cancel()
+                      }}
+                    />
+                  ) : (
+                    <WorkbenchRibbonButton
+                      size="large"
+                      icon={<Play />}
+                      label="실행"
+                      disabled={!persistable || !ready || !valid || busy}
+                      onClick={() => void run(false)}
+                    />
+                  )}
+                  <div className="grid h-[72px] grid-rows-3 items-center">
+                    <WorkbenchRibbonButton
+                      icon={<Play />}
+                      label="전체 실행"
+                      disabled={
+                        !persistable || !ready || !valid || busy || (!candidates.length && currentId !== 'draft')
+                      }
+                      onClick={() => void run(true)}
+                    />
+                  </div>
+                </WorkbenchRibbonGroup>
+                <WorkbenchRibbonGroup label="예측 모델">
+                  <WorkbenchRibbonButton
+                    size="large"
+                    icon={<BrainCircuit />}
+                    label={forward.building ? '모델 생성 중…' : forward.model ? '모델 업데이트' : '예측 모델 생성'}
+                    disabled={!dataReadable || !ready || forward.building || busy}
+                    onClick={() => {
+                      setPreviewFrame(null)
+                      void forward.build()
+                    }}
+                  />
+                  <span className="max-w-40 text-xs text-muted-foreground">
+                    {operation ??
+                      workbench.measurementActions.stage ??
+                      (forward.outdated
+                        ? '새 데이터 · 모델 업데이트 필요'
+                        : forward.model
+                          ? '예측 모델 준비됨'
+                          : '예측 모델 없음')}
+                  </span>
+                </WorkbenchRibbonGroup>
+              </>
+            ),
+          },
+        ]}
+      />
       {!persistable ? (
         <p className="border-b px-3 py-1 text-xs text-muted-foreground">
           실행·저장에는 로그인과 저장된 편집 가능한 Experiment가 필요합니다.

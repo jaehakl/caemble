@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { WorkbenchSectionId } from '../types'
@@ -10,33 +10,76 @@ export type WorkbenchRibbonPanel = Readonly<{
   content: ReactNode
 }>
 
-export function WorkbenchRibbonAction({ action, className }: { action: WorkbenchAction; className?: string }) {
+export function WorkbenchRibbonButton({
+  icon,
+  label,
+  size = 'small',
+  className,
+  ...props
+}: ComponentProps<'button'> & { icon?: ReactNode; label: ReactNode; size?: 'small' | 'large' }) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        'flex shrink-0 items-center rounded-sm text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-disabled:hover:bg-transparent',
+        size === 'large' ? 'h-[72px] w-24 flex-col justify-center gap-1 px-1' : 'h-6 justify-start gap-1.5 px-2',
+        className,
+      )}
+    >
+      {icon ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'flex shrink-0 items-center justify-center',
+            size === 'large' ? '[&_svg]:size-7' : '[&_svg]:size-4',
+          )}
+        >
+          {icon}
+        </span>
+      ) : null}
+      <span
+        className={cn(
+          'text-xs leading-4',
+          size === 'large' ? 'max-w-full text-center whitespace-normal' : 'whitespace-nowrap',
+        )}
+      >
+        {label}
+      </span>
+    </button>
+  )
+}
+
+export function WorkbenchRibbonAction({
+  action,
+  size = 'small',
+  className,
+}: {
+  action: WorkbenchAction
+  size?: 'small' | 'large'
+  className?: string
+}) {
   const accessibleLabel =
     action.disabled && action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label
-
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <WorkbenchRibbonButton
           aria-disabled={action.disabled || undefined}
           aria-label={accessibleLabel}
           aria-pressed={action.pressed}
           className={cn(
-            'flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-disabled:hover:bg-transparent',
-            action.primary && 'bg-primary text-primary-foreground hover:bg-primary/90',
+            action.primary && 'text-primary',
             action.pressed && 'bg-accent text-accent-foreground ring-1 ring-primary/35',
             className,
           )}
+          icon={action.icon}
+          label={action.label}
+          size={size}
           onClick={() => {
             if (!action.disabled) action.onSelect()
           }}
-          type="button"
-        >
-          <span aria-hidden="true" className="flex items-center justify-center [&_svg]:size-4">
-            {action.icon}
-          </span>
-          <span className="text-xs leading-4 font-medium whitespace-nowrap">{action.label}</span>
-        </button>
+        />
       </TooltipTrigger>
       <TooltipContent>
         <div>{action.label}</div>
@@ -49,15 +92,24 @@ export function WorkbenchRibbonAction({ action, className }: { action: Workbench
 
 export function WorkbenchRibbonActions({
   actions,
+  size = 'small',
   className,
 }: {
   actions: readonly WorkbenchAction[]
+  size?: 'small' | 'large'
   className?: string
 }) {
   return (
-    <div className={cn('flex items-center gap-1', className)}>
+    <div
+      className={cn(
+        size === 'large'
+          ? 'flex h-[72px] items-center gap-0.5'
+          : 'grid h-[72px] grid-flow-col grid-rows-3 items-center gap-x-1',
+        className,
+      )}
+    >
       {actions.map((action) => (
-        <WorkbenchRibbonAction action={action} key={action.id} />
+        <WorkbenchRibbonAction action={action} size={size} key={action.id} />
       ))}
     </div>
   )
@@ -75,13 +127,10 @@ export function WorkbenchRibbonGroup({
   return (
     <section
       aria-label={label}
-      className={cn(
-        'flex shrink-0 flex-col justify-center gap-2 border-r border-border/70 px-3 py-1 last:border-r-0',
-        className,
-      )}
+      className={cn('flex h-[88px] shrink-0 flex-col border-r border-border/70 px-2 last:border-r-0', className)}
     >
-      <div className="flex min-h-10 items-center gap-2">{children}</div>
-      <h2 className="text-[10px] font-medium tracking-wide text-muted-foreground">{label}</h2>
+      <div className="flex h-[72px] items-center gap-1">{children}</div>
+      <h2 className="h-4 text-center text-[10px] leading-4 text-muted-foreground">{label}</h2>
     </section>
   )
 }
@@ -102,12 +151,15 @@ export function WorkbenchRibbon({
   return (
     <section
       aria-label={activePanel ? `${activePanel.label} 리본` : 'CAE 리본'}
-      className={cn('overflow-x-auto border-b bg-muted/20 px-1 py-1', className)}
+      className={cn(
+        'h-24 min-h-24 shrink-0 [scrollbar-width:thin] overflow-x-auto overflow-y-hidden border-b bg-muted/30 px-1 pt-1',
+        className,
+      )}
     >
       {activePanel ? (
         <div className="flex min-w-max items-stretch">{activePanel.content}</div>
       ) : (
-        <div className="flex min-h-[72px] items-center text-sm text-muted-foreground">{emptyContent}</div>
+        <div className="flex h-[88px] items-center text-sm text-muted-foreground">{emptyContent}</div>
       )}
     </section>
   )

@@ -1,4 +1,4 @@
-import { act, render, renderHook, screen } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import type { CalculationSaveState } from '@/features/calculation'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
@@ -82,7 +82,7 @@ it('uses the sole New action to open Templates and removes the old Examples and 
     }),
   )
 
-  expect(result.current.actions.newExperiment).toMatchObject({ id: 'new-experiment', label: 'New' })
+  expect(result.current.actions.newExperiment).toMatchObject({ id: 'new-experiment', label: '템플릿' })
   expect(result.current.actions).not.toHaveProperty('examples')
   expect(result.current.actions).not.toHaveProperty('loadExperiment')
   render(
@@ -93,11 +93,32 @@ it('uses the sole New action to open Templates and removes the old Examples and 
   expect(screen.queryByRole('button', { name: /Candidate|Run|Analysis|Sample/ })).not.toBeInTheDocument()
   expect(screen.getByRole('region', { name: '후처리 데이터' })).toBeInTheDocument()
 
+  render(
+    <TooltipProvider>
+      <WorkbenchRibbon activeSectionId="experiment" panels={result.current.ribbonPanels} />
+    </TooltipProvider>,
+  )
+  const information = screen.getByRole('region', { name: '정보' })
+  expect(
+    within(information)
+      .getAllByRole('button')
+      .map((button) => button.textContent),
+  ).toEqual(['실험 정보', '도움말'])
+  expect(screen.getByRole('button', { name: '템플릿' })).toHaveClass('h-[72px]')
+  expect(screen.getByRole('button', { name: '도움말' })).not.toHaveAttribute('aria-disabled', 'true')
+  const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+  fireEvent.click(screen.getByRole('button', { name: '도움말' }))
+  expect(open).toHaveBeenCalledWith('/doc', '_blank', 'noopener,noreferrer')
+  open.mockRestore()
   act(() => result.current.actions.newExperiment.onSelect())
   expect(setDialog).toHaveBeenCalledExactlyOnceWith('templates')
 
   setDialog.mockClear()
-  expect(result.current.actions.experimentInfo).toMatchObject({ id: 'experiment-info', label: 'Info', disabled: false })
+  expect(result.current.actions.experimentInfo).toMatchObject({
+    id: 'experiment-info',
+    label: '실험 정보',
+    disabled: false,
+  })
   act(() => result.current.actions.experimentInfo.onSelect())
   expect(setDialog).toHaveBeenCalledExactlyOnceWith('experiment-info')
 })
@@ -144,6 +165,7 @@ it.each([
     }),
   )
 
+  expect(result.current.actions.experimentHelp.disabled).toBeUndefined()
   expect(result.current.actions.experimentInfo.disabled).toBe(!hasExperiment)
   if (isDemo) {
     expect(result.current.actions.saveCurrentMeasurement.disabled).toBe(!manageable)

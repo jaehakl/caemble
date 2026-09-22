@@ -1,5 +1,5 @@
 import { Braces, ChevronDown, Shapes } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { WorkbenchRibbonButton } from './chrome/WorkbenchRibbon'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { operationAuthoringElements, primitiveAuthoringElements } from '@/lib/cad/source'
@@ -12,20 +12,19 @@ export function GeometryAuthoringRibbon({ state }: { state: CadEditorAuthoringSt
     <div className="flex items-center gap-0.5">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            aria-label={unavailableReason ? `Primitive: ${unavailableReason}` : 'Primitive'}
-            className="h-9 gap-2 px-3"
+          <WorkbenchRibbonButton
+            aria-label={unavailableReason ? `도형: ${unavailableReason}` : '도형'}
+            size="large"
             disabled={!state}
             title={unavailableReason}
             type="button"
-            variant="ghost"
-          >
-            <span className="flex items-center">
-              <Shapes className="!size-4" />
-              <ChevronDown className="!size-3" />
-            </span>
-            <span className="text-xs">Primitive</span>
-          </Button>
+            icon={<Shapes />}
+            label={
+              <span className="flex items-center justify-center gap-1">
+                도형 <ChevronDown className="size-3" />
+              </span>
+            }
+          />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
           {primitiveAuthoringElements.map((element) => (
@@ -39,20 +38,19 @@ export function GeometryAuthoringRibbon({ state }: { state: CadEditorAuthoringSt
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            aria-label={operationReason ? `Operation: ${operationReason}` : 'Operation'}
-            className="h-9 gap-2 px-3"
+          <WorkbenchRibbonButton
+            aria-label={operationReason ? `연산: ${operationReason}` : '연산'}
+            size="large"
             disabled={Boolean(operationReason)}
             title={operationReason}
             type="button"
-            variant="ghost"
-          >
-            <span className="flex items-center">
-              <Braces className="!size-4" />
-              <ChevronDown className="!size-3" />
-            </span>
-            <span className="text-xs">Operation</span>
-          </Button>
+            icon={<Braces />}
+            label={
+              <span className="flex items-center justify-center gap-1">
+                연산 <ChevronDown className="size-3" />
+              </span>
+            }
+          />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
           {operationAuthoringElements.map((element) => (

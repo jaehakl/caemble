@@ -14,6 +14,7 @@ export { WorkbenchMenubar } from './WorkbenchMenubar'
 export {
   WorkbenchRibbon,
   WorkbenchRibbonAction,
+  WorkbenchRibbonButton,
   WorkbenchRibbonActions,
   WorkbenchRibbonGroup,
   type WorkbenchRibbonPanel,

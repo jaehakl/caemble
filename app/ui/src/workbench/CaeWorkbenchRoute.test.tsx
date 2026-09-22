@@ -72,6 +72,19 @@ vi.mock('@/features/cae/CaeBatchProvider', () => ({ useCaeBatches: () => ({ insp
 vi.mock('@/features/cae/useCaeBatchConsole', () => ({ useCaeBatchConsole: () => undefined }))
 vi.mock('@/lib/cad/model', () => ({ parsePolylineBundles: () => [] }))
 vi.mock('@/features/cae-workbench/chrome', () => ({
+  WorkbenchRibbonButton: ({
+    label,
+    onClick,
+    disabled,
+  }: {
+    label: ReactNode
+    onClick: () => void
+    disabled?: boolean
+  }) => (
+    <button onClick={onClick} disabled={disabled}>
+      {label}
+    </button>
+  ),
   defaultWorkbenchSections: [
     { id: 'experiment' },
     { id: 'measurement' },

@@ -2,7 +2,7 @@ import { varsFingerprint } from '@/lib/cad/model/vars'
 import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
 import { useExperimentWarnings } from '@/features/cae-workbench/useExperimentWarnings'
 import { usePreflight } from '@/features/measurement/usePreflight'
-import { Rows3 } from 'lucide-react'
+import { Rows3, Play, RefreshCw, Square, X } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { useAuth } from '@/features/auth/use-auth'
@@ -13,6 +13,7 @@ import {
   WorkbenchConsoleLayout,
   WorkbenchMenubar,
   WorkbenchRibbon,
+  WorkbenchRibbonButton,
 } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
@@ -223,49 +224,32 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     },
     fileBusy: saveWorkflow.busy || preflight.busy,
     preflightControls: (
-      <div className="flex items-center gap-2 px-2 text-xs">
-        <label className="flex items-center gap-1">
-          <input
-            type="checkbox"
-            checked={saveWorkflow.includePreflight && Boolean(saveWorkflow.preflightId)}
-            disabled={!saveWorkflow.preflightId || saveWorkflow.busy}
-            onChange={(event) => saveWorkflow.setIncludePreflight(event.target.checked)}
-          />
-          Preflight 결과 함께 저장
-        </label>
-        <button
-          type="button"
-          className="rounded border px-3 py-1"
+      <div className="flex h-[72px] items-center gap-1 text-xs">
+        <WorkbenchRibbonButton
+          size="large"
+          icon={preflight.busy ? <Square /> : <Play />}
+          label={preflight.busy ? '취소' : '실행'}
           disabled={
-            preflight.busy || !workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy
+            !preflight.busy && (!workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy)
           }
           onClick={() => {
-            if (!auth.isAuthenticated) requestAccount()
+            if (preflight.busy) void preflight.cancel()
+            else if (!auth.isAuthenticated) requestAccount()
             else void preflight.run()
           }}
-        >
-          실행
-        </button>
-        <button
-          type="button"
-          className="rounded border px-3 py-1"
+        />
+        <WorkbenchRibbonButton
+          size="large"
+          icon={<RefreshCw />}
+          label="재생성 및 실행"
           disabled={preflight.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy}
           onClick={() => {
             if (!auth.isAuthenticated) requestAccount()
             else void preflight.run(true)
           }}
-        >
-          Candidate 재생성 + 실행
-        </button>
+        />
         {preflight.result ? (
-          <button type="button" onClick={preflight.clear}>
-            임시 결과 닫기
-          </button>
-        ) : null}
-        {preflight.busy ? (
-          <button type="button" onClick={() => void preflight.cancel()}>
-            취소
-          </button>
+          <WorkbenchRibbonButton icon={<X />} label="임시 결과 닫기" onClick={preflight.clear} />
         ) : null}
       </div>
     ),

@@ -1,6 +1,7 @@
 import { useMemo, useState, type Dispatch, type SetStateAction, type ReactNode } from 'react'
 import {
   Beaker,
+  BookOpenText,
   ChartNoAxesCombined,
   Database,
   Download,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react'
 import {
   WorkbenchRibbonActions,
+  WorkbenchRibbonAction,
   WorkbenchRibbonGroup,
   type WorkbenchAction,
   type WorkbenchRibbonPanel,
@@ -142,17 +144,25 @@ export function useCaePageChrome({
     const defined: Record<string, WorkbenchAction> = {
       newExperiment: {
         id: 'new-experiment',
-        label: 'New',
+        label: '템플릿',
         icon: <FlaskConical />,
         onSelect: () => setDialog('templates'),
       },
       experimentInfo: {
         id: 'experiment-info',
-        label: 'Info',
+        label: '실험 정보',
         icon: <Info />,
         disabled: !workbench.experiment,
         disabledReason: !workbench.experiment ? 'Experiment source가 없습니다.' : undefined,
         onSelect: () => setDialog('experiment-info'),
+      },
+      experimentHelp: {
+        id: 'experiment-help',
+        label: '도움말',
+        icon: <BookOpenText />,
+        onSelect: () => {
+          window.open('/doc', '_blank', 'noopener,noreferrer')
+        },
       },
       editDemoCopy: {
         id: 'edit-demo-copy',
@@ -173,7 +183,7 @@ export function useCaePageChrome({
       saveExperiment: {
         primary: true,
         id: 'save-experiment',
-        label: 'Save',
+        label: '저장',
         icon: <Save />,
         disabled:
           !authenticated ||
@@ -188,13 +198,13 @@ export function useCaePageChrome({
             : !workbench.experimentSourceValidated
               ? sourceValidationReason
               : workbench.experimentRecord && !workbench.experimentManageable
-                ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
+                ? '다른 사용자의 Experiment는 새로 저장을 사용하세요.'
                 : sourceLockReason,
         onSelect: requestExperimentSave ?? (() => setDialog('save-experiment-as')),
       },
       saveExperimentAs: {
         id: 'save-experiment-as',
-        label: 'Save As',
+        label: '새로 저장',
         icon: <SaveAll />,
         disabled:
           !authenticated || !workbench.experiment || !workbench.experimentSourceValidated || workbench.saving !== null,
@@ -209,7 +219,7 @@ export function useCaePageChrome({
       },
       generateCandidate: {
         id: 'generate-candidate',
-        label: 'Candidate',
+        label: '재생성',
         icon: <RotateCw />,
         disabled: !workbench.experiment || workbench.experimentDocument.runIsBusy || caeBusy,
         disabledReason: !workbench.experiment ? 'Experiment source가 없습니다.' : evaluationBusyReason,
@@ -563,27 +573,27 @@ export function useCaePageChrome({
       label: 'Experiment',
       content: (
         <>
-          <WorkbenchRibbonGroup label="File">
+          <WorkbenchRibbonGroup label="파일">
+            <WorkbenchRibbonAction action={actions.newExperiment} size="large" />
             <WorkbenchRibbonActions
               actions={[
-                actions.newExperiment,
-                ...(workbench.experimentIsDemo ? [actions.editDemoCopy] : []),
                 actions.saveExperiment,
                 actions.saveExperimentAs,
+                ...(workbench.experimentIsDemo ? [actions.editDemoCopy] : []),
               ]}
             />
           </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Info">
-            <WorkbenchRibbonActions actions={[actions.experimentInfo]} />
-          </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Candidate">
-            <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
+          <WorkbenchRibbonGroup label="샘플">
+            <WorkbenchRibbonAction action={actions.generateCandidate} size="large" />
           </WorkbenchRibbonGroup>
           {preflightControls ? (
-            <WorkbenchRibbonGroup label="Preflight">{preflightControls}</WorkbenchRibbonGroup>
+            <WorkbenchRibbonGroup label="시뮬레이션">{preflightControls}</WorkbenchRibbonGroup>
           ) : null}
-          <WorkbenchRibbonGroup label="Geometry">
+          <WorkbenchRibbonGroup label="CSG 요소 입력">
             <GeometryAuthoringRibbon state={experimentAuthoringState} />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="정보">
+            <WorkbenchRibbonActions actions={[actions.experimentInfo, actions.experimentHelp]} />
           </WorkbenchRibbonGroup>
         </>
       ),
@@ -594,15 +604,21 @@ export function useCaePageChrome({
       content: (
         <>
           <WorkbenchRibbonGroup label="후처리 데이터">
+            <WorkbenchRibbonAction
+              action={
+                workbench.calculationDataActions.busy ? actions.cancelCalculationData : actions.calculateSelectedData
+              }
+              size="large"
+            />
             <WorkbenchRibbonActions
               actions={
                 workbench.calculationDataActions.busy
-                  ? [actions.cancelCalculationData]
-                  : [actions.calculateSelectedData, actions.calculateMeasurementData, actions.calculateAllData]
+                  ? []
+                  : [actions.calculateMeasurementData, actions.calculateAllData]
               }
             />
             {workbench.calculationDataActions.progress?.running ? (
-              <div className="flex h-[68px] max-w-36 flex-col justify-center text-[10px] text-muted-foreground">
+              <div className="flex h-[72px] max-w-36 flex-col justify-center text-[10px] text-muted-foreground">
                 <span className="font-medium text-foreground">
                   {workbench.calculationDataActions.progress.completed.toLocaleString()}/
                   {workbench.calculationDataActions.progress.total.toLocaleString()}
@@ -625,7 +641,7 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions actions={[actions.predictionSettings, actions.predictionDetails]} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Direction">
-            <div className="flex h-[68px] min-w-36 flex-col justify-center px-2 text-[10px] text-muted-foreground">
+            <div className="flex h-[72px] min-w-36 flex-col justify-center px-2 text-[10px] text-muted-foreground">
               <span className="font-medium text-foreground capitalize">{predictionState.direction}</span>
               <span className="max-w-48 truncate" title={predictionState.status}>
                 {predictionState.status}
@@ -634,15 +650,16 @@ export function useCaePageChrome({
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Validation">
             <WorkbenchRibbonActions
+              size="large"
               actions={predictionState.busy ? [actions.predictionCancel] : [actions.predictionValidate]}
             />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Sampling">
-            <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
+            <label className="flex h-[72px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
               <input
                 aria-label="Latin Hypercube Sample & Run 횟수"
                 aria-invalid={!samplingCountValid}
-                className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-6 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={predictionState.busy}
                 min="1"
                 step="1"
@@ -652,7 +669,7 @@ export function useCaePageChrome({
               />
               <span>LHS · N</span>
             </label>
-            <WorkbenchRibbonActions actions={predictionState.busy ? [] : [actions.predictionSample]} />
+            <WorkbenchRibbonActions size="large" actions={predictionState.busy ? [] : [actions.predictionSample]} />
           </WorkbenchRibbonGroup>
         </>
       ),
@@ -663,7 +680,7 @@ export function useCaePageChrome({
       content: (
         <>
           <WorkbenchRibbonGroup label="View">
-            <WorkbenchRibbonActions actions={analysisActions} />
+            <WorkbenchRibbonActions size="large" actions={analysisActions} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Data">
             <WorkbenchRibbonActions actions={[actions.analysisReload, actions.analysisDataset]} />

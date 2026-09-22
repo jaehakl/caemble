@@ -21,7 +21,11 @@ import {
   DialogDescription,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { WorkbenchRibbonGroup, WorkbenchRibbonActions } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
+import {
+  WorkbenchRibbonGroup,
+  WorkbenchRibbonActions,
+  WorkbenchRibbonButton,
+} from '@/features/cae-workbench/chrome/WorkbenchRibbon'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { MeasurementExplorer } from '@/features/measurement'
 import type { SavedMeasurement, WorkbenchCalculationSelection } from '@/features/cae-workbench/types'
@@ -712,142 +716,150 @@ export function CalculationWorkbench({
         {ribbon(
           <>
             <WorkbenchRibbonGroup label="입력 선택">
-              {(['measurements', 'calculations', 'records'] as const).map((kind) => (
-                <Dialog key={kind} open={picker === kind} onOpenChange={(open) => setPicker(open ? kind : null)}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" className="h-10 max-w-56" disabled={contextPending}>
-                      {kind === 'measurements' ? <Database /> : kind === 'calculations' ? <FileCode2 /> : <Braces />}
-                      <span className="truncate">
-                        {kind === 'measurements'
-                          ? measurementLoading
-                            ? 'Measurement 로딩 중…'
-                            : `Measurement${measurementId === null ? ' 선택' : ` #${measurementId}`}`
-                          : kind === 'calculations'
-                            ? draft.name || 'Calculations 선택'
-                            : 'ExperimentRecord'}
-                      </span>
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="flex h-[70dvh] max-h-[85dvh] flex-col overflow-hidden sm:max-w-4xl">
-                    <DialogHeader>
-                      <DialogTitle>
-                        {kind === 'measurements'
-                          ? 'Measurement 선택'
-                          : kind === 'calculations'
-                            ? 'Calculations'
-                            : 'ExperimentRecord'}
-                      </DialogTitle>
-                      <DialogDescription>현재 Experiment의 데이터를 확인하고 선택하세요.</DialogDescription>
-                    </DialogHeader>
-                    <div className="min-h-0 flex-1 overflow-auto">
-                      {kind === 'measurements' ? (
-                        <MeasurementExplorer
-                          busy={busy}
-                          calculationTotal={
-                            calculationsQuery.isError
-                              ? 'error'
-                              : calculationsQuery.isFetching || !calculationsQuery.isSuccess
-                                ? 'loading'
-                                : rows.length
-                          }
-                          className="min-h-0 gap-2"
-                          enabled={dataReadable}
-                          experimentId={experimentId}
-                          selectedId={measurementId}
-                          onClearSelection={() => {
-                            invalidatePreview('Measurement 선택을 해제하는 중…')
-                            onClearMeasurement()
-                          }}
-                          onDelete={persistable ? onDeleteMeasurements : undefined}
-                          publicDataWarning={publicDemoMutable}
-                          onSelect={(row) => {
-                            invalidatePreview('Measurement RecordedData를 불러오는 중…')
-                            onSelectMeasurement(row)
-                            setPicker(null)
-                          }}
-                        />
-                      ) : kind === 'calculations' ? (
-                        <section className="flex h-full min-h-0 flex-col gap-2 p-2" aria-label="Calculation 목록">
-                          <header className="flex shrink-0 items-center justify-between gap-2">
-                            <h2 className="text-sm font-semibold">Calculations</h2>
-                            <div className="flex gap-1">
-                              <Button
-                                aria-label="선택한 Calculation 삭제"
-                                disabled={
-                                  saving ||
-                                  deleting ||
-                                  calculationDataBusy ||
-                                  (draft.id === null ? !sourceEditable || !dirty : !persistable)
-                                }
-                                size="icon"
-                                title="Delete"
-                                type="button"
-                                variant="outline"
-                                onClick={() => void deleteCurrent()}
-                              >
-                                {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
-                              </Button>
+              <div className="grid h-[72px] grid-rows-3 items-center">
+                {(['measurements', 'calculations', 'records'] as const).map((kind) => (
+                  <Dialog key={kind} open={picker === kind} onOpenChange={(open) => setPicker(open ? kind : null)}>
+                    <DialogTrigger asChild>
+                      <WorkbenchRibbonButton
+                        disabled={contextPending}
+                        icon={
+                          kind === 'measurements' ? <Database /> : kind === 'calculations' ? <FileCode2 /> : <Braces />
+                        }
+                        label={
+                          <span className="block max-w-56 truncate">
+                            {kind === 'measurements'
+                              ? measurementLoading
+                                ? 'Measurement 로딩 중…'
+                                : `Measurement${measurementId === null ? ' 선택' : ` #${measurementId}`}`
+                              : kind === 'calculations'
+                                ? draft.name || 'Calculations 선택'
+                                : 'ExperimentRecord'}
+                          </span>
+                        }
+                      />
+                    </DialogTrigger>
+                    <DialogContent className="flex h-[70dvh] max-h-[85dvh] flex-col overflow-hidden sm:max-w-4xl">
+                      <DialogHeader>
+                        <DialogTitle>
+                          {kind === 'measurements'
+                            ? 'Measurement 선택'
+                            : kind === 'calculations'
+                              ? 'Calculations'
+                              : 'ExperimentRecord'}
+                        </DialogTitle>
+                        <DialogDescription>현재 Experiment의 데이터를 확인하고 선택하세요.</DialogDescription>
+                      </DialogHeader>
+                      <div className="min-h-0 flex-1 overflow-auto">
+                        {kind === 'measurements' ? (
+                          <MeasurementExplorer
+                            busy={busy}
+                            calculationTotal={
+                              calculationsQuery.isError
+                                ? 'error'
+                                : calculationsQuery.isFetching || !calculationsQuery.isSuccess
+                                  ? 'loading'
+                                  : rows.length
+                            }
+                            className="min-h-0 gap-2"
+                            enabled={dataReadable}
+                            experimentId={experimentId}
+                            selectedId={measurementId}
+                            onClearSelection={() => {
+                              invalidatePreview('Measurement 선택을 해제하는 중…')
+                              onClearMeasurement()
+                            }}
+                            onDelete={persistable ? onDeleteMeasurements : undefined}
+                            publicDataWarning={publicDemoMutable}
+                            onSelect={(row) => {
+                              invalidatePreview('Measurement RecordedData를 불러오는 중…')
+                              onSelectMeasurement(row)
+                              setPicker(null)
+                            }}
+                          />
+                        ) : kind === 'calculations' ? (
+                          <section className="flex h-full min-h-0 flex-col gap-2 p-2" aria-label="Calculation 목록">
+                            <header className="flex shrink-0 items-center justify-between gap-2">
+                              <h2 className="text-sm font-semibold">Calculations</h2>
+                              <div className="flex gap-1">
+                                <Button
+                                  aria-label="선택한 Calculation 삭제"
+                                  disabled={
+                                    saving ||
+                                    deleting ||
+                                    calculationDataBusy ||
+                                    (draft.id === null ? !sourceEditable || !dirty : !persistable)
+                                  }
+                                  size="icon"
+                                  title="Delete"
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => void deleteCurrent()}
+                                >
+                                  {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+                                </Button>
+                              </div>
+                            </header>
+                            <div className="min-h-0 flex-1 overflow-auto rounded border">
+                              {experimentId === null ? (
+                                <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
+                                  먼저 저장된 Experiment를 여세요.
+                                </div>
+                              ) : calculationsQuery.isLoading ? (
+                                <div className="grid h-full min-h-24 place-items-center text-xs text-muted-foreground">
+                                  <LoaderCircle className="size-4 animate-spin" />
+                                </div>
+                              ) : calculationsQuery.isError ? (
+                                <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-destructive">
+                                  Calculation 목록을 불러오지 못했습니다.
+                                </div>
+                              ) : rows.length ? (
+                                <ul className="divide-y">
+                                  {rows.map((row) => (
+                                    <li key={row.id}>
+                                      <button
+                                        aria-current={draft.id === row.id ? 'true' : undefined}
+                                        className={cn(
+                                          'w-full px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                                          draft.id === row.id && 'bg-accent',
+                                        )}
+                                        disabled={saving || deleting || calculationDataBusy}
+                                        type="button"
+                                        onClick={() => {
+                                          if (replaceDraft(calculationDraftFromRecord(row), row.id, row))
+                                            setPicker(null)
+                                        }}
+                                      >
+                                        <span className="block truncate font-medium text-foreground">{row.name}</span>
+                                        <span className="mt-0.5 block truncate text-muted-foreground">
+                                          {row.description || `Calculation #${row.id}`}
+                                        </span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
+                                  저장된 Calculation이 없습니다.
+                                </div>
+                              )}
                             </div>
-                          </header>
-                          <div className="min-h-0 flex-1 overflow-auto rounded border">
-                            {experimentId === null ? (
-                              <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
-                                먼저 저장된 Experiment를 여세요.
-                              </div>
-                            ) : calculationsQuery.isLoading ? (
-                              <div className="grid h-full min-h-24 place-items-center text-xs text-muted-foreground">
-                                <LoaderCircle className="size-4 animate-spin" />
-                              </div>
-                            ) : calculationsQuery.isError ? (
-                              <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-destructive">
-                                Calculation 목록을 불러오지 못했습니다.
-                              </div>
-                            ) : rows.length ? (
-                              <ul className="divide-y">
-                                {rows.map((row) => (
-                                  <li key={row.id}>
-                                    <button
-                                      aria-current={draft.id === row.id ? 'true' : undefined}
-                                      className={cn(
-                                        'w-full px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                                        draft.id === row.id && 'bg-accent',
-                                      )}
-                                      disabled={saving || deleting || calculationDataBusy}
-                                      type="button"
-                                      onClick={() => {
-                                        if (replaceDraft(calculationDraftFromRecord(row), row.id, row)) setPicker(null)
-                                      }}
-                                    >
-                                      <span className="block truncate font-medium text-foreground">{row.name}</span>
-                                      <span className="mt-0.5 block truncate text-muted-foreground">
-                                        {row.description || `Calculation #${row.id}`}
-                                      </span>
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div className="grid h-full min-h-24 place-items-center p-3 text-center text-xs text-muted-foreground">
-                                저장된 Calculation이 없습니다.
-                              </div>
-                            )}
-                          </div>
-                        </section>
-                      ) : (
-                        <ExperimentRecordCatalog
-                          analysisError={dependencyState.error?.message ?? null}
-                          experimentId={experimentId}
-                          insertDisabledReason={insertDisabledReason}
-                          items={experimentRecordCatalogItems}
-                          loading={experimentRecordsQuery.isLoading}
-                          loadError={experimentRecordsQuery.isError}
-                          onInsert={insertExperimentRecord}
-                        />
-                      )}
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              ))}
+                          </section>
+                        ) : (
+                          <ExperimentRecordCatalog
+                            analysisError={dependencyState.error?.message ?? null}
+                            experimentId={experimentId}
+                            insertDisabledReason={insertDisabledReason}
+                            items={experimentRecordCatalogItems}
+                            loading={experimentRecordsQuery.isLoading}
+                            loadError={experimentRecordsQuery.isError}
+                            onInsert={insertExperimentRecord}
+                          />
+                        )}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                ))}
+              </div>
             </WorkbenchRibbonGroup>
             <WorkbenchRibbonGroup label="Calculation 작성">
               <WorkbenchRibbonActions

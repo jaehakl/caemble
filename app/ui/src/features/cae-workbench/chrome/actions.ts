@@ -21,11 +21,11 @@ export type WorkbenchSectionDefinition = Readonly<{
 }>
 
 export const defaultWorkbenchSections: readonly WorkbenchSectionDefinition[] = Object.freeze([
-  { id: 'experiment', label: 'Experiment' },
-  { id: 'measurement', label: 'Measurement' },
-  { id: 'calculation', label: 'Calculation' },
-  { id: 'prediction', label: 'Prediction' },
-  { id: 'analysis', label: 'Analysis' },
+  { id: 'experiment', label: '구성' },
+  { id: 'measurement', label: '실행' },
+  { id: 'calculation', label: '가공' },
+  { id: 'analysis', label: '통계' },
+  { id: 'prediction', label: '예측' },
 ])
 
 export type WorkbenchMenuNode =

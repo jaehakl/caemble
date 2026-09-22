@@ -38,7 +38,7 @@ export function WorkbenchMenubar({
   return (
     <div
       aria-label={ariaLabel}
-      className={cn('flex h-9 items-center gap-0.5 overflow-x-auto border-b bg-background px-1', className)}
+      className={cn('flex h-8 shrink-0 items-center gap-0.5 overflow-x-auto border-b bg-background px-1', className)}
       role="menubar"
     >
       {sections.map((section) => {
@@ -50,9 +50,9 @@ export function WorkbenchMenubar({
             aria-checked={active}
             aria-label={accessibleLabel}
             className={cn(
-              'relative flex h-8 shrink-0 items-center rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-45',
+              'relative flex h-8 shrink-0 items-center rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors outline-none hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-45',
               active &&
-                'bg-accent text-accent-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary',
+                'font-semibold text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary',
             )}
             disabled={section.disabled}
             key={section.id}
