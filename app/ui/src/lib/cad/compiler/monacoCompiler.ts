@@ -1,202 +1,41 @@
-import type * as Monaco from 'monaco-editor'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
-import { EXPERIMENT_ENTRY_PATH, cadSourceHash, type CadSourceDocument } from '../source/document'
+import { cadSourceHash, type CadSourceDocument } from '../source/document'
 import { experimentTypeScriptPaths } from '../source/moduleResolution'
-import { assertExperimentModuleGraph } from '../source/sourceAnalysis'
-import { assertCadSourcePolicy } from '../source/sourcePolicy'
-import { withCatalogTypeEnvironment } from './catalogTypeEnvironment'
-import type { CadDiagnostic, CompiledCadDocument, CompiledCadSource } from './types'
+import { catalogRuntimeTypes } from './catalogTypeEnvironment'
+import { compileInWorker } from './compilerClient'
+import { cadCompilerEnvironment } from './compilerDeclarations'
 
-const compilationCache = new Map<string, Promise<CompiledCadDocument>>()
-
-export class CadCompilationError extends Error {
-  readonly diagnostics: readonly CadDiagnostic[]
-  readonly errorType: 'compile' | 'policy' | 'type'
-
-  constructor(errorType: 'compile' | 'policy' | 'type', message: string, diagnostics: readonly CadDiagnostic[] = []) {
-    super(message)
-    this.name = 'CadCompilationError'
-    this.errorType = errorType
-    this.diagnostics = diagnostics
-  }
-}
-
-function documentSources(document: CadSourceDocument) {
-  return Object.fromEntries(
-    experimentTypeScriptPaths(document.sourceBundle.files).map((path) => [path, document.sourceBundle.files[path]]),
-  )
-}
-
-function diagnosticMessage(message: string | { messageText: string; next?: readonly unknown[] }): string {
-  if (typeof message === 'string') return message
-  const children =
-    message.next?.flatMap((child) =>
-      child && typeof child === 'object' && 'messageText' in child
-        ? [diagnosticMessage(child as { messageText: string; next?: readonly unknown[] })]
-        : [],
-    ) ?? []
-  return [message.messageText, ...children].join('\n')
-}
-
-function convertDiagnostic(
-  diagnostic: Monaco.typescript.Diagnostic,
-  model: Monaco.editor.ITextModel,
-  file: string,
-  phase: 'semantic' | 'syntax',
-): CadDiagnostic {
-  const start = Math.max(0, diagnostic.start ?? 0)
-  const end = start + Math.max(0, diagnostic.length ?? 0)
-  const startPosition = model.getPositionAt(start)
-  const endPosition = model.getPositionAt(end)
-  return Object.freeze({
-    code: diagnostic.code,
-    file,
-    message: diagnosticMessage(diagnostic.messageText),
-    phase,
-    range: Object.freeze({
-      startLineNumber: startPosition.lineNumber,
-      startColumn: startPosition.column,
-      endLineNumber: endPosition.lineNumber,
-      endColumn: endPosition.column,
-    }),
-    severity:
-      diagnostic.category === 1
-        ? ('error' as const)
-        : diagnostic.category === 0
-          ? ('warning' as const)
-          : ('info' as const),
-  })
-}
-
-async function getTypeScriptWorker(monaco: typeof Monaco) {
-  let registrationError: unknown
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      return await monaco.typescript.getTypeScriptWorker()
-    } catch (error) {
-      if (!String(error).includes('TypeScript not registered')) throw error
-      registrationError = error
-      await new Promise((resolve) => window.setTimeout(resolve, 20))
-    }
-  }
-  throw registrationError
-}
-
-async function compile(
-  document: CadSourceDocument,
-  sourceHash: string,
-  catalog: CatalogRuntimeSlice | undefined,
-): Promise<CompiledCadDocument> {
-  const sources = documentSources(document)
-  for (const [path, source] of Object.entries(sources)) {
-    try {
-      assertCadSourcePolicy(path, source)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new CadCompilationError('policy', message, [
-        {
-          code: 'CAD_POLICY',
-          file: path,
-          message,
-          phase: 'policy',
-          range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
-          severity: 'error',
-        },
-      ])
-    }
-  }
-  try {
-    assertExperimentModuleGraph(sources)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new CadCompilationError('policy', message, [
-      {
-        code: 'CAD_MODULE_GRAPH',
-        file: EXPERIMENT_ENTRY_PATH,
-        message,
-        phase: 'policy',
-        range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
-        severity: 'error',
-      },
-    ])
-  }
-
-  const { loadMonaco } = await import('./monacoRuntime')
-  const monaco = await loadMonaco()
-  const sourceModels = Object.fromEntries(
-    Object.entries(sources).map(([path, source]) => {
-      const uri = monaco.Uri.parse(`file:///caemble-source/${sourceHash}/${path}`)
-      return [path, monaco.editor.createModel(source, 'typescript', uri)]
-    }),
-  )
-  try {
-    const compilation = withCatalogTypeEnvironment(monaco, catalog, async () => {
-      const workerFactory = await getTypeScriptWorker(monaco)
-      const entries = await Promise.all(
-        Object.entries(sourceModels).map(async ([path, model]) => {
-          const worker = await workerFactory(model.uri)
-          const [syntactic, semantic] = await Promise.all([
-            worker.getSyntacticDiagnostics(model.uri.toString()),
-            worker.getSemanticDiagnostics(model.uri.toString()),
-          ])
-          const diagnostics = [
-            ...syntactic.map((diagnostic) => convertDiagnostic(diagnostic, model, path, 'syntax')),
-            ...semantic.map((diagnostic) => convertDiagnostic(diagnostic, model, path, 'semantic')),
-          ]
-          const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
-          if (errors.length > 0) {
-            throw new CadCompilationError(
-              'type',
-              errors
-                .map(
-                  (diagnostic) =>
-                    `${diagnostic.file}:${diagnostic.range.startLineNumber}:${diagnostic.range.startColumn} ${diagnostic.message}`,
-                )
-                .join('\n'),
-              diagnostics,
-            )
-          }
-          const output = await worker.getEmitOutput(model.uri.toString())
-          const code = output.outputFiles.find((item) => item.name.endsWith('.js'))?.text
-          const sourceMap = output.outputFiles.find((item) => item.name.endsWith('.js.map'))?.text
-          if (output.emitSkipped || code === undefined) {
-            throw new CadCompilationError('compile', `TypeScript did not emit JavaScript for ${path}.`, diagnostics)
-          }
-          const compiledSource: CompiledCadSource = Object.freeze({
-            entryFile: path,
-            code: `${code.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')}\n//# sourceURL=caemble://${sourceHash}/${path}`,
-            ...(sourceMap === undefined ? {} : { sourceMap }),
-            sourceHash,
-          })
-          return [path, compiledSource] as const
-        }),
-      )
-      return Object.freeze({
-        sourceHash,
-        sources: Object.freeze(Object.fromEntries(entries)),
-      })
-    })
-    return await compilation
-  } finally {
-    Object.values(sourceModels).forEach((model) => model.dispose())
-  }
-}
+export { CadCompilationError } from './compilationError'
 
 export type CompileCadDocumentOptions = Readonly<{
   catalogRevision?: string
   catalog?: CatalogRuntimeSlice
+  signal?: AbortSignal
 }>
 
 export async function compileCadDocument(document: CadSourceDocument, options: CompileCadDocumentOptions = {}) {
-  const sourceHash = await cadSourceHash(document)
-  const cacheKey = `${options.catalogRevision ?? 'catalog-independent'}:${sourceHash}`
-  let cached = compilationCache.get(cacheKey)
-  if (!cached) {
-    cached = compile(document, sourceHash, options.catalog).catch((error) => {
-      compilationCache.delete(cacheKey)
-      throw error
-    })
-    compilationCache.set(cacheKey, cached)
-  }
-  return cached
+  options.signal?.throwIfAborted()
+  // Hashing and compilation must use the same input even if the caller replaces its files.
+  const snapshot: CadSourceDocument = { ...document, sourceBundle: { files: { ...document.sourceBundle.files } } }
+  const catalogTypes = options.catalog ? catalogRuntimeTypes(options.catalog) : 'export {}'
+  const revision = options.catalogRevision ?? options.catalog?.catalogRevision ?? 'catalog-independent'
+  const environment = new TextEncoder().encode(JSON.stringify([cadCompilerEnvironment, revision, catalogTypes]))
+  const [sourceHash, environmentDigest] = await Promise.all([
+    cadSourceHash(snapshot),
+    crypto.subtle.digest('SHA-256', environment),
+  ])
+  options.signal?.throwIfAborted()
+  const environmentHash = [...new Uint8Array(environmentDigest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+  const sources = Object.fromEntries(
+    experimentTypeScriptPaths(snapshot.sourceBundle.files).map((path) => [path, snapshot.sourceBundle.files[path]]),
+  )
+  const compiled = await compileInWorker(
+    `${environmentHash}:${sourceHash}`,
+    { sourceHash, sources, catalogTypes },
+    options.signal,
+  )
+  options.signal?.throwIfAborted()
+  return compiled
 }

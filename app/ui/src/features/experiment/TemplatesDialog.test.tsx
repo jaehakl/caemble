@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { TemplatesDialog } from './TemplatesDialog'
 
@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getExperiment: vi.fn(),
   listExperiments: vi.fn(),
   preview: vi.fn(),
+  previewUnmounted: vi.fn(),
 }))
 
 vi.mock('@/api/catalog', async (importOriginal) => {
@@ -17,6 +18,7 @@ vi.mock('@/api/catalog', async (importOriginal) => {
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => {
     const [experimentName, setExperimentName] = useState('')
+    useEffect(() => () => mocks.previewUnmounted(), [])
     return {
       experiment: experimentName ? {} : null,
       experimentName,
@@ -184,4 +186,62 @@ it('previews the selected Template, retries detail errors, and applies only load
   await waitFor(() => expect(screen.getByLabelText('3D Geometry Preview')).toHaveTextContent('Beam'))
   fireEvent.click(screen.getByRole('button', { name: '적용' }))
   expect(apply).toHaveBeenCalledWith(beamDetail)
+})
+
+it('ignores a late detail response from the previous selection', async () => {
+  let resolveFiber!: (value: typeof beamDetail) => void
+  mocks.getExperiment.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveFiber = resolve
+      }),
+  )
+  const apply = vi.fn()
+  render(<TemplatesDialog user={null} onApply={apply} onClose={vi.fn()} />, { wrapper })
+  fireEvent.click(await screen.findByRole('button', { name: 'Fiber Bundle' }))
+  await waitFor(() => expect(mocks.getExperiment).toHaveBeenCalledTimes(1))
+  fireEvent.click(screen.getByRole('button', { name: 'Beam' }))
+  await screen.findByLabelText('3D Geometry Preview')
+  await act(async () => resolveFiber({ ...beamDetail, ...templates[0] }))
+  expect(screen.getByLabelText('3D Geometry Preview')).toHaveTextContent('Beam')
+  fireEvent.click(screen.getByRole('button', { name: '적용' }))
+  expect(apply).toHaveBeenCalledWith(beamDetail)
+})
+
+it('does not preview or apply a response whose coordinate differs from the selection', async () => {
+  render(<TemplatesDialog user={null} onApply={vi.fn()} onClose={vi.fn()} />, { wrapper })
+  fireEvent.click(await screen.findByRole('button', { name: 'Fiber Bundle' }))
+  await waitFor(() => expect(mocks.getExperiment).toHaveBeenCalled())
+  expect(screen.getByRole('button', { name: '적용' })).toBeDisabled()
+  expect(screen.queryByLabelText('3D Geometry Preview')).not.toBeInTheDocument()
+  expect(mocks.preview).not.toHaveBeenCalled()
+})
+
+it('unmounts old previews on selection, close, and apply while allowing a detail-ready apply', async () => {
+  const fiberDetail = { ...beamDetail, ...templates[0] }
+  mocks.getExperiment.mockResolvedValueOnce(beamDetail).mockResolvedValueOnce(fiberDetail)
+  function Host() {
+    const [open, setOpen] = useState(true)
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>Open Templates</button>
+        {open && <TemplatesDialog user={null} onApply={() => setOpen(false)} onClose={() => setOpen(false)} />}
+      </>
+    )
+  }
+  render(<Host />, { wrapper })
+  fireEvent.click(await screen.findByRole('button', { name: 'Beam' }))
+  await screen.findByLabelText('3D Geometry Preview')
+  fireEvent.click(screen.getByRole('button', { name: 'Fiber Bundle' }))
+  await waitFor(() => expect(screen.getByLabelText('3D Geometry Preview')).toHaveTextContent('Fiber Bundle'))
+  expect(mocks.previewUnmounted).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('button', { name: '취소' }))
+  expect(mocks.previewUnmounted).toHaveBeenCalledTimes(2)
+  fireEvent.click(screen.getByRole('button', { name: 'Open Templates' }))
+  expect(screen.getByRole('button', { name: '적용' })).toBeDisabled()
+  fireEvent.click(await screen.findByRole('button', { name: 'Beam' }))
+  await screen.findByLabelText('3D Geometry Preview')
+  fireEvent.click(screen.getByRole('button', { name: '적용' }))
+  expect(screen.queryByRole('dialog', { name: 'Templates' })).not.toBeInTheDocument()
+  expect(mocks.previewUnmounted).toHaveBeenCalledTimes(3)
 })

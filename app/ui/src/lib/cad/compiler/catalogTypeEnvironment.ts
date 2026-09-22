@@ -1,8 +1,4 @@
-import type * as Monaco from 'monaco-editor'
 import type { CatalogRuntimeSlice, ModelParameterSchema } from '@/contracts/catalog'
-
-const catalogTypesPath = 'file:///node_modules/@caemble/core/catalog-runtime.d.ts'
-let environmentQueue = Promise.resolve()
 
 function literal(value: string) {
   return JSON.stringify(value)
@@ -36,25 +32,4 @@ ${interactions.join('\n')}
   }
 }
 `
-}
-
-export function withCatalogTypeEnvironment<T>(
-  monaco: typeof Monaco,
-  slice: CatalogRuntimeSlice | undefined,
-  run: () => Promise<T>,
-) {
-  const previous = environmentQueue
-  let release: () => void = () => undefined
-  environmentQueue = new Promise<void>((resolve) => { release = resolve })
-  return previous.then(async () => {
-    const disposable = slice
-      ? monaco.typescript.typescriptDefaults.addExtraLib(catalogRuntimeTypes(slice), catalogTypesPath)
-      : undefined
-    try {
-      return await run()
-    } finally {
-      disposable?.dispose()
-      release()
-    }
-  })
 }

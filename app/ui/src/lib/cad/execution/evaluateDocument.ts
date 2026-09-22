@@ -73,9 +73,11 @@ export class CadDocumentEvaluationError extends Error {
   }
 }
 
-function resolveCatalogRuntimeSlice(bundle: ExperimentSourceBundle, options: CatalogRuntimeSliceOptions) {
-  if (options.catalog !== undefined) return Promise.resolve(options.catalog)
-  return options.catalogFetcher(bundle)
+async function resolveCatalogRuntimeSlice(bundle: ExperimentSourceBundle, options: EvaluateDocumentOptions) {
+  options.signal?.throwIfAborted()
+  const catalog = options.catalog ?? (await options.catalogFetcher(bundle))
+  options.signal?.throwIfAborted()
+  return catalog
 }
 
 function timeoutPromise<Response, Result>(
@@ -132,12 +134,15 @@ export async function inspectDocument(
   document: ExperimentSourceDocument,
   options: EvaluateDocumentOptions,
 ): Promise<CadDocumentInspection> {
+  options.signal?.throwIfAborted()
   const catalog = await resolveCatalogRuntimeSlice(document.sourceBundle, options)
-  installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(document, {
     catalogRevision: catalog.catalogRevision,
     catalog,
+    signal: options.signal,
   })
+  options.signal?.throwIfAborted()
+  installCatalogRuntimeSlice(catalog)
   registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadInspectionRequest = {
     type: 'inspect',
@@ -162,12 +167,15 @@ export async function evaluateDocument(
   input: CadEvaluationInput,
   options: EvaluateDocumentOptions,
 ): Promise<EvaluatedExperimentSnapshot> {
+  options.signal?.throwIfAborted()
   const catalog = await resolveCatalogRuntimeSlice(input.document.sourceBundle, options)
-  installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(input.document, {
     catalogRevision: catalog.catalogRevision,
     catalog,
+    signal: options.signal,
   })
+  options.signal?.throwIfAborted()
+  installCatalogRuntimeSlice(catalog)
   registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadEvaluationRequest = {
     type: 'evaluate',
@@ -194,12 +202,15 @@ export async function preparePredictionDocument(
   records: readonly string[],
   options: EvaluateDocumentOptions,
 ): Promise<PredictionCandidateSnapshot> {
+  options.signal?.throwIfAborted()
   const catalog = await resolveCatalogRuntimeSlice(input.document.sourceBundle, options)
-  installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(input.document, {
     catalogRevision: catalog.catalogRevision,
     catalog,
+    signal: options.signal,
   })
+  options.signal?.throwIfAborted()
+  installCatalogRuntimeSlice(catalog)
   registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadPredictionRequest = {
     type: 'prepare-prediction',
@@ -227,11 +238,14 @@ export async function evaluateGeometryModule(
   exportName: string,
   options: GeometryModuleEvaluationOptions,
 ): Promise<GeometryModulePreview> {
+  options.signal?.throwIfAborted()
   const catalog = await resolveCatalogRuntimeSlice(document.sourceBundle, options)
   const compiledDocument = await compileCadDocument(document, {
     catalogRevision: catalog.catalogRevision,
     catalog,
+    signal: options.signal,
   })
+  options.signal?.throwIfAborted()
   const request: CadGeometryPreviewRequest = {
     type: 'preview-geometry',
     catalog,

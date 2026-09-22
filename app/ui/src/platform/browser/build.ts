@@ -10,7 +10,7 @@ export async function prepareBrowserMeasurement(
   signal?.throwIfAborted()
   const compiledDocument = await compileCadDocument(
     { kind: 'experiment', sourceBundle: request.source_bundle },
-    { catalog: request.catalog, catalogRevision: request.catalog.catalogRevision },
+    { catalog: request.catalog, catalogRevision: request.catalog.catalogRevision, signal },
   )
   if (compiledDocument.sourceHash !== request.source_hash) throw new Error('The source changed before building.')
   signal?.throwIfAborted()

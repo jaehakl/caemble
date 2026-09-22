@@ -1,6 +1,6 @@
 import type * as Monaco from 'monaco-editor'
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
-import TypeScriptWorker from 'monaco-editor/languages/features/typescript/ts.worker.js?worker'
+import TypeScriptWorker from './cadCompiler.worker?worker'
 import { setupMonaco } from './monacoSetup'
 
 let runtime: Promise<typeof Monaco> | null = null

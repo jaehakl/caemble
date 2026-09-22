@@ -50,6 +50,8 @@ export function TemplatesDialog({
   )
   const detailQuery = useQuery(catalogExperimentQueryOptions(selected ?? '', selected !== null))
 
+  const selectedDetail = detailQuery.data?.coordinate === selected?.coordinate ? detailQuery.data : undefined
+
   function resetSelection() {
     setSelected(null)
   }
@@ -223,8 +225,8 @@ export function TemplatesDialog({
                         </Button>
                       </div>
                     </div>
-                  ) : detailQuery.data ? (
-                    <TemplatePreview key={detailQuery.data.coordinate} detail={detailQuery.data} user={user} />
+                  ) : selectedDetail ? (
+                    <TemplatePreview key={selectedDetail.coordinate} detail={selectedDetail} user={user} />
                   ) : null}
                 </div>
                 {detailQuery.isPending ? (
@@ -232,21 +234,21 @@ export function TemplatesDialog({
                     <div className="h-3 w-full rounded bg-muted" />
                     <div className="h-3 w-2/3 rounded bg-muted" />
                   </div>
-                ) : detailQuery.isSuccess && detailQuery.data ? (
+                ) : detailQuery.isSuccess && selectedDetail ? (
                   <>
-                    {detailQuery.data.description.trim() ? (
+                    {selectedDetail.description.trim() ? (
                       <section className="space-y-2">
                         <h3 className="text-sm font-semibold">설명</h3>
                         <p className="text-sm leading-6 break-words whitespace-pre-wrap text-muted-foreground">
-                          {detailQuery.data.description}
+                          {selectedDetail.description}
                         </p>
                       </section>
                     ) : null}
-                    {detailQuery.data.concepts.length ? (
+                    {selectedDetail.concepts.length ? (
                       <section className="space-y-3">
                         <h3 className="text-sm font-semibold">Concepts</h3>
                         <div className="flex flex-wrap gap-2">
-                          {detailQuery.data.concepts.map((concept) => (
+                          {selectedDetail.concepts.map((concept) => (
                             <span
                               key={concept}
                               className="max-w-full rounded-md bg-muted px-2 py-1 text-xs leading-5 break-words"
@@ -257,11 +259,11 @@ export function TemplatesDialog({
                         </div>
                       </section>
                     ) : null}
-                    {detailQuery.data.relatedSolvers.length ? (
+                    {selectedDetail.relatedSolvers.length ? (
                       <section className="space-y-3">
                         <h3 className="text-sm font-semibold">관련 Solvers</h3>
                         <ul className="divide-y rounded-lg border bg-background px-4">
-                          {detailQuery.data.relatedSolvers.map((solver) => (
+                          {selectedDetail.relatedSolvers.map((solver) => (
                             <li key={solver.name + solver.version} className="space-y-1 py-3">
                               <p className="text-sm font-medium break-words">
                                 {solver.name}{' '}
@@ -277,11 +279,11 @@ export function TemplatesDialog({
                         </ul>
                       </section>
                     ) : null}
-                    {detailQuery.data.calculations.length ? (
+                    {selectedDetail.calculations.length ? (
                       <section className="space-y-3">
                         <h3 className="text-sm font-semibold">포함된 Calculations</h3>
                         <ul className="divide-y rounded-lg border bg-background px-4">
-                          {detailQuery.data.calculations.map((calculation) => (
+                          {selectedDetail.calculations.map((calculation) => (
                             <li key={calculation.name} className="space-y-1 py-3">
                               <p className="text-sm font-medium break-words">{calculation.name}</p>
                               {calculation.description ? (
@@ -298,7 +300,7 @@ export function TemplatesDialog({
                       <summary className="cursor-pointer rounded-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
                         추가 정보
                       </summary>
-                      <p className="mt-3 leading-5 break-all">{detailQuery.data.coordinate}</p>
+                      <p className="mt-3 leading-5 break-all">{selectedDetail.coordinate}</p>
                     </details>
                   </>
                 ) : null}
@@ -311,10 +313,10 @@ export function TemplatesDialog({
             취소
           </Button>
           <Button
-            disabled={!selected || !detailQuery.isSuccess}
+            disabled={!selectedDetail || !detailQuery.isSuccess}
             type="button"
             onClick={() => {
-              if (detailQuery.data) onApply(detailQuery.data)
+              if (selectedDetail) onApply(selectedDetail)
             }}
           >
             적용
