@@ -16,7 +16,6 @@ import type { CadDocumentController } from '@/features/viewer/workspace/useCadWo
 import type { CadViewerSelectionQuery } from '@/features/viewer/viewer/selection'
 import { cadSourceIdSelectionAtRange } from '@/features/viewer/editor/cadSelectionSource'
 import { TaskInteractions } from './TaskInteractions'
-import { DocumentFeedback } from './DocumentFeedback'
 
 const protectedCorePaths: readonly string[] = [
   EXPERIMENT_ENTRY_PATH,
@@ -368,7 +367,6 @@ export function ExperimentEditor({
           </div>
         )}
       </div>
-      <DocumentFeedback controller={controller} />
     </section>
   )
 }

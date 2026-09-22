@@ -1,5 +1,6 @@
 import { varsFingerprint } from '@/lib/cad/model/vars'
 import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
+import { useExperimentWarnings } from '@/features/cae-workbench/useExperimentWarnings'
 import { usePreflight } from '@/features/measurement/usePreflight'
 import { Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -80,7 +81,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     workbench.experiment,
     workbench.experimentDocument,
     `${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${workbench.selection.measurement?.id ?? ''}`,
+    runtimeConsole.append,
   )
+  useExperimentWarnings(workbench.experimentDocument, runtimeConsole.append)
   const experimentDataReadable = auth.isAuthenticated || workbench.experimentIsDemo
   const calculationAccess = calculationAccessPolicy({
     dataReadable: experimentDataReadable,
@@ -254,6 +257,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         >
           Candidate 재생성 + 실행
         </button>
+        {preflight.result ? (
+          <button type="button" onClick={preflight.clear}>
+            임시 결과 닫기
+          </button>
+        ) : null}
         {preflight.busy ? (
           <button type="button" onClick={() => void preflight.cancel()}>
             취소
@@ -285,19 +293,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const contextualRightPane =
     page.activeSection === 'experiment' ? (
       <div aria-label="Experiment source workspace" className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-2 border-b p-2 text-xs">
-          {preflight.result ? (
-            <button type="button" onClick={preflight.clear}>
-              임시 결과 닫기
-            </button>
-          ) : null}
-          <span role="status">{preflight.status}</span>
-          {preflight.error ? (
-            <span role="alert" className="text-red-700">
-              {preflight.error}
-            </span>
-          ) : null}
-        </div>
         <div className="min-h-0 w-full min-w-0 flex-1">
           <ExperimentEditor
             controller={workbench.experimentDocument}
@@ -400,7 +395,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   )
   const viewerPane = (
     <div className="flex h-full min-h-0 flex-col">
-      {preview ? <div className="border-b p-2 text-xs">임시 결과 · 실행 당시 Geometry / Vars</div> : null}
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
           onGeometryRequiredChange={isPrediction ? workbench.setPredictionGeometryRequired : undefined}

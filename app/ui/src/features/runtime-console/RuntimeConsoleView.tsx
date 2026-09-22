@@ -103,13 +103,13 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
       </div>
       <div className="min-h-0 flex-1 overflow-auto font-mono text-xs" role="log" aria-live="polite">
         {events.length ? (
-          <ol aria-label="Runtime Console 이벤트" className="divide-y divide-slate-100">
+          <ol aria-label="Runtime Console 이벤트">
             {events.map((event, index) => {
               const expanded = expandedEventIds.has(event.id)
               const contentId = `runtime-console-event-${index}`
               return (
                 <li
-                  className="grid grid-cols-[1.25rem_5.5rem_minmax(0,1fr)] items-start gap-1 px-3 py-2"
+                  className="grid grid-cols-[1.25rem_5.5rem_minmax(0,1fr)] items-start gap-1 px-3 py-0.5 leading-4"
                   key={event.id}
                 >
                   <button
@@ -156,6 +156,16 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
                       </div>
                     ) : null}
                   </div>
+                  {expanded && event.details ? (
+                    <dl className="col-start-3 min-w-0 break-words whitespace-pre-wrap text-slate-500">
+                      {Object.entries(event.details).map(([key, value]) => (
+                        <div key={key}>
+                          <dt className="inline font-semibold">{key}: </dt>
+                          <dd className="inline">{String(value)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
                 </li>
               )
             })}
@@ -172,7 +182,8 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
 }
 
 export function RuntimeConsoleSummary({ store }: { store: RuntimeConsoleStore }) {
-  const { latestEvent } = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  const { events } = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  const latestEvent = [...events].reverse().find((event) => event.source !== 'cad' || event.level !== 'info')
 
   if (!latestEvent) {
     return <span className="min-w-0 flex-1 truncate text-slate-400">Runtime 이벤트가 없습니다.</span>

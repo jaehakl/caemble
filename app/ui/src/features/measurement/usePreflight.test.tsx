@@ -298,3 +298,37 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
   )
   expect(screen.getByText('이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.')).toBeInTheDocument()
 })
+
+it('reports each failed run once without replaying errors on rerender', async () => {
+  const onActivity = vi.fn()
+  mocks.submit.mockRejectedValue(new Error('입력 업로드 실패'))
+  const { result, rerender } = renderHook(() => usePreflight(experiment, document, 'first', onActivity))
+  await act(async () => {
+    await result.current.run()
+  })
+  expect(onActivity).toHaveBeenCalledTimes(1)
+  expect(onActivity).toHaveBeenLastCalledWith(expect.objectContaining({ level: 'error', message: '입력 업로드 실패' }))
+  rerender()
+  expect(onActivity).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    await result.current.run()
+  })
+  expect(onActivity).toHaveBeenCalledTimes(2)
+})
+
+it('reports result loading failures but does not log successful completion', async () => {
+  const onActivity = vi.fn()
+  const { result } = renderHook(() => usePreflight(experiment, document, 'first', onActivity))
+  await act(async () => {
+    await result.current.run()
+  })
+  expect(onActivity).not.toHaveBeenCalled()
+  mocks.resolve.mockRejectedValue(new Error('결과 로드 실패'))
+  await act(async () => {
+    await result.current.run()
+  })
+  expect(onActivity).toHaveBeenCalledTimes(1)
+  expect(onActivity).toHaveBeenCalledWith(
+    expect.objectContaining({ phase: 'preflight.result.failed', details: { result: 'field', batchId: 'batch' } }),
+  )
+})

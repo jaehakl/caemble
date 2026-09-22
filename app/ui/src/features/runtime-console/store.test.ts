@@ -27,3 +27,27 @@ describe('Runtime Console store', () => {
     expect(store.getSnapshot()).toEqual({ events: [], byteLength: 0, latestEvent: null })
   })
 })
+
+it.each([true, false])('merges preflight and streamed failures in either arrival order (%s)', (preflightFirst) => {
+  const store = createRuntimeConsoleStore()
+  const phases = preflightFirst ? ['preflight.failed', 'job.failed'] : ['job.failed', 'preflight.failed']
+  for (const phase of phases)
+    store.append({ source: 'cae', level: 'error', phase, message: '실행 실패', details: { batchId: 'one' } })
+  expect(store.getSnapshot().events).toHaveLength(1)
+  store.append({
+    source: 'cae',
+    level: 'error',
+    phase: 'preflight.failed',
+    message: '실행 실패',
+    details: { batchId: 'two' },
+  })
+  expect(store.getSnapshot().events).toHaveLength(2)
+  store.append({
+    source: 'cae',
+    level: 'error',
+    phase: 'preflight.result.failed',
+    message: '실행 실패',
+    details: { batchId: 'one', result: 'field' },
+  })
+  expect(store.getSnapshot().events).toHaveLength(3)
+})

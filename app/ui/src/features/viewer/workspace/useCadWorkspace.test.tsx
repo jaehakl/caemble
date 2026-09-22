@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EvaluatedExperimentSnapshot } from '@/lib/cad/execution'
 import type { ExperimentSourceDocument } from '@/lib/cad/source'
 import { useCadWorkspace } from './useCadWorkspace'
+import { emitRuntimeActivity } from '@/features/runtime-console/types'
+import { CadCompilationError } from '@/lib/cad/compiler/monacoCompiler'
 
 const mocks = vi.hoisted(() => ({
   applyMaterialSnapshot: vi.fn(),
@@ -87,6 +89,7 @@ function evaluatedSnapshot(sourceHash: string): EvaluatedExperimentSnapshot {
 }
 
 beforeEach(() => {
+  vi.mocked(emitRuntimeActivity).mockClear()
   mocks.preparePredictionDocument.mockReset().mockImplementation(async ({ vars }, records) => ({
     sourceHash: 'source',
     variables: vars,
@@ -113,6 +116,43 @@ beforeEach(() => {
     warnings: Object.freeze([]),
     taskMaterialWarnings: Object.freeze({}),
   })
+})
+
+it('reports source errors once per location with technical details and keeps editor diagnostics', async () => {
+  const diagnostic = {
+    file: 'experiment.tsx',
+    message: 'Unknown material',
+    severity: 'error',
+    code: 1,
+    phase: 'semantic',
+    range: { startLineNumber: 2, startColumn: 3, endLineNumber: 2, endColumn: 8 },
+  }
+  const cause = Object.assign(new Error('Compilation failed'), {
+    diagnostics: [diagnostic, { ...diagnostic }],
+    errorType: 'type',
+  })
+  Object.setPrototypeOf(cause, CadCompilationError.prototype)
+  mocks.inspectDocument.mockRejectedValue(cause)
+  const { result, rerender } = renderHook(() => useCadWorkspace(firstExperiment, undefined))
+  await waitFor(() => expect(result.current.experimentDocument.status).toBe('Error'))
+  const errors = vi
+    .mocked(emitRuntimeActivity)
+    .mock.calls.map(([, event]) => event)
+    .filter((event) => event.level === 'error')
+  expect(errors).toHaveLength(1)
+  expect(errors[0]).toMatchObject({
+    message: 'Unknown material',
+    details: {
+      title: 'Type Error',
+      file: 'experiment.tsx',
+      line: 2,
+      column: 3,
+      stack: expect.any(String),
+    },
+  })
+  expect(result.current.experimentDocument.diagnostics).toHaveLength(2)
+  rerender()
+  expect(vi.mocked(emitRuntimeActivity).mock.calls.filter(([, event]) => event.level === 'error')).toHaveLength(1)
 })
 
 describe('useCadWorkspace lifecycle boundary', () => {

@@ -26,7 +26,7 @@ vi.mock('@/features/auth/use-auth', () => ({
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
     experimentId: 7,
-    experimentDocument: { resultSessionKey: 'session' },
+    experimentDocument: { resultSessionKey: 'session', materialWarnings: [], draftTaskNames: [] },
     experimentIsDemo: mocks.isDemo,
     experimentManageable: mocks.manageable,
     selectionRestoring: mocks.restoring,
@@ -61,7 +61,9 @@ vi.mock('./useCaePageSession', async () => {
 })
 vi.mock('@/features/calculation', () => ({ calculationAccessPolicy: () => ({}) }))
 vi.mock('@/features/cae-workbench/useCaePageChrome', () => ({
-  useCaePageChrome: () => ({ ribbonPanels: [] }),
+  useCaePageChrome: ({ preflightControls }: { preflightControls: ReactNode }) => ({
+    ribbonPanels: [{ sectionId: 'experiment', content: preflightControls }],
+  }),
 }))
 vi.mock('@/features/cae-workbench/viewer/useSelectionSourceNavigation', () => ({
   useSelectionSourceNavigation: () => ({}),
@@ -395,4 +397,18 @@ it.each([
     publicDemoMutable: mutable,
     measurementSelectionPending: false,
   })
+})
+
+it('moves temporary result dismissal into the ribbon without status banners', () => {
+  mocks.preview = true
+  render(
+    <MemoryRouter>
+      <CaeWorkbenchRoute />
+    </MemoryRouter>,
+  )
+  expect(screen.queryByText('임시 결과 · 실행 당시 Geometry / Vars')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Experiment source workspace').querySelector('[role="status"]')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '임시 결과 닫기' }))
+  expect(mocks.clearPreview).toHaveBeenCalledTimes(1)
+  expect(screen.queryByRole('button', { name: '임시 결과 닫기' })).not.toBeInTheDocument()
 })

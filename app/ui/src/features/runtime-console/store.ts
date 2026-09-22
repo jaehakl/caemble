@@ -105,6 +105,21 @@ export function createRuntimeConsoleStore(dependencies: StoreDependencies = {}):
       ...(progress === undefined ? {} : { progress }),
       ...(details ? { details } : {}),
     })
+    // A preflight failure can also arrive through the batch event stream.
+    const existingFailure =
+      event.source === 'cae' && event.level === 'error' && event.details?.batchId
+        ? snapshot.events.find(
+            (current) =>
+              current.source === event.source &&
+              current.level === event.level &&
+              current.details?.batchId === event.details?.batchId &&
+              current.message === event.message &&
+              (current.phase === 'preflight.failed' || event.phase === 'preflight.failed') &&
+              ['preflight.failed', 'job.failed'].includes(current.phase ?? '') &&
+              ['preflight.failed', 'job.failed'].includes(event.phase ?? ''),
+          )
+        : undefined
+    if (existingFailure) return existingFailure
     const replacementIndex = requestedId ? snapshot.events.findIndex((current) => current.id === event.id) : -1
     const nextEvents = [...snapshot.events]
     const nextSizes = [...sizes]

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { emitRuntimeActivity, type RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { browserClient } from '@/api/http'
 import { caeBatches } from '@/api/cae'
 import { resolveObjects } from '@/api/objectStorage'
@@ -29,6 +30,7 @@ export function usePreflight(
   experiment: ExperimentSourceDocument | null,
   document: CadDocumentController,
   selectionKey: unknown,
+  onActivity?: RuntimeActivityCallback,
 ) {
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
@@ -41,6 +43,18 @@ export function usePreflight(
     rules: ReturnType<typeof recordedDataRules>
     errors: Record<string, string>
   }>(null)
+  const onActivityRef = useRef(onActivity)
+  onActivityRef.current = onActivity
+  const reportError = (message: string, details?: Record<string, string>) => {
+    setError(message)
+    emitRuntimeActivity(onActivityRef.current, {
+      source: 'cae',
+      level: 'error',
+      phase: 'preflight.failed',
+      message,
+      details,
+    })
+  }
   const active = useRef<{ controller: AbortController; batchId?: string } | null>(null)
   const pending = useRef<{ generation: number; sourceBundle: ExperimentSourceDocument['sourceBundle'] } | null>(null)
   const [viewerEpoch, setViewerEpoch] = useState(0)
@@ -66,7 +80,7 @@ export function usePreflight(
       if (!experiment) return
       const generation = document.generateCandidate?.()
       if (generation == null) {
-        setError('Candidate 생성을 시작하지 못했습니다.')
+        reportError('Candidate 생성을 시작하지 못했습니다.')
         return
       }
       pending.current = { generation, sourceBundle: experiment.sourceBundle }
@@ -182,6 +196,15 @@ export function usePreflight(
         data,
         rules: recordedDataRules(payload.schemas, 'preflight.recorded-data'),
       })
+      for (const [name, message] of Object.entries(errors)) {
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cae',
+          level: 'error',
+          phase: 'preflight.result.failed',
+          message,
+          details: { result: name, batchId: payload.id },
+        })
+      }
       const failures = Object.keys(errors).length
       setStatus(
         failures
@@ -192,7 +215,11 @@ export function usePreflight(
       )
     } catch (cause) {
       if (active.current === execution) {
-        setError(signal.aborted ? null : cause instanceof Error ? cause.message : String(cause))
+        if (signal.aborted) setError(null)
+        else
+          reportError(cause instanceof Error ? cause.message : String(cause), {
+            ...(execution.batchId ? { batchId: execution.batchId } : {}),
+          })
         setStatus(signal.aborted ? '취소됨' : '실행 실패')
       }
       if (execution.batchId) await caeBatches.cancel(execution.batchId).catch(() => undefined)
@@ -226,6 +253,15 @@ export function usePreflight(
         setBusy(false)
         setStatus('Candidate 준비 실패')
         setError('Candidate 평가·빌드에 실패했습니다. 진단을 확인하세요.')
+        // The document already reports its failure and source diagnostics.
+        if (!document.error && !document.diagnostics?.some((item) => item.severity === 'error')) {
+          emitRuntimeActivity(onActivityRef.current, {
+            source: 'cae',
+            level: 'error',
+            phase: 'preflight.failed',
+            message: 'Candidate 평가·빌드에 실패했습니다. 진단을 확인하세요.',
+          })
+        }
       }
     }
   }, [document, experiment])
@@ -241,7 +277,7 @@ export function usePreflight(
       try {
         await caeBatches.cancel(execution.batchId)
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause))
+        reportError(cause instanceof Error ? cause.message : String(cause))
       }
     }
   }

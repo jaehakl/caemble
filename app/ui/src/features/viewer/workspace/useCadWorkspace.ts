@@ -646,17 +646,38 @@ export function useCadWorkspace(
         }
         statusRef.current = 'Error'
         dispatchLifecycle({ type: 'evaluationFailed', error: nextError })
-        emitRuntimeActivity(onActivityRef.current, {
-          source: 'cad',
-          level: 'error',
-          phase: compilation ? 'compile.failed' : 'evaluate.failed',
-          message: cause instanceof Error ? cause.message : 'CAD 구조 처리에 실패했습니다.',
-          details: {
-            revision: requestRevision,
-            errorName: cause instanceof Error ? cause.name : 'UnknownError',
-            diagnosticCount: compilation?.diagnostics.length ?? evaluation?.diagnostics.length ?? 0,
-          },
-        })
+        const failureDiagnostics = compilation?.diagnostics ?? evaluation?.diagnostics ?? []
+        const reported = new Set<string>()
+        const actionableDiagnostics = failureDiagnostics.filter((diagnostic) => diagnostic.severity !== 'info')
+        const failures = actionableDiagnostics.some((diagnostic) => diagnostic.severity === 'error')
+          ? actionableDiagnostics
+          : [...actionableDiagnostics, null]
+        for (const diagnostic of failures) {
+          const key = JSON.stringify(
+            diagnostic && [diagnostic.file, diagnostic.range, diagnostic.message, diagnostic.severity],
+          )
+          if (reported.has(key)) continue
+          reported.add(key)
+          emitRuntimeActivity(onActivityRef.current, {
+            source: 'cad',
+            level: diagnostic?.severity === 'warning' ? 'warning' : 'error',
+            phase: compilation ? 'compile.failed' : 'evaluate.failed',
+            message: diagnostic?.message ?? nextError.message,
+            details: {
+              title: nextError.title,
+              ...(nextError.stack ? { stack: nextError.stack } : {}),
+              revision: requestRevision,
+              ...(diagnostic
+                ? {
+                    file: diagnostic.file,
+                    line: diagnostic.range.startLineNumber,
+                    column: diagnostic.range.startColumn,
+                    code: diagnostic.code,
+                  }
+                : {}),
+            },
+          })
+        }
       })
 
     return () => {
@@ -902,6 +923,7 @@ export function useCadWorkspace(
       level: 'error',
       phase: 'render.failed',
       message,
+      details: { title: 'Rendering Error' },
     })
   }, [])
 
