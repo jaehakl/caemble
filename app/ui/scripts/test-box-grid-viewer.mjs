@@ -451,6 +451,10 @@ try {
   assert.equal(await page.getByLabel('값 colorbar').count(), 0)
   await page.setViewportSize({ width: 480, height: 600 })
   await ready()
+  await page.waitForFunction(() => {
+    const bounds = document.querySelector('[data-viewer-canvas]').getBoundingClientRect()
+    return window.innerWidth === 480 && window.innerHeight === 600 && bounds.right <= 480 && bounds.bottom <= 600
+  })
   const narrow = await page.locator('[data-viewer-canvas]').boundingBox()
   await open('Geometry 투명도')
   assert.deepEqual(await page.locator('[data-viewer-canvas]').boundingBox(), narrow)

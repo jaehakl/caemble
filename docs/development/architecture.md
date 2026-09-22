@@ -79,11 +79,14 @@ foreground cancellation; it does not submit API jobs. `batch submit` only upload
 the artifact and never starts Python or resamples input. Local and remote results
 share RecordedData meaning, while file/process and API/SSE lifecycles stay separate.
 
-The account-level Batch Provider shares snapshots and in-flight page requests.
-Progress events update local data directly; state events coalesce for 250 ms
-before requesting a snapshot. Foreground runs await these shared updates instead
-of polling. Reconnect failures back off at 5, 10 and 30 seconds; a healthy SSE
-connection does not cause periodic detail requests.
+The account-level Batch Provider loads the latest 50 summaries plus all active
+or unread finished batches. Older history is paginated on demand. Summary state
+and detail pages have separate caches, with shared in-flight detail requests for
+open panels and foreground execution observers. Progress events update local
+data directly; state events coalesce for 250 ms before refreshing the batch
+summary with `limit=0`. Foreground runs await shared updates instead of polling.
+Reconnect resumes from the last event cursor and backs off at 5, 10 and 30
+seconds; a healthy SSE connection does not cause periodic detail requests.
 
 GPStation owns `job_batches`, numbered `jobs`, execution-scoped `job_records`
 staging and ordered `job_events`. CAE owns `cae_batches`, frozen Experiment inputs,
@@ -100,6 +103,14 @@ jobs do not expire. Legacy jobs without stored input require a new client build.
 
 `/cae/batches` provides submission, listing, detail, cancellation, failed/cancelled-item
 retry and notification read state. `/cae/events` replays owner-scoped SSE events.
+The list returns `CaeBatchSummary` entries without `jobs`, ordered by creation
+time descending and ID for ties. `attention_only=true` selects uploading, queued,
+or running batches and finished batches whose last event is unread. It composes
+with the owner and optional Experiment filters and ordinary `limit`/`offset`
+pagination. The list joins CAE metadata once and uses three queries regardless
+of page size: event cursor, count, and summary rows. Detail responses retain
+`CaeBatch` with paginated `jobs`; `limit=0` returns `jobs: []` and the total without
+querying Jobs.
 Cancellation accepts optional `job_ids` to cancel selected jobs without affecting
 their siblings; omitting them cancels the whole batch. A duplicate Measurement
 commit returns HTTP 409 with its existing batch and job IDs so the client can
@@ -197,9 +208,10 @@ dedicated account or container.
   RecordedData.
 - Launcher tokens authorize worker control, and one launcher owns one active job
   at a time.
-- GPStation supports separate `webrtc` and `websocket` execution modes. Existing
-  applications default to WebRTC; AI retains its browser Master connection and
-  protocol. CAE declares WebSocket and has no WebRTC fallback.
+- GPStation supports separate `webrtc` and `websocket` execution modes. AI and
+  other non-CAE launcher applications retain their WebRTC protocol. The current
+  web UI exposes CAE server-master execution; CAE declares WebSocket and has no
+  WebRTC fallback.
 - Monorepo Node build/evaluation children receive sanitized environments and bounded
   execution lifetimes. API credentials stay in the CLI parent. Local CAE Python
   invokes the existing runtime and does not receive API tokens.

@@ -48,6 +48,13 @@ node $caembleCli batch show $batch.id
 
 push stores source using its base identity and checks its matching artifact. batch submit uploads large already built item bytes directly to S3 and commits their references in the remote batch; it performs no local Solver execution or rebuilding. The local test and server submission above reuse .work/checked exactly. watch emits observation events: Ctrl+C or an observation timeout leaves the remote batch running. Use batch cancel <batch-id> only when cancellation is intended. Inspect the job Measurement IDs returned by batch show with measurement inspect <measurement-id>; fetch persisted records before claiming numerical success.
 
+`batch list` returns batch summaries without per-job details. It reads the latest
+50 batches by default; use `--limit` and `--offset` for older pages and
+`--experiment <id>` to filter the list. `batch show <batch-id>` returns job details
+(100 jobs by default), also paginated with `--limit` and `--offset`.
+`batch show <batch-id> --limit 0` reads only the batch state and totals, with an
+empty `jobs` array. Use a positive limit when looking up job Measurement IDs.
+
 To build a larger batch after the small test succeeds, use experiment build .work/experiment --count 10 --vars-mode random --out .work/batch-build, then batch submit .work/batch-build --experiment <saved-experiment-id>. All ten inputs are built and validated locally before any batch submission. Keep .work/batch-build for retry or inspection. Rebuild after changing source, variables, explicit Material model snapshots or Catalog; do not reuse an artifact with a different source or Catalog identity. For a locked source, select the intended --new-version patch|minor|major on push, then use the returned Experiment ID.
 
 ## 예제 Calculation 등록과 동반 저장

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ExperimentRecordedDataRecord } from '@/api'
 import type { recordedDataRules } from '../measurement/recordedData'
 import { PredictionWorkerClient, PredictionWorkerRestartError } from './client'
 import {
   initialPredictionLifecycleState,
   predictionLifecycleReducer,
+  type PredictionLifecycleAction,
   type PredictionOperation,
   type PredictionSamplingProgress,
 } from './lifecycle'
@@ -379,11 +380,13 @@ export function usePredictionController() {
   const runtimeRef = useRef<PredictionRuntimeController | null>(null)
   if (!runtimeRef.current) runtimeRef.current = new PredictionRuntimeController()
   const runtime = runtimeRef.current
-  const [lifecycle, dispatch] = useReducer(predictionLifecycleReducer, initialPredictionLifecycleState)
-  const busyRef = useRef(lifecycle.busy)
-  const dataStaleRef = useRef(lifecycle.dataStale)
-  const freshnessPendingRef = useRef(lifecycle.freshnessPending)
-  const samplingProgressRef = useRef(lifecycle.samplingProgress)
+  const [lifecycle, setLifecycle] = useState(initialPredictionLifecycleState)
+  const lifecycleRef = useRef(lifecycle)
+  const transition = useCallback((action: PredictionLifecycleAction) => {
+    // Event handlers must observe the transition before React renders again.
+    lifecycleRef.current = predictionLifecycleReducer(lifecycleRef.current, action)
+    setLifecycle(lifecycleRef.current)
+  }, [])
 
   useEffect(() => {
     runtime.start()
@@ -399,59 +402,52 @@ export function usePredictionController() {
         samplingProgress?: PredictionSamplingProgress
       }> = {},
     ) => {
-      busyRef.current = true
-      if (options.samplingProgress) samplingProgressRef.current = options.samplingProgress
-      dispatch({ type: 'operation-started', operation, status, ...options })
+      transition({ type: 'operation-started', operation, status, ...options })
     },
-    [],
+    [transition],
   )
 
-  const finishOperation = useCallback((options: Readonly<{ status?: string; clearSampling?: boolean }> = {}) => {
-    busyRef.current = false
-    if (options.clearSampling) samplingProgressRef.current = null
-    dispatch({ type: 'operation-finished', ...options })
-  }, [])
+  const finishOperation = useCallback(
+    (options: Readonly<{ status?: string; clearSampling?: boolean }> = {}) =>
+      transition({ type: 'operation-finished', ...options }),
+    [transition],
+  )
 
-  const cancelLifecycle = useCallback((options: Readonly<{ dataStale: boolean; freshnessPending: boolean }>) => {
-    busyRef.current = false
-    dataStaleRef.current = options.dataStale
-    freshnessPendingRef.current = options.freshnessPending
-    samplingProgressRef.current = null
-    dispatch({ type: 'cancelled', ...options })
-  }, [])
+  const cancelLifecycle = useCallback(
+    (options: Readonly<{ dataStale: boolean; freshnessPending: boolean }>) =>
+      transition({ type: 'cancelled', ...options }),
+    [transition],
+  )
 
-  const setStatus = useCallback((status: string) => dispatch({ type: 'status-changed', status }), [])
+  const setStatus = useCallback((status: string) => transition({ type: 'status-changed', status }), [transition])
   const setDirection = useCallback(
-    (direction: PredictionDirection) => dispatch({ type: 'direction-changed', direction }),
-    [],
+    (direction: PredictionDirection) => transition({ type: 'direction-changed', direction }),
+    [transition],
   )
-  const setSamplingProgress = useCallback((progress: PredictionSamplingProgress | null) => {
-    samplingProgressRef.current = progress
-    dispatch({ type: 'sampling-progressed', progress })
-  }, [])
-  const setFreshnessPending = useCallback((pending: boolean) => {
-    freshnessPendingRef.current = pending
-    dispatch({ type: 'freshness-pending-changed', pending })
-  }, [])
-  const setDataStale = useCallback((stale: boolean) => {
-    dataStaleRef.current = stale
-    dispatch({ type: 'data-stale-changed', stale })
-  }, [])
+  const setSamplingProgress = useCallback(
+    (progress: PredictionSamplingProgress | null) => transition({ type: 'sampling-progressed', progress }),
+    [transition],
+  )
+  const setFreshnessPending = useCallback(
+    (pending: boolean) => transition({ type: 'freshness-pending-changed', pending }),
+    [transition],
+  )
+  const setDataStale = useCallback((stale: boolean) => transition({ type: 'data-stale-changed', stale }), [transition])
 
   return {
-    busyRef,
+    busy: lifecycle.operation !== 'idle',
     cancelLifecycle,
-    dataStaleRef,
     finishOperation,
-    freshnessPendingRef,
     lifecycle,
+    lifecycleRef,
+    retryingValidation: lifecycle.operation === 'validation-retry',
     runtime,
-    samplingProgressRef,
     setDataStale,
     setDirection,
     setFreshnessPending,
     setSamplingProgress,
     setStatus,
     startOperation,
+    validating: lifecycle.operation === 'validation' || lifecycle.operation === 'validation-retry',
   } as const
 }

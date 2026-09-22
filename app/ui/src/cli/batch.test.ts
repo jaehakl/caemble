@@ -37,6 +37,7 @@ describe('remote observation lifecycle', () => {
         finished_at: null,
         last_event_id: 1,
         read_event_id: 0,
+        jobs: [],
       })
     })
     const client = createCaembleClient({
@@ -75,6 +76,7 @@ describe('remote observation lifecycle', () => {
           finished_at: '2026-09-08T00:00:00Z',
           last_event_id: 2,
           read_event_id: 0,
+          jobs: [],
         }),
     })
     await expect(
@@ -86,5 +88,46 @@ describe('remote observation lifecycle', () => {
         client: () => client,
       }),
     ).rejects.toMatchObject({ exitCode: 1 })
+  })
+  it('lists batch summaries and keeps job pages on show', async () => {
+    const summary = {
+      id: 'batch',
+      experiment_id: 1,
+      mode: 'generate',
+      total: 1,
+      created_count: 1,
+      succeeded: 0,
+      failed: 0,
+      cancelled: 0,
+      state: 'running',
+      created_at: '',
+      updated_at: '',
+      finished_at: null,
+      last_event_id: 1,
+      read_event_id: 0,
+    }
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
+      String(url).includes('/batches/batch')
+        ? Response.json({ ...summary, jobs: [] })
+        : Response.json({ items: [summary], total: 1, cursor: 1 }),
+    )
+    const client = createCaembleClient({
+      baseUrl: 'https://api.example',
+      auth: { kind: 'bearer', token: 'test-key' },
+      fetch,
+    })
+    const context: CommandContext = {
+      environment,
+      options: {},
+      args: ['batch'],
+      signal: new AbortController().signal,
+      client: () => client,
+    }
+    expect(await batchCommand('list', context)).toMatchObject({ items: [summary] })
+    expect(await batchCommand('show', { ...context, options: { limit: '0' } })).toMatchObject({
+      ...summary,
+      jobs: [],
+    })
+    expect(String(fetch.mock.calls[1][0])).toContain('limit=0')
   })
 })

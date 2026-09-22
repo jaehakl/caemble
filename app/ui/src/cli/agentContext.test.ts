@@ -148,7 +148,7 @@ describe('bounded external agent context', () => {
     expect(result.source.files.map(({ file }) => file)).toContain('experiment.tsx')
   })
 
-  it('captures Solver Python files and reports byte truncation while retaining complete required instructions', async () => {
+  it('captures Solver Python files and reports byte truncation with required instructions first', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'caemble-agent-solver-'))
     directories.push(directory)
     await writeFile(path.join(directory, 'entry.py'), `# ${'한'.repeat(30_000)}\n`, 'utf8')
@@ -173,11 +173,19 @@ describe('bounded external agent context', () => {
     const result = await buildAgentContext(context, 'solver')
     expect(result.source).toMatchObject({ kind: 'solver-source-files', complete: false })
     expect(result.source.files[0]).toMatchObject({ file: 'entry.py', complete: false, nextLine: 1, includedBytes: 0 })
-    expect(result.checkoutSources.find(({ file }) => file === 'docs/development/solver-development.md')).toMatchObject({
-      complete: true,
-    })
-    expect(result.checkoutSources.find(({ file }) => file === 'app/slaves/cae/AGENTS.md')).toMatchObject({
-      complete: true,
-    })
+    expect(result.checkoutSources.slice(0, 2).map(({ file }) => file)).toEqual([
+      'docs/development/solver-development.md',
+      'app/slaves/cae/AGENTS.md',
+    ])
+    expect(result.checkoutSources.reduce((bytes, source) => bytes + source.includedBytes, 0)).toBeLessThanOrEqual(
+      result.limits.checkoutBytes,
+    )
+    for (const source of result.checkoutSources) {
+      expect(source.complete).toBe(source.includedBytes === source.totalBytes)
+      if (!source.complete) {
+        expect(source.nextLine).toBeGreaterThan(0)
+        expect(source.omittedBytes).toBe(source.totalBytes - source.includedBytes)
+      }
+    }
   })
 })

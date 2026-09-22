@@ -17,6 +17,7 @@ describe('analysisLifecycleReducer', () => {
     const plotted = analysisLifecycleReducer(plotting, { type: 'plotSucceeded' })
 
     expect(selectAnalysisLifecycle(loading).busy).toBe('load')
+    expect(loading.progress).toBe('Calculation Data 조회')
     expect(progressed.progressCount).toEqual({ completed: 4, total: 10 })
     expect(relationships).toMatchObject({ primary: 'ready', relationships: 'loading', progress: '상관 분석' })
     expect(selectAnalysisLifecycle(relationships).relationshipsBusy).toBe(true)

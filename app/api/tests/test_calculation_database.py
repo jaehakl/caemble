@@ -21,6 +21,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from box_grid_fixtures import box_schema, box_tensor
+
 
 API_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = API_DIR / "app"
@@ -573,10 +575,10 @@ async def _verify_crud_contract(database: str) -> None:
             experiment_record = ExperimentRecord(
                 experiment_id=experiment_id,
                 name="signal",
-                quantity_kind="Signal",
+                quantity_kind="Dimensionless",
                 tensor_order=0,
                 dtype="float64",
-                data_schema={},
+                data_schema=box_schema(),
                 contract_hash="record-contract",
             )
             session.add(experiment_record)
@@ -586,7 +588,7 @@ async def _verify_crud_contract(database: str) -> None:
                     user_id=owner_id,
                     measurement_id=owner_preflight_id,
                     experiment_record_id=experiment_record.id,
-                    data={"shape": [], "storage": {"kind": "inline", "value": 1}},
+                    data=box_tensor(),
                 )
             )
             await session.commit()

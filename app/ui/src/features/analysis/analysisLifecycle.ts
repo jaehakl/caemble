@@ -64,7 +64,7 @@ export function analysisLifecycleReducer(
         plot: 'idle',
         table: 'idle',
         staleCheck: 'idle',
-        progress: 'Measurement 조회',
+        progress: 'Calculation Data 조회',
         progressCount: null,
         error: null,
         stale: false,

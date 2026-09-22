@@ -24,6 +24,9 @@ function BatchPanel({ className, compact }: { className?: string; compact: boole
     inspectedBatchId,
     loading,
     refresh,
+    loadMore,
+    hasMore,
+    loadingMore,
     update,
     readPage,
     withProgress,
@@ -182,6 +185,18 @@ function BatchPanel({ className, compact }: { className?: string; compact: boole
               </button>
             </li>
           ))}
+          {hasMore ? (
+            <li>
+              <Button
+                className="w-full"
+                variant="outline"
+                disabled={loading || loadingMore}
+                onClick={() => void loadMore()}
+              >
+                {loadingMore ? '불러오는 중…' : '더 보기'}
+              </Button>
+            </li>
+          ) : null}
         </ul>
         <div className="min-w-0 space-y-3">
           {detail && batch && detail.id === batch.id ? (

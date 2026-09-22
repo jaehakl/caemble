@@ -2,7 +2,7 @@ import { useCallback, useState, type PropsWithChildren } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CaeBatch, CaeEvent } from '@/contracts/api/cae'
+import { caeBatchSummarySchema, type CaeBatch, type CaeBatchSummary, type CaeEvent } from '@/contracts/api/cae'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CalculationDataActions } from '@/features/calculation/useCalculationDataActions'
 import type { SavedMeasurement } from '@/features/cae-workbench/types'
@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   inspect: vi.fn(),
   load: vi.fn(),
   generate: vi.fn(),
-  batches: [] as CaeBatch[],
+  batches: [] as CaeBatchSummary[],
   events: [] as CaeEvent[],
 }))
 vi.mock('./buildBatchArtifact', () => ({
@@ -164,9 +164,9 @@ function renderActions(selected: SavedMeasurement | null = null, candidateDocume
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.update.mockImplementation((value: CaeBatch) => value)
+  mocks.update.mockImplementation((value: CaeBatchSummary) => caeBatchSummarySchema.parse(value))
   mocks.wait.mockImplementation(
-    (_id: string, _previous: CaeBatch, signal: AbortSignal) =>
+    (_id: string, _previous: CaeBatchSummary, signal: AbortSignal) =>
       new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })),
   )
   mocks.events = []
@@ -333,13 +333,14 @@ describe('server-owned CAE measurement actions', () => {
       state: 'running' as const,
       finished_at: null,
       succeeded: 0,
+      last_event_id: 1,
       jobs: batch().jobs.map((job) => ({ ...job, state: 'running' })),
     }
     mocks.create.mockResolvedValue(initial)
-    let changed!: (value: CaeBatch) => void
+    let changed!: (value: CaeBatchSummary) => void
     mocks.wait.mockImplementation(
       () =>
-        new Promise<CaeBatch>((resolve) => {
+        new Promise<CaeBatchSummary>((resolve) => {
           changed = resolve
         }),
     )
@@ -359,16 +360,61 @@ describe('server-owned CAE measurement actions', () => {
     }
     expect(mocks.read).not.toHaveBeenCalled()
     expect(mocks.calculate).not.toHaveBeenCalled()
+    const recorded = { ...batch(), state: 'running' as const, finished_at: null, last_event_id: 6 }
+    const completed = { ...batch(), last_event_id: 7 }
+    mocks.read.mockResolvedValueOnce(recorded).mockResolvedValueOnce(completed)
     await act(async () => {
-      changed({ ...batch(), state: 'running', finished_at: null })
+      changed(caeBatchSummarySchema.parse(recorded))
     })
     await waitFor(() => expect(mocks.calculate).toHaveBeenCalledOnce())
     await act(async () => {
-      changed(batch())
+      changed(caeBatchSummarySchema.parse(completed))
       await completion
     })
     expect(mocks.calculate).toHaveBeenCalledOnce()
+    expect(mocks.read.mock.calls).toEqual([['batch-1'], ['batch-1']])
+  })
+
+  it('fetches every result page after a completion summary without jobs arrives', async () => {
+    const completed = batch(Array.from({ length: 102 }, (_, index) => index + 1))
+    mocks.create.mockResolvedValue({
+      ...completed,
+      state: 'running',
+      finished_at: null,
+      succeeded: 0,
+      last_event_id: 1,
+      jobs: completed.jobs.slice(0, 100).map((job) => ({ ...job, state: 'running' })),
+    })
+    mocks.read.mockImplementation(async (_id: string, { offset = 0, limit = 100 } = {}) => ({
+      ...completed,
+      jobs: completed.jobs.slice(offset, offset + limit),
+    }))
+    let finish!: (value: CaeBatchSummary) => void
+    mocks.wait.mockImplementationOnce(
+      () =>
+        new Promise<CaeBatchSummary>((resolve) => {
+          finish = resolve
+        }),
+    )
+    const rendered = renderActions()
+    let completion!: Promise<unknown>
+    act(() => {
+      completion = rendered.result.current.runCandidatesAsync(
+        { count: 102, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() },
+        vi.fn(),
+      )
+    })
+    await waitFor(() => expect(mocks.wait).toHaveBeenCalledOnce())
     expect(mocks.read).not.toHaveBeenCalled()
+    expect(mocks.calculate).not.toHaveBeenCalled()
+    const completedSummary = caeBatchSummarySchema.parse(completed)
+    expect(completedSummary).not.toHaveProperty('jobs')
+    await act(async () => {
+      finish(completedSummary)
+      expect(await completion).toMatchObject({ total: 102, succeeded: 102, calculated: 102 })
+    })
+    expect(mocks.read.mock.calls).toEqual([['batch-1'], ['batch-1', { offset: 100, limit: 100 }]])
+    expect(mocks.calculate.mock.calls.map(([id]) => id)).toEqual(Array.from({ length: 102 }, (_, index) => index + 1))
   })
 
   it('submits the fixed Candidate and material snapshot and awaits browser CalculationData', async () => {

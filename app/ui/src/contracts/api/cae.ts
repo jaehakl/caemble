@@ -24,32 +24,35 @@ export const caeMeasurementExecutionSchema = z.object({
 })
 export type CaeMeasurementExecution = z.infer<typeof caeMeasurementExecutionSchema>
 
-export const caeBatchSchema = z
-  .object({
-    id: z.string(),
-    experiment_id: z.number().int().nullable(),
-    preflight: z.boolean().optional(),
-    request_id: z.string().optional(),
-    mode: z.enum(['generate', 'candidate', 'measurement']),
-    total: z.number().int(),
-    uploaded_count: z.number().int().default(0),
-    created_count: z.number().int(),
-    succeeded: z.number().int(),
-    failed: z.number().int(),
-    cancelled: z.number().int(),
-    state: z.enum(['uploading', 'queued', 'running', 'completed', 'cancelled']),
-    created_at: z.string(),
-    updated_at: z.string(),
-    finished_at: z.string().nullable(),
-    last_event_id: z.number().int(),
-    read_event_id: z.number().int(),
-    jobs: z.array(caeJobSchema).default([]),
-    jobs_total: z.number().int().optional(),
+export const caeBatchSummarySchema = z.object({
+  id: z.string(),
+  experiment_id: z.number().int().nullable(),
+  preflight: z.boolean().optional(),
+  request_id: z.string().optional(),
+  mode: z.enum(['generate', 'candidate', 'measurement']),
+  total: z.number().int(),
+  uploaded_count: z.number().int().default(0),
+  created_count: z.number().int(),
+  succeeded: z.number().int(),
+  failed: z.number().int(),
+  cancelled: z.number().int(),
+  state: z.enum(['uploading', 'queued', 'running', 'completed', 'cancelled']),
+  created_at: z.string(),
+  updated_at: z.string(),
+  finished_at: z.string().nullable(),
+  last_event_id: z.number().int(),
+  read_event_id: z.number().int(),
+  jobs_total: z.number().int().optional(),
+})
+
+export const caeBatchSchema = caeBatchSummarySchema
+  .extend({
+    jobs: z.array(caeJobSchema),
   })
   .passthrough()
 
 export const caeBatchListSchema = z.object({
-  items: z.array(caeBatchSchema),
+  items: z.array(caeBatchSummarySchema),
   total: z.number().int(),
   cursor: z.number().int(),
 })
@@ -66,6 +69,7 @@ export const caeEventSchema = z.object({
 })
 
 export type CaeBatch = z.infer<typeof caeBatchSchema>
+export type CaeBatchSummary = z.infer<typeof caeBatchSummarySchema>
 export type CaeJob = z.infer<typeof caeJobSchema>
 export type CaeEvent = z.infer<typeof caeEventSchema>
 export type CaeBatchRequest = Readonly<{

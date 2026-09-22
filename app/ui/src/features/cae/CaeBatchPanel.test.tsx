@@ -1,7 +1,7 @@
 ﻿import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CaeBatch } from '@/contracts/api/cae'
+import { caeBatchSummarySchema, type CaeBatch } from '@/contracts/api/cae'
 import { CaeBatchPanel } from './CaeBatchPanel'
 
 const mocks = vi.hoisted(() => ({
@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   markRead: vi.fn(),
   update: vi.fn(),
   resume: vi.fn(),
+  loadMore: vi.fn(),
+  hasMore: false,
+  loadingMore: false,
   scope: 'user:first',
   batches: [] as CaeBatch[],
 }))
@@ -21,13 +24,16 @@ vi.mock('@/features/auth/use-auth', () => ({ useAuth: () => ({ queryScope: mocks
 vi.mock('./resumeUpload', () => ({ resumeBrowserUpload: mocks.resume }))
 vi.mock('./CaeBatchProvider', () => ({
   useCaeBatches: () => ({
-    batches: mocks.batches,
+    batches: mocks.batches.map((batch) => caeBatchSummarySchema.parse(batch)),
     connected: true,
     error: null,
     inspectedBatchId: null,
     inspectBatch: vi.fn(),
     loading: false,
     refresh: vi.fn(),
+    loadMore: mocks.loadMore,
+    hasMore: mocks.hasMore,
+    loadingMore: mocks.loadingMore,
     update: mocks.update,
     readPage: mocks.read,
     withProgress: (value: CaeBatch) => value,
@@ -71,6 +77,8 @@ function failedBatch(id: string, experimentId: number): CaeBatch {
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.scope = 'user:first'
+  mocks.hasMore = false
+  mocks.loadingMore = false
   mocks.batches = [failedBatch('batch-1', 7)]
   mocks.read.mockImplementation(async (id: string) => mocks.batches.find((batch) => batch.id === id))
   mocks.retry.mockResolvedValue(mocks.batches[0])
@@ -78,6 +86,22 @@ beforeEach(() => {
 })
 
 describe('CAE batch panel', () => {
+  it('loads older summaries on demand and disables the more button while loading', async () => {
+    const user = userEvent.setup()
+    mocks.hasMore = true
+    const rendered = render(<CaeBatchPanel />)
+    expect(mocks.read).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '더 보기' }))
+    expect(mocks.loadMore).toHaveBeenCalledOnce()
+    expect(mocks.read).not.toHaveBeenCalled()
+    mocks.loadingMore = true
+    rendered.rerender(<CaeBatchPanel />)
+    expect(screen.getByRole('button', { name: '불러오는 중…' })).toBeDisabled()
+    mocks.loadingMore = false
+    mocks.hasMore = false
+    rendered.rerender(<CaeBatchPanel />)
+    expect(screen.queryByRole('button', { name: '더 보기' })).not.toBeInTheDocument()
+  })
   it('resumes a stored upload explicitly and shows upload progress', async () => {
     const user = userEvent.setup()
     const pending = {

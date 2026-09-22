@@ -164,8 +164,14 @@ try {
   try {
     const generated = await prepareCaeMeasurement(request, declarations)
     const commonCopper = generated.material_snapshot.experiment.materials.Copper
-    for (const task of Object.values(generated.material_snapshot.tasks))
-      assert.deepEqual(task.materials.Copper, commonCopper)
+    for (const [taskName, task] of Object.entries(generated.material_snapshot.tasks)) {
+      assert.deepEqual(task.materials, {}, `${taskName}: output-grid geometry must not duplicate Experiment Materials`)
+      const copperModels = Object.values(generated.material_snapshot.selections[taskName]).flatMap((role) =>
+        Object.values(role.Copper ?? {}),
+      )
+      assert.ok(copperModels.length > 0, `${taskName}: physical models must select the Experiment Copper`)
+      for (const instance of copperModels) assert.ok(Object.hasOwn(commonCopper.models, instance))
+    }
     const parameters = commonCopper.models.conduction.parameters.sigma as { value: unknown }
     assert.deepEqual(parameters.value, [
       [5e7, 0, 0],

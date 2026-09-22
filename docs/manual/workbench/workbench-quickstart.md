@@ -125,6 +125,8 @@ Save As를 열 때 Viewer의 Geometry·결과 표현·범례를 고정 이미지
 
 큰 BuiltMeasurement와 결과 본문은 Client ↔ S3 ↔ Slave 경로로 전달됩니다. 브라우저는 결과를 S3에서 직접 읽고, 서버는 권한·참조·작업 상태를 관리합니다.
 
+**Setting → CAE Jobs**는 최근 배치 50개와 진행 중이거나 완료 알림을 아직 확인하지 않은 배치를 먼저 표시합니다. 이전 이력은 **더 보기**로 불러옵니다. 배치를 펼치면 작업별 진행 상태와 오류를 조회하며, 재연결하면 마지막으로 받은 이벤트부터 변경 사항을 이어받습니다.
+
 ## 실행 전후에 기억할 점
 
 Measurement는 immutable Experiment revision을 가리킵니다. 생성 요청의 source hash가 현재 revision과 다르면 저장이 거부되므로, source가 바뀌면 새 revision에서 새 Measurement를 준비하세요.

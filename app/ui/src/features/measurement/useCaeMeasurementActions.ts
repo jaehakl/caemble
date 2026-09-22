@@ -240,7 +240,7 @@ export function useCaeMeasurementActions({
             if (!current.job || current.job.id !== job.id) throw new Error('Measurement의 실행 연결이 변경됐습니다.')
             run.jobAttempt = current.job.attempt_count
           }
-          return update(await readPage(execution.batch_id, {}, true))
+          return readPage(execution.batch_id, {}, true)
         }
         let registered: CaeBatch | undefined
         if (request.measurement_id) {
@@ -293,9 +293,10 @@ export function useCaeMeasurementActions({
         if (run.cancelRequested) await caeBatches.cancel(registered.id, run.jobId ? [run.jobId] : undefined)
         signal.throwIfAborted()
         let observed = update(registered)
+        let detail = registered
         while (true) {
           signal.throwIfAborted()
-          let snapshot = observed
+          let snapshot: CaeBatch
           if (run.jobId && request.measurement_id) {
             const execution = await caeBatches.execution(request.measurement_id, { signal })
             signal.throwIfAborted()
@@ -317,6 +318,12 @@ export function useCaeMeasurementActions({
               state: job.state === 'cancelled' ? 'cancelled' : terminal ? 'completed' : 'running',
               finished_at: terminal ? job.updated_at : null,
             }
+          } else {
+            if (detail.last_event_id < observed.last_event_id) {
+              detail = await readPage(observed.id)
+              signal.throwIfAborted()
+            }
+            snapshot = detail
           }
           onBatchState?.(snapshot)
           const jobs = snapshot.jobs

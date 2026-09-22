@@ -18,6 +18,8 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, null, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from box_grid_fixtures import box_schema, box_tensor
+
 from test_calculation_database import (
     API_DIR, ORIGINAL_DB_URL, _check, _create_database, _database_url, _drop_database,
     _seed_owners, _table_names, _upgrade,
@@ -82,12 +84,13 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     def item(self):
+        signal_schema = box_schema((None, None, None, None, None, 1, 1))
         return {"measurement": {"kind": "measurement", "experiment": {
             "kind": "experiment", "sourceHash": self.example["bundleHash"], "variables": {"fixed": 7},
             "varsSchema": {}, "scene": {}, "taskScenes": {}, "simulationProgram": {
-                "resultContracts": {"signal": {"task": "fixture", "output": "signal", "solver": {"name": "fixture", "version": "1"}, "artifactType": "fixture", "catalogRevision": self.catalog.meta()["catalogRevision"], "visualization": {"kind": "tensor"}, "schema": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"}}},
+                "resultContracts": {"signal": {"task": "fixture", "output": "signal", "solver": {"name": "fixture", "version": "1"}, "artifactType": "fixture", "catalogRevision": self.catalog.meta()["catalogRevision"], "visualization": {"kind": "tensor"}, "schema": signal_schema}},
                 "pythonSource": self.example["sourceBundle"]["files"]["simulate.py"], "tasks": {}, "recordedData": {
-                "signal": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"},
+                "signal": signal_schema,
             }}}, "materialSnapshot": {"materials": {}}, "taskMaterialSnapshots": {},
             "modelDefinitions": [], "materialSelections": {}, "varsHash": material_vars_hash({"fixed": 7})}}
 
@@ -158,7 +161,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
                 measurement_id = measurement.id
                 db.add(ExperimentRecord(experiment_id=self.experiment_id, name="signal", dtype="float64",
-                    tensor_order=0, quantity_kind="DimensionlessRatio", data_schema={"dtype": "float64"}, contract_hash="a" * 64))
+                    tensor_order=0, quantity_kind="Dimensionless", data_schema=self.item()["measurement"]["experiment"]["simulationProgram"]["recordedData"]["signal"], contract_hash="a" * 64))
                 record_raw = b"\x00" * 80000
                 record_hash = hashlib.sha256(record_raw).hexdigest()
                 record_ticket = await prepare_upload(db, {"encoding": "base64", "sha256": record_hash,
@@ -169,15 +172,20 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 bucket_objects[f"caemble/objects/{record_id}/00000000"] = record_raw
                 await finish_upload(db, await owned_object(db, record_id, self.owner_id))
                 await db.commit()
-                packet = {"sequence": 1, "name": "signal", "value": {"shape": [10000],
-                    "storage": {"kind": "base64", "data": record_ticket["reference"], "byteLength": len(record_raw)}}}
+                tensor = box_tensor((10, 10, 10, 10, 1, 1, 1))
+                tensor["provenance"].update(task="fixture", solver={"name": "fixture", "version": "1"}, catalogRevision=self.catalog.meta()["catalogRevision"])
+                tensor["storage"] = {"kind": "base64", "data": record_ticket["reference"], "byteLength": len(record_raw)}
+                packet = {"sequence": 1, "name": "signal", "value": tensor}
                 await stage_record(db, job, packet, [])
                 await db.commit()
                 self.assertFalse((await db.get(StorageObject, record_id)).bound)
-                await complete_job(db, job, {"recordSequences": [1]})
+                await complete_job(db, job, {"recordSequences": [1], "visualizationSequences": []})
                 await db.commit()
                 self.assertTrue((await db.get(StorageObject, record_id)).bound)
-                self.assertLess(len(json.dumps((await db.scalar(select(RecordedData))).data)), 1024)
+                persisted = (await db.scalar(select(RecordedData))).data
+                self.assertEqual(persisted, tensor)
+                self.assertEqual(persisted["storage"]["data"], record_ticket["reference"])
+                self.assertLess(len(json.dumps(persisted)), 4096)
                 from db import Calculation, CalculationData
                 from models import CalculationBase, CalculationDataOutput
                 from service.calculation import upsert_calculations
@@ -695,7 +703,6 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.json()["cancelled"], 2)
 
     async def test_retry_completion_uses_only_current_attempt_records(self):
-        from box_grid_fixtures import box_schema, box_tensor
         batch, _ = await self.create()
         original = await self.ready_job(batch.id)
         tensor = box_tensor()
@@ -733,11 +740,13 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         job = await self.ready_job(batch.id, state="running", attempt=2)
         async with self.sessions() as db:
             db.add(ExperimentRecord(experiment_id=self.experiment_id, name="signal", dtype="float64",
-                tensor_order=0, quantity_kind="DimensionlessRatio", contract_hash="signal", data_schema={}))
+                tensor_order=0, quantity_kind="Dimensionless", contract_hash="signal", data_schema=box_schema()))
             # A stale attempt's staging must not be included in this attempt.
             db.add(JobRecord(job_id=job.id, attempt_count=1, sequence=1, name="signal", payload={"stale": True}))
             await db.commit()
-        packet = {"sequence": 1, "name": "signal", "value": {"shape": [], "storage": {"kind": "inline", "value": 7.5}}}
+        tensor = box_tensor()
+        tensor["provenance"].update(task="fixture", solver={"name": "fixture", "version": "1"}, catalogRevision=self.catalog.meta()["catalogRevision"])
+        packet = {"sequence": 1, "name": "signal", "value": tensor}
         async with self.sessions() as db:
             current = await db.get(Job, job.id)
             await stage_record(db, current, packet, [])
@@ -755,13 +764,13 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.rollback()
         async with self.sessions() as db:
             current = await db.get(Job, job.id)
-            await complete_job(db, current, {"recordSequences": [1]})
+            await complete_job(db, current, {"recordSequences": [1], "visualizationSequences": []})
             await db.rollback()
         async with self.sessions() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(RecordedData)), 0)
             current = await db.get(Job, job.id)
             await serialize_events(db)
-            result = await complete_job(db, current, {"recordSequences": [1]})
+            result = await complete_job(db, current, {"recordSequences": [1], "visualizationSequences": []})
             self.assertTrue(await finish_job(db, current, "succeeded", result=result))
             await db.commit()
             self.assertFalse(await finish_job(db, current, "succeeded", result=result))
@@ -774,7 +783,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((finished.state, finished.succeeded), ("completed", 1))
             self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent).where(JobEvent.type == "job.succeeded")), 1)
             with self.assertRaises(ValueError):
-                await complete_job(db, await db.get(Job, job.id), {"recordSequences": [1]})
+                await complete_job(db, await db.get(Job, job.id), {"recordSequences": [1], "visualizationSequences": []})
 
     async def test_stale_cleanup_cannot_release_a_new_attempt(self):
         batch, _ = await self.create()
@@ -919,10 +928,9 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 settings.db_url = ORIGINAL_DB_URL
             self.assertNotIn("job_batches", asyncio.run(_table_names(database)))
-            _upgrade(database, "head")
-            _check(database)
+            _upgrade(database, "000000000007")
             self.assertTrue({"job_batches", "cae_batches", "job_events", "job_records"}.issubset(asyncio.run(_table_names(database))))
-            async def verify():
+            async def verify(*, results_reset=False):
                 engine = create_async_engine(make_async_db_url(_database_url(database)))
                 try:
                     async with async_sessionmaker(engine)() as db:
@@ -931,12 +939,20 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual((job.job_mode, job.offer, job.state), ("webrtc", {"sdp": "retained"}, "succeeded"))
                         measurement = await db.get(Measurement, measurement_id)
                         self.assertEqual(measurement.vars, {"retained": 1})
-                        self.assertIsNotNone(measurement.recorded_at)
                         record = await db.scalar(select(RecordedData).where(RecordedData.measurement_id == measurement_id))
-                        self.assertEqual(record.data["storage"]["value"], 42)
+                        if results_reset:
+                            self.assertIsNone(measurement.recorded_at)
+                            self.assertIsNone(record)
+                        else:
+                            self.assertIsNotNone(measurement.recorded_at)
+                            self.assertEqual(record.data["storage"]["value"], 42)
                 finally:
                     await engine.dispose()
             asyncio.run(verify())
+            # The later Box Grid migration intentionally invalidates only legacy results.
+            _upgrade(database, "head")
+            _check(database)
+            asyncio.run(verify(results_reset=True))
         finally:
             settings.db_url = ORIGINAL_DB_URL
             asyncio.run(_drop_database(database))

@@ -2,16 +2,7 @@ import { createBrowserRouter } from 'react-router'
 import { AppShell } from '@/app/AppShell'
 import { RouteErrorPage } from '@/features/error/RouteErrorPage'
 
-export const appRoutePaths = [
-  'index',
-  'showcase',
-  'workbench',
-  'doc',
-  'admin',
-  'settings',
-  'account',
-  '*',
-] as const
+export const appRoutePaths = ['index', 'showcase', 'workbench', 'doc', 'admin', 'settings', 'account', '*'] as const
 
 export function createAppRouter() {
   return createBrowserRouter([

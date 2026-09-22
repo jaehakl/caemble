@@ -1,14 +1,14 @@
 import { caeBatches } from '@/api/cae'
-import type { CaeBatch, CaeEvent } from '@/contracts/api/cae'
+import { caeBatchSummarySchema, type CaeBatch, type CaeBatchSummary, type CaeEvent } from '@/contracts/api/cae'
 
 /** One account's snapshots, page requests and foreground observers. */
 export function createBatchObservation(scope = '') {
-  const batches = new Map<string, CaeBatch>()
+  const batches = new Map<string, CaeBatchSummary>()
   const pages = new Map<string, CaeBatch>()
   const requests = new Map<string, Promise<CaeBatch>>()
   const controllers = new Set<AbortController>()
   const progress = new Map<string, CaeEvent>()
-  const listeners = new Set<(batch: CaeBatch) => void>()
+  const listeners = new Set<(batch: CaeBatchSummary) => void>()
 
   function overlay(batch: CaeBatch): CaeBatch {
     return {
@@ -25,10 +25,13 @@ export function createBatchObservation(scope = '') {
       }),
     }
   }
-  function update(batch: CaeBatch) {
+  function update(batch: CaeBatchSummary) {
     const previous = batches.get(batch.id)
     if (previous && previous.last_event_id > batch.last_event_id) return previous
-    const next = overlay({ ...batch, read_event_id: Math.max(batch.read_event_id, previous?.read_event_id ?? 0) })
+    const next = caeBatchSummarySchema.parse({
+      ...batch,
+      read_event_id: Math.max(batch.read_event_id, previous?.read_event_id ?? 0),
+    })
     batches.set(next.id, next)
     for (const listener of listeners) listener(next)
     return next
@@ -44,9 +47,14 @@ export function createBatchObservation(scope = '') {
     controllers.add(controller)
     const request = caeBatches
       .read(id, { offset, limit }, { signal: controller.signal })
-      .then((batch) => {
+      .then(async (batch) => {
         controller.signal.throwIfAborted()
-        pages.set(key, batch)
+        // A state event may arrive while this shared page request is in flight.
+        while (limit > 0 && batch.last_event_id < (batches.get(id)?.last_event_id ?? 0)) {
+          batch = await caeBatches.read(id, { offset, limit }, { signal: controller.signal })
+          controller.signal.throwIfAborted()
+        }
+        if (limit > 0 && batch.last_event_id >= (pages.get(key)?.last_event_id ?? 0)) pages.set(key, batch)
         // Retain recently viewed pages, not every item of a large finished batch.
         if (pages.size > 32) pages.delete(pages.keys().next().value!)
         if (offset === 0) update(batch)
@@ -66,15 +74,13 @@ export function createBatchObservation(scope = '') {
       return
     }
     progress.set(event.job_id, event)
-    const batch = batches.get(event.batch_id)
-    if (batch) update(batch)
   }
-  function waitForChange(id: string, previous: CaeBatch, signal: AbortSignal): Promise<CaeBatch> {
+  function waitForChange(id: string, previous: CaeBatchSummary, signal: AbortSignal): Promise<CaeBatchSummary> {
     signal.throwIfAborted()
     const current = batches.get(id)
     if (current && current !== previous) return Promise.resolve(current)
     return new Promise((resolve, reject) => {
-      const changed = (batch: CaeBatch) => {
+      const changed = (batch: CaeBatchSummary) => {
         if (batch.id !== id) return
         listeners.delete(changed)
         signal.removeEventListener('abort', abort)
@@ -95,7 +101,7 @@ export function createBatchObservation(scope = '') {
     readPage,
     applyEvent,
     waitForChange,
-    subscribe(listener: (batch: CaeBatch) => void) {
+    subscribe(listener: (batch: CaeBatchSummary) => void) {
       listeners.add(listener)
       return () => {
         listeners.delete(listener)

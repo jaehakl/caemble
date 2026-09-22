@@ -114,7 +114,13 @@ vi.mock('./PredictionPanels', () => ({
       </button>
     </section>
   ),
-  PredictionDetailsDialog: () => null,
+  PredictionDetailsDialog: ({
+    open,
+    validationComparisons,
+  }: {
+    open: boolean
+    validationComparisons: readonly unknown[]
+  }) => (open ? <div role="dialog" data-validation-count={validationComparisons.length} /> : null),
   PredictionSetupDialog: ({
     calculateMissingDisabled,
     onCalculateMissing,
@@ -173,6 +179,7 @@ function predictionResult(direction: 'forward' | 'inverse', value: number) {
 
 function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEvaluation?: boolean }) {
   const [active, setActive] = useState(true)
+  const [dataReadable, setDataReadable] = useState(true)
   const [experimentId, setExperimentId] = useState(10)
   const [varsContainer, setVarsContainer] = useState<HTMLDivElement | null>(null)
   const [candidate, setCandidate] = useState({ x: 1 })
@@ -233,12 +240,15 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
       </button>
       <button onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'cancel' })}>Cancel</button>
       <button onClick={() => setActive(false)}>Leave Prediction</button>
+      <button onClick={() => setDataReadable(false)}>Lose access</button>
+      <button onClick={() => setDataReadable(true)}>Regain access</button>
+      <button onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'details' })}>Details</button>
       <div ref={setVarsContainer} />
       <button onClick={() => setExperimentId(11)}>Change Experiment</button>
       <PredictionWorkspace
         active={active}
         authenticated
-        dataReadable
+        dataReadable={dataReadable}
         command={command}
         onChromeStateChange={onChromeStateChange}
         onViewerStateChange={mocks.viewerState}
@@ -472,6 +482,30 @@ describe('Prediction Save & Run snapshot display', () => {
   })
 })
 
+it('clears validation, the Viewer and the open details dialog when data access is lost', async () => {
+  mocks.forwardOutputs.mockImplementation(async (_vars, _transaction, publish) => {
+    publish(recordedPreview)
+    return predictionResult('forward', 10)
+  })
+  await renderWorkspace()
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18'))
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(screen.getByRole('dialog')).toHaveAttribute('data-validation-count', '1')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Lose access' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(null)
+
+  // Keep the next load pending so the old validation cannot be cleared by a successful reload.
+  mocks.loadContextData.mockImplementation(() => new Promise(() => {}))
+  fireEvent.click(screen.getByRole('button', { name: 'Regain access' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(screen.getByRole('dialog')).toHaveAttribute('data-validation-count', '0')
+})
+
 it('blocks validation, sampling and missing-data writes without persistent Experiment access', async () => {
   const denied = vi.spyOn(toast, 'error').mockImplementation(() => 'denied')
   mocks.manageable = false
@@ -537,6 +571,29 @@ it.each(['Cancel', 'Leave Prediction', 'Change Experiment'])(
     fireEvent.click(screen.getByRole('button', { name: action }))
     await act(async () => publish(recordedPreview))
     expect(mocks.viewerState).toHaveBeenLastCalledWith(null)
+  },
+)
+
+it.each(['immediate', 'delayed'] as const)(
+  'starts Forward once after an %s initial freshness check',
+  async (timing) => {
+    let finishCheck!: (fingerprint: string) => void
+    const checked = new Promise<string>((resolve) => {
+      finishCheck = resolve
+    })
+    if (timing === 'immediate') finishCheck('before')
+    mocks.loadContextFingerprint.mockReturnValue(checked)
+    mocks.forwardOutputs.mockImplementation(() => new Promise(() => {}))
+
+    await renderWorkspace()
+    await waitFor(() => expect(mocks.loadContextFingerprint).toHaveBeenCalled())
+    if (timing === 'delayed') {
+      expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+      await act(async () => finishCheck('before'))
+    }
+    await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledOnce())
+    await act(async () => undefined)
+    expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
   },
 )
 

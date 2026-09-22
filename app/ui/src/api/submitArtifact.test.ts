@@ -71,6 +71,7 @@ describe('prebuilt remote submission', () => {
                   finished_at: null,
                   last_event_id: 0,
                   read_event_id: 0,
+                  jobs: [],
                 }
               : { ok: true },
           )

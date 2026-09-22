@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { Vars } from '@/lib/cad/model/types'
@@ -107,30 +108,16 @@ vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({
   WorkbenchViewer: ({
     experimentDocument,
     selectedResult,
-    onSelectedResultChange,
-    showToolbar,
     recordedData,
   }: {
     experimentDocument: { variables: Vars }
-    showToolbar?: boolean
     selectedResult: string
     recordedData?: unknown
-    onSelectedResultChange: (name: string) => void
   }) => (
     <div>
       <output aria-label="Viewer Vars">{JSON.stringify(experimentDocument.variables)}</output>
       <output aria-label="Viewer data">{JSON.stringify(recordedData)}</output>
       <output aria-label="Viewer selected result">{selectedResult}</output>
-      {showToolbar !== false && (
-        <select
-          aria-label="Viewer 결과 선택"
-          value={selectedResult}
-          onChange={(event) => onSelectedResultChange(event.target.value)}
-        >
-          <option value="">Geometry</option>
-          <option value="result">result</option>
-        </select>
-      )}
     </div>
   ),
 }))
@@ -446,7 +433,7 @@ describe('Measurement workspace integration', () => {
     expect(mocks.prepare).toHaveBeenCalledTimes(4)
     expect(mocks.predict).toHaveBeenCalledTimes(3)
     expect(preview.getByLabelText('Viewer data')).toHaveTextContent('prediction:2')
-    expect(screen.getAllByLabelText('비교 Viewer 공통 툴바')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /표시 데이터 종류 변경/ })).toHaveLength(1)
   })
 
   it('keeps the last frame and ignores a late prediction after cancellation', async () => {
@@ -577,6 +564,7 @@ describe('Measurement workspace integration', () => {
     expect(within(screen.getByLabelText('실제 결과 Viewer')).getByLabelText('Viewer Vars')).toHaveTextContent('0.25')
   })
   it('keeps the actual Vars while editing a new candidate and synchronizes viewer result selection', async () => {
+    const user = userEvent.setup()
     render(view())
     const actual = screen.getByLabelText('실제 결과 Viewer')
     await waitFor(() => expect(within(actual).getByLabelText('Viewer Vars')).toHaveTextContent('0.25'))
@@ -588,8 +576,9 @@ describe('Measurement workspace integration', () => {
     )
     expect(within(actual).getByLabelText('Viewer Vars')).toHaveTextContent('0.25')
     expect(within(actual).getByText('비교 기준 · 현재 Vars와 다름')).toBeInTheDocument()
-    expect(screen.getAllByLabelText('Viewer 결과 선택')).toHaveLength(1)
-    fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'result' } })
+    expect(screen.getAllByRole('button', { name: /표시 데이터 종류 변경/ })).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: '표시 데이터 종류 변경 · Geometry' }))
+    await user.click(screen.getByRole('menuitem', { name: 'result · Output' }))
     expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer selected result')).toHaveTextContent(
       'result',
     )
@@ -637,13 +626,17 @@ describe('Measurement workspace integration', () => {
 })
 
 it('applies saved data selection after the actual Measurement loads, then keeps manual selection', async () => {
+  const user = userEvent.setup()
   const load = deferred<(typeof rows)[number]>()
   mocks.load.mockReturnValueOnce(load.promise)
   const defaults = { version: 1 as const, selectedResult: 'result', settings: {}, camera: null }
   render(view(true, { ...workbench, experimentRecord: { ...workbench.experimentRecord!, viewer_defaults: defaults } }))
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · Geometry' })).toBeInTheDocument()
   await act(async () => load.resolve(rows[0]))
-  await waitFor(() => expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('result'))
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
-  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · result' })).toBeInTheDocument(),
+  )
+  await user.click(screen.getByRole('button', { name: '표시 데이터 종류 변경 · result' }))
+  await user.click(screen.getByRole('menuitem', { name: 'Geometry' }))
+  expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · Geometry' })).toBeInTheDocument()
 })

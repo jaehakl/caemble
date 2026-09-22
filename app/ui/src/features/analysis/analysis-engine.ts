@@ -253,21 +253,6 @@ function inputFingerprint(measurement: MeasurementRecord) {
   return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
 }
 
-export function stableSignature(rows: readonly Readonly<{ id?: number; updated_at?: string | null }>[]) {
-  const source = rows
-    .map((row) => `${row.id ?? ''}:${row.updated_at ?? ''}`)
-    .sort()
-    .join('|')
-  let first = 0x811c9dc5
-  let second = 0x9e3779b9
-  for (let index = 0; index < source.length; index += 1) {
-    const code = source.charCodeAt(index)
-    first = Math.imul(first ^ code, 0x01000193)
-    second = Math.imul(second ^ code, 0x85ebca6b)
-  }
-  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
-}
-
 export function buildAnalysisDataset({
   calculationData,
   experimentId,

@@ -8,6 +8,46 @@ beforeEach(() => vi.clearAllMocks())
 afterEach(() => vi.unstubAllGlobals())
 
 describe('CAE batch API boundary', () => {
+  it('requests summaries in pages of 50 and supports attention-only history without requiring jobs', () => {
+    caeBatches.list()
+    expect(mocks.request).toHaveBeenLastCalledWith(
+      'get',
+      '/cae/batches?limit=50&offset=0',
+      undefined,
+      expect.any(Object),
+    )
+    const signal = new AbortController().signal
+    caeBatches.list({ experimentId: 7, offset: 50, attentionOnly: true }, { signal })
+    expect(mocks.request).toHaveBeenLastCalledWith(
+      'get',
+      '/cae/batches?limit=50&offset=50&experiment_id=7&attention_only=true',
+      undefined,
+      expect.objectContaining({ signal, validate: expect.any(Function) }),
+    )
+    const validate = mocks.request.mock.calls[1][3].validate as (value: unknown) => unknown
+    const summary = {
+      id: 'batch',
+      experiment_id: 7,
+      mode: 'generate',
+      total: 2,
+      created_count: 2,
+      succeeded: 1,
+      failed: 0,
+      cancelled: 0,
+      state: 'running',
+      created_at: '',
+      updated_at: '',
+      finished_at: null,
+      last_event_id: 12,
+      read_event_id: 0,
+    }
+    expect(validate({ items: [summary], total: 1, cursor: 12 })).toEqual({
+      items: [{ ...summary, uploaded_count: 0 }],
+      total: 1,
+      cursor: 12,
+    })
+  })
+
   it('submits one idempotent batch request with CSRF protection', () => {
     const body = {
       request_id: 'request-1',
@@ -34,6 +74,13 @@ describe('CAE batch API boundary', () => {
     expect(mocks.request).toHaveBeenLastCalledWith(
       'get',
       '/cae/batches/batch%2Fone?limit=50&offset=50',
+      undefined,
+      expect.any(Object),
+    )
+    caeBatches.read('batch/one', { limit: 0 })
+    expect(mocks.request).toHaveBeenLastCalledWith(
+      'get',
+      '/cae/batches/batch%2Fone?limit=0&offset=0',
       undefined,
       expect.any(Object),
     )

@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { caeBatches, subscribeCaeEvents } from '@/api/cae'
-import type { CaeBatch, CaeEvent } from '@/contracts/api/cae'
+import type { CaeBatchSummary, CaeEvent } from '@/contracts/api/cae'
 import { useAuth } from '@/features/auth/use-auth'
 import { createBatchObservation } from './batchObservation'
 import { invalidateMeasurementMutation } from '@/features/measurement/queryInvalidation'
 
 const CaeBatchContext = createContext<{
-  batches: readonly CaeBatch[]
+  batches: readonly CaeBatchSummary[]
   events: readonly CaeEvent[]
   connected: boolean
   loading: boolean
@@ -15,7 +15,10 @@ const CaeBatchContext = createContext<{
   inspectedBatchId: string | null
   inspectBatch: (id: string | null) => void
   refresh: () => Promise<void>
-  update: (batch: CaeBatch) => CaeBatch
+  loadMore: () => Promise<void>
+  hasMore: boolean
+  loadingMore: boolean
+  update: (batch: CaeBatchSummary) => CaeBatchSummary
   withProgress: ReturnType<typeof createBatchObservation>['withProgress']
   readPage: ReturnType<typeof createBatchObservation>['readPage']
   waitForChange: ReturnType<typeof createBatchObservation>['waitForChange']
@@ -24,7 +27,7 @@ const CaeBatchContext = createContext<{
 export function CaeBatchProvider({ children }: { children: ReactNode }) {
   const auth = useAuth()
   const queryClient = useQueryClient()
-  const [batches, setBatches] = useState<readonly CaeBatch[]>([])
+  const [batches, setBatches] = useState<readonly CaeBatchSummary[]>([])
   const [events, setEvents] = useState<readonly CaeEvent[]>([])
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -32,9 +35,12 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
   const [inspectedBatchId, inspectBatch] = useState<string | null>(null)
   const [dataScope, setDataScope] = useState(auth.queryScope)
   const refreshRef = useRef<() => Promise<void>>(async () => {})
+  const loadMoreRef = useRef<() => Promise<void>>(async () => {})
+  const [history, setHistory] = useState({ hasMore: false, loading: false })
   const observation = useMemo(() => createBatchObservation(auth.queryScope), [auth.queryScope])
   const update = observation.update
   const refresh = useCallback(() => refreshRef.current(), [])
+  const loadMore = useCallback(() => loadMoreRef.current(), [])
 
   useEffect(() => {
     setDataScope(auth.queryScope)
@@ -43,9 +49,11 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
     setConnected(false)
     setError(null)
     inspectBatch(null)
+    setHistory({ hasMore: false, loading: false })
     if (!auth.isAuthenticated) {
       setLoading(false)
       refreshRef.current = async () => {}
+      loadMoreRef.current = async () => {}
       return
     }
     const unsubscribe = observation.subscribe(() => {
@@ -55,6 +63,10 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
     let closeStream: (() => void) | undefined
     let cursor: number | null = null
     let loadingList = false
+    let loadingHistory = false
+    let historyOffset = 0
+    let historyTotal = 0
+    let historyRevision = 0
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     const pending = new Map<string, ReturnType<typeof setTimeout>>()
     const required = new Map<string, number>()
@@ -68,7 +80,7 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
         setTimeout(() => {
           const target = required.get(id)
           void observation
-            .readPage(id, {}, true)
+            .readPage(id, { limit: 0 }, true)
             .then(() => {
               if (!active) return
               failures.delete(id)
@@ -109,15 +121,27 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       try {
         const first = await caeBatches.list({}, { signal: controller.signal })
         const items = [...first.items]
-        for (let offset = items.length; offset < first.total; offset += 50) {
-          const page = await caeBatches.list({ offset }, { signal: controller.signal })
+        let firstCursor = first.cursor
+        for (let offset = 0; ;) {
+          const page = await caeBatches.list({ offset, attentionOnly: true }, { signal: controller.signal })
+          firstCursor = Math.min(firstCursor, page.cursor)
           items.push(...page.items)
-          if (!page.items.length) break
+          offset += page.items.length
+          if (!page.items.length || offset >= page.total) break
         }
         if (!active) return
         items.forEach(update)
+        historyRevision++
+        const added = first.total - historyTotal
+        // Preserve loaded history only when the newest page covers all new rows.
+        historyOffset =
+          historyTotal && added <= first.items.length
+            ? Math.max(first.items.length, historyOffset + added)
+            : first.items.length
+        historyTotal = first.total
+        setHistory({ hasMore: historyOffset < historyTotal, loading: loadingHistory })
         setError(null)
-        cursor ??= first.cursor
+        cursor ??= firstCursor
         closeStream = subscribeCaeEvents(cursor, receive, (value) => {
           if (!active) return
           setConnected(value)
@@ -139,6 +163,28 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       }
     }
     refreshRef.current = load
+    loadMoreRef.current = async () => {
+      if (!active || loadingList || loadingHistory || historyOffset >= historyTotal) return
+      loadingHistory = true
+      setHistory({ hasMore: true, loading: true })
+      const offset = historyOffset
+      const revision = historyRevision
+      try {
+        const page = await caeBatches.list({ offset }, { signal: controller.signal })
+        if (!active) return
+        page.items.forEach(update)
+        if (revision === historyRevision) {
+          historyOffset = offset + page.items.length
+          historyTotal = page.items.length ? Math.max(historyTotal, page.total) : historyOffset
+        }
+        setError(null)
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : '이전 CAE 작업을 불러오지 못했습니다.')
+      } finally {
+        loadingHistory = false
+        if (active) setHistory({ hasMore: historyOffset < historyTotal, loading: false })
+      }
+    }
     void load()
     return () => {
       active = false
@@ -149,6 +195,7 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       if (retryTimer) clearTimeout(retryTimer)
       pending.forEach(clearTimeout)
       refreshRef.current = async () => {}
+      loadMoreRef.current = async () => {}
     }
   }, [auth.isAuthenticated, auth.queryScope, queryClient, update, observation])
 
@@ -163,6 +210,9 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
         loading: auth.isAuthenticated && (dataScope !== auth.queryScope || loading),
         error: dataScope === auth.queryScope ? error : null,
         refresh,
+        loadMore,
+        hasMore: dataScope === auth.queryScope && history.hasMore,
+        loadingMore: dataScope === auth.queryScope && history.loading,
         update,
         readPage: observation.readPage,
         withProgress: observation.withProgress,

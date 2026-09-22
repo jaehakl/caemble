@@ -36,11 +36,12 @@ export function createCaeBatches(client: CaembleClient) {
         { csrf: 'required', signal, validate: (value) => caeBatchSchema.parse(value) },
       ),
     list: (
-      options: Readonly<{ experimentId?: number; offset?: number; limit?: number }> = {},
+      options: Readonly<{ experimentId?: number; offset?: number; limit?: number; attentionOnly?: boolean }> = {},
       context?: RequestContext,
     ) => {
       const params = new URLSearchParams({ limit: String(options.limit ?? 50), offset: String(options.offset ?? 0) })
       if (options.experimentId !== undefined) params.set('experiment_id', String(options.experimentId))
+      if (options.attentionOnly) params.set('attention_only', 'true')
       return request('get', `/cae/batches?${params}`, undefined, {
         ...context,
         validate: (value) => caeBatchListSchema.parse(value),

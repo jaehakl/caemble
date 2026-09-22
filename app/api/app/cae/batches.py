@@ -5,7 +5,7 @@ import json
 
 from caemble_catalog import Catalog
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cae.db import CaeBatch, CaeUploadChunk
@@ -102,20 +102,7 @@ async def create_batch(
     return batch
 
 
-async def batch_snapshot(
-    db: AsyncSession, batch: JobBatch, *, limit: int = 50, offset: int = 0
-) -> dict:
-    cae = await db.get(CaeBatch, batch.id)
-    rows = (
-        await db.execute(
-            select(Job, Measurement.id.label("measurement_id"))
-            .outerjoin(Measurement, Measurement.job_id == Job.id)
-            .where(Job.batch_id == batch.id)
-            .order_by(Job.item_index)
-            .limit(limit)
-            .offset(offset)
-        )
-    ).all()
+def batch_summary(batch: JobBatch, cae: CaeBatch) -> dict:
     return {
         "id": batch.id,
         "request_id": batch.request_id,
@@ -135,8 +122,27 @@ async def batch_snapshot(
         "last_event_id": batch.last_event_id,
         "read_event_id": batch.read_event_id,
         "jobs_total": batch.created_count,
-        "jobs": [job_snapshot(job, measurement_id) for job, measurement_id in rows],
     }
+
+
+async def batch_snapshot(
+    db: AsyncSession, batch: JobBatch, *, limit: int = 50, offset: int = 0
+) -> dict:
+    cae = await db.get(CaeBatch, batch.id)
+    snapshot = {**batch_summary(batch, cae), "jobs": []}
+    if limit:
+        rows = (
+            await db.execute(
+                select(Job, Measurement.id.label("measurement_id"))
+                .outerjoin(Measurement, Measurement.job_id == Job.id)
+                .where(Job.batch_id == batch.id)
+                .order_by(Job.item_index)
+                .limit(limit)
+                .offset(offset)
+            )
+        ).all()
+        snapshot["jobs"] = [job_snapshot(job, measurement_id) for job, measurement_id in rows]
+    return snapshot
 
 
 def job_snapshot(job: Job, measurement_id: int | None) -> dict:
@@ -171,26 +177,32 @@ async def measurement_execution(db: AsyncSession, measurement_id: int, user_id: 
 
 
 async def list_batches(
-    db: AsyncSession, user_id: str, *, experiment_id: int | None, limit: int, offset: int
+    db: AsyncSession, user_id: str, *, experiment_id: int | None, limit: int, offset: int,
+    attention_only: bool = False,
 ) -> dict:
     cursor = await event_cursor(db, user_id)
     query = (
-        select(JobBatch)
+        select(JobBatch, CaeBatch)
         .join(CaeBatch, CaeBatch.batch_id == JobBatch.id)
         .where(JobBatch.user_id == user_id)
     )
     if experiment_id is not None:
         query = query.where(CaeBatch.experiment_id == experiment_id)
+    if attention_only:
+        query = query.where(or_(
+            JobBatch.state.in_(("uploading", "queued", "running")),
+            and_(JobBatch.finished_at.is_not(None), JobBatch.read_event_id < JobBatch.last_event_id),
+        ))
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
     batches = (
-        await db.scalars(
+        await db.execute(
             query.order_by(JobBatch.created_at.desc(), JobBatch.id).limit(limit).offset(offset)
         )
     ).all()
     return {
         "cursor": cursor,
         "total": total,
-        "items": [await batch_snapshot(db, batch) for batch in batches],
+        "items": [batch_summary(batch, cae) for batch, cae in batches],
     }
 
 

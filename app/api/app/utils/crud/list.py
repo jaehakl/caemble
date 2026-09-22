@@ -7,17 +7,13 @@ from typing import Any, Callable, List
 
 from sqlalchemy import Text, and_, cast, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
 from utils.datetime_utils import db_datetime_to_utc, parse_api_datetime_to_utc
 from utils.crud.common import (
     CrudSpec,
-    RelationValueSpec,
     build_scope_clause,
     get_model_column_python_type,
-    get_relation_attr_name,
     get_relation_fields,
-    get_relationship_attr,
     normalize_int_ids,
 )
 
@@ -212,13 +208,6 @@ def _build_where_clause(
     return _combine_clauses(and_, (base_clause, where_clause))
 
 
-def _get_sort_request(request: Any) -> tuple[str | None, str]:
-    sort_requests = _get_sort_requests(request)
-    if not sort_requests:
-        return None, "asc"
-    return sort_requests[0]
-
-
 def _get_sort_requests(request: Any) -> list[tuple[str, str]]:
     raw_sort = getattr(request, "sort", None)
     if not raw_sort:
@@ -231,18 +220,6 @@ def _get_sort_requests(request: Any) -> list[tuple[str, str]]:
         direction = str(entry[1] if len(entry) > 1 else "asc").lower()
         normalized.append((entry[0], "desc" if direction == "desc" else "asc"))
     return normalized
-
-
-def get_list_sort_request(request: Any) -> tuple[str | None, str]:
-    return _get_sort_request(request)
-
-
-def build_list_where_clause(
-    request: Any,
-    spec: CrudSpec[Any, Any],
-    base_clause: Any | None = None,
-) -> Any | None:
-    return _build_where_clause(request, spec, base_clause)
 
 
 def _build_column_order_by(
@@ -272,87 +249,6 @@ def _build_column_order_by(
     return order_by_clauses
 
 
-def _get_count_sort_relationship(
-    request: Any,
-    spec: CrudSpec[Any, Any],
-) -> tuple[Any, str] | None:
-    if bool(getattr(request, "random", False)):
-        return None
-
-    field_name, direction = _get_sort_request(request)
-    if not field_name:
-        return None
-
-    relation_attr_name = spec.count_sort_fields.get(field_name)
-    if not relation_attr_name:
-        return None
-
-    relationship_attr = get_relationship_attr(spec.model, relation_attr_name)
-    if relationship_attr is None:
-        return None
-
-    return relationship_attr, direction
-
-
-async def _get_relation_values_by_field(
-    db: AsyncSession,
-    model: type[Any],
-    entity_ids: Sequence[int],
-    relation_specs: Iterable[RelationValueSpec],
-) -> dict[str, dict[int, list[int]]]:
-    relation_specs = list(relation_specs)
-    relation_values_by_field: dict[str, dict[int, list[int]]] = {
-        relation_spec.field_name: {entity_id: [] for entity_id in entity_ids}
-        for relation_spec in relation_specs
-    }
-    normalized_entity_ids = normalize_int_ids(entity_ids, sort=True)
-    if not normalized_entity_ids:
-        return relation_values_by_field
-
-    rows_by_path: dict[tuple[tuple[str, ...], str], list[Any]] = {}
-    for relation_spec in relation_specs:
-        if not relation_spec.path:
-            continue
-
-        path_key = (relation_spec.path, relation_spec.attr_name)
-        if path_key not in rows_by_path:
-            root_alias = aliased(model)
-            current_entity = root_alias
-            stmt = select(root_alias.id.label("entity_id")).select_from(root_alias)
-            for path_attr_name in relation_spec.path:
-                relationship_attr = getattr(current_entity, path_attr_name)
-                target_alias = aliased(relationship_attr.property.mapper.class_)
-                stmt = stmt.join(relationship_attr.of_type(target_alias))
-                current_entity = target_alias
-
-            value_attr = getattr(current_entity, relation_spec.attr_name)
-            rows_by_path[path_key] = (
-                await db.execute(
-                    stmt.add_columns(value_attr.label("value"))
-                    .where(root_alias.id.in_(normalized_entity_ids))
-                    .order_by(root_alias.id.asc(), value_attr.asc())
-                )
-            ).all()
-
-        values_by_entity_id: dict[int, list[int]] = defaultdict(list)
-        for entity_id, value in rows_by_path[path_key]:
-            values_by_entity_id[entity_id].append(value)
-
-        for entity_id in normalized_entity_ids:
-            values = normalize_int_ids(values_by_entity_id.get(entity_id), sort=True)
-            if relation_spec.exclude_self:
-                values = [value for value in values if value != entity_id]
-            relation_values_by_field[relation_spec.field_name][entity_id] = normalize_int_ids(
-                [
-                    *relation_values_by_field[relation_spec.field_name][entity_id],
-                    *values,
-                ],
-                sort=True,
-            )
-
-    return relation_values_by_field
-
-
 async def _get_total(
     db: AsyncSession,
     spec: CrudSpec[Any, Any],
@@ -366,52 +262,12 @@ async def _get_total(
     return (await db.execute(total_stmt)).scalar_one()
 
 
-async def get_list_total(
-    db: AsyncSession,
-    spec: CrudSpec[Any, Any],
-    where_clause: Any | None,
-) -> int:
-    return await _get_total(db, spec, where_clause)
-
-
 async def _get_entities(
     db: AsyncSession,
     request: Any,
     spec: CrudSpec[Any, Any],
     where_clause: Any | None,
 ) -> list[Any]:
-    count_sort = _get_count_sort_relationship(request, spec)
-    if count_sort is not None:
-        relationship_attr, direction = count_sort
-        related_model = relationship_attr.property.mapper.class_
-        count_expr = func.count(related_model.id).label("_crud_relation_count")
-        stmt = (
-            select(spec.model.id.label("entity_id"), count_expr)
-            .select_from(spec.model)
-            .outerjoin(relationship_attr)
-            .group_by(spec.model.id)
-            .order_by(
-                count_expr.desc() if direction == "desc" else count_expr.asc(),
-                spec.model.id.desc(),
-            )
-        )
-        if where_clause is not None:
-            stmt = stmt.where(where_clause)
-        if request.offset:
-            stmt = stmt.offset(request.offset)
-        if request.limit is not None:
-            stmt = stmt.limit(request.limit)
-
-        ordered_ids = [row.entity_id for row in (await db.execute(stmt)).all()]
-        if not ordered_ids:
-            return []
-
-        entity_rows = (
-            await db.execute(select(spec.model).where(spec.model.id.in_(ordered_ids)))
-        ).scalars().all()
-        entities_by_id = {entity.id: entity for entity in entity_rows}
-        return [entities_by_id[entity_id] for entity_id in ordered_ids if entity_id in entities_by_id]
-
     stmt = select(spec.model)
     if where_clause is not None:
         stmt = stmt.where(where_clause)
@@ -429,45 +285,33 @@ async def serialize_list_entities(
     entities: Sequence[Any],
     spec: CrudSpec[Any, Any],
 ) -> list[Any]:
-    relation_fields = get_relation_fields(spec)
-    relation_value_specs = [
-        *(
-            RelationValueSpec(
-                field_name=field_name,
-                path=(attr_name,),
-                attr_name="id",
-            )
-            for field_name, attr_name, _ in relation_fields
-        ),
-        *(
-            RelationValueSpec(
-                field_name=field_name,
-                path=path,
-                attr_name=attr_name,
-                exclude_self=exclude_self,
-            )
-            for field_name, computed_specs in spec.computed_fields.items()
-            for path, attr_name, exclude_self in computed_specs
-        ),
-    ]
-    relation_values_by_field = await _get_relation_values_by_field(
-        db,
-        spec.model,
-        [getattr(entity, "id", None) for entity in entities],
-        relation_value_specs,
-    )
+    if not entities:
+        return []
+
+    entity_ids = [entity.id for entity in entities]
+    relation_ids_by_field: dict[str, dict[int, list[int]]] = {}
+    for field_name, attr_name, related_model in get_relation_fields(spec):
+        stmt = (
+            select(spec.model.id, related_model.id)
+            .select_from(spec.model)
+            .join(getattr(spec.model, attr_name))
+            .where(spec.model.id.in_(entity_ids))
+            .order_by(spec.model.id.asc(), related_model.id.asc())
+        )
+        ids_by_entity: dict[int, list[int]] = defaultdict(list)
+        for entity_id, related_id in (await db.execute(stmt)).all():
+            ids_by_entity[entity_id].append(related_id)
+        relation_ids_by_field[field_name] = {
+            entity_id: normalize_int_ids(related_ids, sort=True)
+            for entity_id, related_ids in ids_by_entity.items()
+        }
+
     items: list[Any] = []
     for entity in entities:
         item_data: dict[str, Any] = {}
         for field_name in spec.schema.model_fields:
-            computed_spec = spec.computed_fields.get(field_name)
-            if computed_spec is not None:
-                item_data[field_name] = relation_values_by_field.get(field_name, {}).get(entity.id, [])
-                continue
-
-            relation_attr_name = get_relation_attr_name(spec, field_name)
-            if relation_attr_name is not None:
-                item_data[field_name] = relation_values_by_field.get(field_name, {}).get(entity.id, [])
+            if field_name in relation_ids_by_field:
+                item_data[field_name] = relation_ids_by_field[field_name].get(entity.id, [])
                 continue
 
             if not hasattr(entity, field_name):
@@ -504,8 +348,8 @@ async def get_list_response(
         read_scope=getattr(request, "scope", "visible"),
     )
     scoped_base_clause = _combine_clauses(and_, (base_clause, scope_clause))
-    where_clause = build_list_where_clause(request, spec, scoped_base_clause)
-    total = await get_list_total(db, spec, where_clause)
+    where_clause = _build_where_clause(request, spec, scoped_base_clause)
+    total = await _get_total(db, spec, where_clause)
     entities = await _get_entities(db, request, spec, where_clause)
     items = await serialize_list_entities(db, entities, spec)
 

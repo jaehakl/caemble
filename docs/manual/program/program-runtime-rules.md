@@ -1,11 +1,25 @@
-# 실행 중 state와 artifact 규칙
+# 실행 상태와 중간 데이터 안전하게 다루기
 
-state와 artifact handle은 현재 run 안에서만 유효합니다. 다른 run의 handle이나 해제한 handle을 다시 사용하면 실행이 실패합니다. 해제한 state root는 새로 읽거나 다음 `sim.run()`에 전달할 수 없지만 계산 계보는 run 종료까지 남습니다.
+여러 Task를 연결하거나 반복 계산을 작성할 때는 **어떤 데이터를 아직 사용하는지** 확인해야 합니다. `state`는 계산을 이어갈 상태이고, `artifact`는 전달하거나 기록할 데이터의 참조입니다. 기본 실행 문법은 [simulate.py 안내](program-simulate.md)에서 먼저 확인하세요.
 
-`sim.release()`와 `keep`은 handle 하나 또는 handle을 담은 mapping/list/tuple을 받습니다. 값의 내용이 아니라 같은 state revision 또는 같은 artifact인지 비교하며, 모든 대상을 확인한 뒤 해제합니다. 시작점인 빈 state revision 0을 해제해도 다음 계산에서 계속 사용할 수 있습니다. 실행 중인 Task의 base state 해제는 거부되므로 `await sim.run()`이 끝난 뒤 해제하세요.
+## 참조를 사용할 수 있는 범위
 
-state 하나를 해제해도 같은 값을 사용하는 다른 state, artifact나 ACK 대기 기록은 유지됩니다. 이미 꺼낸 array를 다른 변수에 보관하면 그 참조가 남아 있는 동안 메모리도 유지될 수 있습니다. 기존 코드는 state를 자동 해제하지 않으므로, 반복 계산에서 필요 없는 과거 state는 명시적으로 해제하세요.
+상태와 데이터 참조(handle)는 현재 실행(run) 안에서만 유효합니다. 다른 실행의 참조나 이미 해제한 참조를 다시 사용하면 실패합니다. 해제한 상태의 최상위 참조는 새로 읽거나 다음 `sim.run()`에 전달할 수 없지만, 계산이 어떤 순서로 이어졌는지에 대한 정보는 실행 종료까지 남습니다.
 
-Solver 호출이 실패하면 해당 호출이 만든 state와 artifact를 함께 rollback합니다. sim.record() 결과는 실행이 끝날 때까지 provisional이며, 뒤 Task나 Python orchestration이 실패하면 모두 폐기됩니다. 실행 전체가 성공해야 서버가 RecordedData를 확정합니다.
+## 다음 계산에 필요한 상태는 남겨 두기
 
-time-series는 같은 이름을 반복 기록하지 말고 시간축이 있는 하나의 tensor artifact로 만드세요. 작은 반복 조건은 observation을 사용하고 큰 물리 데이터는 artifact로 전달합니다.
+`sim.release()`와 `keep`에는 참조 하나 또는 참조가 들어 있는 mapping/list/tuple을 전달할 수 있습니다. 값의 내용이 같은지가 아니라 같은 상태 버전(revision) 또는 같은 데이터 참조인지를 비교하며, 모든 대상을 확인한 뒤 해제합니다. 시작점인 빈 상태 revision 0은 해제하더라도 다음 계산에서 계속 사용할 수 있습니다.
+
+실행 중인 Task가 사용하는 기준 상태는 해제할 수 없습니다. `await sim.run()`이 끝난 뒤, 다음 계산과 checkpoint에 필요한 상태를 `keep`으로 보호하고 이전 상태를 해제하세요.
+
+상태 하나를 해제해도 같은 값을 사용하는 다른 상태, 데이터 참조, 서버의 저장 확인(ACK)을 기다리는 기록은 유지됩니다. 이미 꺼낸 배열을 다른 변수에 보관했다면 그 참조가 남아 있는 동안 메모리도 유지될 수 있습니다. 상태는 자동 해제되지 않으므로 반복 계산에서 더 이상 필요하지 않은 과거 상태를 직접 정리해 주세요.
+
+## 실패했을 때 기록이 남는 범위
+
+Solver 호출이 실패하면 해당 호출이 만든 상태와 데이터를 함께 되돌립니다(rollback). `sim.record()`의 기록은 실행이 끝날 때까지 임시 상태입니다. 뒤의 Task나 Python 실행 흐름에서 오류가 나면 임시 기록은 모두 폐기되고, 실행 전체가 성공해야 서버가 RecordedData를 확정합니다.
+
+따라서 결과 일부를 기록한 시점과 실행이 성공한 시점을 구분해 주세요. 오류를 확인할 때는 [실행·결과 문제 해결](../troubleshooting/troubleshooting-runtime-results.md)을 참고하세요.
+
+## 시간 이력을 기록하려면
+
+같은 이름으로 여러 번 기록하는 대신, 시간축이 있는 하나의 텐서 데이터로 구성하세요. 반복 여부를 판단하는 작은 값은 `observations`, 큰 물리 데이터는 `artifacts`로 전달합니다. 최종 결과 선언과 Viewer에서의 확인 방법은 [결과 기록 안내](program-domain-recording.md)에서 이어서 볼 수 있습니다.

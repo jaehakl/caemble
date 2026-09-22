@@ -1,6 +1,39 @@
 import { describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
 import { PredictionWorkerRestartError } from './client'
-import { PredictionRuntimeController } from './usePredictionController'
+import { PredictionRuntimeController, usePredictionController } from './usePredictionController'
+
+it('observes lifecycle transitions synchronously and blocks duplicate work before rendering', () => {
+  const start = vi.spyOn(PredictionRuntimeController.prototype, 'start').mockImplementation(() => undefined)
+  const { result, unmount } = renderHook(() => usePredictionController())
+  const run = vi.fn()
+  const beginValidation = () => {
+    if (result.current.lifecycleRef.current.operation !== 'idle') return
+    result.current.startOperation('validation', 'validating')
+    run()
+  }
+
+  act(() => {
+    beginValidation()
+    beginValidation()
+    expect(result.current.lifecycleRef.current.operation).toBe('validation')
+  })
+  expect(run).toHaveBeenCalledOnce()
+  expect(result.current).toMatchObject({ busy: true, validating: true, retryingValidation: false })
+
+  act(() => {
+    result.current.startOperation('validation-retry', 'retrying')
+    result.current.setDataStale(true)
+    result.current.setFreshnessPending(false)
+  })
+  expect(result.current).toMatchObject({ busy: true, validating: true, retryingValidation: true })
+  expect(result.current.lifecycleRef.current).toEqual(result.current.lifecycle)
+  act(() => result.current.cancelLifecycle({ dataStale: true, freshnessPending: false }))
+  expect(result.current).toMatchObject({ busy: false, validating: false, retryingValidation: false })
+  expect(result.current.lifecycleRef.current).toEqual(result.current.lifecycle)
+  unmount()
+  start.mockRestore()
+})
 
 describe('PredictionRuntimeController', () => {
   it('invalidates every in-flight revision and releases owned resources on cancel', () => {

@@ -56,6 +56,51 @@ describe('shared batch observation', () => {
     await store.readPage('one')
     expect(read).toHaveBeenCalledTimes(2)
   })
+  it('keeps shared detail reads pending until they catch up with summaries received in flight', async () => {
+    const store = createBatchObservation()
+    store.update(batch)
+    let resolveFirst!: (value: CaeBatch) => void
+    let resolveRetry!: (value: CaeBatch) => void
+    const completed: CaeBatch = {
+      ...batch,
+      state: 'completed',
+      succeeded: 1,
+      finished_at: 'finished',
+      last_event_id: 3,
+      jobs: [{ ...batch.jobs[0], state: 'succeeded' }],
+    }
+    read
+      .mockReturnValueOnce(
+        new Promise<CaeBatch>((resolve) => {
+          resolveFirst = resolve
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<CaeBatch>((resolve) => {
+          resolveRetry = resolve
+        }),
+      )
+      .mockResolvedValueOnce(completed)
+    const pending = store.readPage('one')
+    const delivered = vi.fn()
+    void pending.then(delivered)
+    store.update({ ...batch, last_event_id: 2 })
+    resolveFirst(batch)
+    await Promise.resolve()
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(delivered).not.toHaveBeenCalled()
+    expect(store.readPage('one')).toBe(pending)
+
+    store.update(completed)
+    resolveRetry({ ...batch, last_event_id: 2 })
+    const detail = await pending
+    expect(detail.state).toBe('completed')
+    expect(detail.jobs[0].state).toBe('succeeded')
+    expect(detail.last_event_id).toBe(3)
+    expect(read).toHaveBeenCalledTimes(3)
+    expect(await store.readPage('one')).toEqual(detail)
+    expect(read).toHaveBeenCalledTimes(3)
+  })
   it('overlays progress arriving during a snapshot fetch without hiding its state changes', async () => {
     const store = createBatchObservation()
     store.update(batch)
@@ -76,10 +121,53 @@ describe('shared batch observation', () => {
       payload: { progress: { completed: 9 } },
     })
     resolve({ ...batch, total: 2, last_event_id: 4 })
-    await pending
+    const detail = await pending
     expect(store.batches.get('one')?.total).toBe(2)
-    expect(store.batches.get('one')?.jobs[0].progress).toEqual({ completed: 9 })
+    expect(store.batches.get('one')).not.toHaveProperty('jobs')
+    expect(detail.jobs[0].progress).toEqual({ completed: 9 })
     expect(read).toHaveBeenCalledOnce()
+  })
+  it('keeps detail pages separate from summary-only refreshes and reloads only after a newer summary', async () => {
+    const store = createBatchObservation()
+    read.mockResolvedValueOnce(batch)
+    await store.readPage('one')
+    read.mockResolvedValueOnce({ ...batch, jobs: [] })
+    await store.readPage('one', { limit: 0 }, true)
+    expect((await store.readPage('one')).jobs).toEqual(batch.jobs)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(read).toHaveBeenLastCalledWith('one', { offset: 0, limit: 0 }, expect.any(Object))
+    expect(store.batches.get('one')).not.toHaveProperty('jobs')
+
+    read.mockResolvedValueOnce({ ...batch, last_event_id: 2, jobs: [] })
+    await store.readPage('one', { limit: 0 }, true)
+    const completed = { ...batch, last_event_id: 2, jobs: [{ ...batch.jobs[0], state: 'succeeded' }] }
+    read.mockResolvedValueOnce(completed)
+    expect((await store.readPage('one')).jobs).toEqual(completed.jobs)
+    expect(read).toHaveBeenCalledTimes(4)
+  })
+  it('overlays only the current attempt without notifying summary observers for progress', () => {
+    const store = createBatchObservation()
+    const snapshot = store.update(batch)
+    const changed = vi.fn()
+    store.subscribe(changed)
+    const progress = {
+      id: 5,
+      type: 'job.progress',
+      batch_id: 'one',
+      job_id: 'job',
+      attempt_count: 1,
+      created_at: 'new',
+      payload: { progress: { completed: 9 } },
+    }
+    store.applyEvent(progress)
+    expect(store.withProgress(batch).jobs[0].progress).toEqual({ completed: 9 })
+    expect(store.withProgress({ ...batch, jobs: [{ ...batch.jobs[0], attempt_count: 2 }] }).jobs[0].progress).toBeNull()
+    expect(store.withProgress({ ...batch, last_event_id: 6 }).jobs[0].progress).toBeNull()
+    expect(store.batches.get('one')).toBe(snapshot)
+    expect(changed).not.toHaveBeenCalled()
+    store.applyEvent({ ...progress, id: 6, type: 'job.succeeded', payload: {} })
+    expect(store.withProgress(batch).jobs[0].progress).toBeNull()
+    expect(read).not.toHaveBeenCalled()
   })
   it('waits for snapshots without polling, resolves already received changes, and aborts observation', async () => {
     const store = createBatchObservation()

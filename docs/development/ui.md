@@ -4,7 +4,7 @@ Commands and component-relative paths in this document are relative to `app/ui`,
 
 React 19, React Router Data Mode, Tailwind CSS v4, and Vite power the Caemble
 application. A shared icon rail connects Showcase, Workbench, Documentation,
-Lab, Settings, Account, and the admin-only Admin page. The Workbench keeps the
+Settings, Account, and the admin-only Admin page. The Workbench keeps the
 Experiment, Calculation, Prediction, and Analysis authoring sections;
 unsupported historical routes return Not Found.
 
@@ -63,7 +63,7 @@ implementation-derived language references remain in `src/authoring`.
 - `src/workbench`: Workbench session orchestration, scoped shell store, and
   feature-to-shell adapters.
 - `src/features`: user-facing workflows such as Experiment, Measurement,
-  Calculation, Prediction, Analysis, Viewer, Materials, AI, and Runtime.
+  Calculation, Prediction, Analysis, Viewer, CAE jobs, and Runtime.
 - `src/contracts`: serialized contracts grouped by owning domain. `src/api/types.ts`
   remains a compatibility re-export, not the source of new contracts.
 - `src/api`: HTTP transport and the existing `dbTables` endpoint facade.
@@ -164,6 +164,14 @@ committing the batch. `src/api/submitArtifact.ts` sends the frozen inputs;
 the remote worker owns execution, record ACK and cleanup. Batch observation
 and cancellation belong to the web workflow. There is no browser-local Solver
 fallback.
+
+The account-level Batch Provider initially loads the latest 50 summaries and
+all active or unread finished batches through `attention_only=true`. The CAE
+Jobs panel loads older history with **더 보기**. Summary entries contain no
+`jobs`; open panels and foreground execution observers request detail pages
+through the shared observation cache. A `limit=0` detail request refreshes only
+batch totals and state. Progress events update displayed job progress without
+fetching details or reordering summaries. Reconnection resumes from the last event cursor.
 
 ## Production runner
 

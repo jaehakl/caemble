@@ -1,7 +1,6 @@
 /// <reference lib="webworker" />
 
 import { dbTables, getListRequest } from '@/api'
-import type { CalculationDataAnalysisResponse, MeasurementRecord } from '@/api'
 import {
   analyzeRelationships,
   buildAnalysisDataset,
@@ -9,27 +8,11 @@ import {
   getTablePage,
   getRelationshipPlot,
   mineDataset,
-  stableSignature,
 } from './analysis-engine'
 import type { AnalysisProgressStage, AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
 import { parseAnalysisWorkerRequest, parseAnalysisWorkerResponse } from './analysisProtocol'
 
-type ContextRows = Readonly<{
-  measurements: readonly MeasurementRecord[]
-}>
-
-type LoadedContext = Readonly<{
-  rows: ContextRows
-  calculationData: CalculationDataAnalysisResponse
-  fingerprint: string
-  measurementSignature: string
-}>
-
 let dataset: ReturnType<typeof buildAnalysisDataset> | null = null
-let experimentId: number | null = null
-let measurementSignature = ''
-let calculationDataFingerprint = ''
-let analysisMeasurementIds = new Set<number>()
 
 function postResponse(response: AnalysisWorkerResponse) {
   self.postMessage(parseAnalysisWorkerResponse(response))
@@ -45,33 +28,6 @@ function postProgress(requestId: string, stage: AnalysisProgressStage, completed
   })
 }
 
-async function loadContextRows(selectedExperimentId: number): Promise<ContextRows> {
-  const measurementRequest = {
-    ...getListRequest('visible'),
-    limit: null,
-    filter: { experiment_id: [selectedExperimentId, selectedExperimentId] },
-  }
-  const response = await dbTables.Measurement.listRows(measurementRequest)
-  return { measurements: response.items.filter((row) => row.experiment_id === selectedExperimentId) }
-}
-
-async function loadContext(requestId: string, selectedExperimentId: number): Promise<LoadedContext> {
-  postProgress(requestId, 'Measurement 조회')
-  const rows = await loadContextRows(selectedExperimentId)
-  postProgress(requestId, 'Calculation Data 조회')
-  const calculationData = await dbTables.CalculationData.analysis(selectedExperimentId)
-  const measurementIds = new Set(calculationData.items.map((row) => row.measurement_id))
-  const currentMeasurementSignature = stableSignature(
-    rows.measurements.filter((row) => row.id !== undefined && measurementIds.has(row.id)),
-  )
-  return {
-    rows,
-    calculationData,
-    fingerprint: [currentMeasurementSignature, calculationData.fingerprint].join(':'),
-    measurementSignature: currentMeasurementSignature,
-  }
-}
-
 function requireDataset() {
   if (!dataset) throw new Error('먼저 Experiment 데이터를 불러오세요.')
   return dataset
@@ -79,41 +35,36 @@ function requireDataset() {
 
 async function handleRequest(request: AnalysisWorkerRequest) {
   if (request.type === 'load-context') {
-    experimentId = request.experimentId
-    const loaded = await loadContext(request.requestId, request.experimentId)
+    // Capture the fingerprint before reading inputs so changes during loading remain detectable.
+    postProgress(request.requestId, 'Calculation Data 조회')
+    const calculationData = await dbTables.CalculationData.analysis(request.experimentId)
+    postProgress(request.requestId, 'Measurement 조회')
+    const measurements = await dbTables.Measurement.listRows({
+      ...getListRequest('visible'),
+      limit: null,
+      filter: { experiment_id: [request.experimentId, request.experimentId] },
+    })
     postProgress(request.requestId, '데이터셋 구성')
     dataset = buildAnalysisDataset({
-      calculationData: loaded.calculationData.items,
+      calculationData: calculationData.items,
       experimentId: request.experimentId,
-      measurements: loaded.rows.measurements,
-      fingerprint: loaded.fingerprint,
+      measurements: measurements.items.filter((row) => row.experiment_id === request.experimentId),
+      fingerprint: calculationData.fingerprint,
     })
-    measurementSignature = loaded.measurementSignature
-    calculationDataFingerprint = loaded.calculationData.fingerprint
-    analysisMeasurementIds = new Set(loaded.calculationData.items.map((row) => row.measurement_id))
     postResponse({ type: 'profile', requestId: request.requestId, profile: dataset.profile })
     return
   }
 
   if (request.type === 'check-stale') {
-    if (experimentId === null) {
+    if (!dataset) {
       postResponse({ type: 'stale', requestId: request.requestId, stale: false })
       return
     }
-    const [response, status] = await Promise.all([
-      dbTables.Measurement.listRows({
-        ...getListRequest('visible'),
-        limit: null,
-        filter: { experiment_id: [experimentId, experimentId] },
-      }),
-      dbTables.CalculationData.analysisStatus(experimentId),
-    ])
+    const status = await dbTables.CalculationData.analysisStatus(dataset.profile.experimentId)
     postResponse({
       type: 'stale',
       requestId: request.requestId,
-      stale:
-        stableSignature(response.items.filter((row) => row.id !== undefined && analysisMeasurementIds.has(row.id))) !==
-          measurementSignature || status.fingerprint !== calculationDataFingerprint,
+      stale: status.fingerprint !== dataset.profile.fingerprint,
     })
     return
   }

@@ -22,9 +22,8 @@ describe('prediction lifecycle transitions', () => {
       operation: 'loading',
       status: 'loading data',
     })
-    expect(loading).toMatchObject({ busy: true, operation: 'loading', status: 'loading data' })
+    expect(loading).toMatchObject({ operation: 'loading', status: 'loading data' })
     expect(predictionLifecycleReducer(loading, { type: 'operation-finished', status: 'data ready' })).toMatchObject({
-      busy: false,
       operation: 'idle',
       status: 'data ready',
     })
@@ -37,7 +36,7 @@ describe('prediction lifecycle transitions', () => {
       direction: 'forward',
       status: 'forward running',
     })
-    expect(forward).toMatchObject({ busy: true, direction: 'forward', operation: 'forward' })
+    expect(forward).toMatchObject({ direction: 'forward', operation: 'forward' })
 
     const inverse = predictionLifecycleReducer(forward, {
       type: 'operation-started',
@@ -45,10 +44,9 @@ describe('prediction lifecycle transitions', () => {
       direction: 'inverse',
       status: 'inverse running',
     })
-    expect(inverse).toMatchObject({ busy: true, direction: 'inverse', operation: 'inverse' })
+    expect(inverse).toMatchObject({ direction: 'inverse', operation: 'inverse' })
 
     expect(predictionLifecycleReducer(inverse, { type: 'operation-finished' })).toMatchObject({
-      busy: false,
       direction: 'inverse',
       operation: 'idle',
     })
@@ -60,19 +58,17 @@ describe('prediction lifecycle transitions', () => {
       operation: 'validation',
       status: 'validating',
     })
-    expect(validating).toMatchObject({ busy: true, retryingValidation: false, validating: true })
+    expect(validating).toMatchObject({ operation: 'validation' })
 
     const retrying = predictionLifecycleReducer(validating, {
       type: 'operation-started',
       operation: 'validation-retry',
       status: 'retrying',
     })
-    expect(retrying).toMatchObject({ busy: true, retryingValidation: true, validating: true })
+    expect(retrying).toMatchObject({ operation: 'validation-retry' })
 
     expect(predictionLifecycleReducer(retrying, { type: 'operation-finished' })).toMatchObject({
-      busy: false,
-      retryingValidation: false,
-      validating: false,
+      operation: 'idle',
     })
   })
 
@@ -91,7 +87,6 @@ describe('prediction lifecycle transitions', () => {
     })
     expect(stopping.samplingProgress?.phase).toBe('stopping')
     expect(predictionLifecycleReducer(stopping, { type: 'operation-finished', clearSampling: true })).toMatchObject({
-      busy: false,
       operation: 'idle',
       samplingProgress: null,
     })

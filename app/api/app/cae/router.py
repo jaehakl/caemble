@@ -62,18 +62,22 @@ async def read_preflight_result(
 @router.get("/batches")
 async def batches(
     experiment_id: int | None = None,
+    attention_only: bool = False,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(authenticated),
 ):
-    return await list_batches(db, user.id, experiment_id=experiment_id, limit=limit, offset=offset)
+    return await list_batches(
+        db, user.id, experiment_id=experiment_id, limit=limit, offset=offset,
+        attention_only=attention_only,
+    )
 
 
 @router.get("/batches/{batch_id}")
 async def batch_detail(
     batch_id: UUID,
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=0, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(authenticated),
