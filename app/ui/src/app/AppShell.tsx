@@ -1,7 +1,6 @@
 import {
   BookOpenText,
   CircleUserRound,
-  FlaskConical,
   GalleryHorizontalEnd,
   PanelsTopLeft,
   Settings,
@@ -24,7 +23,6 @@ const navigationItems: readonly NavigationItem[] = [
   { label: 'Showcase', path: '/showcase', icon: GalleryHorizontalEnd },
   { label: 'Workbench', path: '/workbench', icon: PanelsTopLeft },
   { label: 'Documentation', path: '/doc', icon: BookOpenText },
-  { label: 'Lab', path: '/lab', icon: FlaskConical },
   { label: 'Admin', path: '/admin', icon: ShieldCheck, adminOnly: true },
   { label: 'Setting', path: '/settings', icon: Settings },
   { label: 'Account', path: '/account', icon: CircleUserRound },

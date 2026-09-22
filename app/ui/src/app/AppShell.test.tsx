@@ -31,7 +31,6 @@ describe('AppShell', () => {
       'Showcase',
       'Workbench',
       'Documentation',
-      'Lab',
       'Setting',
       'Account',
     ])

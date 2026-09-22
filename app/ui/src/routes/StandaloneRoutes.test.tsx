@@ -3,7 +3,6 @@ import { MemoryRouter } from 'react-router'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AdminPage } from './AdminRoute'
-import { LabPage } from './LabRoute'
 import { SettingsPage } from './SettingsRoute'
 
 const mocks = vi.hoisted(() => ({
@@ -18,7 +17,6 @@ vi.mock('@/features/auth/use-auth', () => ({
     user: mocks.authenticated ? { id: 'user', roles: mocks.roles } : null,
   }),
 }))
-vi.mock('@/features/ai/AiChatPage', () => ({ AiChatWorkspace: () => <section>AI Chat workspace</section> }))
 vi.mock('@/features/cae-workbench/AdminWorkspace', () => ({
   AdminWorkspace: () => <section>Admin workspace</section>,
 }))
@@ -37,12 +35,6 @@ describe('standalone routes', () => {
     mocks.authenticated = true
     mocks.pending = false
     mocks.roles = []
-  })
-
-  it('renders Lab without a Viewer', () => {
-    mount(<LabPage />, '/lab')
-    expect(screen.getByText('AI Chat workspace')).toBeInTheDocument()
-    expect(screen.queryByText(/Viewer/i)).not.toBeInTheDocument()
   })
 
   it('renders all three Setting workspaces at once without a Viewer', () => {
