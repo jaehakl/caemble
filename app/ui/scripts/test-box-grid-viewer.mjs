@@ -127,22 +127,6 @@ const server = await createServer({
         window.qaRaster=createPointCloudData(plot,{identity:'qa-raster',leaf,range,plane:{axis:2,coordinate:.5}}).raster;
         root.render(<React.StrictMode>{overlay?<JscadViewer key="raster-qa" layers={[]} lengthUnit="m" heatmapRenderData={{identity:'qa-raster',geometries:[],raster:window.qaRaster,bounds:{min:[0,0,0],max:[width,height,1]}}} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>:<ScalarPlot key="raster-qa" plot={plot} kind="heatmap" range={range} unit="W"/>}</React.StrictMode>);
       };
-      window.verifyNativeRaster=()=>{
-        const canvas=document.querySelector('canvas[aria-label="heatmap 차트"]');
-        const pixels=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
-        const viewport=canvas.parentElement.parentElement, raster=window.qaRaster;
-        let checked=0,signals=0,mismatches=0;
-        const dpr=window.devicePixelRatio;
-        for(let row=0;row<raster.height;row++)for(let col=0;col<raster.width;col++){
-          const x=Math.floor((75+col+.5-viewport.scrollLeft)*dpr), y=Math.floor((25+raster.height-row-.5-viewport.scrollTop)*dpr);
-          if(x<0||y<0||x>=canvas.width||y>=canvas.height)continue;
-          checked++; const source=(row*raster.width+col)*4, target=(y*canvas.width+x)*4;
-          if(raster.rgba[source]||raster.rgba[source+1])signals++;
-          if([0,1,2,3].some(c=>pixels[target+c]!==raster.rgba[source+c]))mismatches++;
-        }
-        return {checked,signals,mismatches};
-      };
-
       window.renderRecordedSensor=()=>{
         const raster=window.recordedSumRaster;
         const corners=[[0,0],[0,1],[1,0],[1,1]].map(([c,r])=>raster.origin.map((v,i)=>v+c*raster.columnVector[i]+r*raster.rowVector[i]));
@@ -295,23 +279,30 @@ try {
     return canvas.getContext('2d').getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data[3] === 255
   })
   await layoutPage.evaluate(() => window.renderRasterQA({ width: 800, height: 600 }))
-  await layoutPage.getByRole('button', { name: '원본 크기', exact: true }).click()
-  const nativeLayout = await stableChartLayout('Native heatmap')
-  assert.equal(nativeLayout.scrollWidth, 900)
-  assert.equal(nativeLayout.scrollHeight, 690)
+  await layoutPage.getByRole('img', { name: 'heatmap 차트', exact: true }).waitFor()
+  const fittedLayout = await stableChartLayout('Fitted large heatmap')
+  assert.equal(fittedLayout.scrollWidth, fittedLayout.width)
+  assert.equal(fittedLayout.scrollHeight, fittedLayout.height)
+  await layoutPage.evaluate(() => {
+    Object.assign(document.getElementById('fixture').style, { zoom: '1', width: '280.5px', height: '210.5px' })
+  })
+  const smallLayout = await stableChartLayout('Small heatmap')
+  assert.ok(smallLayout.scrollWidth > smallLayout.width && smallLayout.scrollHeight > smallLayout.height)
   await layoutPage.evaluate(() => {
     document.querySelector('canvas[role="img"]').parentElement.parentElement.scrollTo(200, 150)
   })
-  await stableChartLayout('Scrolled native heatmap')
+  await stableChartLayout('Scrolled small heatmap')
   assert.deepEqual(
     await layoutPage.evaluate(() => {
       const viewport = document.querySelector('canvas[role="img"]').parentElement.parentElement
       return [viewport.scrollLeft, viewport.scrollTop]
     }),
-    [200, 150],
+    [smallLayout.scrollWidth - smallLayout.width, smallLayout.scrollHeight - smallLayout.height],
   )
-  await layoutPage.getByRole('button', { name: '화면 맞춤', exact: true }).click()
-  const fitLayout = await stableChartLayout('Return to fit mode')
+  await layoutPage.evaluate(() => {
+    Object.assign(document.getElementById('fixture').style, { width: '500.5px', height: '350.5px' })
+  })
+  const fitLayout = await stableChartLayout('Return to fitted heatmap')
   assert.equal(fitLayout.scrollWidth, fitLayout.width)
   assert.equal(fitLayout.scrollHeight, fitLayout.height)
   await layoutPage.close()
@@ -638,10 +629,15 @@ try {
     await sizedPage.evaluate(() =>
       window.renderRasterQA({ width: 2, height: 2, values: [-1, 0, 1, 0], range: [-1, 1] }),
     )
-    await sizedPage.getByRole('button', { name: '원본 크기', exact: true }).click()
-    await sizedPage.waitForFunction(
-      () => window.verifyNativeRaster().checked === 4 && window.verifyNativeRaster().mismatches === 0,
-    )
+    await sizedPage.getByRole('img', { name: 'heatmap 차트', exact: true }).waitFor()
+    await sizedPage.waitForFunction(() => {
+      const canvas = document.querySelector('canvas[aria-label="heatmap 차트"]')
+      const bounds = canvas.getBoundingClientRect()
+      return (
+        canvas.width === Math.round(bounds.width * devicePixelRatio) &&
+        canvas.height === Math.round(bounds.height * devicePixelRatio)
+      )
+    })
     await sizedContext.close()
   }
   await page.evaluate(() => window.renderPixel())
@@ -664,25 +660,22 @@ try {
   await ready()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/pixel-profile.png' })
 
-  // Native mode must reproduce every source pixel, including impulses missed by the old strides.
+  // Large source grids remain fitted to the chart pane without creating scrollbars.
   await page.setViewportSize({ width: 2000, height: 1400 })
   await page.evaluate(() => window.renderRasterQA())
-  await page.getByRole('button', { name: '원본 크기', exact: true }).click()
-  await page.waitForFunction(() => window.verifyNativeRaster().checked === 1280 * 720)
-  assert.deepEqual(await page.evaluate(() => window.verifyNativeRaster()), {
-    checked: 1280 * 720,
-    signals: 5,
-    mismatches: 0,
+  await page.getByRole('img', { name: 'heatmap 차트', exact: true }).waitFor()
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('canvas[aria-label="heatmap 차트"]')
+    const viewport = canvas.parentElement.parentElement
+    return viewport.scrollWidth === viewport.clientWidth && viewport.scrollHeight === viewport.clientHeight
   })
-  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap-native-sparse.png' })
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap-fitted-sparse.png' })
   await page.setViewportSize({ width: 800, height: 500 })
-  await page.evaluate(() => {
-    const c = document.querySelector('canvas[aria-label="heatmap 차트"]')
-    c.parentElement.parentElement.scrollTo(500, 250)
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('canvas[aria-label="heatmap 차트"]')
+    const viewport = canvas.parentElement.parentElement
+    return viewport.scrollWidth === viewport.clientWidth && viewport.scrollHeight === viewport.clientHeight
   })
-  await page.waitForFunction(() => window.verifyNativeRaster().mismatches === 0)
-  assert.ok((await page.evaluate(() => window.verifyNativeRaster())).checked < 1280 * 720)
-  await page.getByRole('button', { name: '화면 맞춤', exact: true }).click()
   await page.setViewportSize({ width: 2000, height: 1400 })
   // Exercise both the 2048-pixel tile seam and the short final tile.
   await page.evaluate(() =>
@@ -692,12 +685,11 @@ try {
       values: Array.from({ length: 2051 * 3 }, (_, i) => ([2047, 2048, 2050, 4100].includes(i) ? 1 : 0)),
     }),
   )
-  await page.getByRole('button', { name: '원본 크기', exact: true }).click()
-  await page.evaluate(() => {
-    document.querySelector('canvas[aria-label="heatmap 차트"]').parentElement.parentElement.scrollTo(500, 0)
-  })
-  await page.waitForFunction(
-    () => window.verifyNativeRaster().signals === 4 && window.verifyNativeRaster().mismatches === 0,
+  assert.ok(
+    await page.getByRole('img', { name: 'heatmap 차트', exact: true }).evaluate((canvas) => {
+      const bounds = canvas.getBoundingClientRect()
+      return canvas.width === Math.round(bounds.width * devicePixelRatio) && canvas.height > 0
+    }),
   )
   for (const values of [
     [-1, 0, 1, 0],
@@ -708,9 +700,10 @@ try {
         window.renderRasterQA({ width: 2, height: 2, values, range: values.some((v) => v) ? [-1, 1] : [0, 0] }),
       values,
     )
-    await page.waitForFunction(
-      () => window.verifyNativeRaster().checked === 4 && window.verifyNativeRaster().mismatches === 0,
-    )
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('canvas[aria-label="heatmap 차트"]')
+      return canvas.getContext('2d').getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data[3] === 255
+    })
   }
   await page.evaluate(() => window.renderRasterQA({ overlay: true }))
   await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
@@ -720,7 +713,6 @@ try {
   await page.evaluate(() =>
     window.renderRasterQA({ nonuniform: true, width: 3, height: 2, values: [0, 1, 0, 1, 0, 1] }),
   )
-  await page.getByRole('button', { name: '화면 맞춤', exact: true }).click()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/heatmap-nonuniform.png' })
   assert.deepEqual(
     await page.evaluate(() => {

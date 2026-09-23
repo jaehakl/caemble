@@ -83,6 +83,7 @@ export function useCaeWorkbenchState(
   const [saving, setSaving] = useState<'experiment' | null>(null)
   const [pendingMeasurementId, setPendingMeasurementId] = useState<number | null>(null)
   const [selectionRestoreStatus, setSelectionRestoreStatus] = useState<'idle' | 'restoring' | 'failed'>('idle')
+  const [previewMeasurement, setPreviewMeasurement] = useState<SavedMeasurement | null>(null)
   const [storedSelectionContext, setStoredSelectionContext] = useState<WorkbenchSelectionContext>({
     experimentId: null,
     measurementId: null,
@@ -139,6 +140,7 @@ export function useCaeWorkbenchState(
     const current = selectionContextRef.current
     if (current.experimentId !== experimentId) return false
     measurementRequestSequence.current += 1
+    setPreviewMeasurement(null)
     setPendingMeasurementId(null)
     setSelectionRestoreStatus('idle')
     clearBaseMeasurement()
@@ -155,6 +157,7 @@ export function useCaeWorkbenchState(
           ? { experimentId: null, measurementId: null, calculationId: null }
           : { experimentId: nextExperimentId, measurementId: null, calculationId: null }
       measurementRequestSequence.current += 1
+      setPreviewMeasurement(null)
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('idle')
       clearBaseMeasurement()
@@ -177,18 +180,31 @@ export function useCaeWorkbenchState(
         return null
       }
       const sequence = ++measurementRequestSequence.current
+      setPreviewMeasurement(null)
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('restoring')
       let row: SavedMeasurement | null
       try {
-        row = await loadBaseMeasurement(value, expectedExperimentId)
+        row = await loadBaseMeasurement(value, expectedExperimentId, {
+          onDetail: (detail) => {
+            if (
+              sequence === measurementRequestSequence.current &&
+              selectionContextRef.current.experimentId === detail.experiment_id &&
+              !measurement
+            ) {
+              setPreviewMeasurement(detail)
+            }
+          },
+        })
       } catch (cause: unknown) {
         if (sequence !== measurementRequestSequence.current) return null
+        setPreviewMeasurement(null)
         setSelectionRestoreStatus('failed')
         throw cause
       }
       if (sequence !== measurementRequestSequence.current) return null
       if (!row) {
+        setPreviewMeasurement(null)
         setSelectionRestoreStatus('idle')
         return null
       }
@@ -203,11 +219,12 @@ export function useCaeWorkbenchState(
         vars: row.vars as Readonly<Vars>,
         materialSnapshot: row.material_snapshot,
       })
+      setPreviewMeasurement(null)
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('idle')
       return row
     },
-    [experimentId, loadBaseMeasurement],
+    [experimentId, loadBaseMeasurement, measurement],
   )
 
   const selection = useMemo(
@@ -277,13 +294,14 @@ export function useCaeWorkbenchState(
   const { experimentDocument } = useCadWorkspace(experiment, handleExperimentChange, {
     predictionRecords: predictionMode ? predictionRecords : undefined,
     geometryRequired: predictionMode && predictionGeometryRequired,
-    candidateVars: candidateVars ?? undefined,
-    candidateVarsPending: pendingMeasurementId !== null || selectionRestoreStatus === 'restoring',
+    candidateVars: (previewMeasurement?.vars as Readonly<Vars> | undefined) ?? candidateVars ?? undefined,
+    candidateVarsPending:
+      previewMeasurement === null && (pendingMeasurementId !== null || selectionRestoreStatus === 'restoring'),
     candidateProvenance:
-      selection.measurement || pendingMeasurementId || selectionRestoreStatus === 'restoring'
+      selection.measurement || previewMeasurement || pendingMeasurementId || selectionRestoreStatus === 'restoring'
         ? 'persisted-measurement'
         : 'editable',
-    persistedMaterialSnapshot: candidateMaterialSnapshot,
+    persistedMaterialSnapshot: previewMeasurement?.material_snapshot ?? candidateMaterialSnapshot,
     resetKey: workspaceSession,
     onActivity,
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,

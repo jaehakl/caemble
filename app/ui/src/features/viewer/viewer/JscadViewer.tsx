@@ -272,6 +272,7 @@ const cameraViewDirections = {
   y: [0, 1, 0],
   z: [0, 0, 1],
 } as const
+const emptyPolylines: readonly PolylineBundle[] = []
 
 function JscadViewer({
   availableSources,
@@ -286,7 +287,7 @@ function JscadViewer({
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
   onToggleSource,
-  polylines = [],
+  polylines = emptyPolylines,
   meshRenderData,
   meshIdentity,
   preserveCameraOnUpdate = false,

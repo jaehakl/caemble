@@ -54,7 +54,11 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     async (
       value: number | SavedMeasurement,
       expectedExperimentId: number | null = experimentId,
-      options: Readonly<{ expectedSelectionId?: number | null; signal?: AbortSignal }> = {},
+      options: Readonly<{
+        expectedSelectionId?: number | null
+        signal?: AbortSignal
+        onDetail?: (measurement: SavedMeasurement) => void
+      }> = {},
     ) => {
       if (options.signal?.aborted) return null
       const id = typeof value === 'number' ? value : value.id
@@ -83,6 +87,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
           throw new Error('현재 Experiment에 속한 Measurement가 아닙니다.')
         }
         if (sequence !== requestSequence.current || options.signal?.aborted) return null
+        options.onDetail?.(row)
         const recordedDataOptions = measurementRecordedDataQueryOptions(queryScope, row.id, (progress) => {
           if (sequence === requestSequence.current && !options.signal?.aborted) setDownloadProgress(progress)
         })

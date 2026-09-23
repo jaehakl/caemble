@@ -56,6 +56,75 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+it('keeps Geometry render work stable when only the scene wrapper and loading props change', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const scene = {
+    lengthUnit: 'm' as const,
+    parts: [{ id: 'body', geometry: primitives.cuboid(), materialRole: 'body', surfaces: [] }],
+    tree: { key: 'root', label: 'Geometry', children: [] },
+    geometryGroups: [],
+    surfaceGroups: [],
+  }
+  const onRenderEnd = vi.fn()
+  const onRenderError = vi.fn()
+  const onRenderStart = vi.fn()
+  const props = { onRenderEnd, onRenderError, onRenderStart }
+  const view = render(
+    <div data-download-progress="0">
+      <CadViewer {...props} experiment={{ scene, sceneHash: 'scene' }} />
+    </div>,
+  )
+  const initialRenders = mocks.render.mock.calls.length
+  expect(initialRenders).toBeGreaterThan(0)
+  view.rerender(
+    <div data-download-progress="1">
+      <CadViewer {...props} experiment={{ scene, sceneHash: 'scene' }} selectionSourceStatus={{}} />
+    </div>,
+  )
+  expect(mocks.render).toHaveBeenCalledTimes(initialRenders)
+
+  const changedScene = { ...scene, parts: [{ ...scene.parts[0], geometry: primitives.cuboid({ size: [2, 2, 2] }) }] }
+  view.rerender(
+    <div data-download-progress="1">
+      <CadViewer {...props} experiment={{ scene: changedScene, sceneHash: 'changed' }} />
+    </div>,
+  )
+  expect(mocks.render.mock.calls.length).toBeGreaterThan(initialRenders)
+  const changedRenders = mocks.render.mock.calls.length
+  view.rerender(
+    <div data-download-progress="1">
+      <CadViewer {...props} experiment={{ scene: changedScene, sceneHash: 'changed' }} displayUnit="mm" />
+    </div>,
+  )
+  expect(mocks.render.mock.calls.length).toBeGreaterThan(changedRenders)
+
+  const taskScene = { ...scene, parts: [{ ...scene.parts[0], id: 'task' }] }
+  view.rerender(
+    <div data-download-progress="1">
+      <CadViewer
+        {...props}
+        experiment={{
+          scene: changedScene,
+          sceneHash: 'changed',
+          taskScenes: { trace: taskScene },
+          taskSceneHashes: { trace: 'task' },
+        }}
+        displayUnit="mm"
+      />
+    </div>,
+  )
+  const taskRenders = mocks.render.mock.calls.length
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle task' }))
+  expect(mocks.render.mock.calls.length).toBeGreaterThan(taskRenders)
+  expect(onRenderError).not.toHaveBeenCalled()
+})
+
 it('rebuilds heatmap draw commands when StrictMode recreates the renderer', () => {
   vi.stubGlobal(
     'ResizeObserver',

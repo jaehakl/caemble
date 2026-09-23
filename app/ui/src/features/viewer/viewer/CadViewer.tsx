@@ -56,9 +56,29 @@ export function CadViewer({
 }: CadViewerProps) {
   const experimentVisible = true
   const [taskVisible, setTaskVisible] = useViewerSetting('taskVisible', true, 'workspace')
+  const hasExperiment = experiment !== null
+  const scene = experiment?.scene ?? null
+  const sceneHash = experiment?.sceneHash
+  const taskScenes = experiment?.taskScenes
+  const taskSceneHashes = experiment?.taskSceneHashes
   const content = useMemo(
-    () => resolveCadViewerContent(experiment, experimentVisible, taskVisible, activeExperimentTaskName),
-    [activeExperimentTaskName, experiment, experimentVisible, taskVisible],
+    () =>
+      resolveCadViewerContent(
+        hasExperiment ? { scene, sceneHash, taskScenes, taskSceneHashes } : null,
+        experimentVisible,
+        taskVisible,
+        activeExperimentTaskName,
+      ),
+    [
+      activeExperimentTaskName,
+      experimentVisible,
+      hasExperiment,
+      scene,
+      sceneHash,
+      taskScenes,
+      taskSceneHashes,
+      taskVisible,
+    ],
   )
   const handleRenderStart = useCallback(
     () => onRenderStart(content.visibleSources),

@@ -70,14 +70,14 @@ export function ScalarPlot({
   histogramMarker?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const viewportRef = useRef<HTMLDivElement>(null)
+  const plotAreaRef = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState('')
   const heatmapProbe = useRef<((x: number, y: number) => string) | undefined>(undefined)
   const targets = useRef<{ x: number; y: number; label: string }[]>([])
   useEffect(() => {
     const canvas = canvasRef.current
-    const viewport = viewportRef.current
-    if (!canvas || !viewport) return
+    const plotArea = plotAreaRef.current
+    if (!canvas || !plotArea) return
     const edges = kind === 'heatmap' ? plot.axes.map(({ ticks }) => heatmapEdges(ticks)) : []
     const uniform = edges.every((axis) =>
       axis.every(
@@ -100,16 +100,15 @@ export function ScalarPlot({
           })
         : []
     const draw = () => {
-      const width = Math.max(320, viewport.clientWidth),
-        height = Math.max(220, viewport.clientHeight)
-      canvas.style.width = `${width}px`
-      canvas.style.height = `${height}px`
+      const bounds = plotArea.getBoundingClientRect()
+      const width = Math.max(320, bounds.width),
+        height = Math.max(220, bounds.height)
       const ratio = window.devicePixelRatio || 1
-      canvas.width = width * ratio
-      canvas.height = height * ratio
+      canvas.width = Math.round(width * ratio)
+      canvas.height = Math.round(height * ratio)
       const ctx = canvas.getContext('2d')
       if (!ctx) return
-      ctx.scale(ratio, ratio)
+      ctx.scale(canvas.width / width, canvas.height / height)
       ctx.clearRect(0, 0, width, height)
       const layout = kind === 'heatmap' ? heatmapLayout(width, height, edges, squarePixels) : undefined
       const left = layout?.left ?? 75,
@@ -289,7 +288,7 @@ export function ScalarPlot({
       }
     }
     const observer = new ResizeObserver(draw)
-    observer.observe(viewport)
+    observer.observe(plotArea)
     draw()
     return () => {
       observer.disconnect()
@@ -317,11 +316,11 @@ export function ScalarPlot({
           )}
         </div>
       ) : null}
-      <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto" onMouseLeave={() => setHover('')}>
-        <div style={{ width: '100%', height: '100%', minWidth: 320, minHeight: 220 }}>
+      <div className="min-h-0 flex-1 overflow-auto" onMouseLeave={() => setHover('')}>
+        <div ref={plotAreaRef} style={{ width: '100%', height: '100%', minWidth: 320, minHeight: 220 }}>
           <canvas
             ref={canvasRef}
-            className="block"
+            className="block h-full w-full"
             role="img"
             aria-label={`${kind} 차트`}
             onMouseLeave={() => setHover('')}

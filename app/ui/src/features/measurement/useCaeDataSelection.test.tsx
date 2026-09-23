@@ -91,6 +91,35 @@ describe('useCaeDataSelection', () => {
     expect(result.current.measurement?.id).toBe(1)
   })
 
+  it('exposes validated Measurement details before downloading recorded results', async () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    let finishDownload!: (value: unknown) => void
+    mocks.readResults.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDownload = resolve
+        }),
+    )
+    const onDetail = vi.fn()
+    const { result } = renderHook(() => useCaeDataSelection(10), { wrapper })
+    let pending!: ReturnType<typeof result.current.loadMeasurement>
+    act(() => {
+      pending = result.current.loadMeasurement(1, 10, { onDetail })
+    })
+
+    await waitFor(() => expect(onDetail).toHaveBeenCalledWith(measurement(1)))
+    expect(result.current.measurement).toBeNull()
+    expect(result.current.loading).toBe(true)
+
+    await act(async () => {
+      finishDownload({ recorded_data: {}, result_contracts: {} })
+      await pending
+    })
+    expect(result.current.measurement?.id).toBe(1)
+  })
+
   it('keeps the public snapshot identity across an unrelated parent rerender', () => {
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>

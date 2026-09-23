@@ -10,6 +10,7 @@ import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 const mocks = vi.hoisted(() => ({
   clearBaseMeasurement: vi.fn(),
   loadBaseMeasurement: vi.fn(),
+  workspaceOptions: vi.fn(),
   measurement: {
     id: 41,
     experiment_id: 7,
@@ -58,25 +59,28 @@ vi.mock('@/features/measurement/useCaeDataSelection', async () => {
 })
 
 vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
-  useCadWorkspace: () => ({
-    experimentDocument: {
-      completedCandidateGeneration: 0,
-      draftTaskNames: [],
-      generateCandidate: vi.fn(),
-      materialSnapshot: null,
-      resultSessionKey: 0,
-      revision: 0,
-      runIsBusy: false,
-      simulationProgram: null,
-      status: 'Idle',
-      successfulCandidateGeneration: 0,
-      successfulRevision: -1,
-      validatedRevision: -1,
-      variables: null,
-      varsSchema: null,
-    },
-    simulation: {},
-  }),
+  useCadWorkspace: (_experiment: unknown, _onChange: unknown, options: unknown) => {
+    mocks.workspaceOptions(options)
+    return {
+      experimentDocument: {
+        completedCandidateGeneration: 0,
+        draftTaskNames: [],
+        generateCandidate: vi.fn(),
+        materialSnapshot: null,
+        resultSessionKey: 0,
+        revision: 0,
+        runIsBusy: false,
+        simulationProgram: null,
+        status: 'Idle',
+        successfulCandidateGeneration: 0,
+        successfulRevision: -1,
+        validatedRevision: -1,
+        variables: null,
+        varsSchema: null,
+      },
+      simulation: {},
+    }
+  },
 }))
 
 vi.mock('@/features/calculation/useCalculationDataActions', () => ({
@@ -135,6 +139,7 @@ function savedExperiment(id: number): SavedExperiment {
 beforeEach(() => {
   mocks.clearBaseMeasurement.mockClear()
   mocks.loadBaseMeasurement.mockReset().mockResolvedValue(mocks.measurement)
+  mocks.workspaceOptions.mockClear()
 })
 
 describe('useCaeWorkbenchState draft restoration', () => {
@@ -286,7 +291,72 @@ describe('Experiment automatic Measurement selection', () => {
     })
     await waitFor(() => expect(result.current.selectionContext.measurementId).toBe(41))
     expect(fetch).toHaveBeenCalledOnce()
-    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(41, 7)
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(
+      41,
+      7,
+      expect.objectContaining({ onDetail: expect.any(Function) }),
+    )
+  })
+
+  it('prepares Geometry from Measurement details while recorded results are downloading', async () => {
+    const { client, result } = setup()
+    vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [mocks.measurement] } as never)
+    let detailReady!: (row: typeof mocks.measurement) => void
+    let finishDownload!: (row: typeof mocks.measurement) => void
+    mocks.loadBaseMeasurement.mockImplementationOnce(
+      (_id, _expectedExperimentId, options) =>
+        new Promise((resolve) => {
+          detailReady = options.onDetail
+          finishDownload = resolve
+        }),
+    )
+
+    await act(async () => {
+      await result.current.loadExperiment({ ...savedExperiment(7), initial_measurement_id: 41 })
+    })
+    await waitFor(() => expect(detailReady).toBeTypeOf('function'))
+    act(() => detailReady(mocks.measurement))
+
+    expect(mocks.workspaceOptions.mock.lastCall?.[0]).toMatchObject({
+      candidateVars: mocks.measurement.vars,
+      candidateVarsPending: false,
+      candidateProvenance: 'persisted-measurement',
+      persistedMaterialSnapshot: mocks.measurement.material_snapshot,
+    })
+    expect(result.current.selectionContext.measurementId).toBeNull()
+    expect(result.current.selectionRestoring).toBe(true)
+
+    await act(async () => finishDownload(mocks.measurement))
+    expect(result.current.selectionContext.measurementId).toBe(41)
+    expect(result.current.selectionRestoring).toBe(false)
+  })
+
+  it('discards preview Geometry input when the recorded result download fails', async () => {
+    const { client, result } = setup()
+    vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [mocks.measurement] } as never)
+    let detailReady!: (row: typeof mocks.measurement) => void
+    let failDownload!: (error: Error) => void
+    mocks.loadBaseMeasurement.mockImplementationOnce(
+      (_id, _expectedExperimentId, options) =>
+        new Promise((_resolve, reject) => {
+          detailReady = options.onDetail
+          failDownload = reject
+        }),
+    )
+    vi.spyOn(toast, 'error').mockImplementation(() => '')
+
+    await act(async () => {
+      await result.current.loadExperiment({ ...savedExperiment(7), initial_measurement_id: 41 })
+    })
+    await waitFor(() => expect(detailReady).toBeTypeOf('function'))
+    act(() => detailReady(mocks.measurement))
+    expect(mocks.workspaceOptions.mock.lastCall?.[0]).toMatchObject({ candidateVarsPending: false })
+
+    await act(async () => failDownload(new Error('offline')))
+    expect(result.current.selectionContext.measurementId).toBeNull()
+    expect(mocks.workspaceOptions.mock.lastCall?.[0]).not.toMatchObject({
+      persistedMaterialSnapshot: mocks.measurement.material_snapshot,
+    })
   })
 
   it('uses latest recorded result when the pin has been deleted or has no results', async () => {
@@ -355,7 +425,11 @@ describe('Experiment automatic Measurement selection', () => {
       ],
       limit: 1,
     })
-    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(41, 7)
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(
+      41,
+      7,
+      expect.objectContaining({ onDetail: expect.any(Function) }),
+    )
     expect(result.current.candidateVars).toEqual(mocks.measurement.vars)
     expect(result.current.candidateMaterialSnapshot).toEqual(mocks.measurement.material_snapshot)
     expect(result.current.selectionRestoring).toBe(false)
@@ -440,7 +514,13 @@ describe('Experiment automatic Measurement selection', () => {
     await act(async () => {
       await result.current.loadExperiment(savedExperiment(7))
     })
-    await waitFor(() => expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(41, 7))
+    await waitFor(() =>
+      expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(
+        41,
+        7,
+        expect.objectContaining({ onDetail: expect.any(Function) }),
+      ),
+    )
     const manual = { ...mocks.measurement, id: 42, vars: { width: 9 } }
     mocks.loadBaseMeasurement.mockResolvedValueOnce(manual)
     await act(async () => {
