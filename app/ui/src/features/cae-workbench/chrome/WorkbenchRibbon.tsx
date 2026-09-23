@@ -23,7 +23,7 @@ export function WorkbenchRibbonButton({
       {...props}
       className={cn(
         'flex shrink-0 items-center rounded-sm text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-disabled:hover:bg-transparent',
-        size === 'large' ? 'h-[72px] w-24 flex-col justify-center gap-1 px-1' : 'h-6 justify-start gap-1.5 px-2',
+        size === 'large' ? 'h-[72px] w-16 flex-col justify-center gap-1 px-1' : 'h-6 justify-start gap-1.5 px-2',
         className,
       )}
     >

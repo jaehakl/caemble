@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
@@ -32,37 +31,35 @@ export function ViewerLayout({ children }: { children: ReactNode }) {
   return (
     <ViewerToolHosts.Provider value={{ presentation, camera, data, side }}>
       <ViewerPanelHost.Provider value={panels}>
-        <TooltipProvider delayDuration={250}>
-          <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white" data-viewer-layout>
-            <div
-              aria-label="Viewer 공통 툴바"
-              role="toolbar"
-              className="flex shrink-0 items-center gap-1 overflow-x-auto border-b p-1 empty:hidden"
-              data-capture-exclude
-            >
-              <div ref={setPresentation} className="flex shrink-0 items-center gap-1 empty:hidden" />
-              <div ref={setCamera} className="flex shrink-0 items-center gap-1 empty:hidden" />
-              <div ref={setData} className="flex shrink-0 items-center gap-1 empty:hidden" />
-            </div>
-            <div className="relative flex min-h-0 min-w-0 flex-1">
-              <div
-                ref={setSide}
-                role="toolbar"
-                aria-label="데이터 도구모음"
-                aria-orientation="vertical"
-                data-capture-exclude
-                className="flex w-11 shrink-0 flex-col gap-1 overflow-x-hidden overflow-y-auto border-r p-1 text-xs empty:hidden"
-              />
-              <div className="min-h-0 min-w-0 flex-1">{children}</div>
-              <div
-                ref={setPanels}
-                data-capture-exclude
-                aria-label="Viewer 설정 패널"
-                className="pointer-events-none absolute inset-y-0 left-12 z-20 flex w-64 max-w-[calc(100%-3.25rem)] flex-col overflow-x-hidden overflow-y-auto p-1"
-              />
-            </div>
+        <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white" data-viewer-layout>
+          <div
+            aria-label="Viewer 공통 툴바"
+            role="toolbar"
+            className="flex shrink-0 items-center gap-1 overflow-x-auto border-b p-1 empty:hidden"
+            data-capture-exclude
+          >
+            <div ref={setPresentation} className="flex shrink-0 items-center gap-1 empty:hidden" />
+            <div ref={setCamera} className="flex shrink-0 items-center gap-1 empty:hidden" />
+            <div ref={setData} className="flex shrink-0 items-center gap-1 empty:hidden" />
           </div>
-        </TooltipProvider>
+          <div className="relative flex min-h-0 min-w-0 flex-1">
+            <div
+              ref={setSide}
+              role="toolbar"
+              aria-label="데이터 도구모음"
+              aria-orientation="vertical"
+              data-capture-exclude
+              className="flex w-11 shrink-0 flex-col gap-1 overflow-x-hidden overflow-y-auto border-r p-1 text-xs empty:hidden"
+            />
+            <div className="min-h-0 min-w-0 flex-1">{children}</div>
+            <div
+              ref={setPanels}
+              data-capture-exclude
+              aria-label="Viewer 설정 패널"
+              className="pointer-events-none absolute inset-y-0 left-12 z-20 flex w-64 max-w-[calc(100%-3.25rem)] flex-col overflow-x-hidden overflow-y-auto p-1"
+            />
+          </div>
+        </div>
       </ViewerPanelHost.Provider>
     </ViewerToolHosts.Provider>
   )
@@ -80,29 +77,21 @@ export function ViewerToolButton({
   active?: boolean
 }) {
   return (
-    <TooltipProvider delayDuration={250}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex size-8 shrink-0">
-            <button
-              {...props}
-              type="button"
-              aria-label={props['aria-label'] ?? label}
-              aria-pressed={active}
-              title={title ?? label}
-              className={cn(
-                'flex size-8 shrink-0 items-center justify-center rounded border p-0 text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-sky-600 disabled:cursor-not-allowed disabled:opacity-40 [&_svg]:size-4',
-                active ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-slate-300 bg-white',
-                className,
-              )}
-            >
-              {children}
-            </button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{title ?? label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <span className="inline-flex size-8 shrink-0" title={title ?? label}>
+      <button
+        {...props}
+        type="button"
+        aria-label={props['aria-label'] ?? label}
+        aria-pressed={active}
+        className={cn(
+          'flex size-8 shrink-0 items-center justify-center rounded border p-0 text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-sky-600 disabled:cursor-not-allowed disabled:opacity-40 [&_svg]:size-4',
+          active ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-slate-300 bg-white',
+          className,
+        )}
+      >
+        {children}
+      </button>
+    </span>
   )
 }
 
@@ -270,29 +259,22 @@ export function ViewerSelectTool({
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; icon: ReactNode }) {
   return (
-    <TooltipProvider delayDuration={250}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              'relative flex size-8 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-700 focus-within:outline-2 focus-within:outline-sky-600 hover:bg-slate-100 [&_svg]:size-4',
-              props.disabled && 'opacity-40',
-              className,
-            )}
-          >
-            {icon}
-            <select
-              {...props}
-              aria-label={props['aria-label'] ?? label}
-              title={title ?? label}
-              className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-            >
-              {children}
-            </select>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{title ?? label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <span
+      title={title ?? label}
+      className={cn(
+        'relative flex size-8 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-700 focus-within:outline-2 focus-within:outline-sky-600 hover:bg-slate-100 [&_svg]:size-4',
+        props.disabled && 'opacity-40',
+        className,
+      )}
+    >
+      {icon}
+      <select
+        {...props}
+        aria-label={props['aria-label'] ?? label}
+        className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+      >
+        {children}
+      </select>
+    </span>
   )
 }
