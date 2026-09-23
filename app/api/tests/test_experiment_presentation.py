@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import unittest
@@ -31,6 +32,21 @@ DEFAULTS = dict(version=1, selectedResult="signal", settings={
 
 
 class PresentationValidationTests(unittest.TestCase):
+    def test_frontend_initial_view_contract(self):
+        initial = json.loads((Path(__file__).parent / "fixtures/viewer_initial_view.json").read_text(encoding="utf-8"))
+        request = PresentationUpdateRequest(initialView=initial)
+        self.assertEqual(request.initialView.model_dump(), initial)
+        for animation in ("x", "y", "z", "component"):
+            PresentationUpdateRequest(initialView={**initial, "settings": {"signal:box.animation": animation}})
+        for component in ({"tensor": ["arrows", "arrows"]}, {"tensor": ["x", "invalid"]},
+                          {"tensor": ["x"]}, {"tensor": ["x", "y", "z"]}, -1, True):
+            with self.subTest(component=component), self.assertRaises(ValidationError):
+                PresentationUpdateRequest(initialView={**initial, "settings": {"signal:box.component": component}})
+        mesh = initial["settings"]["stress:mesh.view"]
+        with self.assertRaises(ValidationError):
+            PresentationUpdateRequest(initialView={**initial, "settings": {
+                "stress:mesh.view": {**mesh, "component": {"tensor": ["x", "arrows"]}}}})
+
     def test_output_role_settings_are_independent_and_validated(self):
         settings = {"signal@output-space:box.component": 1, "signal@output-chart:box.component": 2,
                     "signal@output-chart:box.kind": "heatmap", "signal@output-space:box.fixed": [0, 10]}
@@ -72,6 +88,20 @@ class PresentationValidationTests(unittest.TestCase):
 
 
 class PresentationServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_frontend_settings_survive_save_and_response(self):
+        initial = json.loads((Path(__file__).parent / "fixtures/viewer_initial_view.json").read_text(encoding="utf-8"))
+        row = Experiment(id=1, thumbnail_url="existing")
+        db = SimpleNamespace(scalar=AsyncMock(side_effect=[row, SimpleNamespace(experiment_id=1, recorded_at=utcnow())]),
+                             commit=AsyncMock(), flush=AsyncMock())
+        with patch("service.experiment_presentation.require_experiment_write", AsyncMock()), patch("service.experiment_presentation.experiment_is_demo", AsyncMock(return_value=False)):
+            result = await update_presentation(db, 1, PresentationUpdateRequest(initialView=initial), user=UserData(id="owner", roles=[RoleEnum.user]))
+        defaults = {key: value for key, value in initial.items() if key != "measurementId"}
+        self.assertEqual(row.viewer_defaults, defaults)
+        self.assertEqual(result["viewer_defaults"], defaults)
+        self.assertEqual(result["initial_measurement_id"], 3)
+        self.assertEqual(result["thumbnail_url"], "existing")
+        db.commit.assert_awaited_once()
+
     async def test_invalid_measurement_or_image_does_not_mutate_existing_settings(self):
         row = Experiment(id=1, initial_measurement_id=9, viewer_defaults=DEFAULTS, thumbnail_url="old")
         db = SimpleNamespace(scalar=AsyncMock(side_effect=[row, SimpleNamespace(experiment_id=2, recorded_at=utcnow())]),
@@ -91,6 +121,8 @@ class PresentationServiceTests(unittest.IsolatedAsyncioTestCase):
 class PresentationDatabaseTests(unittest.TestCase):
     def test_mutable_metadata_public_reads_permissions_and_deleted_measurement(self):
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
+        defaults = json.loads((Path(__file__).parent / "fixtures/viewer_initial_view.json").read_text(encoding="utf-8"))
+        defaults.pop("measurementId")
 
         async def verify():
             owner_id, other_id, experiment_id, other_experiment_id = await _seed_owners(database)
@@ -105,9 +137,9 @@ class PresentationDatabaseTests(unittest.TestCase):
                     db.add(measurement)
                     await db.commit()
                     measurement_id = measurement.id
-                    request = PresentationUpdateRequest(initialView={**DEFAULTS, "measurementId": measurement_id}, thumbnail=image_url())
+                    request = PresentationUpdateRequest(initialView={**defaults, "measurementId": measurement_id}, thumbnail=image_url())
                     result = await update_presentation(db, experiment_id, request, user=owner)
-                    self.assertEqual(result["viewer_defaults"], DEFAULTS)
+                    self.assertEqual(result["viewer_defaults"], defaults)
                     self.assertEqual(result["initial_measurement_id"], measurement_id)
                     thumbnail_url = result["thumbnail_url"]
                     row = await db.get(Experiment, experiment_id)
@@ -128,19 +160,19 @@ class PresentationDatabaseTests(unittest.TestCase):
                     await db.rollback()
                     result = await update_presentation(db, experiment_id, PresentationUpdateRequest(thumbnail=image_url((320, 240))), user=admin)
                     self.assertNotEqual(result["thumbnail_url"], thumbnail_url)
-                    self.assertEqual(result["viewer_defaults"], DEFAULTS)
+                    self.assertEqual(result["viewer_defaults"], defaults)
                     public = await available_experiments(db, user=None)
-                    self.assertEqual(public["demos"][0]["viewer_defaults"], DEFAULTS)
+                    self.assertEqual(public["demos"][0]["viewer_defaults"], defaults)
                     versions = await experiment_versions(db, experiment_id, user=None)
                     self.assertEqual(versions["items"][0]["initial_measurement_id"], measurement_id)
                     listing = await list_experiments(db, GetListRequestBase(scope="visible"), user=None)
-                    self.assertEqual(listing["items"][0]["viewer_defaults"], DEFAULTS)
+                    self.assertEqual(listing["items"][0]["viewer_defaults"], defaults)
                     await db.execute(delete(Measurement).where(Measurement.id == measurement_id))
                     await db.commit()
                     db.expire_all()
                     row = await db.get(Experiment, experiment_id)
                     self.assertIsNone(row.initial_measurement_id)
-                    self.assertEqual(row.viewer_defaults, DEFAULTS)
+                    self.assertEqual(row.viewer_defaults, defaults)
                     cleared = await update_presentation(db, experiment_id, PresentationUpdateRequest(initialView=None), user=admin)
                     self.assertIsNone(cleared["viewer_defaults"])
                     self.assertIsNotNone(await db.get(ExperimentThumbnail, experiment_id))

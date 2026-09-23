@@ -39,9 +39,26 @@ Index = Annotated[StrictInt, Field(ge=0)]
 Axis = Literal["x", "y", "z", "time", "frequency"]
 
 
+class BoxTensorComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    tensor: Annotated[list[Literal["x", "y", "z", "all", "arrows"]], Field(min_length=2, max_length=2)]
+
+    @field_validator("tensor")
+    @classmethod
+    def single_arrow_axis(cls, value):
+        if value.count("arrows") > 1:
+            raise ValueError("Only one tensor direction may use arrows")
+        return value
+
+
+class MeshTensorComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    tensor: Annotated[list[Literal["x", "y", "z", "all"]], Field(min_length=2, max_length=2)]
+
+
 class MeshView(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    component: Index | Literal["magnitude", "vonMises", "material"]
+    component: Index | Literal["magnitude", "vonMises", "material"] | MeshTensorComponent
     wireframe: bool
     overlays: bool
     clipAxis: Literal[-1, 0, 1, 2]
@@ -68,14 +85,15 @@ SETTING_TYPES = {
     "overlay": list[Annotated[str, Field(max_length=512)]],
     "box.wavelength": bool,
     "box.kind": Literal["cloud", "heatmap", "line", "histogram"],
+    "box.squarePixels": bool,
     "box.axes": Annotated[list[Axis], Field(max_length=3)],
     "box.representation": Literal["amplitude", "phase"],
-    "box.component": Index | Literal["magnitude", "arrows"],
+    "box.component": Index | Literal["magnitude", "magnitudeSquared", "arrows"] | BoxTensorComponent,
     "box.reduce": dict[Axis, Reduction],
     "box.overlay": bool,
     "box.geometryOpacity": Annotated[Finite, Field(ge=0, le=1)],
     "box.bins": Annotated[StrictInt, Field(gt=0)],
-    "box.animation": Literal["off", "oscillation", "time", "frequency"],
+    "box.animation": Literal["off", "oscillation", "time", "frequency", "x", "y", "z", "component"],
     "box.timeSeconds": Nonnegative,
     "box.frameIndex": Index,
     "box.durationSeconds": Positive | None,
@@ -133,8 +151,8 @@ class ViewerSettings(BaseModel):
             validator.validate_python(value, strict=True)
             if name in {"box.axes", "tensor.axes"} and value is not None and len(set(value)) != len(value):
                 raise ValueError("Viewer axes must be distinct")
-            if name == "box.fixed" and value is not None and value[0] >= value[1]:
-                raise ValueError("Viewer range must have minimum < maximum")
+            if name == "box.fixed" and value is not None and value[0] > value[1]:
+                raise ValueError("Viewer range must have minimum <= maximum")
         return values
 
 

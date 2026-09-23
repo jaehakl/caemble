@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "measurementId": 3,
+  "geometryMode": 0.9,
+  "selectedOutput": "signal",
+  "visualizations": { "mesh-field": "stress" },
+  "camera": { "position": [3, 4, 5], "target": [0, 0, 0], "up": [0, 0, 1], "fov": 0.8 },
+  "settings": {
+    "@workspace:xrayEnabled": true,
+    "signal@output-chart:box.squarePixels": true,
+    "signal@output-chart:box.component": "magnitudeSquared",
+    "signal@output-space:box.component": { "tensor": ["arrows", "y"] },
+    "signal@output-space:box.fixed": [2, 2],
+    "signal@output-space:box.animation": "x",
+    "signal@output-chart:box.animation": "component",
+    "stress:mesh.view": {
+      "component": { "tensor": ["x", "all"] },
+      "wireframe": true,
+      "overlays": false,
+      "clipAxis": -1,
+      "clipFraction": 0.5,
+      "deformationScale": 0
+    }
+  }
+}

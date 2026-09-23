@@ -15,6 +15,21 @@ function jsonResponse(body: unknown) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('API read boundaries', () => {
+  it('reads public Experiments without requesting CSRF or refreshing authentication', async () => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe('/api/experiment/list')
+      expect(new Headers(init?.headers).has('x-csrf-token')).toBe(false)
+      return jsonResponse({ items: [], total: 0 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(dbTables.Experiment.listRows(getListRequest('visible', [12]))).resolves.toEqual({
+      items: [],
+      total: 0,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('wraps malformed persisted items in ApiContractError', async () => {
     vi.stubGlobal(
       'fetch',

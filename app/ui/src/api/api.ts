@@ -204,7 +204,7 @@ export function createDbTables(client: CaembleClient) {
       recordType: undefined as unknown as SavedExperimentRecord,
       listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
         request<GetListResponse<SavedExperimentRecord>>('post', '/experiment/list', payload, {
-          ...csrfRequired,
+          ...csrfOmitted,
           signal: context?.signal,
           validate: parseExperimentListResponse,
         }),

@@ -117,14 +117,16 @@ function renderSession({
   client,
   initialUrl,
   workbench,
+  queryScope = 'user:first',
 }: {
   client: QueryClient
   initialUrl: string
   workbench: CaeWorkbenchState
+  queryScope?: 'public' | 'user:first'
 }) {
   function Probe() {
     const [, forceRender] = useState(0)
-    const session = useCaePageSession(workbench, { authPending: false, queryScope: 'user:first' })
+    const session = useCaePageSession(workbench, { authPending: false, queryScope })
     return (
       <div>
         <div data-testid="session-state">
@@ -185,6 +187,25 @@ afterAll(() => {
 })
 
 describe('useCaePageSession', () => {
+  it('opens a public Demo URL through the real HTTP query without authentication requests', async () => {
+    const row = { ...savedExperiment(7), isDemo: true, initial_measurement_id: 3 }
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe('/api/experiment/list')
+      expect(new Headers(init?.headers).has('x-csrf-token')).toBe(false)
+      return new Response(JSON.stringify({ items: [row], total: 1 }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const workbench = createWorkbench()
+    renderSession({ client, initialUrl: '/?experiment=7', workbench, queryScope: 'public' })
+
+    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
+    expect(workbench.loadExperiment).toHaveBeenCalledWith(expect.objectContaining(row))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps a meaningful local draft and canonicalizes the URL when the user declines a conflict', async () => {
     vi.mocked(loadWorkbenchDraft).mockResolvedValue(localDraft)
     vi.mocked(window.confirm).mockReturnValue(false)

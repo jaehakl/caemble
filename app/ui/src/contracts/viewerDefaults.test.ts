@@ -1,5 +1,19 @@
 import { expect, it } from 'vitest'
 import { cameraPoseSchema, durableViewerSettings, experimentPresentationSchema } from './viewerDefaults'
+import initialView from '../../../api/tests/fixtures/viewer_initial_view.json'
+
+it('serializes the shared API initial-view fixture without dropping Viewer controls', () => {
+  const { measurementId, ...defaults } = initialView
+  expect(durableViewerSettings(Object.entries(initialView.settings))).toEqual(initialView.settings)
+  expect(
+    experimentPresentationSchema.parse({
+      id: 1,
+      initial_measurement_id: measurementId,
+      viewer_defaults: defaults,
+      thumbnail_url: null,
+    }).viewer_defaults,
+  ).toEqual(defaults)
+})
 
 it('keeps valid display settings independently and excludes transient and malformed values', () => {
   expect(
