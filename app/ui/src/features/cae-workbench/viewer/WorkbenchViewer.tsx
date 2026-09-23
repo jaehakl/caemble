@@ -1,24 +1,37 @@
-import { ViewerLayout, ViewerToolButton, ViewerToolMenu } from '@/features/viewer/viewer/ViewerTools'
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
-import { Layers, Route } from 'lucide-react'
+import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
+import { GeometryDisplayManaged, ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
+import { ViewerDisplayControls, MeshSettingsHost } from '@/features/viewer/viewer/ViewerDisplayControls'
+import {
+  initialViewerDisplay,
+  initializeVisualizations,
+  visualizationGroups,
+  sameInvocation,
+  type GeometryMode,
+  type VisualizationSelection,
+} from '@/features/viewer/viewer/viewerDisplay'
+import {
+  combineMeshes,
+  SceneLayersContext,
+  ViewerSceneLayer,
+  ViewerResultScope,
+  type SceneLayer,
+} from '@/features/viewer/viewer/ViewerSceneLayers'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import { cameraPoseSchema, durableViewerSettings, type ViewerDefaults } from '@/contracts/viewerDefaults'
 import { ViewerPresentationMenu, type ViewerPresentationActions } from '@/features/experiment/ViewerPresentationMenu'
 import {
-  createComparisonSettings,
+  createViewerSettings,
   ViewerPersistenceContext,
-  type ViewerPersistence,
   ViewerComparisonContext,
   useViewerComparison,
   useViewerSetting,
   useViewerSettingValue,
   ViewerControls,
+  type ViewerPersistence,
   type ViewerComparison,
 } from '@/features/viewer/viewer/comparisonSettings'
 import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
 import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
-import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
-import { useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
 import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
@@ -28,19 +41,18 @@ import { ResultTensorView } from '@/features/viewer/viewer/ResultTensorView'
 import { experimentTaskName, type ExperimentSourceDocument } from '@/lib/cad/source'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
-import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { isDataTensor } from '@/lib/cad/model/dataTensor'
-import { parseRecordedMeshFields, type MeshRenderData } from '@/features/viewer/viewer/meshFields'
+import { parseRecordedMeshFields } from '@/features/viewer/viewer/meshFields'
 import { MeshFieldResult } from '@/features/viewer/viewer/MeshFieldResult'
 import { parseRecordedMeshTransforms } from '@/features/viewer/viewer/meshTransforms'
 import { MeshTransformResult } from '@/features/viewer/viewer/MeshTransformResult'
 import { parseRecordedParticleSets } from '@/features/viewer/viewer/particleSets'
 import { ParticleSetResult } from '@/features/viewer/viewer/ParticleSetResult'
+import { ResizableSplit } from '@/shared/layout/ResizableSplit'
 
-// Box Grid carries its experiment placement in the recorded Box metadata.
-function usesExperimentCoordinates(visualization: NonNullable<RecordedResultContracts[string]>['visualization']) {
-  return visualization.kind === 'box-grid' || visualization.coordinateSpace === 'experiment'
-}
+const emptyData = {}
+const emptyRules: readonly RecordedDataRule[] = []
 
 export type WorkbenchViewerProps = {
   onGeometryRequiredChange?: (required: boolean) => void
@@ -79,594 +91,610 @@ export type WorkbenchViewerProps = {
 export function WorkbenchViewer(props: WorkbenchViewerProps) {
   const sessions = useRef(new Map<string, ViewerPersistence>())
   const sessionKey = props.persistenceKey ?? 'default'
-  if (!sessions.current.has(sessionKey)) {
+  if (!sessions.current.has(sessionKey))
     sessions.current.set(sessionKey, {
-      settings: createComparisonSettings(props.initialDefaults?.settings),
+      settings: createViewerSettings(props.initialDefaults),
       camera: createComparisonCamera(props.initialDefaults?.camera),
       item: '',
     })
-  }
-  const persistent = sessions.current.get(sessionKey)
-  const predictionPrevious = useRef<WorkbenchViewerProps | null>(null)
-  if (
-    predictionPrevious.current?.persistenceKey !== props.persistenceKey ||
-    predictionPrevious.current?.experiment !== props.experiment
-  )
-    predictionPrevious.current = null
+  const previous = useRef<WorkbenchViewerProps | null>(null)
+  if (previous.current?.persistenceKey !== props.persistenceKey || previous.current?.experiment !== props.experiment)
+    previous.current = null
   if (
     props.persistenceKey &&
     !props.resultPlaceholder &&
     props.recordedData &&
     Object.keys(props.resultContracts ?? {}).length
-  ) {
-    predictionPrevious.current = props
-  }
-  const pending = props.resultPlaceholder ? predictionPrevious.current : null
-  const previous = useRef<WorkbenchViewerProps | null>(null)
-  const name = props.selectedResult ?? ''
-  const visualName = name.startsWith('@visualizations.')
-  const present =
-    !name ||
-    Boolean(
-      visualName
-        ? Object.keys(visualizationData(props.visualizations ?? {}).data).some(
-            (key) => key === name || key.startsWith(`${name}.`),
-          )
-        : Object.keys(props.recordedData ?? {}).some((key) => key === name || key.startsWith(`${name}.`)),
-    )
-  if (present && !props.loading && !props.resultErrors?.[name]) previous.current = props
-  const retained =
-    props.comparison && (!present || props.resultErrors?.[name]) && previous.current?.selectedResult === name
-      ? previous.current
-      : null
-  const unavailable = Boolean(
-    !props.resultPlaceholder && props.comparison && name && (!present || props.resultErrors?.[name]),
   )
+    previous.current = props
+  const pending = props.resultPlaceholder ? previous.current : null
   return (
-    <ViewerPersistenceContext.Provider value={persistent ?? null}>
-      <ViewerComparisonContext.Provider value={props.comparison ?? null}>
-        <div className="relative h-full min-h-0">
-          <div className={`h-full min-h-0 ${unavailable ? 'invisible' : ''}`}>
-            <ViewerContent
-              {...props}
-              pendingExperimentDocument={pending?.experimentDocument}
-              resultSourceHash={pending?.resultSourceHash ?? props.resultSourceHash}
-              resultVarsHash={pending?.resultVarsHash ?? props.resultVarsHash}
-              recordedData={pending?.recordedData ?? retained?.recordedData ?? props.recordedData}
-              recordedRules={pending?.recordedRules ?? retained?.recordedRules ?? props.recordedRules}
-              resultContracts={pending?.resultContracts ?? retained?.resultContracts ?? props.resultContracts}
-              visualizations={retained?.visualizations ?? props.visualizations}
-              resultErrors={unavailable && retained ? retained.resultErrors : props.resultErrors}
-            />
-          </div>
-          {unavailable ? (
-            <p role="status" className="absolute inset-0 grid place-items-center p-3 text-sm">
-              {props.resultErrors?.[name] ??
-                (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
-            </p>
-          ) : null}
-        </div>
-      </ViewerComparisonContext.Provider>
-    </ViewerPersistenceContext.Provider>
+    <GeometryDisplayManaged.Provider value>
+      <ViewerPersistenceContext.Provider value={sessions.current.get(sessionKey)!}>
+        <ViewerComparisonContext.Provider value={props.comparison ?? null}>
+          <ViewerContent
+            key={sessionKey}
+            {...props}
+            pendingExperimentDocument={pending?.experimentDocument}
+            recordedData={pending?.recordedData ?? props.recordedData}
+            recordedRules={pending?.recordedRules ?? props.recordedRules}
+            resultContracts={pending?.resultContracts ?? props.resultContracts}
+            visualizations={pending?.visualizations ?? props.visualizations}
+            resultSourceHash={pending?.resultSourceHash ?? props.resultSourceHash}
+            resultVarsHash={pending?.resultVarsHash ?? props.resultVarsHash}
+          />
+        </ViewerComparisonContext.Provider>
+      </ViewerPersistenceContext.Provider>
+    </GeometryDisplayManaged.Provider>
   )
 }
 
-function ViewerContent({
-  onGeometryRequiredChange,
-  pendingExperimentDocument,
-  initialDefaults,
-  presentation,
-  calculationSource,
-  activeExperimentTaskName,
-  experiment,
-  experimentDocument,
-  onFindSelectionSource,
-  onSelectionQueryChange,
-  onSelectionSourcePathsChange,
-  resultContracts: outputContracts,
-  resultErrors: outputErrors = {},
-  visualizations = {},
-  resultSourceHash,
-  resultVarsHash,
-  selectionQuery,
-  selectionSourceStatus,
-  recordedData: outputData,
-  recordedRules: outputRules = [],
-  loading = false,
-  downloadProgress,
-  autoSelectResult = false,
-  captureRef,
-  selectedResult,
-  onSelectedResultChange,
-  showToolbar = true,
-  persistenceKey,
-  resultPlaceholder,
-}: WorkbenchViewerProps) {
-  const localCaptureRef = useRef<HTMLDivElement>(null)
-  useImperativeHandle(captureRef, () => localCaptureRef.current!)
-  const initialSelection = useRef(initialDefaults?.selectedResult)
+function ViewerContent(props: WorkbenchViewerProps) {
+  const { resultPlaceholder, loading, resultSourceHash, resultVarsHash, onGeometryRequiredChange } = props
+  const initialDefaults = useRef(props.initialDefaults).current
   const comparison = useViewerComparison()
-  const persistent = useContext(ViewerPersistenceContext)
-  const visual = useMemo(() => visualizationData(visualizations), [visualizations])
-  const resultContracts = useMemo(
-    () =>
-      outputContracts || Object.keys(visual.contracts).length ? { ...outputContracts, ...visual.contracts } : null,
-    [outputContracts, visual],
+  const persistent = useContext(ViewerPersistenceContext)!
+  const sharedMeshHost = useContext(MeshSettingsHost)
+  const [localMeshHost, updateMeshHosts] = useState<Record<string, HTMLElement>>({})
+  const setMeshHost = useCallback(
+    (name: string, host: HTMLDivElement | null) =>
+      updateMeshHosts((current) => {
+        if ((current[name] ?? null) === host) return current
+        const next = { ...current }
+        if (host) next[name] = host
+        else delete next[name]
+        return next
+      }),
+    [],
   )
-  const recordedRules = useMemo(() => [...outputRules, ...visual.rules], [outputRules, visual])
-  const recordedData = useMemo(
-    () => (outputData || Object.keys(visual.data).length ? { ...outputData, ...visual.data } : undefined),
-    [outputData, visual],
+  const capture = useRef<HTMLDivElement>(null)
+  useImperativeHandle(props.captureRef, () => capture.current!)
+  const visual = useMemo(() => visualizationData(props.visualizations ?? emptyData), [props.visualizations])
+  const contracts = useMemo(() => ({ ...props.resultContracts, ...visual.contracts }), [props.resultContracts, visual])
+  const data = useMemo(() => ({ ...props.recordedData, ...visual.data }), [props.recordedData, visual])
+  const rules = useMemo(() => [...(props.recordedRules ?? emptyRules), ...visual.rules], [props.recordedRules, visual])
+  const errors = useMemo(() => ({ ...props.resultErrors, ...visual.errors }), [props.resultErrors, visual])
+  const initial = useRef(initialViewerDisplay(initialDefaults))
+  const [localOutput, setOutput] = useViewerSetting('selectedOutput', initial.current.output, 'workspace')
+  const output = props.selectedResult ?? localOutput
+  const [geometry, setGeometry] = useViewerSetting<GeometryMode>('geometryMode', initial.current.geometry, 'workspace')
+  const [visualizations, setVisualizations] = useViewerSetting<VisualizationSelection>(
+    'visualizations',
+    initial.current.visualizations,
+    'workspace',
   )
-  const resultErrors = useMemo(() => ({ ...outputErrors, ...visual.errors }), [outputErrors, visual])
-  const resultProvenance = useMemo(
-    () => ({
-      ...Object.fromEntries(
-        Object.entries(outputData ?? {}).map(([name, tensor]) => [
-          name,
-          isDataTensor(tensor) ? tensor.provenance : undefined,
-        ]),
-      ),
-      ...visual.provenance,
-    }),
-    [outputData, visual],
-  )
-  const mesh = useMemo(
-    () => parseRecordedMeshFields(recordedRules, recordedData, resultContracts ?? {}),
-    [recordedRules, recordedData, resultContracts],
-  )
-  const polylines = useMemo(
-    () => parseResultPolylines(resultContracts ?? {}, recordedRules, recordedData),
-    [resultContracts, recordedRules, recordedData],
-  )
-  const transforms = useMemo(
-    () => parseRecordedMeshTransforms(recordedRules, recordedData, resultContracts ?? {}),
-    [recordedRules, recordedData, resultContracts],
-  )
-  const particles = useMemo(
-    () => parseRecordedParticleSets(recordedRules, recordedData, resultContracts ?? {}),
-    [recordedRules, recordedData, resultContracts],
-  )
-  const [selections, setSelections] = useState<Record<string, string>>({})
-  const scope = persistenceKey ?? ''
-  const selectedView = selectedResult ?? selections[scope] ?? ''
-  const [overlay, setOverlay] = useViewerSetting<readonly string[]>('overlay', [], 'item', undefined, selectedView)
-  const selectionMade = useRef(new Set<string>())
-  const selectedField = mesh.fields.find((field) => field.label === selectedView)
-  const selectedMotion = transforms.motions.find((motion) => motion.label === selectedView)
-  const selectedParticles = particles.particles.find((value) => value.label === selectedView)
-  const selectedContract = resultContracts?.[selectedView]
-  const displayedDocument = selectedView && pendingExperimentDocument ? pendingExperimentDocument : experimentDocument
-  const [experimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
+  const document =
+    output || Object.values(visualizations).some(Boolean)
+      ? (props.pendingExperimentDocument ?? props.experimentDocument)
+      : props.experimentDocument
   const [taskVisible] = useViewerSetting('taskVisible', true, 'workspace')
-  const boxOverlay = useViewerSettingValue('box.overlay', true, selectedView)
-  const selectedTensor = recordedData?.[selectedView]
-  const surfaceGrid = isDataTensor(selectedTensor) && selectedTensor.boxGrid?.sampling === 'surface-integral'
-  const boxKind = useViewerSettingValue('box.kind', surfaceGrid ? 'heatmap' : 'cloud', selectedView)
-  const defaultBoxAxes = useMemo(() => (surfaceGrid ? ['y', 'x'] : ['x', 'y', 'z']), [surfaceGrid])
-  const boxAxes = useViewerSettingValue<readonly string[]>('box.axes', defaultBoxAxes, selectedView)
-  const explicitGeometry =
-    selectedView === '' &&
-    (selectionMade.current.has(scope) || (!resultPlaceholder && !autoSelectResult) || initialSelection.current === '')
-  const availableGeometrySources = experimentDocument.predictionCandidate?.geometrySources
-  const visibleGeometry = availableGeometrySources
-    ? (experimentVisible && availableGeometrySources.includes('experiment')) ||
-      (taskVisible && availableGeometrySources.includes('task'))
-    : (experimentVisible && Boolean(experimentDocument.scene)) ||
-      (taskVisible && Object.keys(experimentDocument.taskScenes ?? {}).length > 0)
-  const geometryRequired =
-    visibleGeometry &&
-    (explicitGeometry ||
-      Boolean(
-        selectedContract?.visualization.kind === 'box-grid' &&
-        boxOverlay &&
-        (boxKind === 'cloud' || boxKind === 'heatmap') &&
-        boxAxes.every((axis) => ['x', 'y', 'z'].includes(axis)),
-      ))
+  const selectionMade = useRef(
+    persistent.settings.values.get('@workspace:outputInitialized') === true ||
+      (Boolean(initialDefaults) && (initialDefaults?.version === 2 || initial.current.output === '')),
+  )
+  const mesh = useMemo(() => parseRecordedMeshFields(rules, data, contracts), [rules, data, contracts])
+  const lines = useMemo(() => parseResultPolylines(contracts, rules, data), [contracts, rules, data])
+  const motions = useMemo(() => parseRecordedMeshTransforms(rules, data, contracts), [rules, data, contracts])
+  const particles = useMemo(() => parseRecordedParticleSets(rules, data, contracts), [rules, data, contracts])
+  const validContracts = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(contracts).filter(([name, contract]) => {
+          if (errors[name]) return false
+          switch (contract.visualization.kind) {
+            case 'mesh-field':
+              return mesh.fields.some((field) => field.label === name)
+            case 'mesh-transform':
+              return motions.motions.some((motion) => motion.label === name)
+            case 'particle-set':
+              return particles.particles.some((value) => value.label === name)
+            case 'polyline':
+              return lines.bundles.some((line) => line.id === name)
+            default:
+              return Object.keys(data).some((key) => key === name || key.startsWith(`${name}.`))
+          }
+        }),
+      ),
+    [contracts, errors, mesh, motions, particles, lines, data],
+  )
+  useEffect(() => {
+    if (loading || resultPlaceholder) return
+    const next = initializeVisualizations(validContracts, visualizations, initialDefaults)
+    if (JSON.stringify(next) !== JSON.stringify(visualizations)) setVisualizations(next)
+  }, [validContracts, visualizations, initialDefaults, loading, resultPlaceholder, setVisualizations])
+  const snapshot = document.evaluatedSnapshot
+  const frameReason =
+    !snapshot || !document.scene
+      ? 'Geometry가 준비되지 않았습니다.'
+      : !resultSourceHash || !resultVarsHash
+        ? '결과의 source/Vars 비교 정보가 없어 Geometry를 겹칠 수 없습니다.'
+        : snapshot.sourceHash !== resultSourceHash
+          ? 'Geometry와 결과의 source가 다릅니다.'
+          : materialVarsHash(snapshot.variables) !== resultVarsHash
+            ? 'Geometry와 결과의 Vars가 다릅니다.'
+            : undefined
+  useEffect(() => {
+    if (
+      props.selectedResult !== undefined ||
+      !props.autoSelectResult ||
+      selectionMade.current ||
+      loading ||
+      resultPlaceholder
+    )
+      return
+    const candidates = Object.entries(validContracts).filter(([name]) => !name.startsWith('@visualizations.'))
+    if (!candidates.length) return
+    let largest = ''
+    let count = 0
+    for (const [name, contract] of candidates) {
+      const tensor = data[name]
+      const grid = isDataTensor(tensor) ? tensor.boxGrid?.gridShape : undefined
+      if (
+        contract.visualization.kind !== 'box-grid' ||
+        !grid ||
+        !isDataTensor(tensor) ||
+        grid.length !== 3 ||
+        grid.some((size, axis) => !Number.isSafeInteger(size) || size <= 0 || size !== tensor.shape[axis])
+      )
+        continue
+      const size = grid.reduce((total, length) => total * length, 1)
+      if (size > count) {
+        largest = name
+        count = size
+      }
+    }
+    const spatial = candidates.filter(
+      ([, contract]) =>
+        !frameReason &&
+        (contract.visualization.kind === 'box-grid' || contract.visualization.coordinateSpace === 'experiment'),
+    )
+    setOutput(
+      (initial.current.output && validContracts[initial.current.output] ? initial.current.output : '') ||
+        largest ||
+        (spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])[0],
+    )
+    selectionMade.current = true
+    persistent.settings.set('@workspace:outputInitialized', true)
+  }, [
+    props.selectedResult,
+    props.autoSelectResult,
+    loading,
+    resultPlaceholder,
+    validContracts,
+    data,
+    frameReason,
+    persistent.settings,
+    setOutput,
+  ])
+  const surface = isDataTensor(data[output]) && data[output].boxGrid?.sampling === 'surface-integral'
+  const boxKind = useViewerSettingValue('box.kind', surface ? 'heatmap' : 'cloud', output)
+  const defaultAxes = useMemo(() => (surface ? ['y', 'x'] : ['x', 'y', 'z']), [surface])
+  const boxAxes = useViewerSettingValue<readonly string[]>('box.axes', defaultAxes, output)
+  const previousKinds = useRef<Record<string, string>>({})
+  for (const [name, contract] of Object.entries(contracts)) previousKinds.current[name] = contract.visualization.kind
+  const outputKind = contracts[output]?.visualization.kind ?? previousKinds.current[output]
+  const outputSpatial =
+    ['mesh-field', 'mesh-transform', 'particle-set', 'polyline'].includes(outputKind ?? '') ||
+    (outputKind === 'box-grid' &&
+      ['cloud', 'heatmap'].includes(boxKind) &&
+      boxAxes.every((axis) => ['x', 'y', 'z'].includes(axis)))
+  const selected = useMemo(() => {
+    const kinds = [...new Set([...Object.keys(visualizationGroups(contracts)), ...Object.keys(visualizations)])]
+    return [output, ...kinds.map((kind) => visualizations[kind])].filter(
+      (name, index, names) => name && names.indexOf(name) === index,
+    )
+  }, [output, visualizations, contracts])
+  const spatialNames = useMemo(
+    () => selected.filter((name) => name !== output || outputSpatial),
+    [selected, output, outputSpatial],
+  )
+  const provenance = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.keys(contracts).map((name) => {
+          const tensor = data[name] ?? Object.entries(data).find(([key]) => key.startsWith(`${name}.`))?.[1]
+          return [name, visual.provenance[name] ?? (isDataTensor(tensor) ? tensor.provenance : undefined)]
+        }),
+      ),
+    [contracts, data, visual],
+  )
+  const { accepted, blocked } = useMemo(() => {
+    const accepted: string[] = []
+    const blocked: Record<string, string> = {}
+    for (const name of spatialNames) {
+      if (!validContracts[name]) continue
+      const reference = accepted[0]
+      if (reference) {
+        const coordinates = (key: string) =>
+          contracts[key].visualization.kind === 'box-grid' ||
+          contracts[key].visualization.coordinateSpace === 'experiment'
+        if (!coordinates(reference) || !coordinates(name) || !sameInvocation(provenance[reference], provenance[name])) {
+          blocked[name] = '표시 기준 데이터와 좌표계 또는 실행 이력이 달라 함께 표시할 수 없습니다.'
+          continue
+        }
+      }
+      accepted.push(name)
+    }
+    return { accepted, blocked }
+  }, [spatialNames, validContracts, contracts, provenance])
+  const primary = accepted[0]
+  const primaryCoordinates =
+    !primary ||
+    contracts[primary].visualization.kind === 'box-grid' ||
+    contracts[primary].visualization.coordinateSpace === 'experiment'
+  const primaryUnit =
+    mesh.fields.find((field) => field.label === primary)?.lengthUnit ??
+    motions.motions.find((motion) => motion.label === primary)?.lengthUnit ??
+    particles.particles.find((value) => value.label === primary)?.lengthUnit
+  const displayUnit = (document.scene?.lengthUnit ?? primaryUnit ?? 'm') as UcumUnit
+  const [layers, setLayers] = useState<Record<string, SceneLayer>>({})
+  const publish = useCallback(
+    (name: string, layer: SceneLayer | null) =>
+      setLayers((current) => {
+        if (layer === null) {
+          if (!current[name]) return current
+          const next = { ...current }
+          delete next[name]
+          return next
+        }
+        const old = current[name]
+        if (
+          old?.mesh === layer.mesh &&
+          old?.heatmap === layer.heatmap &&
+          old?.lines === layer.lines &&
+          old?.deformed === layer.deformed
+        )
+          return current
+        return { ...current, [name]: layer }
+      }),
+    [],
+  )
+  const activeLayers = accepted.flatMap((name) => (layers[name] ? [layers[name]] : []))
+  const deformed = activeLayers.some((layer) => layer.deformed)
+  const combined = useMemo(
+    () => combineMeshes(accepted.flatMap((name) => (layers[name] ? [layers[name]] : []))),
+    [layers, accepted],
+  )
+  const displayedLines = useMemo(
+    () => (deformed ? [] : accepted.flatMap((name) => layers[name]?.lines ?? [])),
+    [layers, deformed, accepted],
+  )
+  const heatmaps = useMemo(
+    () => accepted.flatMap((name) => (layers[name]?.heatmap ? [layers[name].heatmap!] : [])),
+    [accepted, layers],
+  )
+  const availableSources = document.predictionCandidate?.geometrySources
+  const hasGeometry = availableSources
+    ? availableSources.includes('experiment') || (taskVisible && availableSources.includes('task'))
+    : Boolean(document.scene) || (taskVisible && Object.keys(document.taskScenes ?? {}).length > 0)
+  const geometryAllowed = geometry > 0 && primaryCoordinates && (!primary || !frameReason) && !deformed
+  const geometryRequired = geometry > 0 && hasGeometry && primaryCoordinates && !deformed
   useEffect(() => {
     onGeometryRequiredChange?.(geometryRequired)
   }, [geometryRequired, onGeometryRequiredChange])
   useEffect(() => () => onGeometryRequiredChange?.(false), [onGeometryRequiredChange])
-  const viewerDocument = useMemo(
-    () =>
-      experiment
-        ? {
-            scene: displayedDocument.scene,
-            sceneHash: displayedDocument.sceneHash,
-            taskScenes: displayedDocument.taskScenes,
-            taskSceneHashes: displayedDocument.taskSceneHashes,
-          }
-        : null,
-    [
-      experiment,
-      displayedDocument.scene,
-      displayedDocument.sceneHash,
-      displayedDocument.taskSceneHashes,
-      displayedDocument.taskScenes,
-    ],
+  const hasScene = (geometry > 0 && hasGeometry) || spatialNames.length > 0
+  const nonspatial = output && !outputSpatial
+  const result = (name: string) => (
+    <ViewerResultScope key={name} name={name} available={Boolean(validContracts[name])}>
+      <RetainedResultLayer
+        name={name}
+        contracts={contracts}
+        data={data}
+        rules={rules}
+        errors={errors}
+        blocked={blocked[name]}
+        displayUnit={displayUnit}
+        mesh={mesh}
+        lines={lines}
+        motions={motions}
+        particles={particles}
+        calculationSource={props.calculationSource}
+        loading={loading}
+        provenance={provenance}
+      />
+    </ViewerResultScope>
   )
-
-  const snapshot = displayedDocument.evaluatedSnapshot
-  const frameBlockedReason =
-    !snapshot || !displayedDocument.scene
-      ? 'Geometry가 준비되지 않았습니다. 평가가 끝난 뒤 Geometry 겹치기를 사용할 수 있습니다.'
-      : !resultSourceHash || !resultVarsHash
-        ? '결과의 source/Vars 비교 정보가 없어 Geometry 겹치기를 사용할 수 없습니다.'
-        : snapshot.sourceHash !== resultSourceHash
-          ? 'Geometry와 결과의 source가 달라 Geometry 겹치기를 사용할 수 없습니다.'
-          : materialVarsHash(snapshot.variables) !== resultVarsHash
-            ? 'Geometry와 결과의 Vars가 달라 Geometry 겹치기를 사용할 수 없습니다.'
-            : undefined
-  const frameMatches = !frameBlockedReason
-  useEffect(() => {
-    if (
-      selectedResult !== undefined ||
-      !autoSelectResult ||
-      loading ||
-      !recordedData ||
-      selectionMade.current.has(scope) ||
-      resultPlaceholder
-    )
-      return
-    const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
-      if (resultErrors[name]) return false
-      if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
-      if (result.visualization.kind === 'mesh-transform')
-        return transforms.motions.some((motion) => motion.label === name)
-      if (result.visualization.kind === 'particle-set') return particles.particles.some((value) => value.label === name)
-      if (result.visualization.kind === 'polyline') return polylines.bundles.some((bundle) => bundle.id === name)
-      return Object.keys(recordedData).some((path) => path === name || path.startsWith(`${name}.`))
-    })
-    const spatial = candidates.filter(
-      ([, result]) =>
-        frameMatches &&
-        usesExperimentCoordinates(result.visualization) &&
-        (result.visualization.kind === 'mesh-field' ||
-          result.visualization.kind === 'mesh-transform' ||
-          result.visualization.kind === 'particle-set' ||
-          result.visualization.kind === 'polyline' ||
-          result.visualization.kind === 'box-grid' ||
-          (result.visualization.kind === 'structured-field' && result.visualization.grid)),
-    )
-    let largestBoxGrid: string | undefined
-    let largestGridCount = 0
-    for (const [name, result] of candidates) {
-      if (result.visualization.kind !== 'box-grid') continue
-      const tensor = recordedData[name]
-      if (!isDataTensor(tensor) || !Array.isArray(tensor.shape)) continue
-      const gridShape = tensor.boxGrid?.gridShape
-      if (
-        !Array.isArray(gridShape) ||
-        gridShape.length !== 3 ||
-        gridShape.some((length, axis) => !Number.isSafeInteger(length) || length <= 0 || length !== tensor.shape[axis])
-      )
-        continue
-      const count = gridShape.reduce((total, length) => total * length, 1)
-      if (Number.isSafeInteger(count) && count > largestGridCount) {
-        largestBoxGrid = name
-        largestGridCount = count
-      }
-    }
-    const preferred = initialSelection.current
-    const nextSelection =
-      (preferred === '' || candidates.some(([name]) => name === preferred) ? preferred : undefined) ??
-      largestBoxGrid ??
-      (spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ??
-      ''
-    setSelections((current) => ({ ...current, [scope]: nextSelection }))
-    if (candidates.length > 0 || preferred === '') selectionMade.current.add(scope)
-  }, [
-    selectedResult,
-    scope,
-    resultPlaceholder,
-    autoSelectResult,
-    loading,
-    recordedData,
-    resultContracts,
-    resultErrors,
-    mesh,
-    transforms,
-    particles,
-    polylines,
-    frameMatches,
-  ])
-  const geometryBlockedReason =
-    frameBlockedReason ??
-    (selectedContract && !usesExperimentCoordinates(selectedContract.visualization)
-      ? '이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.'
-      : undefined)
-  const canOverlayGeometry = !geometryBlockedReason
-  const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
-  const recordReference = useMemo(() => {
-    if (!calculationSource) return undefined
-    try {
-      return calculationExperimentRecordReference(calculationSource, selectedView)
-    } catch {
-      return undefined
-    }
-  }, [calculationSource, selectedView])
-  const gridAxis =
-    selectedContract?.visualization.kind === 'box-grid' ? 0 : selectedContract?.visualization.grid?.xyzAxes[0]
-  const gridUnit =
-    gridAxis === undefined
-      ? undefined
-      : recordedRules.find((rule) => rule.label === selectedView)?.result.axes?.[gridAxis]?.unit
-  const displayUnit =
-    sceneDocument?.scene?.lengthUnit ??
-    selectedField?.lengthUnit ??
-    selectedMotion?.lengthUnit ??
-    selectedParticles?.lengthUnit ??
-    gridUnit ??
-    'm'
-  function sameResultInvocation(name: string) {
-    if (!selectedView || selectedView === name) return true
-    const selected = resultProvenance[selectedView]
-    const other = resultProvenance[name]
-    return Boolean(
-      selected &&
-      other &&
-      selected.task === other.task &&
-      selected.solver.name === other.solver.name &&
-      selected.solver.version === other.solver.version &&
-      selected.stateRevision === other.stateRevision &&
-      selected.invocation === other.invocation &&
-      selected.catalogRevision === other.catalogRevision,
-    )
-  }
-  const selectedLines = polylines.bundles.filter(
-    (bundle) =>
-      bundle.id === selectedView ||
-      (overlay.includes(bundle.id) &&
-        sameResultInvocation(bundle.id) &&
-        frameMatches &&
-        usesExperimentCoordinates(resultContracts![bundle.id].visualization) &&
-        (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))),
-  )
-  const renderScene = (
-    meshRenderData?: MeshRenderData,
-    deformationScale = 0,
-    heatmapRenderData?: HeatmapRenderData,
-    geometryOpacity = 1,
-    showParticleGeometry = false,
-  ) => (
-    <>
-      {deformationScale > 0 && selectedLines.length ? (
-        <p role="status" className="bg-amber-50 p-2 text-xs">
-          변형 표시 중에는 원래 좌표의 polyline Overlay를 표시하지 않습니다.
+  const scene = (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="max-h-40 shrink-0 overflow-auto [&_.h-full]:h-auto">{spatialNames.map(result)}</div>
+      {deformed && activeLayers.some((layer) => layer.lines?.length) ? (
+        <p role="status" className="p-2 text-xs">
+          변형 표시 중에는 원래 좌표의 ray를 표시하지 않습니다.
         </p>
       ) : null}
-      <CadViewer
-        availableSources={
-          onGeometryRequiredChange ? experimentDocument.predictionCandidate?.geometrySources : undefined
-        }
-        activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
-        experiment={
-          deformationScale > 0 || selectedMotion || (selectedParticles && !showParticleGeometry) ? null : sceneDocument
-        }
-        onFindSelectionSource={onFindSelectionSource}
-        onRenderEnd={experimentDocument.handleRenderEnd}
-        onRenderError={experimentDocument.handleRenderError}
-        onRenderStart={experimentDocument.handleRenderStart}
-        onSelectionQueryChange={onSelectionQueryChange}
-        onSelectionSourcePathsChange={onSelectionSourcePathsChange}
-        polylines={deformationScale > 0 || selectedMotion ? [] : selectedLines}
-        meshRenderData={meshRenderData}
-        heatmapRenderData={heatmapRenderData}
-        geometryOpacity={geometryOpacity}
-        meshIdentity={selectedField?.identity ?? selectedMotion?.identity ?? selectedParticles?.identity}
-        displayUnit={displayUnit}
-        preserveCameraOnUpdate={
-          Boolean(comparison) || autoSelectResult || Boolean(selectedMotion) || Boolean(selectedParticles)
-        }
-        selectionQuery={selectionQuery}
-        selectionSourceStatus={selectionSourceStatus}
-      />
-    </>
+      {geometry > 0 && primary && !geometryAllowed ? (
+        <p role="status" className="p-2 text-xs">
+          {frameReason ??
+            (!primaryCoordinates
+              ? '이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.'
+              : '변형 표시 중에는 원래 Geometry를 겹치지 않습니다.')}
+        </p>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        <CadViewer
+          experiment={
+            geometryAllowed && props.experiment
+              ? {
+                  scene: document.scene,
+                  sceneHash: document.sceneHash,
+                  taskScenes: document.taskScenes,
+                  taskSceneHashes: document.taskSceneHashes,
+                }
+              : null
+          }
+          availableSources={props.onGeometryRequiredChange ? availableSources : undefined}
+          activeExperimentTaskName={
+            props.activeExperimentTaskName ? experimentTaskName(props.activeExperimentTaskName) : null
+          }
+          geometryOpacity={geometry}
+          displayUnit={displayUnit}
+          meshRenderData={combined}
+          heatmapRenderLayers={heatmaps}
+          meshIdentity={accepted.join('|')}
+          polylines={displayedLines}
+          preserveCameraOnUpdate
+          onFindSelectionSource={props.onFindSelectionSource}
+          onRenderEnd={document.handleRenderEnd}
+          onRenderStart={document.handleRenderStart}
+          onRenderError={document.handleRenderError}
+          onSelectionQueryChange={props.onSelectionQueryChange}
+          onSelectionSourcePathsChange={props.onSelectionSourcePathsChange}
+          selectionQuery={props.selectionQuery}
+          selectionSourceStatus={props.selectionSourceStatus}
+        />
+      </div>
+    </div>
   )
   return (
-    <ViewerPersistenceContext.Provider value={persistent ? { ...persistent, item: selectedView } : null}>
-      <ViewerLayout>
-        <div className="relative flex h-full min-h-0 flex-col">
-          {presentation ? (
+    <MeshSettingsHost.Provider value={{ ...sharedMeshHost, ...localMeshHost }}>
+      <SceneLayersContext.Provider value={publish}>
+        <ViewerLayout>
+          {props.presentation ? (
             <ViewerControls placement="presentation">
               <ViewerPresentationMenu
-                key={presentation.experimentId}
-                actions={presentation}
+                actions={props.presentation}
                 disabled={loading || Boolean(resultPlaceholder)}
-                captureNode={() => localCaptureRef.current}
+                captureNode={() => capture.current}
                 snapshot={() => {
                   const owner = comparison ?? persistent
-                  const camera = cameraPoseSchema.safeParse(owner?.camera.current)
+                  const camera = cameraPoseSchema.safeParse(owner.camera.current)
                   return {
-                    version: 1,
-                    selectedResult: selectedView,
-                    settings: durableViewerSettings(owner?.settings.values.entries() ?? []),
+                    version: 2,
+                    geometryMode: geometry,
+                    selectedOutput: output,
+                    visualizations,
+                    settings: durableViewerSettings(owner.settings.values.entries()),
                     camera: camera.success ? camera.data : null,
                   }
                 }}
               />
             </ViewerControls>
           ) : null}
-          <ViewerControls placement="data">
-            <div className="flex items-center gap-1 text-xs">
-              {showToolbar ? (
-                <ViewerToolMenu label={`표시 데이터 종류 변경 · ${selectedView || 'Geometry'}`} icon={<Layers />}>
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      selectionMade.current.add(scope)
-                      setSelections({ ...selections, [scope]: '' })
-                      onSelectedResultChange?.('')
-                    }}
-                  >
-                    Geometry
-                  </DropdownMenuItem>
-                  {selectedView && !selectedContract ? (
-                    <DropdownMenuItem disabled>{selectedView} · 결과 없음</DropdownMenuItem>
-                  ) : null}
-                  {Object.keys(resultContracts ?? {}).map((name) => (
-                    <DropdownMenuItem
-                      key={name}
-                      onSelect={() => {
-                        selectionMade.current.add(scope)
-                        setSelections({ ...selections, [scope]: name })
-                        onSelectedResultChange?.(name)
-                      }}
-                    >
-                      {name.startsWith('@visualizations.')
-                        ? `${name.slice('@visualizations.'.length)} · 시각화`
-                        : `${name} · Output`}
-                    </DropdownMenuItem>
-                  ))}
-                </ViewerToolMenu>
-              ) : null}
-              {loading ? (
-                <span role="status">
-                  저장 결과 불러오는 중
-                  {downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
-                </span>
-              ) : null}
-              {!resultContracts && recordedRules.length ? (
-                <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
-              ) : null}
+          {props.showToolbar !== false ? (
+            <ViewerControls placement="data">
+              <ViewerDisplayControls
+                contracts={contracts}
+                output={output}
+                onOutput={(name) => {
+                  selectionMade.current = true
+                  persistent.settings.set('@workspace:outputInitialized', true)
+                  setOutput(name)
+                  props.onSelectedResultChange?.(name)
+                }}
+                geometry={geometry}
+                onGeometry={setGeometry}
+                visualizations={visualizations}
+                onVisualizations={setVisualizations}
+                meshHost={setMeshHost}
+              />
+            </ViewerControls>
+          ) : null}
+          <div className="flex h-full min-h-0 flex-col">
+            {loading ? (
+              <p role="status" className="p-2 text-xs">
+                저장 결과 불러오는 중
+                {props.downloadProgress
+                  ? ` · ${props.downloadProgress.completed}/${props.downloadProgress.total}`
+                  : '…'}
+              </p>
+            ) : null}
+            {resultPlaceholder ? (
+              <p role="status" className="p-2 text-xs">
+                {selected.length ? '이전 예측 결과 표시 중 · ' : ''}
+                {resultPlaceholder}
+              </p>
+            ) : null}
+            {document.geometryError ? (
+              <p role="alert" className="p-2 text-xs">
+                Geometry 준비 실패 · {document.geometryError}
+              </p>
+            ) : null}
+            <div ref={capture} className="min-h-0 flex-1 overflow-hidden">
+              {hasScene && nonspatial ? (
+                <ResizableSplit vertical label="3D와 Output 높이 조절" first={scene} second={result(output)} />
+              ) : nonspatial ? (
+                result(output)
+              ) : hasScene ? (
+                scene
+              ) : (
+                <>
+                  <div className="max-h-32 overflow-auto">{spatialNames.map(result)}</div>
+                  <p role="status" className="p-3 text-sm">
+                    표시할 데이터가 없습니다. Geometry, Output 또는 Visualization을 선택하세요.
+                  </p>
+                </>
+              )}
             </div>
-          </ViewerControls>
-          <ViewerControls>
-            {Object.entries(resultContracts ?? {})
-              .filter(([, result]) => result.visualization.kind === 'polyline')
-              .map(([name, result]) => {
-                const compatible =
-                  sameResultInvocation(name) &&
-                  polylines.bundles.some((bundle) => bundle.id === name) &&
-                  frameMatches &&
-                  usesExperimentCoordinates(result.visualization) &&
-                  (!selectedContract || usesExperimentCoordinates(selectedContract.visualization))
-                return (
-                  <ViewerToolButton
-                    key={name}
-                    label={`${name} Overlay`}
-                    active={name === selectedView || overlay.includes(name)}
-                    disabled={!compatible || name === selectedView}
-                    title={
-                      compatible
-                        ? `${name} · Geometry 좌표에 겹쳐 표시`
-                        : (geometryBlockedReason ?? '선택 결과와 좌표계를 연결할 수 없습니다.')
-                    }
-                    onClick={() =>
-                      setOverlay(overlay.includes(name) ? overlay.filter((item) => item !== name) : [...overlay, name])
-                    }
-                  >
-                    <Route />
-                  </ViewerToolButton>
-                )
-              })}
-            {overlay
-              .filter((name) => !resultContracts?.[name])
-              .map((name) => (
-                <ViewerToolButton
-                  key={name}
-                  label={`${name} Overlay`}
-                  title={`${name} · 결과 없음 · 클릭하여 해제`}
-                  active
-                  onClick={() => setOverlay(overlay.filter((item) => item !== name))}
-                >
-                  <Route />
-                </ViewerToolButton>
+            {Object.entries(errors)
+              .filter(([name]) => !selected.includes(name))
+              .map(([name, error]) => (
+                <p role="alert" key={name} className="p-2 text-xs text-red-700">
+                  {name}: {error}
+                </p>
               ))}
-          </ViewerControls>
-          {resultPlaceholder ? (
-            <p role="status" className="p-2 text-xs">
-              {selectedContract ? '이전 예측 결과 표시 중 · ' : ''}
-              {resultPlaceholder}
-            </p>
-          ) : null}
-          {experimentDocument.geometryError ? (
-            <p role="alert" className="p-2 text-xs">
-              Geometry 준비 실패 · {experimentDocument.geometryError}
-            </p>
-          ) : null}
-          {!resultPlaceholder && !canOverlayGeometry && selectedView !== '' && !selectedMotion ? (
-            <p role="status" className="p-2 text-xs">
-              {geometryBlockedReason}
-            </p>
-          ) : null}
-          <div ref={localCaptureRef} className="min-h-0 flex-1 overflow-auto">
-            {resultPlaceholder && !selectedContract && !explicitGeometry ? null : selectedView && !selectedContract ? (
-              <p role="alert" className="p-3 text-red-700">
-                {selectedView}: 새 실행에 선택한 결과가 없습니다.
-              </p>
-            ) : resultErrors[selectedView] ? (
-              <p role="alert" className="p-3 text-red-700">
-                {selectedView}: {resultErrors[selectedView]}
-              </p>
-            ) : selectedParticles ? (
-              <ParticleSetResult
-                key={selectedView}
-                particles={selectedParticles}
-                displayUnit={displayUnit}
-                canOverlayGeometry={canOverlayGeometry}
-                renderViewer={(data, showGeometry) => renderScene(data, 0, undefined, 1, showGeometry)}
-              />
-            ) : selectedMotion ? (
-              <MeshTransformResult
-                key={selectedView}
-                motion={selectedMotion}
-                displayUnit={displayUnit}
-                renderViewer={(data) => renderScene(data)}
-              />
-            ) : selectedField ? (
-              <MeshFieldResult
-                key={selectedView}
-                field={selectedField}
-                displacementFields={mesh.fields.filter((candidate) => sameResultInvocation(candidate.label))}
-                displayUnit={displayUnit}
-                renderViewer={(data, view) => renderScene(data, view.deformationScale)}
-              />
-            ) : selectedContract?.visualization.kind === 'box-grid' ? (
-              <BoxGridResult
-                key={selectedView}
-                name={selectedView}
-                rules={recordedRules}
-                data={recordedData}
-                displayUnit={displayUnit}
-                canOverlayGeometry={
-                  onGeometryRequiredChange
-                    ? Boolean(selectedContract && usesExperimentCoordinates(selectedContract.visualization))
-                    : canOverlayGeometry
-                }
-                geometryBlockedReason={onGeometryRequiredChange ? undefined : geometryBlockedReason}
-                renderViewer={(data, geometryOpacity) => renderScene(undefined, 0, data, geometryOpacity)}
-                recordReference={recordReference}
-              />
-            ) : selectedContract &&
-              !['mesh-field', 'mesh-transform', 'polyline', 'particle-set'].includes(
-                selectedContract.visualization.kind,
-              ) ? (
-              <ResultTensorView
-                key={selectedView}
-                name={selectedView}
-                contract={selectedContract}
-                rules={recordedRules}
-                data={recordedData}
-              />
-            ) : (
-              renderScene()
-            )}
           </div>
-          {[
-            ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
-            ...mesh.errors.filter((error) => !resultErrors[error.label]),
-            ...transforms.errors.filter((error) => !resultErrors[error.label]),
-            ...particles.errors.filter((error) => !resultErrors[error.label]),
-            ...polylines.errors.filter((error) => !resultErrors[error.label]),
-          ]
-            .filter((error) => error.label !== selectedView || !resultErrors[selectedView])
-            .map((error) => (
-              <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
-                {error.label}: {error.message}
-              </p>
-            ))}
-        </div>
-      </ViewerLayout>
-    </ViewerPersistenceContext.Provider>
+        </ViewerLayout>
+      </SceneLayersContext.Provider>
+    </MeshSettingsHost.Provider>
   )
+}
+
+function RetainedResultLayer(props: Parameters<typeof ResultLayer>[0]) {
+  const previous = useRef<typeof props | null>(null)
+  const present =
+    Boolean(props.contracts[props.name]) &&
+    (Object.keys(props.data).some((key) => key === props.name || key.startsWith(`${props.name}.`)) ||
+      props.mesh.fields.some((field) => field.label === props.name))
+  const unavailable = !present || Boolean(props.errors[props.name])
+  if (!unavailable) previous.current = props
+  return (
+    <>
+      {unavailable ? (
+        <p role={props.errors[props.name] ? 'alert' : 'status'} className="p-2 text-xs">
+          {props.name}:{' '}
+          {props.errors[props.name] ??
+            (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
+        </p>
+      ) : null}
+      <div className={unavailable ? 'hidden' : 'h-full min-h-0'}>
+        {unavailable ? previous.current ? <ResultLayer {...previous.current} /> : null : <ResultLayer {...props} />}
+      </div>
+    </>
+  )
+}
+
+function ResultLayer({
+  name,
+  contracts,
+  data,
+  rules,
+  errors,
+  blocked,
+  displayUnit,
+  mesh,
+  lines,
+  motions,
+  particles,
+  calculationSource,
+  loading,
+  provenance,
+}: {
+  name: string
+  contracts: RecordedResultContracts
+  data: RecordedData
+  rules: readonly RecordedDataRule[]
+  errors: Readonly<Record<string, string>>
+  blocked?: string
+  displayUnit: UcumUnit
+  mesh: ReturnType<typeof parseRecordedMeshFields>
+  lines: ReturnType<typeof parseResultPolylines>
+  motions: ReturnType<typeof parseRecordedMeshTransforms>
+  particles: ReturnType<typeof parseRecordedParticleSets>
+  calculationSource?: string
+  loading?: boolean
+  provenance: Record<string, unknown>
+}) {
+  // Keep asynchronous Output calculations stable when an unrelated visualization changes.
+  const input = useRef<{ rules: readonly RecordedDataRule[]; data: RecordedData } | null>(null)
+  const ownRules = rules.filter((rule) => rule.label === name || rule.label.startsWith(`${name}.`))
+  const ownData = Object.fromEntries(Object.entries(data).filter(([key]) => key === name || key.startsWith(`${name}.`)))
+  if (
+    !input.current ||
+    ownRules.length !== input.current.rules.length ||
+    ownRules.some((rule, index) => rule !== input.current!.rules[index]) ||
+    Object.keys(ownData).length !== Object.keys(input.current.data).length ||
+    Object.entries(ownData).some(([key, value]) => value !== input.current!.data[key])
+  )
+    input.current = { rules: ownRules, data: ownData }
+  const contract = contracts[name]
+  const field = mesh.fields.find((value) => value.label === name)
+  const displacementFields = useMemo(
+    () =>
+      mesh.fields.filter(
+        (candidate) => candidate.label === name || sameInvocation(provenance[name], provenance[candidate.label]),
+      ),
+    [mesh.fields, name, provenance],
+  )
+  const motion = motions.motions.find((value) => value.label === name)
+  const particle = particles.particles.find((value) => value.label === name)
+  const selectedLines = useMemo(() => lines.bundles.filter((value) => value.id === name), [lines, name])
+  const recordReference = useMemo(() => {
+    if (!calculationSource) return undefined
+    try {
+      return calculationExperimentRecordReference(calculationSource, name)
+    } catch {
+      return undefined
+    }
+  }, [calculationSource, name])
+  const parseError = [...mesh.errors, ...motions.errors, ...particles.errors, ...lines.errors].find(
+    (error) => error.label === name,
+  )?.message
+  if (blocked)
+    return (
+      <p role="status" className="p-2 text-xs">
+        {name}: {blocked}
+      </p>
+    )
+  if (errors[name] || parseError)
+    return (
+      <p role="alert" className="p-2 text-xs text-red-700">
+        {name}: {errors[name] ?? parseError}
+      </p>
+    )
+  if (
+    !contract ||
+    (!field &&
+      !motion &&
+      !particle &&
+      !selectedLines.length &&
+      !Object.keys(data).some((key) => key === name || key.startsWith(`${name}.`)))
+  )
+    return (
+      <p role="status" className="p-2 text-xs">
+        {name}: {loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.'}
+      </p>
+    )
+  if (field)
+    return (
+      <MeshFieldResult
+        field={field}
+        displacementFields={displacementFields}
+        displayUnit={displayUnit}
+        renderViewer={(value, view) => (
+          <ViewerSceneLayer name={name} mesh={value} deformed={view.deformationScale > 0} />
+        )}
+      />
+    )
+  if (motion)
+    return (
+      <MeshTransformResult
+        motion={motion}
+        displayUnit={displayUnit}
+        renderViewer={(value) => <ViewerSceneLayer name={name} mesh={value} />}
+      />
+    )
+  if (particle)
+    return (
+      <ParticleSetResult
+        particles={particle}
+        displayUnit={displayUnit}
+        canOverlayGeometry
+        renderViewer={(value) => <ViewerSceneLayer name={name} mesh={value} />}
+      />
+    )
+  if (contract.visualization.kind === 'polyline') return <ViewerSceneLayer name={name} lines={selectedLines} />
+  if (contract.visualization.kind === 'box-grid')
+    return (
+      <BoxGridResult
+        name={name}
+        rules={input.current.rules}
+        data={input.current.data}
+        displayUnit={displayUnit}
+        canOverlayGeometry
+        recordReference={recordReference}
+        renderViewer={(value) => <ViewerSceneLayer name={name} heatmap={value} />}
+      />
+    )
+  return <ResultTensorView name={name} contract={contract} rules={input.current.rules} data={input.current.data} />
 }

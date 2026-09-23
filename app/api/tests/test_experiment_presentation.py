@@ -31,6 +31,17 @@ DEFAULTS = dict(version=1, selectedResult="signal", settings={
 
 
 class PresentationValidationTests(unittest.TestCase):
+    def test_v2_independent_selections_round_trip(self):
+        defaults = dict(version=2, geometryMode=0.5, selectedOutput="signal",
+                        visualizations={"polyline": "", "mesh-field": "@visualizations.solid.field"},
+                        settings={"@workspace:geometryMode": 0.5,
+                                  "@visualizations.solid.field:mesh.deformed": False}, camera=DEFAULTS["camera"])
+        request = PresentationUpdateRequest(initialView={**defaults, "measurementId": 3})
+        self.assertEqual(request.initialView.model_dump(exclude={"measurementId"}), defaults)
+        for override in ({"geometryMode": 0.7}, {"selectedResult": "legacy"}, {"visualizations": {"polyline": 42}}):
+            with self.subTest(override=override), self.assertRaises(ValidationError):
+                PresentationUpdateRequest(initialView={**defaults, "measurementId": 3, **override})
+
     def test_partial_update_and_clear(self):
         self.assertEqual(PresentationUpdateRequest(initialView=None).model_fields_set, {"initialView"})
         request = PresentationUpdateRequest(initialView={**DEFAULTS, "measurementId": 3})

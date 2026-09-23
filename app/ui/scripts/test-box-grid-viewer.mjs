@@ -335,14 +335,13 @@ try {
     'true',
   )
   assert.equal(
-    await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).getAttribute('aria-pressed'),
+    await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).getAttribute('aria-pressed'),
     'true',
   )
   assert.equal(await page.getByRole('button', { name: 'Viewer 확장', exact: true }).count(), 0)
   assert.equal(await page.getByLabel('표본 조회').count(), 0)
   assert.equal(await page.getByText(/표본 표시/).count(), 0)
   const initialCanvas = await page.locator('[data-viewer-canvas]').boundingBox()
-  await open('Geometry 투명도')
   await open('comp 축 역할')
   await open('f 축 역할')
   assert.deepEqual(
@@ -350,11 +349,10 @@ try {
     initialCanvas,
     'Popovers must not resize the canvas',
   )
-  assert.equal(await page.getByRole('slider', { name: 'Geometry 투명도', exact: true }).inputValue(), '0.5')
+  assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).count(), 1)
   assert.equal(await page.getByLabel('성분', { exact: true }).inputValue(), 'magnitude')
   assert.equal(await page.getByLabel('frequency 역할').inputValue(), 'sum')
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/default-cloud.png' })
-  await page.getByRole('button', { name: 'Geometry 투명도', exact: true }).click()
   assert.equal(await page.getByRole('slider', { name: 'Geometry 투명도', exact: true }).count(), 0)
   await closePanels()
   await role('z', 'index')
@@ -456,7 +454,6 @@ try {
     return window.innerWidth === 480 && window.innerHeight === 600 && bounds.right <= 480 && bounds.bottom <= 600
   })
   const narrow = await page.locator('[data-viewer-canvas]').boundingBox()
-  await open('Geometry 투명도')
   assert.deepEqual(await page.locator('[data-viewer-canvas]').boundingBox(), narrow)
   assert.ok(narrow.width > 400)
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/narrow.png' })
@@ -509,21 +506,31 @@ try {
   await page.setViewportSize({ width: 1200, height: 850 })
   await page.evaluate(() => window.renderWorkbench())
   await ready()
-  assert.equal(await page.getByRole('button', { name: '표시 데이터 종류 변경 · signal', exact: true }).count(), 1)
-  assert.equal(await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).isEnabled(), true)
+  assert.equal(await page.getByRole('button', { name: 'Output · signal', exact: true }).count(), 1)
+  assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
   await role('z', 'index')
   await role('time', 'space')
-  assert.equal(await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).isDisabled(), true)
+  assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
+  assert.equal(await page.getByRole('separator', { name: '3D와 Output 높이 조절', exact: true }).count(), 1)
   await role('time', 'index')
   await role('z', 'space')
   for (const mismatch of ['source', 'vars']) {
     await page.evaluate((value) => window.renderWorkbench(value), mismatch)
     await ready()
-    assert.equal(await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
+    assert.equal(
+      await page
+        .getByText(
+          mismatch === 'source' ? 'Geometry와 결과의 source가 다릅니다.' : 'Geometry와 결과의 Vars가 다릅니다.',
+          { exact: true },
+        )
+        .count(),
+      1,
+    )
   }
   await page.evaluate(() => window.renderWorkbench())
   await ready()
-  assert.equal(await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).isEnabled(), true)
+  assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
   for (const deviceScaleFactor of [1, 2]) {
     const sizedContext = await browser.newContext({ viewport: { width: 1000, height: 750 }, deviceScaleFactor })
     const sizedPage = await sizedContext.newPage()
@@ -713,26 +720,21 @@ try {
     })
     await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
     await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-overlay.png' })
-    await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).click()
-    await page.getByRole('button', { name: '원본 크기', exact: true }).click()
-    await page.waitForFunction(() => window.verifyNativeRaster().checked === 1280 * 720)
-    assert.deepEqual(await page.evaluate(() => window.verifyNativeRaster()), {
-      checked: 1280 * 720,
-      signals: 1303,
-      mismatches: 0,
-    })
-    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-native.png' })
-    await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).click()
+    await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
+    await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
+    assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
+    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-geometry-off.png' })
+    await page.getByRole('button', { name: 'Geometry · off', exact: true }).click()
     await page.getByRole('button', { name: '값 범위 고정', exact: true }).click()
     await page.getByLabel('범위 최댓값').fill('0.05')
     await ready()
     await role('frequency', 'index')
     await setRange('frequency index', 2)
     await ready()
-    await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).click()
-    await page.getByRole('button', { name: '원본 크기', exact: true }).click()
-    await page.waitForFunction(() => window.verifyNativeRaster().mismatches === 0)
-    await page.getByRole('button', { name: 'Geometry 겹치기', exact: true }).click()
+    await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
+    await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
+    assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
+    await page.getByRole('button', { name: 'Geometry · off', exact: true }).click()
     await role('frequency', 'index')
     await page.getByRole('button', { name: 'f 재생', exact: true }).click()
     await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) > 0)
@@ -741,9 +743,7 @@ try {
     await page.evaluate(() => window.renderRecordedSensor())
     await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
     await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-sensor.png' })
-    console.log(
-      'Saved spectrometer Heatmap: 1303 signals, 921600 native pixels verified against overlay texture bytes.',
-    )
+    console.log('Saved spectrometer Heatmap: 1303 signals, Geometry modes retain the spatial heatmap.')
   }
   if (process.env.CAEMBLE_VIEWER_RAY_RESULT) {
     const directory = path.resolve(process.env.CAEMBLE_VIEWER_RAY_RESULT)

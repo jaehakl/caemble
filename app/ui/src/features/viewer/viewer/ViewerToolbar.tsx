@@ -1,20 +1,23 @@
-import { Box, MousePointer2, Scan, ScanFace, ScanLine, FlaskConical, ListTodo } from 'lucide-react'
+import type { GeometryMode } from './viewerDisplay'
+import { Box, MousePointer2, Scan, ScanFace, ListTodo } from 'lucide-react'
 import type { CadViewerPickMode, CadViewerSource } from './model'
-import { ViewerAxisIcon, ViewerToolButton } from './ViewerTools'
+import { GeometryDisplayButton, ViewerAxisIcon, ViewerToolButton } from './ViewerTools'
 
 export type CameraView = 'default' | 'x' | 'y' | 'z'
 
 export function ViewerToolbar({
+  geometryMode,
+  onGeometryModeChange,
   availableSources = [],
   meshMode = false,
   onPickModeChange,
   onSetCameraView,
   onToggleSource,
-  onToggleXray,
   pickMode,
   visibleSources = [],
-  xrayEnabled,
 }: {
+  geometryMode?: GeometryMode
+  onGeometryModeChange?: (mode: GeometryMode) => void
   availableSources?: readonly CadViewerSource[]
   meshMode?: boolean
   onPickModeChange: (mode: CadViewerPickMode) => void
@@ -39,16 +42,6 @@ export function ViewerToolbar({
           </ViewerToolButton>
         ))}
       </div>
-      <ViewerToolButton
-        label="X-ray"
-        aria-label="Toggle X-ray"
-        active={xrayEnabled}
-        disabled={meshMode}
-        title={meshMode ? 'Geometry가 없어 X-ray를 사용할 수 없습니다.' : '내부 Geometry를 보기 위한 반투명 표시'}
-        onClick={onToggleXray}
-      >
-        <ScanLine />
-      </ViewerToolButton>
       <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l pl-1">
         {(['off', 'geometry', 'surface'] as const).map((mode) => (
           <ViewerToolButton
@@ -63,18 +56,21 @@ export function ViewerToolbar({
           </ViewerToolButton>
         ))}
       </div>
+      {geometryMode !== undefined && onGeometryModeChange ? (
+        <GeometryDisplayButton mode={geometryMode} onChange={onGeometryModeChange} />
+      ) : null}
       <div aria-label="Viewer sources" className="flex items-center gap-1 border-l pl-1">
-        {(['experiment', 'task'] as const).map((source) => (
+        {(['task'] as const).map((source) => (
           <ViewerToolButton
             key={source}
-            label={`display ${source === 'experiment' ? 'Experiment' : 'Task'}`}
+            label="display Task"
             aria-label={`Toggle ${source}`}
             active={availableSources.includes(source) && visibleSources.includes(source)}
             disabled={!onToggleSource || !availableSources.includes(source)}
             title={!availableSources.includes(source) ? `${source} Geometry가 없습니다.` : `${source} 표시 전환`}
             onClick={() => onToggleSource?.(source)}
           >
-            {source === 'experiment' ? <FlaskConical /> : <ListTodo />}
+            <ListTodo />
           </ViewerToolButton>
         ))}
       </div>

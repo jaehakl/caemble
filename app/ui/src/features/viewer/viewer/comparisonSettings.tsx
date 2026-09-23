@@ -1,5 +1,6 @@
+import { initialViewerDisplay } from './viewerDisplay'
 import type { createComparisonCamera } from './comparisonCamera'
-import { durableViewerSettings } from '@/contracts/viewerDefaults'
+import { type ViewerDefaults, durableViewerSettings } from '@/contracts/viewerDefaults'
 import {
   createContext,
   useCallback,
@@ -34,6 +35,16 @@ export function createComparisonSettings(initial?: Record<string, unknown>) {
       listeners.forEach((listener) => listener())
     },
   }
+}
+
+export function createViewerSettings(defaults?: ViewerDefaults | null) {
+  const display = initialViewerDisplay(defaults)
+  return createComparisonSettings({
+    ...defaults?.settings,
+    '@workspace:selectedOutput': display.output,
+    '@workspace:geometryMode': display.geometry,
+    '@workspace:visualizations': display.visualizations,
+  })
 }
 
 export type ComparisonSettings = ReturnType<typeof createComparisonSettings>
@@ -137,15 +148,19 @@ export function ViewerControls({
 export function useComparisonBusy(busy: boolean) {
   const comparison = useViewerComparison()
   const settings = comparison?.settings
-  const key = `busy:${comparison?.side}`
+  const key = `busy:${comparison?.side}:${comparison?.item}`
   useLayoutEffect(() => {
     settings?.set(key, busy)
     return () => settings?.set(key, false)
   }, [settings, key, busy])
   const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
   const snapshot = useCallback(
-    () => Boolean(settings?.values.get('busy:preview') || settings?.values.get('busy:actual')),
-    [settings],
+    () =>
+      Boolean(
+        settings?.values.get(`busy:preview:${comparison?.item}`) ||
+        settings?.values.get(`busy:actual:${comparison?.item}`),
+      ),
+    [settings, comparison?.item],
   )
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }

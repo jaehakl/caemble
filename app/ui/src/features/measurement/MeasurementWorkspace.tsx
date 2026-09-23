@@ -1,7 +1,8 @@
-import { ViewerLayout, ViewerToolMenu } from '@/features/viewer/viewer/ViewerTools'
+import { SharedViewerDisplayControls, MeshSettingsHost } from '@/features/viewer/viewer/ViewerDisplayControls'
+import { initialViewerDisplay } from '@/features/viewer/viewer/viewerDisplay'
+import { ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
 import { ViewerControls } from '@/features/viewer/viewer/comparisonSettings'
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
-import { Layers, Plus, Play, Square, Sparkles, BrainCircuit } from 'lucide-react'
+import { Plus, Play, Square, Sparkles, BrainCircuit } from 'lucide-react'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import { ComparisonToolbar } from '@/features/viewer/viewer/ComparisonToolbar'
 import {
@@ -16,7 +17,11 @@ import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { SavedMeasurement } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
-import { createComparisonSettings, type ViewerComparison } from '@/features/viewer/viewer/comparisonSettings'
+import {
+  createViewerSettings,
+  ViewerPersistenceContext,
+  type ViewerComparison,
+} from '@/features/viewer/viewer/comparisonSettings'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
 import { useCadWorkspace, type CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
@@ -94,13 +99,30 @@ export function MeasurementWorkspace({
   const [recordedDocuments, setRecordedDocuments] = useState<Record<number, CadDocumentController>>({})
   const batchController = useRef<AbortController | null>(null)
   const [execution, setExecution] = useState<Record<string, ReviewedMeasurementProgress>>({})
-  const [selectedResult, setSelectedResult] = useState('')
-  const [comparisonSettings] = useState(() =>
-    createComparisonSettings(workbench.experimentRecord?.viewer_defaults?.settings),
+  const [selectedResult, setSelectedResult] = useState(() => {
+    const defaults = workbench.experimentRecord?.viewer_defaults
+    return defaults?.version === 2 ? defaults.selectedOutput : ''
+  })
+  const [comparisonSettings] = useState(() => createViewerSettings(workbench.experimentRecord?.viewer_defaults))
+  const [meshHost, updateMeshHosts] = useState<Record<string, HTMLElement>>({})
+  const setMeshHost = useCallback(
+    (name: string, host: HTMLDivElement | null) =>
+      updateMeshHosts((current) => {
+        if ((current[name] ?? null) === host) return current
+        const next = { ...current }
+        if (host) next[name] = host
+        else delete next[name]
+        return next
+      }),
+    [],
   )
   const controlsHost = null
   const [camera] = useState(() => createComparisonCamera(workbench.experimentRecord?.viewer_defaults?.camera))
-  const defaultResult = useRef(workbench.experimentRecord?.viewer_defaults?.selectedResult)
+  const defaultResult = useRef(
+    workbench.experimentRecord?.viewer_defaults
+      ? initialViewerDisplay(workbench.experimentRecord.viewer_defaults).output
+      : undefined,
+  )
   const resultSelectionMade = useRef(false)
   const [pcaRevision, setPcaRevision] = useState(0)
   const [projection, setProjection] = useState<MeasurementProjection | null>(null)
@@ -751,6 +773,7 @@ export function MeasurementWorkspace({
     /* A new schema waits for its matching PCA snapshot. */
   }
   const viewerBase = {
+    initialDefaults: workbench.experimentRecord?.viewer_defaults,
     experiment: workbench.experiment,
     selectionQuery: null,
     selectionSourceStatus: {},
@@ -980,151 +1003,140 @@ export function MeasurementWorkspace({
             />
           }
           second={
-            <ViewerLayout>
-              <ViewerControls placement="data">
-                <ViewerToolMenu label={`표시 데이터 종류 변경 · ${selectedResult || 'Geometry'}`} icon={<Layers />}>
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      resultSelectionMade.current = true
-                      setSelectedResult('')
-                    }}
-                  >
-                    Geometry
-                  </DropdownMenuItem>
-                  {selectedResult && !comparisonContracts[selectedResult] ? (
-                    <DropdownMenuItem disabled>{selectedResult} · 결과 없음</DropdownMenuItem>
-                  ) : null}
-                  {Object.keys(comparisonContracts).map((name) => (
-                    <DropdownMenuItem
-                      key={name}
-                      onSelect={() => {
+            <ViewerPersistenceContext.Provider value={{ settings: comparisonSettings, camera, item: selectedResult }}>
+              <MeshSettingsHost.Provider value={meshHost}>
+                <ViewerLayout>
+                  <ViewerControls placement="data">
+                    <SharedViewerDisplayControls
+                      contracts={comparisonContracts}
+                      output={selectedResult}
+                      onOutput={(name) => {
                         resultSelectionMade.current = true
                         setSelectedResult(name)
                       }}
-                    >
-                      {name.startsWith('@visualizations.')
-                        ? `${name.slice('@visualizations.'.length)} · 시각화`
-                        : `${name} · Output`}
-                    </DropdownMenuItem>
-                  ))}
-                </ViewerToolMenu>
-              </ViewerControls>
-              <ComparisonToolbar camera={camera} />
-              <div className="h-full min-h-0">
-                <MeasurementSplit
-                  label="미리보기와 실제 결과 너비 조절"
-                  first={
-                    <section aria-label="미리보기 Viewer" className="flex h-full min-h-0 flex-col">
-                      <header className="shrink-0 border-b p-2 text-xs">
-                        <strong>
-                          미리보기 ·{' '}
-                          {previewFrame
-                            ? previewFrame.candidateId.startsWith('measurement:')
-                              ? `Measurement #${previewFrame.candidateId.slice(12)}`
-                              : previewFrame.candidateId === 'draft'
-                                ? '편집 후보'
-                                : `후보 ${previewFrame.candidateId.slice(10, 18)}`
-                            : '현재 Vars'}
-                        </strong>
-                        <span className="ml-2 text-muted-foreground">
-                          {previewFrame
-                            ? previewFrame.error || (previewFrame.data ? 'Forward 예측 · 실행 전' : 'CAD')
-                            : !ready
-                              ? '구조 평가 중…'
-                              : forward.predicting
-                                ? 'Forward 갱신 중…'
-                                : forward.model
-                                  ? 'Forward 예측'
-                                  : '구조 · 모델을 생성하면 Output을 예측합니다.'}
-                        </span>
-                        {previewDocument.error ? (
-                          <p role="alert" className="text-destructive">
-                            {previewDocument.error.message}
-                          </p>
-                        ) : null}
-                        {!previewFrame && forward.error ? (
-                          <p role="alert" className="text-destructive">
-                            {forward.error}
-                          </p>
-                        ) : null}
-                        {!previewFrame &&
-                          forward.model &&
-                          Object.values(forward.model.errors).map((message, index) => (
-                            <p className="text-muted-foreground" key={index}>
-                              {message}
-                            </p>
-                          ))}
-                      </header>
-                      <div className="min-h-0 flex-1">
-                        <WorkbenchViewer
-                          {...viewerBase}
-                          comparison={comparison.preview}
-                          experimentDocument={previewDocument}
-                          resultContracts={previewDocument.simulationProgram?.resultContracts}
-                          recordedData={previewData}
-                          recordedRules={previewFrame ? previewFrame.rules : forward.model?.rules}
-                          resultSourceHash={previewDocument.evaluatedSnapshot?.sourceHash}
-                          resultVarsHash={
-                            (previewFrame?.vars ?? vars) ? materialVarsHash((previewFrame?.vars ?? vars)!) : null
-                          }
-                          loading={!previewFrame && (!ready || forward.predicting)}
-                          selectedResult={previewFrame && !previewFrame.data ? '' : selectedResult}
-                        />
-                      </div>
-                    </section>
-                  }
-                  second={
-                    <section aria-label="실제 결과 Viewer" className="flex h-full min-h-0 flex-col">
-                      <header className="shrink-0 border-b p-2 text-xs">
-                        <strong>실제 결과 {actual.measurement ? `· Measurement #${actual.measurement.id}` : ''}</strong>
-                        {actual.variables && varsFingerprint(actual.variables) !== currentKey ? (
-                          <span className="ml-2 text-amber-700">비교 기준 · 현재 Vars와 다름</span>
-                        ) : null}
-                        {displayedActualDocument.error ? (
-                          <p role="alert" className="text-destructive">
-                            {displayedActualDocument.error.message}
-                          </p>
-                        ) : null}
-                      </header>
-                      <div className="min-h-0 flex-1">
-                        {actual.measurement || actual.loading ? (
-                          <WorkbenchViewer
-                            {...viewerBase}
-                            presentation={
-                              workbench.viewerPresentation
-                                ? {
-                                    ...workbench.viewerPresentation,
-                                    measurementId: actual.measurement?.id ?? null,
-                                    canSaveInitialView:
-                                      workbench.experimentClean &&
-                                      Boolean(actual.measurement?.recorded_at) &&
-                                      !actual.loading,
-                                  }
-                                : undefined
-                            }
-                            comparison={comparison.actual}
-                            experimentDocument={displayedActualDocument}
-                            resultContracts={actual.resultContracts}
-                            recordedData={actual.flatRecordedData}
-                            recordedRules={actual.recordedRules}
-                            resultErrors={actual.resultErrors}
-                            visualizations={actual.visualizations}
-                            resultSourceHash={actual.materialSnapshot?.sourceHash}
-                            resultVarsHash={actual.materialSnapshot?.varsHash}
-                            loading={actual.loading && !actual.measurement}
-                            downloadProgress={actual.downloadProgress}
-                          />
-                        ) : (
-                          <p className="grid h-full place-items-center p-3 text-sm text-muted-foreground">
-                            Recorded Measurement를 선택하면 실제 결과를 표시합니다.
-                          </p>
-                        )}
-                      </div>
-                    </section>
-                  }
-                />
-              </div>
-            </ViewerLayout>
+                      meshHost={setMeshHost}
+                    />
+                  </ViewerControls>
+                  <ComparisonToolbar camera={camera} />
+                  <div className="h-full min-h-0">
+                    <MeasurementSplit
+                      label="미리보기와 실제 결과 너비 조절"
+                      first={
+                        <section aria-label="미리보기 Viewer" className="flex h-full min-h-0 flex-col">
+                          <header className="shrink-0 border-b p-2 text-xs">
+                            <strong>
+                              미리보기 ·{' '}
+                              {previewFrame
+                                ? previewFrame.candidateId.startsWith('measurement:')
+                                  ? `Measurement #${previewFrame.candidateId.slice(12)}`
+                                  : previewFrame.candidateId === 'draft'
+                                    ? '편집 후보'
+                                    : `후보 ${previewFrame.candidateId.slice(10, 18)}`
+                                : '현재 Vars'}
+                            </strong>
+                            <span className="ml-2 text-muted-foreground">
+                              {previewFrame
+                                ? previewFrame.error || (previewFrame.data ? 'Forward 예측 · 실행 전' : 'CAD')
+                                : !ready
+                                  ? '구조 평가 중…'
+                                  : forward.predicting
+                                    ? 'Forward 갱신 중…'
+                                    : forward.model
+                                      ? 'Forward 예측'
+                                      : '구조 · 모델을 생성하면 Output을 예측합니다.'}
+                            </span>
+                            {previewDocument.error ? (
+                              <p role="alert" className="text-destructive">
+                                {previewDocument.error.message}
+                              </p>
+                            ) : null}
+                            {!previewFrame && forward.error ? (
+                              <p role="alert" className="text-destructive">
+                                {forward.error}
+                              </p>
+                            ) : null}
+                            {!previewFrame &&
+                              forward.model &&
+                              Object.values(forward.model.errors).map((message, index) => (
+                                <p className="text-muted-foreground" key={index}>
+                                  {message}
+                                </p>
+                              ))}
+                          </header>
+                          <div className="min-h-0 flex-1">
+                            <WorkbenchViewer
+                              {...viewerBase}
+                              comparison={comparison.preview}
+                              experimentDocument={previewDocument}
+                              resultContracts={previewDocument.simulationProgram?.resultContracts}
+                              recordedData={previewData}
+                              recordedRules={previewFrame ? previewFrame.rules : forward.model?.rules}
+                              resultSourceHash={previewDocument.evaluatedSnapshot?.sourceHash}
+                              resultVarsHash={
+                                (previewFrame?.vars ?? vars) ? materialVarsHash((previewFrame?.vars ?? vars)!) : null
+                              }
+                              loading={!previewFrame && (!ready || forward.predicting)}
+                              selectedResult={previewFrame && !previewFrame.data ? '' : selectedResult}
+                            />
+                          </div>
+                        </section>
+                      }
+                      second={
+                        <section aria-label="실제 결과 Viewer" className="flex h-full min-h-0 flex-col">
+                          <header className="shrink-0 border-b p-2 text-xs">
+                            <strong>
+                              실제 결과 {actual.measurement ? `· Measurement #${actual.measurement.id}` : ''}
+                            </strong>
+                            {actual.variables && varsFingerprint(actual.variables) !== currentKey ? (
+                              <span className="ml-2 text-amber-700">비교 기준 · 현재 Vars와 다름</span>
+                            ) : null}
+                            {displayedActualDocument.error ? (
+                              <p role="alert" className="text-destructive">
+                                {displayedActualDocument.error.message}
+                              </p>
+                            ) : null}
+                          </header>
+                          <div className="min-h-0 flex-1">
+                            {actual.measurement || actual.loading ? (
+                              <WorkbenchViewer
+                                {...viewerBase}
+                                presentation={
+                                  workbench.viewerPresentation
+                                    ? {
+                                        ...workbench.viewerPresentation,
+                                        measurementId: actual.measurement?.id ?? null,
+                                        canSaveInitialView:
+                                          workbench.experimentClean &&
+                                          Boolean(actual.measurement?.recorded_at) &&
+                                          !actual.loading,
+                                      }
+                                    : undefined
+                                }
+                                comparison={comparison.actual}
+                                experimentDocument={displayedActualDocument}
+                                resultContracts={actual.resultContracts}
+                                recordedData={actual.flatRecordedData}
+                                recordedRules={actual.recordedRules}
+                                resultErrors={actual.resultErrors}
+                                visualizations={actual.visualizations}
+                                resultSourceHash={actual.materialSnapshot?.sourceHash}
+                                resultVarsHash={actual.materialSnapshot?.varsHash}
+                                loading={actual.loading && !actual.measurement}
+                                downloadProgress={actual.downloadProgress}
+                              />
+                            ) : (
+                              <p className="grid h-full place-items-center p-3 text-sm text-muted-foreground">
+                                Recorded Measurement를 선택하면 실제 결과를 표시합니다.
+                              </p>
+                            )}
+                          </div>
+                        </section>
+                      }
+                    />
+                  </div>
+                </ViewerLayout>
+              </MeshSettingsHost.Provider>
+            </ViewerPersistenceContext.Provider>
           }
         />
       </div>

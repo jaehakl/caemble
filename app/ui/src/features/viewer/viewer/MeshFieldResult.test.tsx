@@ -1,3 +1,4 @@
+import { MeshSettingsHost } from './ViewerDisplayControls'
 import { ViewerPersistenceContext, createComparisonSettings } from './comparisonSettings'
 import { createComparisonCamera } from './comparisonCamera'
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -127,18 +128,23 @@ describe('mesh field inspection controls', () => {
       'stress:mesh.scaleMode': 'manual',
       'stress:mesh.manualScale': 100,
     })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     render(
-      <ViewerPersistenceContext.Provider value={{ settings, item: 'stress', camera: createComparisonCamera() }}>
-        <MeshFieldResult
-          field={displacement}
-          renderViewer={(data) => <output data-testid="deformation">{data?.bounds.min[0]}</output>}
-        />
-      </ViewerPersistenceContext.Provider>,
+      <MeshSettingsHost.Provider value={{ stress: host }}>
+        <ViewerPersistenceContext.Provider value={{ settings, item: 'stress', camera: createComparisonCamera() }}>
+          <MeshFieldResult
+            field={displacement}
+            renderViewer={(data) => <output data-testid="deformation">{data?.bounds.min[0]}</output>}
+          />
+        </ViewerPersistenceContext.Provider>
+      </MeshSettingsHost.Provider>,
     )
     expect(Number(screen.getByTestId('deformation').textContent)).toBeCloseTo(0.02)
-    fireEvent.click(screen.getByRole('button', { name: '변형 표시' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '변형 표시' }))
     expect(Number(screen.getByTestId('deformation').textContent)).toBe(0)
     expect(screen.queryByLabelText('변형 배율')).not.toBeInTheDocument()
+    host.remove()
   })
 
   it('keeps harmonic pressure on its reference mesh and validates the explicitly selected phase', () => {
@@ -165,6 +171,7 @@ describe('mesh field inspection controls', () => {
   })
   it('switches physical stress components, materials, overlays and interpolated cuts', () => {
     render(<MeshFieldResult field={field} />)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field 설정' }), { key: 'ArrowDown' })
     expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '10')
     expect(screen.getByText('vonMises (Pa)')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('stress field component'), { target: { value: '1' } })
@@ -183,6 +190,7 @@ describe('mesh field inspection controls', () => {
 
 it('retains checkboxes and component/section settings while replacing field data', () => {
   const { rerender } = render(<MeshFieldResult field={field} />)
+  fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field 설정' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByLabelText('Mesh 경계선'))
   fireEvent.click(screen.getByLabelText('구속 / 하중'))
   fireEvent.change(screen.getByLabelText('stress field component'), { target: { value: '0' } })
@@ -191,8 +199,8 @@ it('retains checkboxes and component/section settings while replacing field data
   rerender(
     <MeshFieldResult field={{ ...field, identity: 'new-mesh', values: new Float64Array([20, 0, 0, 0, 0, 0]) }} />,
   )
-  expect(screen.getByLabelText('Mesh 경계선')).toHaveAttribute('aria-pressed', 'false')
-  expect(screen.getByLabelText('구속 / 하중')).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByLabelText('Mesh 경계선')).not.toBeChecked()
+  expect(screen.getByLabelText('구속 / 하중')).not.toBeChecked()
   expect(screen.getByLabelText('stress field component')).toHaveValue('0')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '20')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-cut', '0.25')

@@ -111,7 +111,7 @@ x/y/z/t/f 축을 **개별 index**로 지정하면 아이콘 옆 슬라이더에�
 Gold FCC Array의 새 결과에서 `referenceScattered`, `incident`, `scattered`를
 선택하고 Heatmap의 공간 축과 frequency 개별 index를 지정하세요. 성분과
 Amplitude·Phase를 바꾸고, **시간 전개** 및 **f index 재생**을
-차례로 확인합니다. Geometry 겹치기, 투명도, 값 범위 고정과 좌표 hover 정보도 확인하세요.
+차례로 확인합니다. Geometry의 90%·50%·off 순환, 값 범위 고정과 좌표 hover 정보도 확인하세요.
 
 ### Catalog·Draft에서 임시 실행
 

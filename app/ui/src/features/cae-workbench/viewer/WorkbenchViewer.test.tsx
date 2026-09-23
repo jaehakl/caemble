@@ -8,22 +8,16 @@ import { calculationExampleInput } from '@/authoring/examples'
 import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 
 function selectResult(value: string) {
-  fireEvent.keyDown(screen.getByRole('button', { name: /^표시 데이터 종류 변경/ }), { key: 'ArrowDown' })
-  fireEvent.click(
-    screen.getByRole('menuitem', {
-      name:
-        value === ''
-          ? 'Geometry'
-          : value.startsWith('@visualizations.')
-            ? `${value.slice('@visualizations.'.length)} · 시각화`
-            : `${value} · Output`,
-    }),
-  )
+  fireEvent.keyDown(screen.getByRole('button', { name: /^Output ·/ }), { key: 'ArrowDown' })
+  const radio = screen.queryByRole('radio', { name: value || '선택 안 함' })
+  fireEvent.click(radio ?? screen.getByRole('menuitemradio', { name: value || '선택 안 함' }))
+  const menu = screen.queryByRole('menu')
+  if (menu) fireEvent.keyDown(menu, { key: 'Escape' })
 }
 function currentResult() {
-  const label = screen.getByRole('button', { name: /^표시 데이터 종류 변경/ }).getAttribute('aria-label')!
-  const value = label.slice('표시 데이터 종류 변경 · '.length)
-  return value === 'Geometry' ? '' : value
+  const label = screen.getByRole('button', { name: /^Output ·/ }).getAttribute('aria-label')!
+  const value = label.slice('Output · '.length)
+  return value === '선택 안 함' ? '' : value
 }
 
 vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
@@ -155,9 +149,9 @@ it('selects a native rigid animation beside numerical Outputs through its semant
     />,
   )
   expect(currentResult()).toBe('density')
-  selectResult('@visualizations.movement.pose')
+  selectResult('')
   expect(screen.getByText('Rigid animation @visualizations.movement.pose')).toBeTruthy()
-  expect(screen.queryByText(/Geometry가 준비되지 않았습니다/)).toBeNull()
+  expect(screen.getByRole('button', { name: /^mesh-transform · movement.pose/ })).toBeInTheDocument()
   expect(screen.queryByText('Box Grid density')).toBeNull()
   selectResult('density')
   expect(screen.getByText('Box Grid density')).toBeTruthy()
@@ -244,12 +238,12 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
       downloadProgress={{ completed: 4, total: 40 }}
     />,
   )
-  expect(screen.getByText('Geometry preview')).toBeTruthy()
+  expect(screen.getByText(/표시할 데이터가 없습니다/)).toBeTruthy()
   selectResult('displacement')
   expect(screen.getByText('Stored volume field')).toBeTruthy()
   expect(screen.getByText(/4\/40/)).toBeTruthy()
   selectResult('')
-  expect(screen.getByText('Geometry preview')).toBeTruthy()
+  expect(screen.getByText(/표시할 데이터가 없습니다/)).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
 })
 
@@ -346,17 +340,17 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
   }
   const { rerender } = render(<WorkbenchViewer {...props} />)
   selectResult('flux')
-  fireEvent.keyDown(screen.getByRole('button', { name: /^표시 데이터 종류 변경/ }), { key: 'ArrowDown' })
-  expect(screen.getByRole('menuitem', { name: 'ray.paths · 시각화' })).toBeInTheDocument()
+  fireEvent.keyDown(screen.getByRole('button', { name: /^ray ·/ }), { key: 'ArrowDown' })
+  expect(screen.getByRole('menuitemradio', { name: 'ray.paths' })).toBeInTheDocument()
   fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
-  expect(screen.getByLabelText('@visualizations.ray.paths Overlay')).toBeDisabled()
+  expect(screen.getByText(/실행 이력이 달라/)).toBeInTheDocument()
   rerender(
     <WorkbenchViewer
       {...props}
       visualizations={{ ray: { paths: { ...props.visualizations!.ray.paths, provenance } } }}
     />,
   )
-  expect(screen.getByLabelText('@visualizations.ray.paths Overlay')).not.toBeDisabled()
+  expect(screen.queryByText(/실행 이력이 달라/)).not.toBeInTheDocument()
 })
 
 it('shows the selected result error instead of an empty Box Grid renderer', () => {
@@ -424,7 +418,7 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   expect(random).toHaveBeenCalledTimes(calls)
   expect(currentResult()).toBe('second')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} resultContracts={{ first: contract }} />)
-  expect(screen.getByText('second: 새 실행에 선택한 결과가 없습니다.')).toBeInTheDocument()
+  expect(screen.getByText('second: 선택한 데이터가 없습니다. 설정은 유지됩니다.')).toBeInTheDocument()
   selectResult('')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
   expect(currentResult()).toBe('')
@@ -438,7 +432,7 @@ it('retains the previous result during prediction, preserves BoxGrid controls an
   fireEvent.change(screen.getByLabelText('Grid opacity'), { target: { value: '0.2' } })
   const pending = { ...props, recordedData: undefined, resultContracts: {}, resultPlaceholder: 'Predicting new Vars' }
   rerender(<WorkbenchViewer {...pending} />)
-  expect(screen.queryByText('Geometry preview')).not.toBeInTheDocument()
+  expect(screen.queryByText('선택한 데이터가 없습니다. 설정은 유지됩니다.')).not.toBeInTheDocument()
   expect(screen.getByText('Box Grid field')).toBeInTheDocument()
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
   expect(currentResult()).toBe('field')
@@ -448,7 +442,7 @@ it('retains the previous result during prediction, preserves BoxGrid controls an
   selectResult('')
   rerender(<WorkbenchViewer {...props} />)
   expect(currentResult()).toBe('')
-  expect(screen.getByText('Geometry preview')).toBeInTheDocument()
+  expect(screen.getByText(/표시할 데이터가 없습니다/)).toBeInTheDocument()
   rerender(<WorkbenchViewer {...gridSelectionProps({ saved: [3, 3, 1] })} />)
   expect(currentResult()).toBe('saved')
   rerender(<WorkbenchViewer {...props} />)
@@ -464,7 +458,7 @@ it('waits for data, prefers the saved result and settings, then preserves manual
     camera: null,
   }
   const { rerender } = render(<WorkbenchViewer {...props} loading initialDefaults={defaults} />)
-  expect(currentResult()).toBe('')
+  expect(currentResult()).toBe('small')
   rerender(<WorkbenchViewer {...props} initialDefaults={defaults} />)
   expect(currentResult()).toBe('small')
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.2)
@@ -503,7 +497,7 @@ it('isolates the next Experiment and applies its own defaults', () => {
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.5)
 })
 
-it('requests Geometry only for the selected visible view and keeps that demand through prediction updates', () => {
+it('keeps Geometry demand independent of Output and retains its off mode during prediction updates', () => {
   const required = vi.fn()
   const props = {
     ...gridSelectionProps({ field: [2, 2, 1] }),
@@ -513,20 +507,19 @@ it('requests Geometry only for the selected visible view and keeps that demand t
   props.experimentDocument = { scene: {}, taskScenes: { wave: {} } } as unknown as typeof props.experimentDocument
   const { rerender } = render(<WorkbenchViewer {...props} />)
   expect(required).toHaveBeenLastCalledWith(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle overlay' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Geometry · 90%' }))
+  expect(required).toHaveBeenLastCalledWith(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Geometry · 50%' }))
   expect(required).toHaveBeenLastCalledWith(false)
   const count = required.mock.calls.length
   rerender(<WorkbenchViewer {...props} recordedData={undefined} resultContracts={{}} resultPlaceholder="Updating" />)
   expect(required).toHaveBeenCalledTimes(count)
   expect(screen.getByText('Box Grid field')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Geometry · off' })).toBeInTheDocument()
   rerender(<WorkbenchViewer {...props} />)
-  expect(required).toHaveBeenCalledTimes(count)
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle overlay' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Geometry · off' }))
   expect(required).toHaveBeenLastCalledWith(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle task' }))
-  expect(required).toHaveBeenLastCalledWith(false)
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
+  selectResult('')
   expect(required).toHaveBeenLastCalledWith(true)
 })
 

@@ -186,8 +186,7 @@ it('rebuilds transparent Geometry entities without making the result chart trans
 
   view.rerender(<JscadViewer {...props} geometryOpacity={0.2} />)
   expect(geometryAlphas().every((alpha) => Math.abs(alpha - 0.2) < 1e-6)).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle X-ray' }))
-  expect(geometryAlphas().every((alpha) => alpha === 0)).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Toggle X-ray' })).not.toBeInTheDocument()
   expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
@@ -516,7 +515,7 @@ it('shares camera gestures and one toolbar, preserving the pose through late mou
   expect(camera.current).toEqual(finalPose)
 })
 
-it('shares X-ray, selection mode and source visibility while keeping selection focus local', () => {
+it('shares selection mode and Task visibility while keeping selection focus local', () => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -565,9 +564,8 @@ it('shares X-ray, selection mode and source visibility while keeping selection f
     </>
   )
   const view = render(content(''))
-  expect(screen.getAllByRole('button', { name: 'Toggle X-ray' })).toHaveLength(1)
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle X-ray' }))
-  expect(screen.getByRole('button', { name: 'Toggle X-ray' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.queryByRole('button', { name: 'Toggle X-ray' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Toggle experiment' })).not.toBeInTheDocument()
   const canvases = view.container.querySelectorAll('canvas')
   fireEvent.click(screen.getByRole('button', { name: 'Selection mode geometry' }))
   for (const canvas of canvases) expect(canvas.className).toContain('cursor-crosshair')
@@ -584,11 +582,8 @@ it('shares X-ray, selection mode and source visibility while keeping selection f
   // Task exists only in the second pane, but the common control must remain usable.
   fireEvent.click(screen.getByRole('button', { name: 'Toggle task' }))
   expect(screen.getByRole('button', { name: 'Toggle task' })).toHaveAttribute('aria-pressed', 'false')
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
-  expect(screen.getAllByText('All Experiment geometry layers are hidden.')).toHaveLength(2)
   view.rerender(content('other-result'))
-  expect(screen.getAllByText('All Experiment geometry layers are hidden.')).toHaveLength(2)
-  expect(screen.getByRole('button', { name: 'Toggle X-ray' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Toggle task' })).toHaveAttribute('aria-pressed', 'false')
   for (const canvas of canvases) expect(canvas.className).toContain('cursor-crosshair')
   expect(props.onRenderError).not.toHaveBeenCalled()
 })

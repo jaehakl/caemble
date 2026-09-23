@@ -318,7 +318,12 @@ try {
   } else {
     browser = await chromium.launch({ headless: true, args: ['--enable-unsafe-swiftshader'] })
     const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
+    const openMeshSettings = async () => {
+      const button = page.getByRole('button', { name: 'mesh-field 설정', exact: true })
+      if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
+    }
     const openTools = async () => {
+      if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
       for (const name of [
         '단면',
         '성분',
@@ -349,9 +354,11 @@ try {
     await canvas.waitFor()
     const initial = await canvas.screenshot()
     assert.equal(await page.getByRole('alert').count(), 0)
+    await openMeshSettings()
     await page.getByLabel('Displacement section axis').selectOption('0')
     const section = await canvas.screenshot()
     assert.ok(!initial.equals(section), 'A section must change the rendered volume, not just the controls.')
+    await page.getByRole('menu').press('Escape')
     await page.getByLabel('Displacement field component').selectOption('material')
     assert.equal(await page.getByText('Steel', { exact: true }).count(), 1)
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
@@ -406,18 +413,22 @@ try {
     await page.getByRole('article', { name: 'Harmonic stress mesh field' }).waitFor()
     await openTools()
     assert.equal(await page.getByLabel('Harmonic stress frequency').inputValue(), '90')
+    await openMeshSettings()
     assert.equal(await page.getByLabel('Deformation result').inputValue(), 'Harmonic displacement')
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
+    await page.getByRole('menu').press('Escape')
     const stressPhaseZero = await canvas.screenshot()
     await page.getByLabel('Harmonic stress phase degrees').fill('90')
     assert.ok(
       !stressPhaseZero.equals(await canvas.screenshot()),
       'Stress and its compatible deformation must change with their common phase.',
     )
+    await openMeshSettings()
     await page.getByLabel('Harmonic stress section axis').selectOption('0')
     assert.ok(
       (await page.getByLabel('Harmonic stress section position').locator('..').textContent()).includes('0.5000'),
     )
+    await page.getByRole('menu').press('Escape')
     await page.getByLabel('Harmonic stress frequency').selectOption('40')
     await page.getByText('40 Hz · 90° · 순간값 Re(Q exp(iφ)) · peak phasor', { exact: true }).waitFor()
     assert.equal(await page.getByRole('alert').count(), 0)
@@ -529,6 +540,7 @@ try {
       )
       for (const selected of fields) {
         assert.ok(selected.nodes > 4 && selected.cells > 1)
+        if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
         await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
         await openTools()
@@ -545,9 +557,11 @@ try {
         }
         if (selected.valueKind === 'stress') {
           const displacement = fields.find((field) => field.valueKind === 'displacement')
+          await openMeshSettings()
           assert.equal(await page.getByLabel('Deformation result').inputValue(), displacement?.label)
         }
         if (selected.componentCount === 1) assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
+        await openMeshSettings()
         await page.getByLabel(`${selected.label} section axis`).selectOption('2')
         await canvas.screenshot()
         assert.equal(await page.getByRole('alert').count(), 0)
@@ -557,6 +571,7 @@ try {
       }
       for (const selected of motions) {
         assert.ok(selected.bodyIds.length && selected.vertices > 4 && selected.triangles > 4)
+        if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
         await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh transform` }).waitFor()
         await openTools()
@@ -579,6 +594,7 @@ try {
       }
       for (const selected of particles) {
         assert.ok(selected.ids.length && selected.times.length && selected.attributes.length)
+        if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
         await fixturePicker.selectOption('record:' + selected.label)
         const article = page.getByRole('article', { name: `${selected.label} particles` })
         await article.waitFor()
@@ -657,6 +673,7 @@ try {
         await page.evaluate(() => {
           window.renderedAxisLabels = []
         })
+        if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
         await fixturePicker.selectOption('record:' + name)
         await page
           .getByRole('button', { name: '3D Point cloud', exact: true })
@@ -818,6 +835,7 @@ try {
         )
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
         await openTools()
+        await openMeshSettings()
         await page.getByLabel(`${selected.label} section axis`).selectOption('0')
         await canvas.screenshot()
         assert.equal(await page.getByRole('alert').count(), 0)
@@ -879,9 +897,10 @@ try {
         if (step === 1 || step === 2)
           assert.equal(await page.evaluate(() => window.meshUpdateCanvas === document.querySelector('canvas')), true)
         await page.getByLabel(`${selected.label} field component`).selectOption('material')
+        await openMeshSettings()
         for (const label of ['Mesh 경계선', '구속 / 하중'])
-          if ((await page.getByRole('button', { name: label, exact: true }).getAttribute('aria-pressed')) === 'true')
-            await page.getByRole('button', { name: label, exact: true }).click()
+          await page.getByRole('checkbox', { name: label, exact: true }).uncheck()
+        await openMeshSettings()
         await page.getByLabel(`${selected.label} section axis`).selectOption('2')
         await page.getByLabel(`${selected.label} section position`).press('End')
         await page.getByLabel(`${selected.label} section position`).press('ArrowLeft')
@@ -892,6 +911,7 @@ try {
           ),
         )
         await page.getByLabel(`${selected.label} section axis`).selectOption('-1')
+        if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
         await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()
         const pixels = await canvas.screenshot()
         screenshots.push(pixels)

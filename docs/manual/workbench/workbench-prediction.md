@@ -53,9 +53,9 @@ Target Heatmap에서 선택한 사각형은 목표값 확정, Inverse 실행, �
 
 Vars를 바꾸면 마지막 정상 예측을 보여 주면서 갱신 중이라고 안내합니다. 현재 조건의 Forward RecordedData가 준비되면 Calculation이 끝나기 전에도 Box Grid 결과를 바꿉니다. 선택한 Calculation에 필요한 Record만 예측하며, 형상을 겹칠 때는 소스와 Vars가 결과에 일치하는 형상만 사용합니다. Inverse로 찾은 조건도 같은 방식으로 표시하고 입력한 Target은 유지합니다.
 
-형상이 필요 없는 보기에서는 Record 규격과 현재 조건의 Box Grid 위치·크기·변환·격자 정보만 준비합니다. 필요한 선언 함수와 메타데이터는 해석하지만 전체 CAD 평가와 JSCAD 입체·불리언 연산, Manifold 표시 메쉬 생성과 형상 렌더링은 생략합니다. Geometry 보기나 겹치기를 켜면 최신 후보의 형상을 준비하고, 같은 입력의 준비 결과는 재사용합니다. **Save & Run**에서는 보기 설정과 관계없이 실행에 필요한 전체 평가·재료 검증·빌드를 수행합니다.
+형상이 필요 없는 보기에서는 Record 규격과 현재 조건의 Box Grid 위치·크기·변환·격자 정보만 준비합니다. 필요한 선언 함수와 메타데이터는 해석하지만 전체 CAD 평가와 JSCAD 입체·불리언 연산, Manifold 표시 메쉬 생성과 형상 렌더링은 생략합니다. Geometry를 90% 또는 50%로 켜면 최신 후보의 형상을 준비하고, 같은 입력의 준비 결과는 재사용합니다. **Save & Run**에서는 보기 설정과 관계없이 실행에 필요한 전체 평가·재료 검증·빌드를 수행합니다.
 
-처음에는 Viewer의 기본 규칙에 따라 Box Grid를 선택합니다. 이후에는 선택한 데이터나 Geometry, 표시 설정과 카메라를 유지합니다. 갱신 중 Geometry를 골랐다면 예측이 도착해도 그대로 표시합니다. Prediction은 현재 예측 대신 다른 저장 Measurement나 임시 Preflight 결과를 보여 주지 않습니다.
+처음에는 Viewer의 기본 규칙에 따라 Box Grid를 선택합니다. 이후에는 선택한 데이터나 Geometry, 표시 설정과 카메라를 유지합니다. 갱신 중 Output이나 Visualization을 해제하거나 Geometry 모드를 바꾸면 예측이 도착해도 그 선택을 유지합니다. Prediction은 현재 예측 대신 다른 저장 Measurement나 임시 Preflight 결과를 보여 주지 않습니다.
 
 Calculation이 실패해도 성공한 Box Grid 예측은 남습니다. 예측이 실패하거나 취소된 뒤, 또는 Experiment나 탭을 바꾼 뒤에 늦게 도착한 응답은 표시하지 않습니다.
 

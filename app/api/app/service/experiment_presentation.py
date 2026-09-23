@@ -59,6 +59,9 @@ class Reduction(BaseModel):
 
 # Matches durable display controls; runtime busy, frequency discovery and picking are excluded.
 SETTING_TYPES = {
+    "selectedOutput": Annotated[str, Field(max_length=512)],
+    "geometryMode": Literal[0, 0.5, 0.9],
+    "visualizations": dict[str, Annotated[str, Field(max_length=512)]],
     "experimentVisible": bool,
     "taskVisible": bool,
     "xrayEnabled": bool,
@@ -106,10 +109,8 @@ SETTING_TYPES = {
 SETTING_VALIDATORS = {name: TypeAdapter(value) for name, value in SETTING_TYPES.items()}
 
 
-class ViewerDefaults(BaseModel):
+class ViewerSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    version: Literal[1] = 1
-    selectedResult: Annotated[str, Field(max_length=512)]
     settings: dict[str, JsonValue]
     camera: CameraPose | None = None
 
@@ -122,7 +123,7 @@ class ViewerDefaults(BaseModel):
             if len(key) > 600 or ":" not in key:
                 raise ValueError("Invalid Viewer setting key")
             scope, name = key.rsplit(":", 1)
-            if (scope == "@workspace") != (name in {"experimentVisible", "taskVisible", "xrayEnabled"}):
+            if (scope == "@workspace") != (name in {"selectedOutput", "geometryMode", "visualizations", "experimentVisible", "taskVisible", "xrayEnabled"}):
                 raise ValueError("Invalid Viewer setting scope")
             validator = SETTING_VALIDATORS.get(name)
             if validator is None:
@@ -135,13 +136,29 @@ class ViewerDefaults(BaseModel):
         return values
 
 
+class ViewerDefaults(ViewerSettings):
+    version: Literal[1] = 1
+    selectedResult: Annotated[str, Field(max_length=512)]
+
+
+class ViewerDefaultsV2(ViewerSettings):
+    version: Literal[2]
+    geometryMode: Literal[0, 0.5, 0.9]
+    selectedOutput: Annotated[str, Field(max_length=512)]
+    visualizations: dict[str, Annotated[str, Field(max_length=512)]]
+
+
 class ExperimentInitialView(ViewerDefaults):
+    measurementId: Annotated[StrictInt, Field(gt=0)]
+
+
+class ExperimentInitialViewV2(ViewerDefaultsV2):
     measurementId: Annotated[StrictInt, Field(gt=0)]
 
 
 class PresentationUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    initialView: ExperimentInitialView | None = None
+    initialView: ExperimentInitialView | ExperimentInitialViewV2 | None = None
     thumbnail: Annotated[str, Field(max_length=700000)] | None = None
 
     @model_validator(mode="after")

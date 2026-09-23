@@ -436,7 +436,7 @@ describe('Measurement workspace integration', () => {
     expect(mocks.prepare).toHaveBeenCalledTimes(4)
     expect(mocks.predict).toHaveBeenCalledTimes(3)
     expect(preview.getByLabelText('Viewer data')).toHaveTextContent('prediction:2')
-    expect(screen.getAllByRole('button', { name: /표시 데이터 종류 변경/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /Output ·/ })).toHaveLength(1)
   })
 
   it('keeps the last frame and ignores a late prediction after cancellation', async () => {
@@ -579,9 +579,9 @@ describe('Measurement workspace integration', () => {
     )
     expect(within(actual).getByLabelText('Viewer Vars')).toHaveTextContent('0.25')
     expect(within(actual).getByText('비교 기준 · 현재 Vars와 다름')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: /표시 데이터 종류 변경/ })).toHaveLength(1)
-    await user.click(screen.getByRole('button', { name: '표시 데이터 종류 변경 · Geometry' }))
-    await user.click(screen.getByRole('menuitem', { name: 'result · Output' }))
+    expect(screen.getAllByRole('button', { name: /Output ·/ })).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Output · 선택 안 함' }))
+    await user.click(screen.getByRole('menuitemradio', { name: 'result' }))
     expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer selected result')).toHaveTextContent(
       'result',
     )
@@ -634,12 +634,25 @@ it('applies saved data selection after the actual Measurement loads, then keeps 
   mocks.load.mockReturnValueOnce(load.promise)
   const defaults = { version: 1 as const, selectedResult: 'result', settings: {}, camera: null }
   render(view(true, { ...workbench, experimentRecord: { ...workbench.experimentRecord!, viewer_defaults: defaults } }))
-  expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · Geometry' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Output · 선택 안 함' })).toBeInTheDocument()
   await act(async () => load.resolve(rows[0]))
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · result' })).toBeInTheDocument(),
-  )
-  await user.click(screen.getByRole('button', { name: '표시 데이터 종류 변경 · result' }))
-  await user.click(screen.getByRole('menuitem', { name: 'Geometry' }))
-  expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · Geometry' })).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Output · result' })).toBeInTheDocument())
+  await user.click(screen.getByRole('button', { name: 'Output · result' }))
+  await user.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
+  expect(screen.getByRole('button', { name: 'Output · 선택 안 함' })).toBeInTheDocument()
+})
+
+it('retains a v2 Output selection when the current Measurement temporarily lacks it', async () => {
+  const defaults = {
+    version: 2 as const,
+    geometryMode: 0.5 as const,
+    selectedOutput: 'temporarily-missing',
+    visualizations: { polyline: '' },
+    settings: {},
+    camera: null,
+  }
+  render(view(true, { ...workbench, experimentRecord: { ...workbench.experimentRecord!, viewer_defaults: defaults } }))
+  await waitFor(() => expect(mocks.load).toHaveBeenCalled())
+  expect(screen.getByRole('button', { name: 'Output · temporarily-missing' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Geometry · 50%' })).toBeInTheDocument()
 })

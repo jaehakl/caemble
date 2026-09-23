@@ -25,6 +25,7 @@ export type CadViewerProps = {
   meshRenderData?: MeshRenderData
   preserveCameraOnUpdate?: boolean
   meshIdentity?: string
+  heatmapRenderLayers?: readonly HeatmapRenderData[]
   heatmapRenderData?: HeatmapRenderData
   geometryOpacity?: number
   displayUnit?: UcumUnit
@@ -47,12 +48,13 @@ export function CadViewer({
   meshIdentity,
   preserveCameraOnUpdate = false,
   heatmapRenderData,
+  heatmapRenderLayers,
   geometryOpacity,
   displayUnit,
   selectionQuery,
   selectionSourceStatus,
 }: CadViewerProps) {
-  const [experimentVisible, setExperimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
+  const experimentVisible = true
   const [taskVisible, setTaskVisible] = useViewerSetting('taskVisible', true, 'workspace')
   const content = useMemo(
     () => resolveCadViewerContent(experiment, experimentVisible, taskVisible, activeExperimentTaskName),
@@ -83,6 +85,7 @@ export function CadViewer({
         meshIdentity={meshIdentity}
         preserveCameraOnUpdate={preserveCameraOnUpdate}
         heatmapRenderData={heatmapRenderData}
+        heatmapRenderLayers={heatmapRenderLayers}
         geometryOpacity={geometryOpacity}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
@@ -95,8 +98,7 @@ export function CadViewer({
         onRenderError={handleRenderError}
         onRenderStart={handleRenderStart}
         onToggleSource={(source) => {
-          if (source === 'experiment') setExperimentVisible((current) => !current)
-          else setTaskVisible((current) => !current)
+          if (source === 'task') setTaskVisible((current) => !current)
         }}
       />
     </section>

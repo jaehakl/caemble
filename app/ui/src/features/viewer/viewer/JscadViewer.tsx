@@ -1,3 +1,6 @@
+import { useContext } from 'react'
+import type { GeometryMode } from './viewerDisplay'
+import { GeometryDisplayManaged } from './ViewerTools'
 import { ViewerLayout } from './ViewerTools'
 import { ViewerControls } from './comparisonSettings'
 import { ViewerToolbar, type CameraView } from './ViewerToolbar'
@@ -98,6 +101,7 @@ type JscadViewerProps = {
   meshRenderData?: MeshRenderData
   preserveCameraOnUpdate?: boolean
   meshIdentity?: string
+  heatmapRenderLayers?: readonly HeatmapRenderData[]
   heatmapRenderData?: HeatmapRenderData
   geometryOpacity?: number
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
@@ -294,17 +298,27 @@ function JscadViewer({
   meshIdentity,
   preserveCameraOnUpdate = false,
   heatmapRenderData,
-  geometryOpacity = 1,
+  heatmapRenderLayers,
+  geometryOpacity: requestedGeometryOpacity,
   selectionQuery = null,
   selectionSourceStatus = {},
   visibleSources,
 }: JscadViewerProps) {
+  const managed = useContext(GeometryDisplayManaged)
+  const [geometryMode, setGeometryMode] = useViewerSetting<GeometryMode>('geometryMode', 0.9, 'workspace')
+  const [geometryControlledLocally, setGeometryControlledLocally] = useState(false)
+  const geometryOpacity =
+    !managed && geometryControlledLocally ? geometryMode : (requestedGeometryOpacity ?? geometryMode)
+  const geometryOff = geometryOpacity === 0
   const savedCamera = useViewerCamera()
   const comparison = useViewerComparison()
   const cameraToken = useRef({})
   const [pickMode, setPickMode] = useViewerSetting<CadViewerPickMode>('pickMode', 'off', 'workspace')
-  const [xrayEnabled, setXrayEnabled] = useViewerSetting('xrayEnabled', false, 'workspace')
-  const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
+  const xrayEnabled = false
+  const displayLayers = useMemo(
+    () => (geometryOff ? [] : scaleViewerLayers(layers, lengthUnit)),
+    [layers, lengthUnit, geometryOff],
+  )
   const parts = useMemo(() => displayLayers.flatMap((layer) => layer.parts), [displayLayers])
   const selectionMatches = useMemo(
     () => resolveCadViewerSelection(displayLayers, selectionQuery),
@@ -364,19 +378,21 @@ function JscadViewer({
     transparent: false,
   })
   const clearRasterRef = useRef<(() => void) | undefined>(undefined)
+  const heatmaps = useMemo(
+    () => heatmapRenderLayers ?? (heatmapRenderData ? [heatmapRenderData] : []),
+    [heatmapRenderLayers, heatmapRenderData],
+  )
   const heatmapEntities = useMemo(
-    () => [
-      ...(heatmapRenderData?.geometries.map((geometry) => ({
-        ...geometry,
-        visuals: heatmapVisualsRef.current,
-      })) ?? []),
-      ...(heatmapRenderData?.raster ? [{ raster: heatmapRenderData.raster, visuals: rasterVisualsRef.current }] : []),
-    ],
-    [heatmapRenderData],
+    () =>
+      heatmaps.flatMap((data) => [
+        ...data.geometries.map((geometry) => ({ ...geometry, visuals: heatmapVisualsRef.current })),
+        ...(data.raster ? [{ raster: data.raster, visuals: rasterVisualsRef.current }] : []),
+      ]),
+    [heatmaps],
   )
   const resultIdentity = JSON.stringify([
     meshIdentity,
-    heatmapRenderData?.identity,
+    heatmaps.map((data) => data.identity),
     polylines.map((bundle) => bundle.id),
   ])
   const lastRenderedResultRef = useRef<string | null>(null)
@@ -396,7 +412,7 @@ function JscadViewer({
     const boxes = [
       ...geometryBounds,
       ...(meshRenderData ? [[meshRenderData.bounds.min, meshRenderData.bounds.max]] : []),
-      ...(heatmapRenderData ? [[heatmapRenderData.bounds.min, heatmapRenderData.bounds.max]] : []),
+      ...heatmaps.map((data) => [data.bounds.min, data.bounds.max]),
     ]
     for (const [lower, upper] of boxes)
       for (let axis = 0; axis < 3; axis++) {
@@ -412,7 +428,7 @@ function JscadViewer({
       max.some((value, axis) => value > min[axis])
       ? ([min, max] as const)
       : null
-  }, [geometryBounds, meshRenderData, heatmapRenderData, rayPathGeometries])
+  }, [geometryBounds, meshRenderData, heatmaps, rayPathGeometries])
   const sceneBoundsRef = useRef(sceneBounds)
   sceneBoundsRef.current = sceneBounds
   const raySegmentCount = polylines.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
@@ -655,7 +671,7 @@ function JscadViewer({
   }, [renderScene, savedCamera, publishCamera])
 
   // Release textures even when the next view has no raster and never invokes its draw command.
-  useEffect(() => () => clearRasterRef.current?.(), [heatmapRenderData])
+  useEffect(() => () => clearRasterRef.current?.(), [heatmaps])
 
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
@@ -795,7 +811,7 @@ function JscadViewer({
     parts,
     meshEntities,
     meshIdentity,
-    heatmapRenderData,
+    heatmaps,
     heatmapEntities,
     meshRenderData,
     rayPathEntities,
@@ -872,6 +888,13 @@ function JscadViewer({
   }
 
   const toolbar = {
+    geometryMode: managed
+      ? undefined
+      : ((geometryOpacity === 0 ? 0 : geometryOpacity < 0.7 ? 0.5 : 0.9) as GeometryMode),
+    onGeometryModeChange: (mode: GeometryMode) => {
+      setGeometryControlledLocally(true)
+      setGeometryMode(mode)
+    },
     availableSources,
     meshMode: Boolean(meshRenderData) && parts.length === 0,
     pickMode,
@@ -879,7 +902,7 @@ function JscadViewer({
     onPickModeChange: setPickMode,
     onSetCameraView: setCameraView,
     onToggleSource,
-    onToggleXray: () => setXrayEnabled((current) => !current),
+    onToggleXray: () => {},
     xrayEnabled,
   }
   useLayoutEffect(() => {
@@ -1144,7 +1167,7 @@ function JscadViewer({
             </div>
           ) : null}
 
-          {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmapRenderData ? (
+          {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmaps.length ? (
             <div
               data-viewer-empty="true"
               className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500"

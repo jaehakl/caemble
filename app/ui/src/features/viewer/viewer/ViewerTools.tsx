@@ -12,6 +12,28 @@ import {
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Box } from 'lucide-react'
+import type { GeometryMode } from './viewerDisplay'
+
+export const GeometryDisplayManaged = createContext(false)
+
+export function GeometryDisplayButton({
+  mode,
+  onChange,
+}: {
+  mode: GeometryMode
+  onChange: (mode: GeometryMode) => void
+}) {
+  return (
+    <ViewerToolButton
+      label={`Geometry · ${mode ? `${mode * 100}%` : 'off'}`}
+      active={mode > 0}
+      onClick={() => onChange(mode === 0.9 ? 0.5 : mode === 0.5 ? 0 : 0.9)}
+    >
+      <Box />
+    </ViewerToolButton>
+  )
+}
 
 export type ViewerControlPlacement = 'presentation' | 'camera' | 'data' | 'side'
 export const ViewerToolHosts = createContext<Partial<Record<ViewerControlPlacement, HTMLDivElement | null>> | null>(
@@ -224,10 +246,20 @@ export function ViewerAxisIcon({ axis }: { axis: string }) {
   )
 }
 
-export function ViewerToolMenu({ label, icon, children }: { label: string; icon: ReactNode; children: ReactNode }) {
+export function ViewerToolMenu({
+  label,
+  icon,
+  children,
+  modal = true,
+}: {
+  label: string
+  icon: ReactNode
+  children: ReactNode
+  modal?: boolean
+}) {
   const [boundary, setBoundary] = useState<HTMLElement | null>(null)
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={modal}>
       <DropdownMenuTrigger asChild>
         <ViewerToolButton
           label={label}

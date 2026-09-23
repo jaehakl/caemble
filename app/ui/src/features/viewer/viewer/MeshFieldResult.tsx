@@ -1,7 +1,10 @@
-import { Box, Component, Grid2X2, Scissors, Move3D, Layers, Activity, Waves, SlidersHorizontal } from 'lucide-react'
-import { ViewerLayout, ViewerToolButton, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
+import { createPortal } from 'react-dom'
+import { MeshSettingsHost } from './ViewerDisplayControls'
+import { ViewerToolMenu } from './ViewerTools'
+import { Component, Activity, Waves } from 'lucide-react'
+import { ViewerLayout, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
 import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   matchMeshDisplacement,
   meshHistoryBounds,
@@ -31,6 +34,7 @@ export function MeshFieldResult({
   displayUnit?: typeof field.lengthUnit
   renderViewer?: (data: ReturnType<typeof createMeshFieldRenderData>, view: MeshFieldView) => ReactNode
 }) {
+  const settingsHost = useContext(MeshSettingsHost)[field.label]
   const comparison = useViewerComparison()
   const [view, setView] = useViewerSetting<MeshFieldView>(
     'mesh.view',
@@ -194,8 +198,102 @@ export function MeshFieldResult({
       : view.component === 'magnitude' && field.componentCount === 1
         ? 'Value'
         : view.component
+  const meshSettings = (
+    <div className="grid gap-2 text-xs" aria-label="mesh-field 설정">
+      <label>
+        <input
+          type="checkbox"
+          aria-label="Mesh 경계선"
+          checked={view.wireframe}
+          onChange={() => setView({ ...view, wireframe: !view.wireframe })}
+        />{' '}
+        Mesh 경계선
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          aria-label="구속 / 하중"
+          checked={view.overlays}
+          onChange={() => setView({ ...view, overlays: !view.overlays })}
+        />{' '}
+        구속 / 하중
+      </label>
+      <label>
+        단면{' '}
+        <select
+          aria-label={`${field.label} section axis`}
+          value={view.clipAxis}
+          onChange={(event) => setView({ ...view, clipAxis: Number(event.target.value) as MeshFieldView['clipAxis'] })}
+        >
+          <option value={-1}>None</option>
+          <option value={0}>X</option>
+          <option value={1}>Y</option>
+          <option value={2}>Z</option>
+        </select>
+      </label>
+      {view.clipAxis >= 0 ? (
+        <>
+          <input
+            aria-label={`${field.label} section position`}
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={view.clipFraction}
+            onChange={(event) => setView({ ...view, clipFraction: Number(event.target.value) })}
+          />
+          <output>
+            {rendered.data?.cut.toPrecision(4)} {field.lengthUnit}
+          </output>
+        </>
+      ) : null}
+      {field.valueKind === 'stress' ? (
+        <label>
+          변위 결과{' '}
+          <select
+            aria-label="Deformation result"
+            value={displacement?.label ?? ''}
+            onChange={(event) => setSelectedDisplacement(event.target.value)}
+          >
+            <option value="">{candidates.length ? '선택 안 함' : '호환되는 변위 없음'}</option>
+            {candidates.map((candidate) => (
+              <option key={candidate.label} value={candidate.label}>
+                {candidate.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {canDeform ? (
+        <>
+          <label>
+            <input type="checkbox" aria-label="변형 표시" checked={deformed} onChange={() => setDeformed(!deformed)} />{' '}
+            변형 표시 · 실제 크기 1×
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              aria-label="원형 윤곽 비교"
+              checked={view.compareOriginal ?? false}
+              onChange={() => setView({ ...view, compareOriginal: !view.compareOriginal })}
+            />{' '}
+            원형 윤곽 비교
+          </label>
+        </>
+      ) : null}
+    </div>
+  )
   return (
     <ViewerLayout>
+      {settingsHost && (!comparison || comparison.controlsOwner) ? (
+        createPortal(meshSettings, settingsHost)
+      ) : !renderViewer ? (
+        <ViewerControls placement="data">
+          <ViewerToolMenu modal={false} label="mesh-field 설정" icon={<Component />}>
+            {meshSettings}
+          </ViewerToolMenu>
+        </ViewerControls>
+      ) : null}
       <article
         className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
         data-result-visualization="mesh field"
@@ -279,102 +377,6 @@ export function MeshFieldResult({
             ))}
             <option value="material">Material regions</option>
           </ViewerSelectTool>
-          <ViewerToolButton
-            label="Mesh 경계선"
-            active={view.wireframe}
-            onClick={() => setView({ ...view, wireframe: !view.wireframe })}
-          >
-            <Grid2X2 />
-          </ViewerToolButton>
-          <ViewerToolButton
-            label="구속 / 하중"
-            active={view.overlays}
-            onClick={() => setView({ ...view, overlays: !view.overlays })}
-          >
-            <Move3D />
-          </ViewerToolButton>
-          {view.clipAxis < 0 ? (
-            <ViewerSelectTool
-              label="단면"
-              icon={<Scissors />}
-              aria-label={`${field.label} section axis`}
-              value={view.clipAxis}
-              onChange={(event) =>
-                setView({ ...view, clipAxis: Number(event.target.value) as MeshFieldView['clipAxis'] })
-              }
-            >
-              <option value={-1}>None</option>
-              <option value={0}>X</option>
-              <option value={1}>Y</option>
-              <option value={2}>Z</option>
-            </ViewerSelectTool>
-          ) : (
-            <ViewerToolPanel label="단면" icon={<Scissors />} active initialOpen>
-              <select
-                aria-label={`${field.label} section axis`}
-                value={view.clipAxis}
-                onChange={(event) =>
-                  setView({ ...view, clipAxis: Number(event.target.value) as MeshFieldView['clipAxis'] })
-                }
-              >
-                <option value={-1}>None</option>
-                <option value={0}>X</option>
-                <option value={1}>Y</option>
-                <option value={2}>Z</option>
-              </select>
-              {view.clipAxis >= 0 ? (
-                <>
-                  <input
-                    aria-label={`${field.label} section position`}
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={view.clipFraction}
-                    onChange={(event) => setView({ ...view, clipFraction: Number(event.target.value) })}
-                  />
-                  <output>
-                    {rendered.data?.cut.toPrecision(4)} {field.lengthUnit}
-                  </output>
-                </>
-              ) : null}
-            </ViewerToolPanel>
-          )}
-          {field.valueKind === 'stress' ? (
-            <ViewerSelectTool
-              label="변위 결과"
-              icon={<SlidersHorizontal />}
-              aria-label="Deformation result"
-              value={displacement?.label ?? ''}
-              onChange={(event) => setSelectedDisplacement(event.target.value)}
-            >
-              <option value="">{candidates.length ? '선택 안 함' : '호환되는 변위 없음'}</option>
-              {candidates.map((candidate) => (
-                <option key={candidate.label} value={candidate.label}>
-                  {candidate.label}
-                </option>
-              ))}
-            </ViewerSelectTool>
-          ) : null}
-          {canDeform ? (
-            <>
-              <ViewerToolButton
-                label="변형 표시"
-                title="변형 표시 · 실제 크기 1×"
-                active={deformed}
-                onClick={() => setDeformed(!deformed)}
-              >
-                <Box />
-              </ViewerToolButton>
-              <ViewerToolButton
-                label="원형 윤곽 비교"
-                active={view.compareOriginal ?? false}
-                onClick={() => setView({ ...view, compareOriginal: !view.compareOriginal })}
-              >
-                <Layers />
-              </ViewerToolButton>
-            </>
-          ) : null}
           {field.times ? (
             <MeshPlayback times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
           ) : null}

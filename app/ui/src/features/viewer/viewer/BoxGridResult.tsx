@@ -1,3 +1,4 @@
+import JscadViewer from './JscadViewer'
 import {
   useComparisonBusy,
   useComparisonFrequencies,
@@ -29,7 +30,6 @@ import {
 } from './boxGridViewData'
 import { createPointCloudData } from './pointCloudData'
 import { ScalarPlot } from './ScalarPlot'
-import JscadViewer from './JscadViewer'
 import type { HeatmapRenderData } from './structuredField'
 
 const noLayers = Object.freeze([])
@@ -41,7 +41,6 @@ export function BoxGridResult({
   displayUnit,
   renderViewer,
   canOverlayGeometry,
-  geometryBlockedReason,
   recordReference,
 }: {
   name: string
@@ -92,7 +91,6 @@ export function BoxGridResult({
         displayUnit={displayUnit}
         renderViewer={renderViewer}
         canOverlayGeometry={canOverlayGeometry}
-        geometryBlockedReason={geometryBlockedReason}
         recordReference={recordReference ?? `record[${JSON.stringify(name)}]`}
       />
     </ViewerLayout>
@@ -105,7 +103,6 @@ function BoxGridControls({
   displayUnit,
   renderViewer,
   canOverlayGeometry,
-  geometryBlockedReason,
   recordReference,
 }: {
   name: string
@@ -113,7 +110,6 @@ function BoxGridControls({
   displayUnit: UcumUnit
   renderViewer: (data: HeatmapRenderData, geometryOpacity: number) => ReactNode
   canOverlayGeometry: boolean
-  geometryBlockedReason?: string
   recordReference: string
 }) {
   const comparison = useViewerComparison()
@@ -152,8 +148,7 @@ function BoxGridControls({
           (reduction.index ?? 0) < leaf.shape[projectionAxes.indexOf(axis as ProjectionAxis)],
       ),
   )
-  const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
-  const [geometryOpacity, setGeometryOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
+  const [geometryOpacity] = useViewerSetting('geometryMode', 0.9, 'workspace')
   const [bins, setBins] = useViewerSetting<number | undefined>('box.bins', undefined)
   const [animation, setAnimation] = useViewerSetting<BoxGridAnimation>(
     'box.animation',
@@ -443,8 +438,7 @@ function BoxGridControls({
       !result ||
       result.scalar.axes.map((axis) => axis.name).join(',') !== axesKey ||
       kind === 'histogram' ||
-      kind === 'line' ||
-      (kind === 'heatmap' && !overlay)
+      kind === 'line'
     )
       return undefined
     let plane: { axis: number; coordinate: number } | undefined
@@ -473,7 +467,6 @@ function BoxGridControls({
   }, [
     result,
     kind,
-    overlay,
     axes,
     effectiveReduce,
     leaf,
@@ -564,12 +557,6 @@ function BoxGridControls({
             if (axis === 'component') setComponent(index)
             else setReduce((current) => ({ ...current, [axis]: { method: 'index', index } }))
           }}
-          overlay={overlay}
-          geometryOpacity={geometryOpacity}
-          overlayAvailable={spatial && canOverlayGeometry && (kind === 'cloud' || kind === 'heatmap')}
-          geometryBlockedReason={!spatial ? '공간 좌표 축에서만 Geometry를 겹칠 수 있습니다.' : geometryBlockedReason}
-          onOverlay={() => setOverlay(!overlay)}
-          onOpacity={setGeometryOpacity}
           fixed={fixed}
           range={range}
           onFixed={setFixed}
@@ -670,11 +657,11 @@ function BoxGridControls({
       ) : null}
       <div className="min-h-0 flex-1" aria-busy={busy}>
         {result && !invalidSetting && range[0] <= range[1] ? (
-          kind === 'cloud' || (kind === 'heatmap' && overlay && canOverlayGeometry && spatial) ? (
+          kind === 'cloud' || (kind === 'heatmap' && spatial && canOverlayGeometry) ? (
             renderData ? (
               <div className="flex h-full min-h-0 flex-col">
                 <div className="min-h-0 flex-1">
-                  {overlay && canOverlayGeometry && spatial ? (
+                  {spatial && canOverlayGeometry ? (
                     renderViewer(renderData, geometryOpacity)
                   ) : (
                     <JscadViewer

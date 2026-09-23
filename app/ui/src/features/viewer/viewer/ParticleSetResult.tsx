@@ -1,5 +1,5 @@
-import { Layers, Component, Circle, Fingerprint, Shapes } from 'lucide-react'
-import { ViewerLayout, ViewerToolButton, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
+import { Component, Circle, Fingerprint, Shapes } from 'lucide-react'
+import { ViewerLayout, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
 import { useCallback, useMemo, type ReactNode } from 'react'
 import type { UcumUnit } from '@/lib/cad/model'
 import { MeshPlayback } from './MeshPlayback'
@@ -41,7 +41,7 @@ export function ParticleSetResult({
     particles.particleIds.includes(value),
   )
   const [pointSize, setPointSize] = useViewerSetting('particles.pointSize', 5)
-  const [showGeometry, setShowGeometry] = useViewerSetting('particles.geometry', false)
+  const [showGeometry] = useViewerSetting('particles.geometry', false)
   const frame = meshFrameAtTime(particles.times, time)
   const quantity = particles.attributes[attribute]
   const selectedParticle = particles.particleIds.indexOf(particleId)
@@ -89,15 +89,6 @@ export function ParticleSetResult({
             time={time}
             onTime={setTime}
           />
-          <ViewerToolButton
-            label="Particle Geometry Overlay"
-            title={canOverlayGeometry ? 'Geometry 겹치기' : 'Geometry와 좌표계가 일치하지 않습니다.'}
-            disabled={!canOverlayGeometry}
-            active={showGeometry}
-            onClick={() => setShowGeometry(!showGeometry)}
-          >
-            <Layers />
-          </ViewerToolButton>
           <ViewerSelectTool
             label="물리량"
             icon={<Shapes />}

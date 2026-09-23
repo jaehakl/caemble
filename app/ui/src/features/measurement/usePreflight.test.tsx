@@ -274,20 +274,19 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
     selectionSourceStatus: {},
   }
   const { rerender } = render(<WorkbenchViewer {...props} />)
-  expect(screen.getByRole('button', { name: '표시 데이터 종류 변경 · field' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Geometry 겹치기' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Output · field' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeEnabled()
   expect(screen.queryByText(/source가 달라|Vars가 달라/)).toBeNull()
   for (const [override, reason] of [
-    [{ resultSourceHash: 'different' }, /source가 달라/],
-    [{ resultVarsHash: 'different' }, /Vars가 달라/],
+    [{ resultSourceHash: 'different' }, /source가 다릅니다/],
+    [{ resultVarsHash: 'different' }, /Vars가 다릅니다/],
     [{ resultSourceHash: undefined }, /비교 정보가 없어/],
     [{ resultVarsHash: undefined }, /비교 정보가 없어/],
     [{ experimentDocument: { ...document, scene: null } }, /Geometry가 준비되지/],
     [{ experimentDocument: { ...document, evaluatedSnapshot: null } }, /Geometry가 준비되지/],
   ] as const) {
     rerender(<WorkbenchViewer {...props} {...override} />)
-    expect(screen.getByRole('button', { name: 'Geometry 겹치기' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Geometry 겹치기' }).title).toMatch(reason)
+    expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeEnabled()
     expect(screen.getByText(reason)).toBeInTheDocument()
   }
   rerender(
@@ -296,7 +295,7 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
       resultContracts={{ field: { ...preview.payload.result_contracts.field, visualization: { kind: 'tensor' } } }}
     />,
   )
-  expect(screen.getByText('이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.')).toBeInTheDocument()
+  expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
 })
 
 it('reports each failed run once without replaying errors on rerender', async () => {

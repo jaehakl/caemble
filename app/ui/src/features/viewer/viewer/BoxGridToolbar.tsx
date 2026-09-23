@@ -4,8 +4,6 @@ import {
   ChartLine,
   Grid2X2,
   Box,
-  Layers,
-  Blend,
   LockKeyhole,
   Copy,
   SlidersHorizontal,
@@ -46,12 +44,6 @@ export function BoxGridToolbar(props: {
   onRepresentation: (representation: 'amplitude' | 'phase') => void
   onComponent: (component: ComponentChoice) => void
   onIndex: (axis: IndexAxis, index: number) => void
-  overlay: boolean
-  geometryOpacity: number
-  overlayAvailable: boolean
-  geometryBlockedReason?: string
-  onOverlay: () => void
-  onOpacity: (opacity: number) => void
   fixed: readonly [number, number] | null
   range: readonly number[]
   onFixed: (range: [number, number] | null) => void
@@ -149,32 +141,6 @@ export function BoxGridToolbar(props: {
           </ViewerToolButton>
         ))}
       </div>
-      <ViewerToolButton
-        label="Geometry 겹치기"
-        active={props.overlay && props.overlayAvailable}
-        disabled={!props.overlayAvailable}
-        title={
-          !props.overlayAvailable
-            ? (props.geometryBlockedReason ?? '현재 시각화에서는 Geometry를 겹칠 수 없습니다.')
-            : 'Geometry 겹치기'
-        }
-        onClick={props.onOverlay}
-      >
-        <Layers />
-      </ViewerToolButton>
-      <ViewerToolPanel label="Geometry 투명도" icon={<Blend />}>
-        <input
-          aria-label="Geometry 투명도"
-          type="range"
-          min={0.05}
-          max={1}
-          step={0.05}
-          disabled={!props.overlayAvailable || !props.overlay}
-          value={props.geometryOpacity}
-          onChange={(event) => props.onOpacity(Number(event.target.value))}
-        />
-        <output>{Math.round(props.geometryOpacity * 100)}%</output>
-      </ViewerToolPanel>
       {projectionAxes.map((axis) => {
         const reduction = reduce[axis]?.method ?? 'mean'
         const role = axes.includes(axis) ? 'space' : reduction === 'index' ? 'index' : 'statistic'

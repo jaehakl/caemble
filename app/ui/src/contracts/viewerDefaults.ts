@@ -10,6 +10,9 @@ const reduction = z.object({
 
 /** Only durable display controls are serialized; runtime busy/picking state stays local. */
 export const viewerSettingSchemas: Record<string, z.ZodType> = {
+  selectedOutput: z.string().max(512),
+  geometryMode: z.union([z.literal(0), z.literal(0.5), z.literal(0.9)]),
+  visualizations: z.record(z.string(), z.string().max(512)),
   experimentVisible: z.boolean(),
   taskVisible: z.boolean(),
   xrayEnabled: z.boolean(),
@@ -77,12 +80,21 @@ export const cameraPoseSchema = z
     return [d[1] * up[2] - d[2] * up[1], d[2] * up[0] - d[0] * up[2], d[0] * up[1] - d[1] * up[0]].some(Boolean)
   })
 
-export const viewerDefaultsSchema = z.object({
+const viewerDefaultsV1 = z.object({
   version: z.literal(1),
   selectedResult: z.string().max(512),
   settings: z.record(z.string(), z.unknown()),
   camera: cameraPoseSchema.nullable(),
 })
+const viewerDefaultsV2 = z.object({
+  version: z.literal(2),
+  geometryMode: z.union([z.literal(0), z.literal(0.5), z.literal(0.9)]),
+  selectedOutput: z.string().max(512),
+  visualizations: z.record(z.string(), z.string().max(512)),
+  settings: z.record(z.string(), z.unknown()),
+  camera: cameraPoseSchema.nullable(),
+})
+export const viewerDefaultsSchema = z.discriminatedUnion('version', [viewerDefaultsV1, viewerDefaultsV2])
 export type ViewerDefaults = z.infer<typeof viewerDefaultsSchema>
 export type ExperimentInitialView = ViewerDefaults & { measurementId: number }
 export type ExperimentPresentationUpdate = { initialView?: ExperimentInitialView | null; thumbnail?: string }
@@ -100,7 +112,14 @@ export function durableViewerSettings(entries: Iterable<[string, unknown]>) {
     const separator = key.lastIndexOf(':')
     if (separator < 0) continue
     const name = key.slice(separator + 1)
-    const workspace = ['experimentVisible', 'taskVisible', 'xrayEnabled'].includes(name)
+    const workspace = [
+      'selectedOutput',
+      'geometryMode',
+      'visualizations',
+      'experimentVisible',
+      'taskVisible',
+      'xrayEnabled',
+    ].includes(name)
     if ((key.slice(0, separator) === '@workspace') !== workspace) continue
     const parsed = viewerSettingSchemas[name]?.safeParse(value)
     if (parsed?.success) settings[key] = parsed.data
