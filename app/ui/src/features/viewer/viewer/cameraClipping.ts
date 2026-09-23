@@ -212,3 +212,41 @@ export function rotateCameraAroundPivot({
     up: rotate(yawedUp, pitchAxis, pitch),
   }
 }
+
+/** Rolls the camera about its view direction without moving its position or target. */
+export function spinCameraUp({
+  position,
+  target,
+  up,
+  angle,
+}: {
+  position: readonly number[]
+  target: readonly number[]
+  up: readonly number[]
+  angle: number
+}) {
+  const view = target.map((value, axis) => value - position[axis])
+  const viewLength = Math.hypot(...view)
+  const upLength = Math.hypot(...up)
+  if (
+    !Number.isFinite(viewLength) ||
+    viewLength === 0 ||
+    !Number.isFinite(upLength) ||
+    upLength === 0 ||
+    !Number.isFinite(angle)
+  ) {
+    return null
+  }
+  const axis = view.map((value) => value / viewLength)
+  const cosine = Math.cos(angle)
+  const sine = Math.sin(angle)
+  const projection = axis.reduce((sum, value, index) => sum + value * up[index], 0)
+  const perpendicular = [
+    axis[1] * up[2] - axis[2] * up[1],
+    axis[2] * up[0] - axis[0] * up[2],
+    axis[0] * up[1] - axis[1] * up[0],
+  ]
+  return up.map(
+    (value, index) => value * cosine + perpendicular[index] * sine + axis[index] * projection * (1 - cosine),
+  )
+}

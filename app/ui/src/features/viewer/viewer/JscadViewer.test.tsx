@@ -62,6 +62,54 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+it('renders ray paths and Geometry without the ray statistics or Materials overlays', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const ray = {
+    id: 'ray',
+    pathCount: 1,
+    segmentCount: 1,
+    vertices: Float32Array.from([0, 0, 0, 1, 0, 0]),
+    pathOffsets: Uint32Array.from([0, 2]),
+    segmentPower: Float32Array.from([1]),
+    pathWavelength: Float32Array.from([550e-9]),
+    segmentEvent: Uint8Array.from([0]),
+  }
+  const props = { lengthUnit: 'm' as const, onRenderStart: vi.fn(), onRenderEnd: vi.fn(), onRenderError: vi.fn() }
+  const view = render(<JscadViewer {...props} layers={[]} polylines={[ray]} />)
+  const entities = () =>
+    mocks.render.mock.calls[mocks.render.mock.calls.length - 1]?.[0].entities as {
+      visuals: { drawCmd: string }
+    }[]
+  expect(entities().some((entity) => entity.visuals.drawCmd === 'drawRayPaths')).toBe(true)
+  expect(view.container.querySelector('[data-viewer-empty]')).toBeNull()
+  expect(screen.queryByText(/Polylines ·/)).not.toBeInTheDocument()
+  expect(screen.getByLabelText('길이 Scale bar')).toBeInTheDocument()
+
+  const layers: JscadViewerLayer[] = [
+    {
+      source: 'experiment',
+      lengthUnit: 'm',
+      parts: [{ id: 'body', geometry: primitives.cuboid(), materialRole: 'body', surfaces: [] }],
+      tree: { key: 'root', label: 'Geometry', children: [] },
+    },
+  ]
+  view.rerender(<JscadViewer {...props} layers={layers} />)
+  expect(entities().some((entity) => entity.visuals.drawCmd === 'drawMesh')).toBe(true)
+  expect(view.container.querySelector('[data-viewer-empty]')).toBeNull()
+  expect(screen.queryByText('Materials')).not.toBeInTheDocument()
+  expect(view.container.querySelector('[data-material-swatch]')).toBeNull()
+
+  view.rerender(<JscadViewer {...props} layers={[]} />)
+  expect(view.container.querySelector('[data-viewer-empty]')).toBeInTheDocument()
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
 it('selects Geometry and Surface locally, keeps missing paths, and clears through Viewer controls', () => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -109,6 +157,9 @@ it('selects Geometry and Surface locally, keeps missing paths, and clears throug
   clickCanvas()
   expect(screen.getByRole('button', { name: 'Focus Viewer on body' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /Find .* in Source/ })).not.toBeInTheDocument()
+  fireEvent.pointerDown(canvas, { button: 1, buttons: 4, clientX: 100, clientY: 100 })
+  fireEvent.pointerUp(canvas, { button: 1, clientX: 100, clientY: 100 })
+  expect(screen.getByRole('button', { name: 'Focus Viewer on body' })).toBeInTheDocument()
 
   view.rerender(<JscadViewer {...props} layers={[]} />)
   expect(screen.getByText('찾지 못함')).toBeInTheDocument()
@@ -588,6 +639,77 @@ it('applies drag modifiers to rotation and panning without carrying over earlier
     expect(camera.position[0]).toBeCloseTo(basePan * multiplier, 5)
     expect(camera.target[0]).toBeCloseTo(basePan * multiplier, 5)
   }
+})
+
+it('spins around the view axis with middle drag and keeps the camera position and focus fixed', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const view = render(
+    <JscadViewer layers={[]} lengthUnit="m" onRenderStart={vi.fn()} onRenderEnd={vi.fn()} onRenderError={vi.fn()} />,
+  )
+  const canvas = view.container.querySelector('canvas')!
+  Object.assign(canvas, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+  const camera = (
+    vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
+      camera: { position: number[]; target: number[]; up: number[] }
+    }
+  ).camera
+
+  for (const { ctrlKey, shiftKey, multiplier } of [
+    { ctrlKey: false, shiftKey: false, multiplier: 1 },
+    { ctrlKey: true, shiftKey: false, multiplier: 0.1 },
+    { ctrlKey: true, shiftKey: true, multiplier: 0.01 },
+    { ctrlKey: false, shiftKey: true, multiplier: 10 },
+  ]) {
+    camera.position = [3, -10, 5]
+    camera.target = [3, 0, 5]
+    camera.up = [0, 0, 1]
+    const position = [...camera.position]
+    const target = [...camera.target]
+    fireEvent.pointerDown(canvas, { button: 1, buttons: 4, clientX: 400, clientY: 200 })
+    fireEvent.pointerMove(canvas, { buttons: 4, clientX: 500, clientY: 300, ctrlKey, shiftKey })
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 500, clientY: 300 })
+    expect(Array.from(camera.position)).toEqual(position)
+    expect(Array.from(camera.target)).toEqual(target)
+    expect(camera.up[0]).toBeCloseTo(Math.sin((-Math.PI / 2) * multiplier), 6)
+    expect(camera.up[2]).toBeCloseTo(Math.cos((-Math.PI / 2) * multiplier), 6)
+  }
+
+  camera.up = [0, 0, 1]
+  fireEvent.pointerDown(canvas, { button: 1, buttons: 4, clientX: 400, clientY: 200 })
+  fireEvent.pointerMove(canvas, { buttons: 4, clientX: 300, clientY: 300 })
+  fireEvent.pointerUp(canvas, { button: 1, clientX: 300, clientY: 300 })
+  expect(camera.up[0]).toBeCloseTo(1)
+  expect(camera.up[2]).toBeCloseTo(0)
+
+  camera.up = [0, 0, 1]
+  fireEvent.pointerDown(canvas, { button: 1, buttons: 4, clientX: 300, clientY: 301 })
+  fireEvent.pointerMove(canvas, { buttons: 4, clientX: 300, clientY: 299 })
+  fireEvent.pointerUp(canvas, { button: 1, clientX: 300, clientY: 299 })
+  expect(camera.up[0]).toBeCloseTo(-0.02, 3)
+  expect(camera.up[2]).toBeCloseTo(1, 3)
+
+  camera.up = [0, 0, 1]
+  fireEvent.pointerDown(canvas, { button: 1, buttons: 4, clientX: 400, clientY: 200 })
+  fireEvent.pointerMove(canvas, { buttons: 4, clientX: 400, clientY: 300 })
+  fireEvent.pointerMove(canvas, { buttons: 4, clientX: 500, clientY: 300 })
+  expect(Array.from(camera.up)).toEqual([0, 0, 1])
+  fireEvent.pointerMove(canvas, { buttons: 4, clientX: 400, clientY: 200 })
+  fireEvent.pointerUp(canvas, { button: 1, clientX: 400, clientY: 200 })
+  expect(camera.up[0]).toBeCloseTo(1)
+  expect(fireEvent(canvas, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))).toBe(false)
+  expect(fireEvent.mouseDown(canvas, { button: 1 })).toBe(false)
 })
 
 it('fits delayed small geometry instead of saving the empty initial camera, including StrictMode', () => {
@@ -1087,17 +1209,19 @@ it('shares camera gestures and one toolbar, preserving the pose through late mou
     for (const current of activeCameras) {
       current.position.forEach((value, axis) => expect(value).toBeCloseTo(camera.current!.position[axis], 5))
       expect(Array.from(current.target)).toEqual(camera.current!.target)
+      current.up.forEach((value, axis) => expect(value).toBeCloseTo(camera.current!.up[axis], 5))
     }
   }
   expectSynchronized()
   const canvases = Array.from(view.container.querySelectorAll('canvas'))
   for (const target of canvases) {
     Object.assign(target, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
-    for (const button of [0, 2]) {
+    for (const button of [0, 1, 2]) {
       const before = structuredClone(camera.current)
-      fireEvent.pointerDown(target, { button, buttons: button === 2 ? 2 : 1, clientX: 100, clientY: 100 })
-      fireEvent.pointerMove(target, { buttons: button === 2 ? 2 : 1, clientX: 130, clientY: 120 })
-      fireEvent.pointerUp(target, { button, clientX: 130, clientY: 120 })
+      const buttons = button === 1 ? 4 : button === 2 ? 2 : 1
+      fireEvent.pointerDown(target, { button, buttons, clientX: 100, clientY: 100 })
+      fireEvent.pointerMove(target, { buttons, clientX: 130, clientY: button === 1 ? 100 : 120 })
+      fireEvent.pointerUp(target, { button, clientX: 130, clientY: button === 1 ? 100 : 120 })
       expect(camera.current).not.toEqual(before)
       expectSynchronized()
     }

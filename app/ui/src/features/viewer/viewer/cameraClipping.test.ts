@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitCameraToBounds, panCamera, rotateCameraAroundPivot } from './cameraClipping'
+import { fitCameraToBounds, panCamera, rotateCameraAroundPivot, spinCameraUp } from './cameraClipping'
 
 describe('fitCameraToBounds', () => {
   it.each([1e-6, 1e-3, 1])('fits off-center content tightly at scale %s in narrow and wide viewports', (scale) => {
@@ -153,5 +153,27 @@ describe('rotateCameraAroundPivot', () => {
       )
     }
     expect(Math.hypot(...rotated.up)).toBeCloseTo(1, 8)
+  })
+})
+
+describe('spinCameraUp', () => {
+  it('rolls around the current view direction without depending on the world origin', () => {
+    const pose = { position: [3, -10, 5], target: [3, 0, 5], up: [0, 0, 1] }
+    const clockwise = spinCameraUp({ ...pose, angle: -Math.PI / 2 })!
+    const counterclockwise = spinCameraUp({ ...pose, angle: Math.PI / 2 })!
+    expect(clockwise[0]).toBeCloseTo(-1)
+    expect(clockwise[1]).toBeCloseTo(0)
+    expect(clockwise[2]).toBeCloseTo(0)
+    expect(counterclockwise[0]).toBeCloseTo(1)
+    expect(Math.hypot(...clockwise)).toBeCloseTo(1)
+    expect(pose.position).toEqual([3, -10, 5])
+    expect(pose.target).toEqual([3, 0, 5])
+  })
+
+  it('ignores invalid camera poses and angles', () => {
+    const pose = { position: [0, -10, 0], target: [0, 0, 0], up: [0, 0, 1] }
+    expect(spinCameraUp({ ...pose, target: pose.position, angle: 1 })).toBeNull()
+    expect(spinCameraUp({ ...pose, up: [0, 0, 0], angle: 1 })).toBeNull()
+    expect(spinCameraUp({ ...pose, angle: Infinity })).toBeNull()
   })
 })
