@@ -145,3 +145,70 @@ export function panCamera({
     target: target.map((value, axis) => value + offset[axis]),
   }
 }
+
+/** Rotates the camera pose about a world-space pivot so the scene follows the pointer. */
+export function rotateCameraAroundPivot({
+  deltaX,
+  deltaY,
+  pivot,
+  position,
+  target,
+  up,
+  speed,
+}: {
+  deltaX: number
+  deltaY: number
+  pivot: readonly number[]
+  position: readonly number[]
+  target: readonly number[]
+  up: readonly number[]
+  speed: number
+}) {
+  const upLength = Math.hypot(...up)
+  const viewLength = Math.hypot(...target.map((value, axis) => value - position[axis]))
+  if (!Number.isFinite(upLength) || upLength === 0 || !Number.isFinite(viewLength) || viewLength === 0) return null
+
+  const cross = (left: readonly number[], right: readonly number[]) => [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0],
+  ]
+  const rotate = (vector: readonly number[], axis: readonly number[], angle: number) => {
+    const cosine = Math.cos(angle)
+    const sine = Math.sin(angle)
+    const perpendicular = cross(axis, vector)
+    const projection = axis.reduce((sum, value, index) => sum + value * vector[index], 0)
+    return vector.map(
+      (value, index) => value * cosine + perpendicular[index] * sine + axis[index] * projection * (1 - cosine),
+    )
+  }
+
+  const yawAxis = up.map((value) => value / upLength)
+  const yaw = deltaX * speed
+  const pitch = deltaY * speed
+  const yawedPosition = rotate(
+    position.map((value, axis) => value - pivot[axis]),
+    yawAxis,
+    yaw,
+  )
+  const yawedTarget = rotate(
+    target.map((value, axis) => value - pivot[axis]),
+    yawAxis,
+    yaw,
+  )
+  const yawedUp = rotate(up, yawAxis, yaw)
+  const forward = yawedTarget.map((value, axis) => value - yawedPosition[axis])
+  let right = cross(forward, yawedUp)
+  let rightLength = Math.hypot(...right)
+  if (!Number.isFinite(rightLength) || rightLength < 1e-12) {
+    right = cross(forward, Math.abs(forward[1]) < viewLength * 0.9 ? [0, 1, 0] : [1, 0, 0])
+    rightLength = Math.hypot(...right)
+  }
+  if (!Number.isFinite(rightLength) || rightLength === 0) return null
+  const pitchAxis = right.map((value) => value / rightLength)
+  return {
+    position: rotate(yawedPosition, pitchAxis, pitch).map((value, axis) => value + pivot[axis]),
+    target: rotate(yawedTarget, pitchAxis, pitch).map((value, axis) => value + pivot[axis]),
+    up: rotate(yawedUp, pitchAxis, pitch),
+  }
+}

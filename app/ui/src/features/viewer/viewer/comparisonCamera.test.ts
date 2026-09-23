@@ -47,6 +47,90 @@ it('fits every corner of both scenes within unequal viewports and ignores hidden
   }
 })
 
+it('fits only matching selected Geometry bounds across comparison panes', () => {
+  const camera = createComparisonCamera()
+  const renderer: ComparisonRenderer = {
+    apply: vi.fn(),
+    bounds: () => [
+      [-100, -100, -100],
+      [100, 100, 100],
+    ],
+    selectedBounds: () => [
+      [1, 0, 0],
+      [3, 2, 2],
+    ],
+    viewport: () => ({ width: 800, height: 600 }),
+    toolbar: {
+      onPickModeChange: vi.fn(),
+      onSetCameraView: vi.fn(),
+      onToggleXray: vi.fn(),
+      pickMode: 'off',
+      xrayEnabled: false,
+    },
+  }
+  camera.register({}, renderer)
+  camera.register(
+    {},
+    {
+      ...renderer,
+      bounds: () => [
+        [-1000, -1000, -1000],
+        [1000, 1000, 1000],
+      ],
+      selectedBounds: () => [
+        [9, 0, 0],
+        [11, 2, 2],
+      ],
+    },
+  )
+  camera.register(
+    {},
+    {
+      ...renderer,
+      bounds: () => [
+        [-500, -500, -500],
+        [500, 500, 500],
+      ],
+      selectedBounds: () => null,
+    },
+  )
+  expect(camera.fitExtent('selection')?.bounds).toEqual([
+    [1, 0, 0],
+    [11, 2, 2],
+  ])
+  expect(camera.fitExtent('scene')?.bounds).toEqual([
+    [-1000, -1000, -1000],
+    [1000, 1000, 1000],
+  ])
+})
+
+it('uses whole scenes for full fit when no comparison pane has a matching selection', () => {
+  const camera = createComparisonCamera()
+  camera.register(
+    {},
+    {
+      apply: vi.fn(),
+      bounds: () => [
+        [-2, -1, -1],
+        [4, 1, 1],
+      ],
+      selectedBounds: () => null,
+      viewport: () => ({ width: 800, height: 600 }),
+      toolbar: {
+        onPickModeChange: vi.fn(),
+        onSetCameraView: vi.fn(),
+        onToggleXray: vi.fn(),
+        pickMode: 'off',
+        xrayEnabled: false,
+      },
+    },
+  )
+  expect(camera.fitExtent('selection')?.bounds).toEqual([
+    [-2, -1, -1],
+    [4, 1, 1],
+  ])
+})
+
 it('isolates camera snapshots and detaches removed renderers without losing the latest pose', () => {
   const camera = createComparisonCamera()
   const source = {},

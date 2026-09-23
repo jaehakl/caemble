@@ -9,7 +9,7 @@ import { useViewerCamera, useViewerComparison, useViewerSetting } from './compar
 import type { HeatmapRaster, HeatmapRenderData } from './structuredField'
 import { heatmapTiles } from './pointCloudData'
 import { measurements } from '@jscad/modeling'
-import { cameraClipping, fitCameraToBounds, panCamera } from './cameraClipping'
+import { cameraClipping, fitCameraToBounds, panCamera, rotateCameraAroundPivot } from './cameraClipping'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
 import { Copy, Focus, SearchCode, X } from 'lucide-react'
@@ -25,6 +25,7 @@ import {
   createCadViewerPickParts,
   pickCadViewerTargets,
   resolveCadViewerSelection,
+  selectedCadViewerBounds,
   type CadViewerPickMode,
   type CadViewerPickingCamera,
   type CadViewerSelectionQuery,
@@ -56,15 +57,7 @@ type ReglRendererApi = {
   controls: {
     orbit: {
       defaults: RendererState
-      rotate: (
-        state: RendererState & { camera: RendererState; controls: RendererState; speed: number },
-        angle: number[],
-      ) => RendererChange
       update: (state: { camera: RendererState; controls: RendererState }) => RendererChange
-      zoom: (
-        state: RendererState & { camera: RendererState; controls: RendererState; speed: number },
-        delta: number,
-      ) => RendererChange
       zoomToFit: (state: {
         camera: RendererState
         controls: RendererState
@@ -321,6 +314,10 @@ function JscadViewer({
     () => resolveCadViewerSelection(displayLayers, selectionQuery),
     [displayLayers, selectionQuery],
   )
+  const selectedBounds = useMemo(
+    () => selectedCadViewerBounds(displayLayers, selectionQuery ?? null, selectionMatches),
+    [displayLayers, selectionQuery, selectionMatches],
+  )
   const selectionSourcePaths = useMemo(
     () =>
       selectionQuery
@@ -428,6 +425,8 @@ function JscadViewer({
   }, [geometryBounds, meshRenderData, heatmaps, rayPathGeometries])
   const sceneBoundsRef = useRef(sceneBounds)
   sceneBoundsRef.current = sceneBounds
+  const selectedBoundsRef = useRef(selectedBounds)
+  selectedBoundsRef.current = selectedBounds
   const raySegmentCount = polylines.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
   const scaleBarRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -492,34 +491,39 @@ function JscadViewer({
     }
   }, [])
 
-  const fitCamera = useCallback(() => {
-    const camera = cameraRef.current
-    const controls = controlsRef.current
-    const sharedExtent = savedCamera?.fitExtent()
-    const bounds = sharedExtent?.bounds ?? sceneBoundsRef.current
-    const viewport = sharedExtent ?? canvasRef.current?.parentElement?.getBoundingClientRect()
-    if (!camera || !controls || !bounds || !viewport) return false
-    const fitted = fitCameraToBounds({
-      bounds,
-      position: camera.position as number[],
-      target: camera.target as number[],
-      up: camera.up as number[],
-      fov: Number(camera.fov),
-      width: viewport.width,
-      height: viewport.height,
-    })
-    if (!fitted) return false
-    Object.assign(camera, fitted)
-    const diameter = Math.hypot(...bounds[1].map((value, axis) => value - bounds[0][axis]))
-    Object.assign(controls, {
-      phiDelta: 0,
-      thetaDelta: 0,
-      scale: 1,
-      limits: { ...(controls.limits as object), minDistance: diameter * 1e-6, maxDistance: diameter * 1e6 },
-    })
-    cameraInitializedRef.current = true
-    return true
-  }, [savedCamera])
+  const fitCamera = useCallback(
+    (mode: 'scene' | 'selection' = 'scene') => {
+      const camera = cameraRef.current
+      const controls = controlsRef.current
+      const sharedExtent = savedCamera?.fitExtent(mode)
+      const bounds =
+        sharedExtent?.bounds ??
+        (mode === 'selection' ? (selectedBoundsRef.current ?? sceneBoundsRef.current) : sceneBoundsRef.current)
+      const viewport = sharedExtent ?? canvasRef.current?.parentElement?.getBoundingClientRect()
+      if (!camera || !controls || !bounds || !viewport) return false
+      const fitted = fitCameraToBounds({
+        bounds,
+        position: camera.position as number[],
+        target: camera.target as number[],
+        up: camera.up as number[],
+        fov: Number(camera.fov),
+        width: viewport.width,
+        height: viewport.height,
+      })
+      if (!fitted) return false
+      Object.assign(camera, fitted)
+      const diameter = Math.hypot(...bounds[1].map((value, axis) => value - bounds[0][axis]))
+      Object.assign(controls, {
+        phiDelta: 0,
+        thetaDelta: 0,
+        scale: 1,
+        limits: { ...(controls.limits as object), minDistance: diameter * 1e-6, maxDistance: diameter * 1e6 },
+      })
+      cameraInitializedRef.current = true
+      return true
+    },
+    [savedCamera],
+  )
 
   const publishCamera = useCallback(() => {
     const camera = cameraRef.current
@@ -622,9 +626,18 @@ function JscadViewer({
     const wheelHandler = (event: WheelEvent) => {
       event.preventDefault()
       event.stopPropagation()
-      const controlChange = orbit.zoom({ camera, controls, speed: 0.12 }, event.deltaY > 0 ? 1 : -1)
-      Object.assign(camera, controlChange.camera)
-      Object.assign(controls, controlChange.controls)
+      if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return
+      const position = camera.position as number[]
+      const target = camera.target as number[]
+      const distance = Math.hypot(...position.map((value, axis) => target[axis] - value))
+      if (!Number.isFinite(distance) || distance === 0) return
+      const scale = viewerScaleBar(distance, Number(camera.fov), canvas.clientHeight)
+      if (!scale) return
+      const modifier = event.ctrlKey ? (event.shiftKey ? 0.01 : 0.1) : event.shiftKey ? 10 : 1
+      const step = scale.length * modifier * (event.deltaY < 0 ? 1 : -1)
+      const offset = position.map((value, axis) => ((target[axis] - value) / distance) * step)
+      camera.position = position.map((value, axis) => value + offset[axis])
+      camera.target = target.map((value, axis) => value + offset[axis])
       const updated = orbit.update({ camera, controls })
       Object.assign(camera, updated.camera)
       Object.assign(controls, updated.controls)
@@ -846,14 +859,22 @@ function JscadViewer({
     const distance = Number.isFinite(currentDistance) && currentDistance > 0 ? currentDistance : fallbackDistance
     const direction = cameraViewDirections[view]
     const directionLength = Math.hypot(...direction)
+    const axis = view === 'x' ? 0 : view === 'y' ? 1 : view === 'z' ? 2 : -1
+    const offset = position.map((value, index) => value - target[index])
+    const aligned =
+      axis >= 0 &&
+      Number.isFinite(currentDistance) &&
+      currentDistance > 0 &&
+      Math.hypot(...offset.map((value, index) => (index === axis ? 0 : value))) <= currentDistance * 1e-6
+    const sign = aligned ? -Math.sign(offset[axis]) : 1
 
     Object.assign(cameraRef.current, {
-      position: direction.map((component, index) => target[index] + (component / directionLength) * distance),
+      position: direction.map((component, index) => target[index] + (component / directionLength) * distance * sign),
       target: [...target],
       up: view === 'z' ? [0, 1, 0] : [0, 0, 1],
     })
     Object.assign(controlsRef.current, { phiDelta: 0, scale: 1, thetaDelta: 0 })
-    if (view === 'default') fitCamera()
+    if (view === 'default') fitCamera('selection')
     renderWithControls()
   }
 
@@ -915,6 +936,7 @@ function JscadViewer({
         renderScene()
       },
       bounds: () => sceneBoundsRef.current,
+      selectedBounds: () => selectedBoundsRef.current,
       viewport: () => canvasRef.current?.parentElement?.getBoundingClientRect(),
       toolbar,
     })
@@ -978,14 +1000,15 @@ function JscadViewer({
               event.preventDefault()
               const dx = event.clientX - lastPoint.x
               const dy = event.clientY - lastPoint.y
+              const modifier = event.ctrlKey ? (event.shiftKey ? 0.01 : 0.1) : event.shiftKey ? 10 : 1
               if (lastPoint.button === 2) {
                 const rect = event.currentTarget.getBoundingClientRect()
                 Object.assign(
                   cameraRef.current,
                   panCamera({
                     aspect: cameraRef.current.aspect as number,
-                    deltaX: dx,
-                    deltaY: dy,
+                    deltaX: dx * modifier,
+                    deltaY: dy * modifier,
                     fov: cameraRef.current.fov as number,
                     height: rect.height,
                     position: cameraRef.current.position as number[],
@@ -995,12 +1018,18 @@ function JscadViewer({
                   }),
                 )
               } else {
-                const controlChange = renderer.controls.orbit.rotate(
-                  { camera: cameraRef.current, controls: controlsRef.current, speed: 0.006 },
-                  [dx, dy],
-                )
-                Object.assign(cameraRef.current, controlChange.camera)
-                Object.assign(controlsRef.current, controlChange.controls)
+                const bounds = selectedBoundsRef.current
+                const rotated = rotateCameraAroundPivot({
+                  deltaX: dx,
+                  deltaY: dy,
+                  pivot: bounds ? bounds[0].map((value, axis) => (value + bounds[1][axis]) / 2) : [0, 0, 0],
+                  position: cameraRef.current.position as number[],
+                  target: cameraRef.current.target as number[],
+                  up: cameraRef.current.up as number[],
+                  speed: 0.006 * modifier,
+                })
+                if (rotated) Object.assign(cameraRef.current, rotated)
+                Object.assign(controlsRef.current, { thetaDelta: 0, phiDelta: 0, scale: 1 })
               }
               lastPointRef.current = {
                 ...lastPoint,

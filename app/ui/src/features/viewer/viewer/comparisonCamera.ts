@@ -10,6 +10,7 @@ export type CameraPose = {
 export type ComparisonRenderer = {
   apply: (pose: CameraPose) => void
   bounds: () => readonly [readonly number[], readonly number[]] | null
+  selectedBounds?: () => readonly [readonly number[], readonly number[]] | null
   viewport: () => { width: number; height: number } | undefined
   toolbar: ComponentProps<typeof ViewerToolbar>
 }
@@ -52,11 +53,20 @@ export function createComparisonCamera(initial?: CameraPose | null) {
       }
     },
     getSnapshot: () => snapshot,
-    fitExtent() {
-      const bounds = [...renderers.values()].flatMap((renderer) => {
-        const box = renderer.bounds()
-        return box ? [box] : []
-      })
+    fitExtent(mode: 'scene' | 'selection' = 'scene') {
+      const selectedBounds =
+        mode === 'selection'
+          ? [...renderers.values()].flatMap((renderer) => {
+              const box = renderer.selectedBounds?.()
+              return box ? [box] : []
+            })
+          : []
+      const bounds = selectedBounds.length
+        ? selectedBounds
+        : [...renderers.values()].flatMap((renderer) => {
+            const box = renderer.bounds()
+            return box ? [box] : []
+          })
       const aspects = [...renderers.values()].flatMap((renderer) => {
         const viewport = renderer.viewport()
         return viewport && viewport.width > 0 && viewport.height > 0 ? [viewport.width / viewport.height] : []

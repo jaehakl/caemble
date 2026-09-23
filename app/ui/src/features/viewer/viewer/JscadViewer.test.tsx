@@ -233,6 +233,150 @@ it('keeps the camera when preflight mesh bounds and identity change', () => {
   expect(props.onRenderEnd).toHaveBeenCalledTimes(renderedBeforeUpdate + 1)
 })
 
+it.each(['m', 'mm'] as const)('moves the %s camera by scale-bar wheel steps', (lengthUnit) => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const view = render(
+    <JscadViewer
+      layers={[]}
+      lengthUnit={lengthUnit}
+      onRenderStart={vi.fn()}
+      onRenderEnd={vi.fn()}
+      onRenderError={vi.fn()}
+    />,
+  )
+  const canvas = view.container.querySelector('canvas')!
+  let height = 600
+  Object.defineProperty(canvas, 'clientHeight', { configurable: true, get: () => height })
+  const camera = (
+    vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
+      camera: { position: number[]; target: number[]; fov: number }
+    }
+  ).camera
+  camera.fov = Math.PI / 2
+
+  for (const { distance, viewportHeight, deltaY, ctrlKey, shiftKey, scaleLength, step } of [
+    { distance: 10, viewportHeight: 600, deltaY: -1, ctrlKey: false, shiftKey: false, scaleLength: 2, step: 2 },
+    { distance: 100, viewportHeight: 600, deltaY: -100, ctrlKey: false, shiftKey: false, scaleLength: 20, step: 20 },
+    { distance: 10, viewportHeight: 1200, deltaY: -1, ctrlKey: false, shiftKey: false, scaleLength: 1, step: 1 },
+    { distance: 10, viewportHeight: 600, deltaY: 1, ctrlKey: false, shiftKey: false, scaleLength: 2, step: -2 },
+    { distance: 10, viewportHeight: 600, deltaY: -1, ctrlKey: true, shiftKey: false, scaleLength: 2, step: 0.2 },
+    { distance: 10, viewportHeight: 600, deltaY: -1, ctrlKey: true, shiftKey: true, scaleLength: 2, step: 0.02 },
+    { distance: 10, viewportHeight: 600, deltaY: -1, ctrlKey: false, shiftKey: true, scaleLength: 2, step: 20 },
+  ]) {
+    height = viewportHeight
+    camera.position = [distance, 0, 0]
+    camera.target = [0, 0, 0]
+    fireEvent.wheel(canvas, { deltaY, ctrlKey, shiftKey })
+    expect(camera.position[0]).toBeCloseTo(distance - step)
+    expect(camera.target[0]).toBeCloseTo(-step)
+    expect(camera.position[0] - camera.target[0]).toBeCloseTo(distance)
+    expect(screen.getByLabelText('길이 Scale bar')).toHaveTextContent(`${scaleLength} ${lengthUnit}`)
+  }
+
+  height = 600
+  camera.position = [10, 0, 0]
+  camera.target = [0, 0, 0]
+  for (let wheel = 0; wheel < 6; wheel++) fireEvent.wheel(canvas, { deltaY: -1 })
+  expect(camera.position[0]).toBeCloseTo(-2)
+  expect(camera.target[0]).toBeCloseTo(-12)
+  fireEvent.wheel(canvas, { deltaY: -1 })
+  expect(camera.position[0]).toBeCloseTo(-4)
+  expect(camera.target[0]).toBeCloseTo(-14)
+  const position = [...camera.position]
+  const target = [...camera.target]
+  fireEvent.wheel(canvas, { deltaY: 0 })
+  expect(Array.from(camera.position)).toEqual(position)
+  expect(Array.from(camera.target)).toEqual(target)
+})
+
+it('applies drag modifiers to rotation and panning without carrying over earlier rotation', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const view = render(
+    <JscadViewer layers={[]} lengthUnit="m" onRenderStart={vi.fn()} onRenderEnd={vi.fn()} onRenderError={vi.fn()} />,
+  )
+  const canvas = view.container.querySelector('canvas')!
+  Object.assign(canvas, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+  const camera = (
+    vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
+      camera: { position: number[]; target: number[]; up: number[] }
+    }
+  ).camera
+
+  for (const { ctrlKey, shiftKey, angle } of [
+    { ctrlKey: false, shiftKey: false, angle: 0.06 },
+    { ctrlKey: true, shiftKey: false, angle: 0.006 },
+    { ctrlKey: true, shiftKey: true, angle: 0.0006 },
+    { ctrlKey: false, shiftKey: true, angle: 0.6 },
+  ]) {
+    camera.position = [0, -10, 0]
+    camera.target = [0, 0, 0]
+    camera.up = [0, 0, 1]
+    fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(canvas, { buttons: 1, clientX: 110, clientY: 100, ctrlKey, shiftKey })
+    fireEvent.pointerUp(canvas, { button: 0, clientX: 110, clientY: 100 })
+    expect(Math.atan2(camera.position[0], -camera.position[1])).toBeCloseTo(angle, 5)
+    expect(Array.from(camera.target)).toEqual([0, 0, 0])
+  }
+
+  camera.position = [0, -10, 0]
+  camera.target = [0, 0, 0]
+  camera.up = [0, 0, 1]
+  fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 100, clientY: 100 })
+  fireEvent.pointerMove(canvas, { buttons: 1, clientX: 110, clientY: 100 })
+  fireEvent.pointerMove(canvas, { buttons: 1, clientX: 120, clientY: 100, ctrlKey: true })
+  fireEvent.pointerUp(canvas, { button: 0, clientX: 120, clientY: 100 })
+  expect(Math.atan2(camera.position[0], -camera.position[1])).toBeCloseTo(0.066, 5)
+
+  camera.position = [3, -10, 5]
+  camera.target = [2, -1, 1]
+  camera.up = [0, 0, 1]
+  const positionRadius = Math.hypot(...camera.position)
+  const targetRadius = Math.hypot(...camera.target)
+  fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 100, clientY: 100 })
+  fireEvent.pointerMove(canvas, { buttons: 1, clientX: 130, clientY: 120 })
+  fireEvent.pointerUp(canvas, { button: 0, clientX: 130, clientY: 120 })
+  expect(Math.hypot(...camera.position)).toBeCloseTo(positionRadius, 5)
+  expect(Math.hypot(...camera.target)).toBeCloseTo(targetRadius, 5)
+  expect(Array.from(camera.target)).not.toEqual([2, -1, 1])
+  expect(camera.up[2]).toBeLessThan(1)
+
+  let basePan = 0
+  for (const { ctrlKey, shiftKey, multiplier } of [
+    { ctrlKey: false, shiftKey: false, multiplier: 1 },
+    { ctrlKey: true, shiftKey: false, multiplier: 0.1 },
+    { ctrlKey: true, shiftKey: true, multiplier: 0.01 },
+    { ctrlKey: false, shiftKey: true, multiplier: 10 },
+  ]) {
+    camera.position = [0, -10, 0]
+    camera.target = [0, 0, 0]
+    camera.up = [0, 0, 1]
+    fireEvent.pointerDown(canvas, { button: 2, buttons: 2, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(canvas, { buttons: 2, clientX: 130, clientY: 100, ctrlKey, shiftKey })
+    fireEvent.pointerUp(canvas, { button: 2, clientX: 130, clientY: 100 })
+    if (multiplier === 1) basePan = camera.position[0]
+    expect(camera.position[0]).toBeCloseTo(basePan * multiplier, 5)
+    expect(camera.target[0]).toBeCloseTo(basePan * multiplier, 5)
+  }
+})
+
 it('fits delayed small geometry instead of saving the empty initial camera, including StrictMode', () => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -395,6 +539,252 @@ it('uses the current content center and size when the user requests full fit', (
   expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
+it('rotates around the selected Geometry center and fits its bounds only on button click', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const layers = [
+    {
+      source: 'experiment' as const,
+      lengthUnit: 'm' as const,
+      parts: [
+        {
+          id: 'chosen',
+          geometry: primitives.cuboid({ center: [10, 0, 0], size: [2, 2, 2] }),
+          materialRole: 'body',
+          surfaces: [],
+        },
+        {
+          id: 'other',
+          geometry: primitives.cuboid({ center: [-10, 0, 0], size: [2, 2, 2] }),
+          materialRole: 'body',
+          surfaces: [],
+        },
+      ],
+      tree: { key: 'root', label: 'Geometry', children: [] },
+    },
+  ]
+  const selectionQuery = {
+    kind: 'geometry',
+    match: 'exact',
+    origin: 'code',
+    scope: { source: 'experiment' },
+    value: 'chosen',
+  } as const
+  const props = {
+    layers,
+    lengthUnit: 'm' as const,
+    onRenderStart: vi.fn(),
+    onRenderEnd: vi.fn(),
+    onRenderError: vi.fn(),
+  }
+  const view = render(<JscadViewer {...props} selectionQuery={selectionQuery} />)
+  const camera = (
+    vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
+      camera: { position: number[]; target: number[]; up: number[] }
+    }
+  ).camera
+  expect(camera.target[0]).toBeCloseTo(0)
+
+  const canvas = view.container.querySelector('canvas')!
+  Object.assign(canvas, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+  camera.position = [0, -20, 0]
+  camera.target = [0, 0, 0]
+  camera.up = [0, 0, 1]
+  const pivot = [10, 0, 0]
+  const radius = Math.hypot(...camera.position.map((value, axis) => value - pivot[axis]))
+  fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 100, clientY: 100 })
+  fireEvent.pointerMove(canvas, { buttons: 1, clientX: 130, clientY: 120 })
+  fireEvent.pointerUp(canvas, { button: 0, clientX: 130, clientY: 120 })
+  expect(Math.hypot(...camera.position.map((value, axis) => value - pivot[axis]))).toBeCloseTo(radius, 5)
+  expect(Math.hypot(...camera.position)).not.toBeCloseTo(20, 2)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
+  expect(camera.target).toEqual([10, 0, 0])
+  const selectedDistance = Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))
+  view.rerender(<JscadViewer {...props} selectionQuery={null} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
+  expect(camera.target).toEqual([0, 0, 0])
+  expect(Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))).toBeGreaterThan(
+    selectedDistance,
+  )
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
+it('fits selected Geometry across comparison viewers with different layer units', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const camera = createComparisonCamera()
+  const comparison: ViewerComparison = {
+    settings: createComparisonSettings(),
+    item: '',
+    side: 'preview',
+    controlsHost: null,
+    controlsOwner: false,
+    suspended: false,
+    camera,
+  }
+  const selected = {
+    kind: 'geometry',
+    match: 'exact',
+    origin: 'code',
+    scope: { source: 'experiment' },
+    value: 'chosen',
+  } as const
+  const props = { lengthUnit: 'm' as const, onRenderStart: vi.fn(), onRenderEnd: vi.fn(), onRenderError: vi.fn() }
+  const layers = (lengthUnit: 'm' | 'mm', center: number) => [
+    {
+      source: 'experiment' as const,
+      lengthUnit,
+      parts: [
+        {
+          id: 'chosen',
+          geometry: primitives.cuboid({
+            center: [center, 0, 0],
+            size: lengthUnit === 'mm' ? [2000, 2000, 2000] : [2, 2, 2],
+          }),
+          materialRole: 'body',
+          surfaces: [],
+        },
+        {
+          id: 'other',
+          geometry: primitives.cuboid({ center: [center + 100000, 0, 0] }),
+          materialRole: 'body',
+          surfaces: [],
+        },
+      ],
+      tree: { key: 'root', label: 'Geometry', children: [] },
+    },
+  ]
+  render(
+    <>
+      <ComparisonToolbar camera={camera} />
+      <ViewerComparisonContext.Provider value={comparison}>
+        <JscadViewer {...props} layers={layers('m', 1)} selectionQuery={selected} />
+      </ViewerComparisonContext.Provider>
+      <ViewerComparisonContext.Provider value={{ ...comparison, side: 'actual' }}>
+        <JscadViewer {...props} layers={layers('mm', 5000)} selectionQuery={selected} />
+      </ViewerComparisonContext.Provider>
+    </>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
+  expect(camera.current?.target[0]).toBeCloseTo(3)
+  expect(camera.current?.target.slice(1)).toEqual([0, 0])
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
+it.each(['x', 'y', 'z'] as const)('toggles the %s camera view across its axis', (viewName) => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  const view = render(
+    <JscadViewer layers={[]} lengthUnit="m" onRenderStart={vi.fn()} onRenderEnd={vi.fn()} onRenderError={vi.fn()} />,
+  )
+  const canvas = view.container.querySelector('canvas')!
+  Object.defineProperty(canvas, 'clientHeight', { configurable: true, value: 600 })
+  const camera = (
+    vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
+      camera: { position: number[]; target: number[]; up: number[] }
+    }
+  ).camera
+  camera.position = [8, 9, 10]
+  camera.target = [1, 2, 3]
+  const initialTarget = [...camera.target]
+  const distance = Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))
+  const axis = { x: 0, y: 1, z: 2 }[viewName]
+  const button = () => screen.getByRole('button', { name: `Set ${viewName} camera view` })
+  const expectDirection = (sign: number) => {
+    camera.position.forEach((value, index) =>
+      expect(value - camera.target[index]).toBeCloseTo(index === axis ? sign * distance : 0, 4),
+    )
+    expect(camera.up).toEqual(viewName === 'z' ? [0, 1, 0] : [0, 0, 1])
+  }
+
+  fireEvent.click(button())
+  expectDirection(1)
+  expect(Array.from(camera.target)).toEqual(initialTarget)
+  fireEvent.click(button())
+  expectDirection(-1)
+  fireEvent.click(button())
+  expectDirection(1)
+
+  fireEvent.wheel(canvas, { deltaY: -1 })
+  const movedTarget = [...camera.target]
+  expect(movedTarget).not.toEqual(initialTarget)
+  fireEvent.click(button())
+  expectDirection(-1)
+  expect(Array.from(camera.target)).toEqual(movedTarget)
+
+  fireEvent.click(screen.getByRole('button', { name: `Set ${viewName === 'x' ? 'y' : 'x'} camera view` }))
+  fireEvent.click(button())
+  expectDirection(1)
+})
+
+it('keeps an axis toggle after panning and starts from the positive side after free rotation', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const view = render(
+    <JscadViewer layers={[]} lengthUnit="m" onRenderStart={vi.fn()} onRenderEnd={vi.fn()} onRenderError={vi.fn()} />,
+  )
+  const canvas = view.container.querySelector('canvas')!
+  Object.assign(canvas, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+  const camera = (
+    vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
+      camera: { position: number[]; target: number[] }
+    }
+  ).camera
+  const button = screen.getByRole('button', { name: 'Set x camera view' })
+  fireEvent.click(button)
+  const distance = Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))
+
+  fireEvent.pointerDown(canvas, { button: 2, buttons: 2, clientX: 100, clientY: 100 })
+  fireEvent.pointerMove(canvas, { buttons: 2, clientX: 130, clientY: 100 })
+  fireEvent.pointerUp(canvas, { button: 2, clientX: 130, clientY: 100 })
+  const pannedTarget = [...camera.target]
+  fireEvent.click(button)
+  expect(camera.position[0] - camera.target[0]).toBeCloseTo(-distance, 4)
+  expect(Array.from(camera.target)).toEqual(pannedTarget)
+
+  fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 100, clientY: 100 })
+  fireEvent.pointerMove(canvas, { buttons: 1, clientX: 130, clientY: 100 })
+  fireEvent.pointerUp(canvas, { button: 0, clientX: 130, clientY: 100 })
+  expect(Math.abs(camera.position[1] - camera.target[1])).toBeGreaterThan(0.01)
+  const rotatedTarget = [...camera.target]
+  fireEvent.click(button)
+  expect(camera.position[0] - camera.target[0]).toBeCloseTo(distance, 4)
+  expect(Array.from(camera.target)).toEqual(rotatedTarget)
+})
+
 it('shares camera gestures and one toolbar, preserving the pose through late mount and result replacement', () => {
   const resizeCallbacks: (() => void)[] = []
   vi.stubGlobal(
@@ -494,10 +884,14 @@ it('shares camera gestures and one toolbar, preserving the pose through late mou
     fireEvent.wheel(target, { deltaY: -1 })
     expectSynchronized()
   }
-  for (const direction of ['x', 'y', 'z', 'default']) {
+  for (const direction of ['x', 'y', 'z']) {
+    fireEvent.click(screen.getByRole('button', { name: `Set ${direction} camera view` }))
+    expectSynchronized()
     fireEvent.click(screen.getByRole('button', { name: `Set ${direction} camera view` }))
     expectSynchronized()
   }
+  fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
+  expectSynchronized()
   expect(camera.current!.target).toEqual([6, 1, 1])
   const beforeResize = structuredClone(camera.current)
   vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(new DOMRect(0, 0, 250, 600))

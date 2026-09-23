@@ -1,4 +1,4 @@
-import { geometries } from '@jscad/modeling'
+import { geometries, measurements } from '@jscad/modeling'
 import type { CadScenePart, CadSceneTreeNode } from '@/lib/cad/evaluation/types'
 import { cross, dot, subtract } from '@/lib/cad/geometry/vec3'
 import type {
@@ -98,6 +98,51 @@ export function resolveCadViewerSelection(
     const rightLayer = `${right.source}:${right.taskName ?? ''}`
     return leftLayer.localeCompare(rightLayer) || left.geometryId.localeCompare(right.geometryId)
   })
+}
+
+export function selectedCadViewerBounds(
+  layers: readonly JscadViewerLayer[],
+  query: CadViewerSelectionQuery | null,
+  matches: readonly CadViewerSelectionMatch[],
+): readonly [readonly number[], readonly number[]] | null {
+  const first = matches[0]
+  if (!query || !first) return null
+  const layer = layers.find((candidate) => candidate.source === first.source && candidate.taskName === first.taskName)
+  if (!layer) return null
+  const ids = new Set([first.geometryId])
+  if (query.kind === 'geometry') {
+    let matchingNode: CadSceneTreeNode | undefined
+    visitSceneTree(layer.tree, (node) => {
+      const matches =
+        query.match === 'exact'
+          ? node.globalId === query.value || node.groupId === query.value || node.geometryId === query.value
+          : node.globalId?.split('.').slice(-1)[0] === query.value
+      if (
+        !matchingNode &&
+        matches &&
+        (node.geometryId === first.geometryId || node.geometryIds?.includes(first.geometryId))
+      ) {
+        matchingNode = node
+      }
+    })
+    matchingNode?.geometryIds?.forEach((id) => ids.add(id))
+  }
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  for (const part of layer.parts) {
+    if (!ids.has(part.id)) continue
+    const bounds = measurements.measureBoundingBox(
+      part.geometry as Parameters<typeof measurements.measureBoundingBox>[0],
+    )
+    for (let axis = 0; axis < 3; axis++) {
+      min[axis] = Math.min(min[axis], bounds[0][axis])
+      max[axis] = Math.max(max[axis], bounds[1][axis])
+    }
+  }
+  return min.every((value, axis) => Number.isFinite(value) && Number.isFinite(max[axis]) && max[axis] >= value) &&
+    Math.hypot(...max.map((value, axis) => value - min[axis])) > 0
+    ? [min, max]
+    : null
 }
 
 export function createCadViewerPickParts(layers: readonly JscadViewerLayer[]): CadViewerPickPart[] {

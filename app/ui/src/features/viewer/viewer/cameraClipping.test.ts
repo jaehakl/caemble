@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitCameraToBounds, panCamera } from './cameraClipping'
+import { fitCameraToBounds, panCamera, rotateCameraAroundPivot } from './cameraClipping'
 
 describe('fitCameraToBounds', () => {
   it.each([1e-6, 1e-3, 1])('fits off-center content tightly at scale %s in narrow and wide viewports', (scale) => {
@@ -100,5 +100,58 @@ describe('panCamera', () => {
     expect(result.position.every(Number.isFinite)).toBe(true)
     expect(result.target.every(Number.isFinite)).toBe(true)
     expect(result.target).not.toEqual([0, 0, 0])
+  })
+})
+
+describe('rotateCameraAroundPivot', () => {
+  const projection = (camera: { position: number[]; target: number[]; up: number[] }, point: number[]) => {
+    const cross = (left: number[], right: number[]) => [
+      left[1] * right[2] - left[2] * right[1],
+      left[2] * right[0] - left[0] * right[2],
+      left[0] * right[1] - left[1] * right[0],
+    ]
+    const dot = (left: number[], right: number[]) => left.reduce((sum, value, axis) => sum + value * right[axis], 0)
+    const normalize = (vector: number[]) => vector.map((value) => value / Math.hypot(...vector))
+    const forward = normalize(camera.target.map((value, axis) => value - camera.position[axis]))
+    const right = normalize(cross(forward, camera.up))
+    const screenUp = cross(right, forward)
+    const offset = point.map((value, axis) => value - camera.position[axis])
+    const depth = dot(offset, forward)
+    return [dot(offset, right) / depth, dot(offset, screenUp) / depth]
+  }
+
+  it('keeps the world origin at the same screen location with an offset target', () => {
+    const camera = { position: [3, -10, 5], target: [2, -1, 1], up: [0, 0, 1] }
+    const before = projection(camera, [0, 0, 0])
+    const rotated = rotateCameraAroundPivot({ ...camera, pivot: [0, 0, 0], deltaX: 30, deltaY: 20, speed: 0.006 })!
+    const after = projection(rotated, [0, 0, 0])
+    after.forEach((value, axis) => expect(value).toBeCloseTo(before[axis], 8))
+    expect(Math.hypot(...rotated.position)).toBeCloseTo(Math.hypot(...camera.position), 8)
+    expect(Math.hypot(...rotated.target)).toBeCloseTo(Math.hypot(...camera.target), 8)
+    expect(Math.hypot(...rotated.up)).toBeCloseTo(1, 8)
+  })
+
+  it('makes scene landmarks follow rightward and downward drags', () => {
+    const camera = { position: [0, -10, 0], target: [0, 0, 0], up: [0, 0, 1] }
+    const landmark = [0, 1, 0]
+    const right = rotateCameraAroundPivot({ ...camera, pivot: [0, 0, 0], deltaX: 10, deltaY: 0, speed: 0.006 })!
+    const down = rotateCameraAroundPivot({ ...camera, pivot: [0, 0, 0], deltaX: 0, deltaY: 10, speed: 0.006 })!
+    expect(projection(right, landmark)[0]).toBeGreaterThan(0)
+    expect(projection(down, landmark)[1]).toBeLessThan(0)
+  })
+
+  it('keeps an offset selected center fixed on screen while rotating the whole camera pose', () => {
+    const pivot = [12, -3, 5]
+    const camera = { position: [3, -10, 5], target: [2, -1, 1], up: [0, 0, 1] }
+    const before = projection(camera, pivot)
+    const rotated = rotateCameraAroundPivot({ ...camera, pivot, deltaX: 30, deltaY: 20, speed: 0.006 })!
+    projection(rotated, pivot).forEach((value, axis) => expect(value).toBeCloseTo(before[axis], 8))
+    for (const key of ['position', 'target'] as const) {
+      expect(Math.hypot(...rotated[key].map((value, axis) => value - pivot[axis]))).toBeCloseTo(
+        Math.hypot(...camera[key].map((value, axis) => value - pivot[axis])),
+        8,
+      )
+    }
+    expect(Math.hypot(...rotated.up)).toBeCloseTo(1, 8)
   })
 })
