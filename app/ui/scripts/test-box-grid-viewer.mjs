@@ -20,6 +20,8 @@ const server = await createServer({
       import React from 'react'; import { createRoot } from 'react-dom/client';
       import modeling from '@jscad/modeling';
       import { ViewerLayout } from '/src/features/viewer/viewer/ViewerTools.tsx';
+      import { ViewerControls } from '/src/features/viewer/viewer/comparisonSettings.tsx';
+      import { ViewerDisplayControls } from '/src/features/viewer/viewer/ViewerDisplayControls.tsx';
       import { ViewerComparisonContext, createComparisonSettings } from '/src/features/viewer/viewer/comparisonSettings.tsx';
       import { createComparisonCamera } from '/src/features/viewer/viewer/comparisonCamera.ts';
       import { ComparisonToolbar } from '/src/features/viewer/viewer/ComparisonToolbar.tsx';
@@ -45,7 +47,7 @@ const server = await createServer({
       const noop=()=>{}; const root=createRoot(document.getElementById('fixture'));
       window.leaf={dtype:'float64',shape,data:values,axes,tensorOrder:1,boxGrid:grid,unit:'m'};
       window.executeCopy = (code) => new Function('samples','boxGrid','return '+code)({signal:window.leaf},boxGrid);
-      window.renderBox = (compatible=true)=>root.render(<BoxGridResult name="signal" rules={[rule]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={compatible} renderViewer={(data,geometryOpacity)=><JscadViewer layers={layers} lengthUnit="m" heatmapRenderData={data} geometryOpacity={geometryOpacity} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>}/>);
+      window.renderBox = (compatible=true)=>root.render(<ViewerLayout><ViewerControls placement="data"><ViewerDisplayControls contracts={{}} output="signal" onOutput={noop} geometry={0} onGeometry={noop} visualizations={{}} onVisualizations={noop} meshHost={noop}/></ViewerControls><BoxGridResult name="signal" rules={[rule]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={compatible} renderViewer={(data,geometryOpacity)=><JscadViewer layers={layers} lengthUnit="m" heatmapRenderData={data} geometryOpacity={geometryOpacity} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>}/></ViewerLayout>);
       window.renderComparison=()=>{
         const settings=createComparisonSettings(), camera=createComparisonCamera();
         root.render(<ViewerLayout><ComparisonToolbar camera={camera}/><div className="flex h-full">
@@ -71,12 +73,12 @@ const server = await createServer({
       };
       window.renderCalculation=()=>root.render(<CalculationOutputChart preview={{status:'success',output:normalizeCalculationOutput(boxGrid.project(window.leaf,{axes:['x','y','z'],component:'magnitude'}))}}/>);
       window.renderMesh=()=>root.render(<MeshFieldResult field={{label:'mesh',identity:'mesh',lengthUnit:'m',valueUnit:'m',quantity:'Displacement',valueKind:'displacement',location:'node',points:new Float64Array([0,0,0,1,0,0,0,1,0,0,0,1]),cells:new Uint32Array([0,1,2,3]),values:new Float64Array(12).fill(.01),componentCount:3,components:['x','y','z'],boundaryFaces:new Uint32Array([0,1,2,0,1,3,0,2,3,1,2,3]),boundaryCells:new Uint32Array([0,0,0,0]),cellRegions:new Uint32Array([0]),regionIds:['body'],supportNodes:new Uint32Array(),loadPoints:new Float64Array(),loadVectors:new Float64Array()}}/>);
-      window.renderWorkbench = (mismatch='')=>root.render(<WorkbenchViewer
+      window.renderWorkbench = (mismatch='',extra=true)=>root.render(<WorkbenchViewer
         experiment={{kind:'experiment',sourceBundle:{files:{'simulate.py':'fixture'}}}}
         experimentDocument={{scene:layers[0],evaluatedSnapshot:{sourceHash:'source',variables:{}},handleRenderStart:noop,handleRenderEnd:noop,handleRenderError:message=>{throw new Error(message)}}}
         resultSourceHash={mismatch==='source'?'changed':'source'} resultVarsHash={mismatch==='vars'?'changed':materialVarsHash({})}
-        resultContracts={{signal:{task:'solid',output:'signal',solver:{name:'fixture',version:'1'},catalogRevision:'frozen',artifactType:'fixture@1',schema:rule.result,visualization:{kind:'box-grid'}}}}
-        recordedRules={[rule]} recordedData={{signal:tensor}} autoSelectResult
+        resultContracts={{signal:{task:'solid',output:'signal',solver:{name:'fixture',version:'1'},catalogRevision:'frozen',artifactType:'fixture@1',schema:rule.result,visualization:{kind:'box-grid'}},...(extra?{summary:{task:'solid',output:'summary',solver:{name:'fixture',version:'1'},catalogRevision:'frozen',artifactType:'fixture@1',schema:rule.result,visualization:{kind:'tensor'}}}:{})}}
+        recordedRules={extra?[rule,{...rule,label:'summary'}]:[rule]} recordedData={extra?{signal:tensor,summary:tensor}:{signal:tensor}} autoSelectResult
         onFindSelectionSource={noop} onSelectionQueryChange={noop} onSelectionSourcePathsChange={noop} selectionQuery={null} selectionSourceStatus={{}}
       />);
       window.renderBox();
@@ -112,6 +114,9 @@ const server = await createServer({
       window.renderScalarQA=(kind)=>root.render(<ScalarPlot key={kind} kind={kind} plot={{
         axes:[{name:'y',ticks:[0,1]},{name:'x',ticks:[0,1,2]}],
         shape:[2,3],values:[0,1,2,3,4,5],range:[0,5]
+      }}/>);
+      window.renderSingletonQA=()=>root.render(<ScalarPlot key="singleton" kind="heatmap" plot={{
+        axes:[{name:'y',ticks:[0]},{name:'x',ticks:[0]}],shape:[1,1],values:[3],range:[3,3]
       }}/>);
 
       window.renderRasterQA=({overlay=false,width=1280,height=720,nonuniform=false,range=[0,1],values: supplied}={})=>{
@@ -283,6 +288,12 @@ try {
       }
     }
   }
+  await layoutPage.evaluate(() => window.renderSingletonQA())
+  await layoutPage.getByRole('img', { name: 'heatmap 차트', exact: true }).waitFor()
+  await layoutPage.waitForFunction(() => {
+    const canvas = document.querySelector('canvas[aria-label="heatmap 차트"]')
+    return canvas.getContext('2d').getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data[3] === 255
+  })
   await layoutPage.evaluate(() => window.renderRasterQA({ width: 800, height: 600 }))
   await layoutPage.getByRole('button', { name: '원본 크기', exact: true }).click()
   const nativeLayout = await stableChartLayout('Native heatmap')
@@ -348,7 +359,9 @@ try {
   assert.equal(await page.getByLabel('표본 조회').count(), 0)
   assert.equal(await page.getByText(/표본 표시/).count(), 0)
   const initialCanvas = await page.locator('[data-viewer-canvas]').boundingBox()
-  await open('comp 축 역할')
+  await open('Output · signal')
+  assert.equal(await page.getByRole('button', { name: '벡터 화살표 |V|' }).getAttribute('aria-pressed'), 'true')
+  assert.equal(await page.getByRole('button', { name: '벡터 |V|²' }).count(), 1)
   await open('f 축 역할')
   assert.deepEqual(
     await page.locator('[data-viewer-canvas]').boundingBox(),
@@ -356,7 +369,7 @@ try {
     'Popovers must not resize the canvas',
   )
   assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).count(), 1)
-  assert.equal(await page.getByLabel('성분', { exact: true }).inputValue(), 'magnitude')
+  assert.equal(await page.getByRole('button', { name: 'comp 축 역할' }).count(), 0)
   assert.equal(await page.getByLabel('frequency 역할').inputValue(), 'sum')
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/default-cloud.png' })
   assert.equal(await page.getByRole('slider', { name: 'Geometry 투명도', exact: true }).count(), 0)
@@ -371,18 +384,14 @@ try {
     line.axes.map((axis) => axis.ticks.length),
     [4],
   )
-  await role('x', 'mean')
-  assert.equal(await page.getByRole('button', { name: 'Histogram', exact: true }).getAttribute('aria-pressed'), 'true')
-  await page.getByLabel('집계 결과값').waitFor()
-  await page.getByRole('button', { name: '변환 코드 복사', exact: true }).click()
-  const scalar = await page.evaluate(async () => window.executeCopy(await navigator.clipboard.readText()))
-  assert.deepEqual(scalar.axes, [])
-  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/histogram-marker.png' })
-  await role('x', 'space')
+  assert.equal(await page.getByRole('button', { name: 'Histogram', exact: true }).count(), 0)
   await role('y', 'space')
   await role('z', 'space')
-  await open('comp 축 역할')
-  await page.getByLabel('성분', { exact: true }).selectOption('arrows')
+  await open('Output · signal')
+  await page.getByRole('button', { name: '벡터 |V|²' }).click()
+  await ready()
+  assert.equal(await page.getByRole('button', { name: '벡터 |V|²' }).getAttribute('aria-pressed'), 'true')
+  await page.getByRole('button', { name: '벡터 화살표 |V|' }).click()
   await role('time', 'mean')
   await role('frequency', 'mean')
   await open('채널 축 역할')
@@ -502,7 +511,6 @@ try {
   await page.waitForSelector('[data-result-visualization="point-cloud"] canvas')
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/calculation-3d.png' })
   await page.evaluate(() => window.renderLargeBox())
-  await page.getByRole('button', { name: 'Histogram', exact: true }).click()
   await page.getByRole('button', { name: 'Line Chart', exact: true }).click()
   await ready()
   assert.equal(await page.getByRole('alert').count(), 0)
@@ -517,28 +525,66 @@ try {
   await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
   await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
   await page.getByRole('button', { name: 'Output · signal', exact: true }).click()
-  const spaceSettings = page.getByRole('region', { name: '3D 설정', exact: true })
-  const chartSettings = page.getByRole('region', { name: '차트 설정', exact: true })
-  assert.equal(await spaceSettings.getByLabel('x 역할', { exact: true }).count(), 0)
-  assert.equal(await spaceSettings.getByRole('button', { name: 'Heatmap', exact: true }).count(), 0)
-  await chartSettings.getByRole('button', { name: 'Line Chart', exact: true }).click()
+  const chartSettings = page.getByRole('toolbar', { name: 'Output 설정 툴바', exact: true })
+  assert.equal(await page.getByRole('region', { name: '3D 설정', exact: true }).count(), 0)
+  assert.equal(await page.getByRole('region', { name: '차트 설정', exact: true }).count(), 0)
+  assert.equal(await chartSettings.getByRole('button', { name: '축 지정', exact: true }).count(), 0)
+  assert.equal(await chartSettings.getByRole('button', { name: 'Histogram', exact: true }).count(), 0)
+  assert.equal(await chartSettings.getByRole('button', { name: 'Line Chart', exact: true }).count(), 0)
+  assert.equal(await chartSettings.getByLabel('frequency 역할').count(), 0)
+  const outputMenu = page.getByRole('menu', { name: 'Output · signal', exact: true })
+  assert.equal(await outputMenu.count(), 1)
+  const axisSettings = outputMenu.getByRole('region', { name: 'Box Grid 축 설정', exact: true })
+  assert.equal(await axisSettings.count(), 1)
+  assert.equal(await axisSettings.locator('[aria-label$="축 설정"]').count(), 5)
+  assert.equal(await axisSettings.getByRole('button', { name: 'Line Chart', exact: true }).count(), 1)
+  assert.equal(await axisSettings.getByRole('button', { name: 'Heatmap', exact: true }).count(), 1)
+  await axisSettings.getByRole('button', { name: 'Line Chart', exact: true }).click()
+  await axisSettings.getByRole('button', { name: 'y 주 축', exact: true }).click()
   await ready()
-  assert.equal(await page.getByRole('menu', { name: 'Output · signal', exact: true }).count(), 1)
-  assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
+  assert.equal(
+    await axisSettings.getByRole('button', { name: 'y 주 축', exact: true }).getAttribute('aria-pressed'),
+    'true',
+  )
+  await page.getByLabel('frequency 적분 방법').selectOption('index')
+  await setRange('frequency index', 1)
+  await ready()
+  assert.ok((await page.getByLabel('차트 축 설정').innerText()).includes('f · 개별 index 1 · 10 Hz'))
+  assert.equal(await outputMenu.count(), 1)
+  await page.getByRole('menuitemradio', { name: 'summary', exact: true }).click()
+  assert.equal(await page.getByRole('menu', { name: 'Output · summary', exact: true }).count(), 1)
+  assert.equal(await page.getByRole('region', { name: 'Box Grid 축 설정' }).count(), 0)
+  await page.getByRole('menuitemradio', { name: 'signal', exact: true }).click()
+  await ready()
+  assert.equal(await page.getByRole('button', { name: 'y 주 축', exact: true }).getAttribute('aria-pressed'), 'true')
   await page.keyboard.press('Escape')
+  assert.equal(await page.getByLabel('frequency 적분 방법').count(), 0)
+  assert.ok((await page.getByLabel('차트 축 설정').innerText()).includes('f · 개별 index 1 · 10 Hz'))
+  assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
+  await page.setViewportSize({ width: 480, height: 650 })
+  await page.getByRole('button', { name: 'Output · signal', exact: true }).click()
+  const narrowMenu = page.getByRole('menu', { name: 'Output · signal', exact: true })
+  const narrowBounds = await narrowMenu.boundingBox()
+  assert.ok(narrowBounds.x >= 0 && narrowBounds.x + narrowBounds.width <= 480)
+  assert.ok(
+    await narrowMenu.getByRole('region', { name: 'Box Grid 축 설정' }).evaluate((section) => {
+      const right = section.parentElement
+      return right.scrollWidth > right.clientWidth
+    }),
+    'The axis area scrolls horizontally in a narrow Output menu',
+  )
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ width: 1200, height: 850 })
   for (const mismatch of ['source', 'vars']) {
-    await page.evaluate((value) => window.renderWorkbench(value), mismatch)
+    await page.evaluate((value) => window.renderWorkbench(value, false), mismatch)
     await ready()
     assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
-    assert.equal(
-      await page
-        .getByText(
-          mismatch === 'source' ? 'Geometry와 결과의 source가 다릅니다.' : 'Geometry와 결과의 Vars가 다릅니다.',
-          { exact: false },
-        )
-        .count(),
-      1,
+    const mismatchMessage = page.getByText(
+      mismatch === 'source' ? 'Geometry와 결과의 source가 다릅니다.' : 'Geometry와 결과의 Vars가 다릅니다.',
+      { exact: false },
     )
+    await mismatchMessage.waitFor()
+    assert.equal(await mismatchMessage.count(), 1)
   }
   await page.evaluate(() => window.renderWorkbench())
   await page.getByRole('button', { name: 'Output · signal', exact: true }).waitFor()
@@ -779,7 +825,7 @@ try {
   }
   assert.deepEqual(errors, [])
   console.log(
-    'Box Grid browser QA passed: four charts, code execution, playback, overlays, fixed range, narrow and comparison layouts, Calculation 3D, mesh layout.',
+    'Box Grid browser QA passed: chart layout, axis selection, code execution, playback, overlays, fixed range, narrow and comparison layouts, Calculation 3D, mesh layout.',
   )
 } finally {
   await browser?.close()

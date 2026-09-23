@@ -6,11 +6,14 @@ import type { BoxGridData } from '@/contracts/boxGrid'
 import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import { BoxGridResult } from './BoxGridResult'
+import { ViewerDisplayControls } from './ViewerDisplayControls'
+import { ViewerLayout } from './ViewerTools'
 import { WorkbenchViewer, type WorkbenchViewerProps } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { calculateBoxGridView, type BoxGridViewRequest } from './boxGridViewData'
 import {
   createComparisonSettings,
   ViewerComparisonContext,
+  ViewerControls,
   type ComparisonSettings,
   type ViewerComparison,
 } from './comparisonSettings'
@@ -19,16 +22,31 @@ vi.mock('./ScalarPlot', () => ({
   ScalarPlot: (props: unknown) => <output data-testid="plot">{JSON.stringify(props)}</output>,
 }))
 vi.mock('./JscadViewer', () => ({ default: () => <div>3D scene</div> }))
+const projectionRequests: BoxGridViewRequest[] = []
 
 function openPanel(name: string) {
   const button = screen.queryByRole('button', { name })
   if (!button) return
   if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button)
 }
+function openComponent() {
+  const output = screen.getAllByRole('button', { name: /^Output ·/ })[0]
+  if (output.getAttribute('aria-expanded') !== 'true') fireEvent.keyDown(output, { key: 'ArrowDown' })
+}
 function changeRole(axis: 'time' | 'frequency' | 'y', role: string) {
   const label = axis === 'time' ? 't' : axis === 'frequency' ? 'f' : axis
   openPanel(`${label} 축 역할`)
   fireEvent.change(screen.getByLabelText(`${axis} 역할`), { target: { value: role } })
+}
+
+function openChartAxes() {
+  if (!screen.queryByRole('button', { name: 'x 주 축' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Output ·/ }), { key: 'ArrowDown' })
+}
+
+function selectChartAxis(axis: 'x' | 'y' | 'z' | 't' | 'f', role: '주 축' | '보조축') {
+  openChartAxes()
+  fireEvent.click(screen.getByRole('button', { name: `${axis} ${role}` }))
 }
 
 function restoredSettings() {
@@ -40,13 +58,29 @@ function restoredSettings() {
   return settings
 }
 
-function fixture(name: string, scale: number, times = 3, frequencies?: readonly number[], componentCount = 2) {
-  const shape = [2, 2, 1, times, frequencies?.length ?? 2, frequencies ? 2 : 1, componentCount]
+function fixture(
+  name: string,
+  scale: number,
+  times = 3,
+  frequencies?: readonly number[],
+  componentCount = 2,
+  spatialShape: readonly [number, number, number] = [2, 2, 1],
+) {
+  const shape = [...spatialShape, times, frequencies?.length ?? 2, frequencies ? 2 : 1, componentCount]
   const axisNames = ['x', 'y', 'z', 'time', 'frequency', 'amplitudePhase', 'component']
   const grid: BoxGridData = {
     version: 1,
     sampling: 'point',
-    components: componentCount === 3 ? ['x', 'y', 'z'] : componentCount === 1 ? ['value'] : ['a', 'b'],
+    components:
+      componentCount === 9
+        ? ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz']
+        : componentCount === 6
+          ? ['xx', 'yy', 'zz', 'xy', 'yz', 'xz']
+          : componentCount === 3
+            ? ['x', 'y', 'z']
+            : componentCount === 1
+              ? ['value']
+              : ['a', 'b'],
     channels: frequencies ? ['amplitude', 'phase'] : ['value'],
     channelUnits: frequencies ? ['m', 'rad'] : ['m'],
     origin: [0, 0, 0],
@@ -64,7 +98,7 @@ function fixture(name: string, scale: number, times = 3, frequencies?: readonly 
   const result: RecordedDataRule['result'] & { tensorOrder: number } = {
     dtype: 'float64',
     quantityKind: 'Length',
-    tensorOrder: componentCount === 3 ? 1 : 0,
+    tensorOrder: componentCount === 9 || componentCount === 6 ? 2 : componentCount === 3 ? 1 : 0,
     unit: 'm',
     boxGrid: grid,
     axes: axisNames.map((name) => (name === 'frequency' ? { name, unit: 'Hz', quantityKind: 'Frequency' } : { name })),
@@ -104,6 +138,7 @@ function Pair({
   suspended = false,
   frequencies,
   componentCount = 2,
+  spatialShape,
 }: {
   settings: ComparisonSettings
   role?: 'space' | 'chart'
@@ -114,14 +149,15 @@ function Pair({
   suspended?: boolean
   componentCount?: number
   frequencies?: readonly [readonly number[], readonly number[]]
+  spatialShape?: readonly [number, number, number]
 }) {
   const [host, setHost] = useState<HTMLDivElement | null>(null)
   const input = useMemo(
     () => [
-      fixture(name, scale, times, frequencies?.[0], componentCount),
-      fixture(name, scale * 10, times, frequencies?.[1], componentCount),
+      fixture(name, scale, times, frequencies?.[0], componentCount, spatialShape),
+      fixture(name, scale * 10, times, frequencies?.[1], componentCount, spatialShape),
     ],
-    [name, scale, times, frequencies, componentCount],
+    [name, scale, times, frequencies, componentCount, spatialShape],
   )
   const contexts = useMemo(
     () =>
@@ -136,7 +172,7 @@ function Pair({
       })),
     [settings, name, host, suspended, role],
   )
-  return (
+  const views = (
     <>
       <div ref={setHost} aria-label="Shared controls" />
       {visible &&
@@ -155,14 +191,33 @@ function Pair({
         ))}
     </>
   )
+  return (
+    <ViewerLayout>
+      <ViewerControls placement="data">
+        <ViewerDisplayControls
+          contracts={{}}
+          output={name}
+          onOutput={() => {}}
+          geometry={0.9}
+          onGeometry={() => {}}
+          visualizations={{}}
+          onVisualizations={() => {}}
+          meshHost={() => {}}
+        />
+      </ViewerControls>
+      {views}
+    </ViewerLayout>
+  )
 }
 
 beforeEach(() => {
+  projectionRequests.length = 0
   vi.stubGlobal(
     'Worker',
     class {
       onmessage: ((event: { data: unknown }) => void) | null = null
       postMessage(request: BoxGridViewRequest) {
+        projectionRequests.push(request)
         const result = calculateBoxGridView(request)
         queueMicrotask(() => this.onmessage?.({ data: { result } }))
       }
@@ -178,10 +233,10 @@ afterEach(() => {
 })
 
 it.each([
-  { label: 'complex vector', frequencies: [1, 2], componentCount: 3, animation: 'oscillation', component: 'magnitude' },
+  { label: 'complex vector', frequencies: [1, 2], componentCount: 3, animation: 'oscillation', component: 'arrows' },
   { label: 'complex scalar', frequencies: [1, 2], componentCount: 1, animation: 'oscillation', component: 0 },
   { label: 'real scalar', frequencies: undefined, componentCount: 1, animation: 'off', component: 0 },
-  { label: 'DC vector', frequencies: [0], componentCount: 3, animation: 'off', component: 'magnitude' },
+  { label: 'DC vector', frequencies: [0], componentCount: 3, animation: 'off', component: 'arrows' },
 ])(
   'opens $label with XYZ points, frequency sum and no autoplay',
   async ({ frequencies, componentCount, animation, component }) => {
@@ -243,7 +298,7 @@ it('shows loading for initial and changed views but keeps frame calculations vis
   screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'true'))
   expect(screen.getByLabelText('Animation 시간')).toHaveTextContent('1.25000e-1 s')
   await complete()
-  openPanel('comp 축 역할')
+  openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
   screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
   await complete()
@@ -260,7 +315,7 @@ it('synthesizes different frequency grids at one shared time and uses their comb
   ] as const
   const view = render(<Pair settings={settings} times={1} frequencies={frequencies} />)
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
-  openPanel('comp 축 역할')
+  openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
   openPanel('채널 축 역할')
   fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'oscillation' } })
@@ -348,7 +403,7 @@ it('shares one toolbar, retains settings through replacement and remount, and co
   expect(screen.getAllByLabelText('시각화 도구모음')).toHaveLength(1)
   const ranges = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)
   expect(ranges[1][1]).toBeCloseTo(ranges[0][1] * 10)
-  openPanel('comp 축 역할')
+  openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '1' } })
   changeRole('time', 'index')
   changeRole('y', 'space')
@@ -361,7 +416,7 @@ it('shares one toolbar, retains settings through replacement and remount, and co
       screen.getAllByTestId('plot').every((node) => JSON.stringify(JSON.parse(node.textContent!).range) === '[-5,25]'),
     ).toBe(true),
   )
-  openPanel('comp 축 역할')
+  openComponent()
   expect(screen.getByLabelText('성분')).toHaveValue('1')
   expect(settings.values.get('signal:box.axes')).toEqual(['y', 'x'])
   view.rerender(<Pair settings={settings} visible={false} />)
@@ -369,7 +424,7 @@ it('shares one toolbar, retains settings through replacement and remount, and co
   expect(screen.getByRole('button', { name: '값 범위 고정' })).toHaveAttribute('aria-pressed', 'false')
   view.rerender(<Pair settings={settings} />)
   expect(screen.getByLabelText('범위 최솟값')).toHaveValue(-5)
-  openPanel('comp 축 역할')
+  openComponent()
   expect(screen.getByLabelText('성분')).toHaveValue('1')
 })
 
@@ -459,7 +514,7 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
   const view = render(<WorkbenchViewer {...props} />)
   await waitFor(() => expect(screen.getByTestId('plot')).toBeInTheDocument())
   fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
-  openPanel('comp 축 역할')
+  openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '1' } })
   fireEvent.click(screen.getByLabelText('값 범위 고정'))
   fireEvent.change(screen.getByLabelText('범위 최댓값'), { target: { value: '123' } })
@@ -468,12 +523,12 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
   expect(screen.getByLabelText('범위 최댓값')).toHaveValue(123)
   view.rerender(<WorkbenchViewer {...props} resultErrors={{ signal: 'Prediction failed' }} />)
   expect(screen.getAllByText(/Prediction failed/)[0]).toBeInTheDocument()
-  openPanel('comp 축 역할')
+  openComponent()
   expect(screen.getByLabelText('성분')).toHaveValue('1')
   view.rerender(<WorkbenchViewer {...props} recordedData={fixture('signal', 5).data} />)
   await waitFor(() => expect(screen.queryByText(/Prediction failed/)).not.toBeInTheDocument())
   expect(screen.getByLabelText('범위 최댓값')).toHaveValue(123)
-  openPanel('comp 축 역할')
+  openComponent()
   expect(screen.getByLabelText('성분')).toHaveValue('1')
 })
 
@@ -497,22 +552,96 @@ it('normalizes incompatible saved indices once without dropping other shared dis
   expect(screen.queryAllByRole('alert')).toHaveLength(0)
 })
 
-it('changes visualization with axis roles and shows a raw histogram with a reduced marker at zero axes', async () => {
-  const settings = restoredSettings()
-  render(<Pair settings={settings} />)
-  await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
-  changeRole('time', 'index')
-  await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
-  expect(settings.values.get('signal:box.kind')).toBe('line')
-  expect(settings.values.get('signal:box.axes')).toEqual(['x'])
-  fireEvent.change(screen.getByLabelText('x 역할'), { target: { value: 'sum' } })
-  await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
-  expect(settings.values.get('signal:box.kind')).toBe('histogram')
-  const plots = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!))
-  expect(plots[0].plot.values).toHaveLength(24)
-  expect(plots[0].histogramMarker).toBeGreaterThan(0)
-  expect(plots[1].histogramMarker).toBeCloseTo(plots[0].histogramMarker * 10)
-  expect(screen.queryByLabelText('표본 조회')).not.toBeInTheDocument()
+it('preserves saved chart axes and maps them to heatmap rows and line series', async () => {
+  const settings = createComparisonSettings({
+    'signal@output-chart:box.axes': ['time', 'x'],
+    'signal@output-chart:box.kind': 'heatmap',
+  })
+  render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['time', 'x'])
+  openChartAxes()
+  expect(screen.getByRole('button', { name: 'x 주 축' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 't 보조축' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.queryByRole('button', { name: 'Histogram' })).not.toBeInTheDocument()
+  expect(projectionRequests.some(({ options }) => options.axes.join(',') === 'time,x')).toBe(true)
+  const heatmap = JSON.parse(screen.getAllByTestId('plot')[0].textContent!)
+  expect(heatmap.kind).toBe('heatmap')
+  expect(heatmap.plot.axes.map((axis: { name: string }) => axis.name)).toEqual(['time', 'x'])
+  fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['time', 'x'])
+  const line = JSON.parse(screen.getAllByTestId('plot')[0].textContent!)
+  expect(line.kind).toBe('line')
+  expect(line.plot.axes.map((axis: { name: string }) => axis.name)).toEqual(['time', 'x'])
+  expect(line.plot.shape).toEqual([3, 2])
+})
+
+it('swaps chart axes and lets a line omit its secondary axis without changing kind', async () => {
+  const settings = createComparisonSettings()
+  render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['x', 'time'])
+  selectChartAxis('x', '주 축')
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['time', 'x'])
+  expect(settings.values.get('signal@output-chart:box.kind')).toBe('heatmap')
+  fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
+  selectChartAxis('t', '보조축')
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['x'])
+  expect(settings.values.get('signal@output-chart:box.kind')).toBe('line')
+  openChartAxes()
+  fireEvent.click(screen.getByRole('button', { name: 'Heatmap' }))
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['time', 'x'])
+  expect(settings.values.get('signal@output-chart:box.kind')).toBe('heatmap')
+})
+
+it('keeps all five chart axis controls in the picker and shows reductions and index coordinates above the chart', async () => {
+  const settings = createComparisonSettings()
+  render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(screen.queryByRole('button', { name: 'Line Chart' })).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('frequency 적분 방법')).not.toBeInTheDocument()
+  openChartAxes()
+  expect(screen.getAllByLabelText(/^[xyztf] 축 설정$/)).toHaveLength(5)
+  expect(screen.getByRole('button', { name: 'Line Chart' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Heatmap' })).toBeInTheDocument()
+  expect(screen.queryByLabelText('time 적분 방법')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('frequency 적분 방법')).toHaveValue('sum')
+  fireEvent.change(screen.getByLabelText('frequency 적분 방법'), { target: { value: 'index' } })
+  fireEvent.change(screen.getByLabelText('frequency index'), { target: { value: '1' } })
+  expect(screen.queryByRole('button', { name: 'f 재생' })).not.toBeInTheDocument()
+  expect(screen.getAllByLabelText('차트 축 설정')[0]).toHaveTextContent('f · 개별 index 1 · 1 Hz')
+  expect(screen.getAllByLabelText('차트 축 설정')[0]).toHaveTextContent('y · mean')
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+  expect(screen.queryByLabelText('frequency 적분 방법')).not.toBeInTheDocument()
+  expect(screen.getAllByLabelText('차트 축 설정')[0]).toHaveTextContent('f · 개별 index 1 · 1 Hz')
+})
+
+it('uses longest axes including singleton dimensions and restores saved Histogram as Heatmap', async () => {
+  const settings = createComparisonSettings({ 'signal@output-chart:box.kind': 'histogram' })
+  render(<Pair role="chart" settings={settings} times={1} spatialShape={[1, 1, 1]} frequencies={[[1], [1]]} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['y', 'x'])
+  expect(settings.values.get('signal@output-chart:box.kind')).toBe('heatmap')
+  const plot = JSON.parse(screen.getAllByTestId('plot')[0].textContent!)
+  expect(plot.kind).toBe('heatmap')
+  expect(plot.plot.shape).toEqual([1, 1])
+})
+
+it('restores a single saved chart axis from Histogram as a line and copies that projection', async () => {
+  const settings = createComparisonSettings({
+    'signal@output-chart:box.axes': ['frequency'],
+    'signal@output-chart:box.kind': 'histogram',
+  })
+  render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.axes')).toEqual(['frequency'])
+  expect(settings.values.get('signal@output-chart:box.kind')).toBe('line')
+  const writeText = vi.fn(async (_text: string) => {})
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+  fireEvent.click(screen.getByRole('button', { name: '변환 코드 복사' }))
+  await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
+  expect(writeText.mock.calls[0][0]).toContain('boxGrid.project(record["signal"], {"axes":["frequency"]')
 })
 
 it('opens index controls on selection, toggles them with the icon, and preserves their coordinate', async () => {
@@ -549,11 +678,12 @@ it('retains the last valid fixed range during invalid input and supports constan
   expect(screen.queryByLabelText('값 colorbar')).not.toBeInTheDocument()
 })
 
-it('switches index playback between spatial and component axes with stable ranges and pauses on panel close', async () => {
+it('keeps spatial playback ranges stable without a component toolbar button', async () => {
   const settings = restoredSettings()
   render(<Pair settings={settings} />)
   await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
   fireEvent.change(screen.getByLabelText('x 역할'), { target: { value: 'index' } })
+  openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
   await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
   vi.useFakeTimers()
@@ -565,26 +695,11 @@ it('switches index playback between spatial and component axes with stable range
   })
   expect(settings.values.get('signal:box.frameIndex')).toBe(1)
   expect(screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)).toEqual(ranges)
-  fireEvent.click(screen.getByRole('button', { name: 'comp 재생' }))
-  await act(async () => {})
-  expect(settings.values.get('signal:box.animation')).toBe('component')
-  expect(settings.values.get('signal:box.reduce')).toMatchObject({ x: { method: 'index', index: 1 } })
-  expect(screen.queryByRole('button', { name: 'x 일시정지' })).not.toBeInTheDocument()
-  const componentRanges = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(100)
-  })
-  expect(settings.values.get('signal:box.frameIndex')).toBe(1)
-  expect(screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)).toEqual(componentRanges)
-  fireEvent.click(screen.getByRole('button', { name: 'comp 축 역할' }))
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(500)
-  })
-  expect(settings.values.get('signal:box.playing')).toBe(false)
-  expect(settings.values.get('signal:box.frameIndex')).toBe(1)
+  expect(screen.queryByRole('button', { name: 'comp 재생' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'comp 축 역할' })).not.toBeInTheDocument()
 })
 
-it('shares Output playback within each comparison role without advancing the other role', async () => {
+it('shares Output playback between chart and 3D while advancing it once', async () => {
   const settings = createComparisonSettings()
   render(
     <>
@@ -614,19 +729,121 @@ it('shares Output playback within each comparison role without advancing the oth
   )
   await waitFor(() => expect(settings.values.get('busy:actual:signal@output-space')).toBe(false))
   await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
-  const controls = within(screen.getByTestId('space-pair'))
+  const controls = within(screen.getByTestId('chart-pair'))
   if (!controls.queryByLabelText('Animation 프레임'))
     fireEvent.click(controls.getByRole('button', { name: '채널 축 역할' }))
   fireEvent.change(controls.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
   await waitFor(() => expect(settings.values.get('busy:preview:signal@output-space')).toBe(false))
-  expect(settings.values.get('signal@output-space:box.timeSeconds')).toBe(0.125)
-  expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBe(0)
+  expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBe(0.125)
+  expect(settings.values.has('signal@output-space:box.timeSeconds')).toBe(false)
   vi.useFakeTimers()
   fireEvent.click(controls.getByRole('button', { name: '시간 전개 재생' }))
   await act(async () => {
     await vi.advanceTimersByTimeAsync(100)
   })
-  expect(Number(settings.values.get('signal@output-space:box.timeSeconds'))).toBeGreaterThan(0.125)
-  expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBe(0)
-  expect(settings.values.get('signal@output-chart:box.playing')).toBe(false)
+  expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBeCloseTo(0.13125)
+  expect(settings.values.has('signal@output-space:box.timeSeconds')).toBe(false)
+})
+
+it('uses chart controls for shared Box Grid values without changing 3D spatial axes', async () => {
+  const settings = createComparisonSettings()
+  render(
+    <>
+      <section data-testid="space-pair">
+        <Pair role="space" settings={settings} />
+      </section>
+      <section data-testid="chart-pair">
+        <Pair role="chart" settings={settings} />
+      </section>
+    </>,
+  )
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  const chart = within(screen.getByTestId('chart-pair'))
+  fireEvent.keyDown(chart.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
+  fireEvent.change(screen.getByLabelText('성분'), { target: { value: '1' } })
+  await waitFor(() =>
+    expect(
+      projectionRequests.some(({ options }) => options.axes.join(',') === 'x,y,z' && options.component === 1),
+    ).toBe(true),
+  )
+  expect(settings.values.get('signal@output-chart:box.component')).toBe(1)
+  expect(settings.values.has('signal@output-space:box.component')).toBe(false)
+  projectionRequests.length = 0
+  fireEvent.keyDown(chart.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
+  fireEvent.change(screen.getByLabelText('frequency 적분 방법'), { target: { value: 'mean' } })
+  await waitFor(() =>
+    expect(
+      projectionRequests.some(
+        ({ options }) => options.axes.join(',') === 'x,y,z' && options.reduce?.frequency?.method === 'mean',
+      ),
+    ).toBe(true),
+  )
+  expect(projectionRequests.some(({ options }) => options.axes.join(',') === 'x,y,z')).toBe(true)
+  expect(projectionRequests.some(({ options }) => options.axes.join(',') === 'x,time')).toBe(true)
+})
+
+it('selects vector components inside Output and disables magnitude choices for Phase', async () => {
+  const settings = createComparisonSettings()
+  render(<Pair role="chart" settings={settings} componentCount={3} frequencies={[[1], [1]]} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  openComponent()
+  expect(screen.getByRole('button', { name: '벡터 화살표 |V|' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getAllByRole('button', { name: /^벡터 / })).toHaveLength(5)
+  fireEvent.click(screen.getByRole('button', { name: '벡터 |V|²' }))
+  expect(settings.values.get('signal@output-chart:box.component')).toBe('magnitudeSquared')
+  await waitFor(() =>
+    expect(projectionRequests.some(({ options }) => options.component === 'magnitudeSquared')).toBe(true),
+  )
+  expect(screen.getAllByTestId('plot')[0]).toHaveTextContent('"unit":"(m)²"')
+  fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'phase' } })
+  expect(screen.getByRole('button', { name: '벡터 |V|²' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '벡터 화살표 |V|' })).toBeDisabled()
+  expect(settings.values.get('signal@output-chart:box.component')).toBe(0)
+  expect(screen.queryByRole('button', { name: 'comp 축 역할' })).not.toBeInTheDocument()
+})
+
+it('keeps tensor direction and magnitude selections in the Output panel', async () => {
+  const settings = createComparisonSettings()
+  render(<Pair role="chart" settings={settings} componentCount={9} frequencies={[[1], [1]]} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  openComponent()
+  expect(screen.getByRole('region', { name: 'Box Grid 성분 설정' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '텐서 1축 X' }))
+  fireEvent.click(screen.getByRole('button', { name: '텐서 2축 Y' }))
+  expect(settings.values.get('signal@output-chart:box.component')).toEqual({ tensor: ['x', 'y'] })
+  await waitFor(() =>
+    expect(projectionRequests.some(({ options }) => JSON.stringify(options.component) === '{"tensor":["x","y"]}')).toBe(
+      true,
+    ),
+  )
+  fireEvent.click(screen.getByRole('button', { name: '텐서 1축 화살표' }))
+  expect(settings.values.get('signal@output-chart:box.component')).toEqual({ tensor: ['arrows', 'y'] })
+  fireEvent.click(screen.getByRole('button', { name: '텐서 2축 |T|' }))
+  expect(settings.values.get('signal@output-chart:box.component')).toEqual({ tensor: ['arrows', 'all'] })
+  fireEvent.click(screen.getByRole('button', { name: '텐서 2축 화살표' }))
+  expect(settings.values.get('signal@output-chart:box.component')).toEqual({ tensor: ['all', 'arrows'] })
+  expect(screen.getByRole('button', { name: '텐서 1축 |T|' })).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'phase' } })
+  expect(settings.values.get('signal@output-chart:box.component')).toBe(0)
+  expect(screen.getByRole('button', { name: '텐서 1축 화살표' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '텐서 2축 |T|' })).toBeDisabled()
+})
+
+it('keeps a saved chart spatial frame without applying that animation to 3D', async () => {
+  const settings = createComparisonSettings({
+    'signal@output-chart:box.animation': 'x',
+    'signal@output-chart:box.frameIndex': 1,
+  })
+  render(
+    <>
+      <Pair role="space" settings={settings} />
+      <Pair role="chart" settings={settings} />
+    </>,
+  )
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.frameIndex')).toBe(1)
+  expect(projectionRequests.some(({ options, sweepAxis }) => options.axes.join(',') === 'x,y,z' && !sweepAxis)).toBe(
+    true,
+  )
+  expect(projectionRequests.some(({ sweepAxis }) => sweepAxis === 'x')).toBe(true)
 })

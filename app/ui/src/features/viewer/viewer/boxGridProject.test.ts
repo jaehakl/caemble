@@ -1,13 +1,19 @@
 import { analyzeCalculationSource } from '@/lib/calculation/sourcePolicy'
 import { describe, expect, it } from 'vitest'
 import { calculationExampleInput } from '@/authoring/examples'
-import { projectBoxGrid, projectionCode, type BoxGridProjectionOptions } from '@/lib/calculation/boxGridProject'
+import {
+  boxGridTensorComponents,
+  projectBoxGrid,
+  projectionCode,
+  type BoxGridProjectionOptions,
+} from '@/lib/calculation/boxGridProject'
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
 import { normalizeCalculationOutput, normalizeCalculationRunnerOutput } from '@/lib/calculation/validation'
 import { executeCalculation } from '@/lib/calculation/execute'
 import { transformCalculationSource } from '@/lib/calculation/transform'
 import { analyzeCalculationDependencies } from '@/lib/calculation/dependencies'
-import { scalarPlotData, calculateBoxGridView } from '@/features/viewer/viewer/boxGridViewData'
+import { scalarPlotData, calculateBoxGridView, boxGridArrowComponents } from '@/features/viewer/viewer/boxGridViewData'
+import { createPointCloudData } from '@/features/viewer/viewer/pointCloudData'
 
 const leaf: CalculationInputLeaf = {
   ...calculationExampleInput.signal,
@@ -43,6 +49,101 @@ function harmonicLeaf(frequencies: number[], data: number[], components = ['valu
     },
   }
 }
+
+describe('Box Grid component projections', () => {
+  it('separates vector magnitude from squared magnitude after frequency synthesis', () => {
+    const input = harmonicLeaf([1, 2], [3, 4, 0, 0, 0, 0, 3, 4, 0, -Math.PI, -Math.PI, 0], ['x', 'y', 'z'])
+    const options: BoxGridProjectionOptions = {
+      axes: [],
+      reduce: { frequency: { method: 'sum' } },
+      frame: { timeSeconds: 0.5 },
+    }
+    expect(projectBoxGrid(input, { ...options, component: 'magnitude' }).data).toBeCloseTo(10)
+    expect(projectBoxGrid(input, { ...options, component: 'magnitudeSquared' }).data).toBeCloseTo(100)
+    expect(() =>
+      projectBoxGrid(input, { ...options, representation: 'phase', component: 'magnitudeSquared' }),
+    ).toThrow()
+  })
+
+  it('projects a full tensor by named directions and copies a runnable expression', () => {
+    const names = ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz']
+    const input = {
+      ...harmonicLeaf([0], [...Array.from({ length: 9 }, (_, i) => i + 1), ...Array(9).fill(0)], names),
+      tensorOrder: 2,
+    }
+    expect(boxGridTensorComponents(input)).toEqual([
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+    ])
+    const select = (first: 'x' | 'y' | 'z' | 'all', second: 'x' | 'y' | 'z' | 'all') =>
+      projectBoxGrid(input, { axes: [], component: { tensor: [first, second] } }).data
+    expect(select('x', 'y')).toBe(2)
+    expect(select('all', 'y')).toBeCloseTo(Math.hypot(2, 5, 8))
+    expect(select('x', 'all')).toBeCloseTo(Math.hypot(1, 2, 3))
+    expect(select('all', 'all')).toBeCloseTo(Math.sqrt(285))
+    expect(boxGridArrowComponents(input, { tensor: ['arrows', 'y'] })).toEqual([1, 4, 7])
+    expect(boxGridArrowComponents(input, { tensor: ['x', 'arrows'] })).toEqual([0, 1, 2])
+    expect(boxGridArrowComponents(input, { tensor: ['arrows', 'all'] })).toBeUndefined()
+    expect(boxGridArrowComponents(input, { tensor: ['all', 'arrows'] })).toBeUndefined()
+    const arrowView = calculateBoxGridView({
+      leaf: input,
+      options: { axes: ['x', 'y', 'z'], component: { tensor: ['all', 'y'] } },
+      arrows: true,
+      vectorComponents: boxGridArrowComponents(input, { tensor: ['arrows', 'y'] }),
+      animationRange: false,
+    })
+    expect(
+      createPointCloudData(arrowView.scalar, { identity: 'tensor-arrow', leaf: input, vectors: arrowView.vectors })
+        .geometries[0].primitive,
+    ).toBe('lines')
+    const magnitudeView = calculateBoxGridView({
+      leaf: input,
+      options: { axes: ['x', 'y', 'z'], component: { tensor: ['all', 'all'] } },
+      arrows: false,
+      animationRange: false,
+    })
+    expect(
+      createPointCloudData(magnitudeView.scalar, { identity: 'tensor-magnitude', leaf: input }).geometries[0].primitive,
+    ).toBe('points')
+    const options: BoxGridProjectionOptions = { axes: [], component: { tensor: ['all', 'y'] } }
+    const expression = projectionCode("samples['signal']", options)
+    const source = `export default function calculate(samples) { return ${expression}; }`
+    expect(
+      executeCalculation(
+        transformCalculationSource(source, 'test', analyzeCalculationSource(source)),
+        { signal: input },
+        () => {},
+      ),
+    ).toEqual(normalizeCalculationOutput(projectBoxGrid(input, options)))
+    const copiedArrow = projectionCode("samples['signal']", options, [1, 4, 7]).split('\n')
+    expect(copiedArrow).toHaveLength(4)
+    for (const [index, arrowExpression] of copiedArrow.entries()) {
+      const arrowSource = `export default function calculate(samples) { return ${arrowExpression}\n }`
+      const output = executeCalculation(
+        transformCalculationSource(arrowSource, 'test', analyzeCalculationSource(arrowSource)),
+        { signal: input },
+        () => {},
+      )
+      expect(scalarPlotData(output).values).toEqual([index < 3 ? [2, 5, 8][index] : Math.hypot(2, 5, 8)])
+    }
+  })
+
+  it('counts symmetric off-diagonal entries twice in the Frobenius norm', () => {
+    const names = ['xx', 'yy', 'zz', 'xy', 'yz', 'xz']
+    const input = { ...harmonicLeaf([0], [1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0], names), tensorOrder: 2 }
+    expect(boxGridTensorComponents(input)).toEqual([
+      [0, 3, 5],
+      [3, 1, 4],
+      [5, 4, 2],
+    ])
+    expect(projectBoxGrid(input, { axes: [], component: { tensor: ['y', 'x'] } }).data).toBe(4)
+    expect(projectBoxGrid(input, { axes: [], component: { tensor: ['all', 'all'] } }).data).toBeCloseTo(Math.sqrt(168))
+    expect(() =>
+      projectBoxGrid(input, { axes: [], component: { tensor: ['all', 'all'] }, representation: 'phase' }),
+    ).toThrow()
+  })
+})
 
 describe('Common-time frequency synthesis', () => {
   it.each([

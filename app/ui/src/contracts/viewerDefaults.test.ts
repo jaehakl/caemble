@@ -38,3 +38,21 @@ it('validates camera geometry and preserves defaults after a deleted Measurement
   }
   expect(experimentPresentationSchema.parse(presentation)).toEqual(presentation)
 })
+
+it('restores vector and tensor component choices while rejecting malformed tensor pairs', () => {
+  expect(
+    durableViewerSettings(
+      Object.entries({
+        'vector:box.component': 'magnitude',
+        'squared:box.component': 'magnitudeSquared',
+        'tensor:box.component': { tensor: ['arrows', 'y'] },
+        'invalid:box.component': { tensor: ['arrows', 'invalid'] },
+        'two-arrows:box.component': { tensor: ['arrows', 'arrows'] },
+      }),
+    ),
+  ).toEqual({
+    'vector:box.component': 'magnitude',
+    'squared:box.component': 'magnitudeSquared',
+    'tensor:box.component': { tensor: ['arrows', 'y'] },
+  })
+})

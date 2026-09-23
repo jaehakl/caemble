@@ -163,7 +163,7 @@ export default function calculate(record) {
 }
 ```
 
-`axes`는 남길 축과 반환 순서입니다. `x`, `y`, `z`, `time`, `frequency`를 사용할 수 있고 빈 배열이면 숫자 하나를 반환합니다. `representation`은 `amplitude`(기본) 또는 `phase`, `component`는 0부터 시작하는 성분 번호 또는 `magnitude`입니다. 위상에는 성분 하나를 지정합니다. 실수 스칼라의 기본값은 성분 0이며 부호를 유지합니다.
+`axes`는 남길 축과 반환 순서입니다. `x`, `y`, `z`, `time`, `frequency`를 사용할 수 있고 빈 배열이면 숫자 하나를 반환합니다. `representation`은 `amplitude`(기본) 또는 `phase`입니다. `component`는 0부터 시작하는 성분 번호, 벡터 크기 `magnitude` (`|V|`), 벡터 제곱 크기 `magnitudeSquared` (`|V|²`), 또는 텐서 방향 선택 `{ tensor: ['x', 'y'] }`입니다. 텐서 방향에는 `x`, `y`, `z`, `all`을 쓸 수 있습니다. 두 방향을 지정하면 해당 성분, 한 방향만 `all`이면 행·열 벡터 크기, 둘 다 `all`이면 Frobenius 크기를 반환합니다. 위상에는 숫자 성분 하나를 지정합니다. 실수 스칼라의 기본값은 성분 0이며 부호를 유지합니다.
 
 `reduce`는 표시하지 않는 각 축을 어떻게 줄일지 정하는 `{ method, index? }` 설정입니다. `sum`, `mean`(기본), `min`, `max`, `median`, `std`, `index`를 지원합니다. 표본별 성분이나 크기를 계산한 뒤 x→y→z→time→frequency 순서로 집계합니다. sum은 표본의 합, std는 모집단 표준편차입니다. 위상도 rad 단위 숫자로 같은 집계를 적용합니다. index는 0부터 시작합니다.
 

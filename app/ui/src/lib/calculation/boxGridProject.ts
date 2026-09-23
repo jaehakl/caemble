@@ -8,15 +8,44 @@ export type ProjectionReduction = {
   method: 'sum' | 'mean' | 'min' | 'max' | 'median' | 'std' | 'index'
   index?: number
 }
+export type TensorDirection = 'x' | 'y' | 'z' | 'all'
+export type TensorComponent = Readonly<{ tensor: readonly [TensorDirection, TensorDirection] }>
 export type BoxGridProjectionOptions = Readonly<{
   axes: readonly ProjectionAxis[]
   representation?: 'amplitude' | 'phase'
-  component?: number | 'magnitude'
+  component?: number | 'magnitude' | 'magnitudeSquared' | TensorComponent
   reduce?: Partial<Record<ProjectionAxis, ProjectionReduction>>
   frame?: { phase?: number; timeSeconds?: number; axis?: 'time' | 'frequency'; index?: number }
 }>
 export type ProjectionData = number | readonly ProjectionData[]
 export type BoxGridProjection = Readonly<{ dtype: 'float64'; data: ProjectionData; axes: readonly CalculationAxis[] }>
+
+/** Map tensor directions to the flattened component axis, including symmetric six-component tensors. */
+export function boxGridTensorComponents(leaf: CalculationInputLeaf): number[][] | undefined {
+  if (leaf.tensorOrder !== 2 || ![6, 9].includes(leaf.boxGrid.components.length)) return undefined
+  const directions = ['x', 'y', 'z']
+  const indices = Array.from({ length: 3 }, () => Array<number>(3).fill(-1))
+  for (const [index, label] of leaf.boxGrid.components.entries()) {
+    const match = label
+      .toLowerCase()
+      .replace(/[^a-z]/g, '')
+      .match(/([xyz])([xyz])$/)
+    if (!match) return undefined
+    const row = directions.indexOf(match[1]),
+      column = directions.indexOf(match[2])
+    if (indices[row][column] !== -1) return undefined
+    indices[row][column] = index
+  }
+  if (leaf.boxGrid.components.length === 6) {
+    for (let row = 0; row < 3; row++)
+      for (let column = row + 1; column < 3; column++) {
+        if ((indices[row][column] === -1) === (indices[column][row] === -1)) return undefined
+        if (indices[row][column] === -1) indices[row][column] = indices[column][row]
+        else indices[column][row] = indices[row][column]
+      }
+  }
+  return indices.every((row) => row.every((index) => index >= 0)) ? indices : undefined
+}
 
 export function boxGridFrequenciesHz(leaf: CalculationInputLeaf): number[] {
   const axis = leaf.axes[4]
@@ -37,11 +66,42 @@ export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProje
     throw new Error('표시 축은 중복 없이 x/y/z/time/frequency에서 선택하세요.')
   const representation = options.representation ?? 'amplitude'
   const component = options.component ?? (leaf.shape[6] === 1 ? 0 : 'magnitude')
+  const tensor = component && typeof component === 'object' ? boxGridTensorComponents(leaf) : undefined
+  const directions = ['x', 'y', 'z', 'all']
+  if (typeof component === 'string' && !['magnitude', 'magnitudeSquared'].includes(component))
+    throw new Error('지원하지 않는 성분 선택입니다.')
+  if (
+    component &&
+    typeof component === 'object' &&
+    (!tensor ||
+      !Array.isArray(component.tensor) ||
+      component.tensor.length !== 2 ||
+      component.tensor.some((direction) => !directions.includes(direction)))
+  )
+    throw new Error('텐서 성분 방향을 현재 Box Grid에 적용할 수 없습니다.')
+  if (component === null) throw new Error('지원하지 않는 성분 선택입니다.')
+  const tensorIndices =
+    tensor && typeof component === 'object'
+      ? (component.tensor[0] === 'all' ? [0, 1, 2] : [directions.indexOf(component.tensor[0])]).flatMap((row) =>
+          (component.tensor[1] === 'all' ? [0, 1, 2] : [directions.indexOf(component.tensor[1])]).map(
+            (column) => tensor[row][column],
+          ),
+        )
+      : undefined
+  const norm =
+    component === 'magnitude' || component === 'magnitudeSquared' || Boolean(tensorIndices && tensorIndices.length > 1)
   if (!['amplitude', 'phase'].includes(representation)) throw new Error('지원하지 않는 채널입니다.')
-  if (component !== 'magnitude' && (!Number.isSafeInteger(component) || component < 0 || component >= leaf.shape[6]))
+  if (
+    typeof component === 'number' &&
+    (!Number.isSafeInteger(component) || component < 0 || component >= leaf.shape[6])
+  )
     throw new Error('성분 index가 범위를 벗어났습니다.')
-  if (representation === 'phase' && (leaf.shape[5] !== 2 || component === 'magnitude'))
+  if (representation === 'phase' && (leaf.shape[5] !== 2 || typeof component !== 'number'))
     throw new Error('Phase는 진폭·위상 입력의 성분 하나를 선택해야 합니다.')
+  const componentWeights = Array<number>(leaf.shape[6]).fill(0)
+  if (tensorIndices) for (const index of tensorIndices) componentWeights[index]++
+  else if (norm) componentWeights.fill(1)
+  else componentWeights[component as number] = 1
   const frame = options.frame
   if (frame?.timeSeconds !== undefined) {
     if (!Number.isFinite(frame.timeSeconds) || leaf.shape[5] !== 2)
@@ -110,7 +170,8 @@ export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProje
       indices.reduce((total, index, axis) => total * leaf.shape[axis] + index, 0) * leaf.shape[5] * leaf.shape[6]
     let squared = 0
     for (let c = 0; c < leaf.shape[6]; c++) {
-      if (component !== 'magnitude' && c !== component) continue
+      const multiplicity = componentWeights[c]
+      if (!multiplicity) continue
       let value = 0
       const count = synthesize ? leaf.shape[4] : 1
       for (let f = 0; f < count; f++) {
@@ -128,10 +189,10 @@ export function projectBoxGrid(leaf: CalculationInputLeaf, options: BoxGridProje
       }
       if (synthesize && frequencyMethod === 'mean') value /= count
       if (!Number.isFinite(value)) throw new Error('Box Grid에 유한하지 않은 값이 있습니다.')
-      if (component === 'magnitude') squared += value * value
+      if (norm) squared += multiplicity * value * value
       else values[flat] = value
     }
-    if (component === 'magnitude') values[flat] = Math.sqrt(squared)
+    if (norm) values[flat] = component === 'magnitudeSquared' ? squared : Math.sqrt(squared)
   }
   for (let axis = 0; axis < 5; axis++) {
     if (kept.includes(axis)) continue
@@ -203,11 +264,12 @@ export function projectionCode(
   vectorComponents?: readonly number[],
 ) {
   return vectorComponents
-    ? [...vectorComponents, 'magnitude' as const]
-        .map(
+    ? [
+        ...vectorComponents.map(
           (component, index) =>
-            `boxGrid.project(${recordReference}, ${JSON.stringify({ ...options, component })}) // ${index < 3 ? ['X', 'Y', 'Z'][index] : '벡터 크기'}`,
-        )
-        .join('\n')
+            `boxGrid.project(${recordReference}, ${JSON.stringify({ ...options, component })}) // 화살표 ${['X', 'Y', 'Z'][index]}`,
+        ),
+        `boxGrid.project(${recordReference}, ${JSON.stringify(options)}) // 색상 값`,
+      ].join('\n')
     : `boxGrid.project(${recordReference}, ${JSON.stringify(options)})`
 }

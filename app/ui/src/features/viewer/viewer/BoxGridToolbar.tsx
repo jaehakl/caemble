@@ -1,35 +1,50 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
-  BarChart3,
   ChartLine,
   Grid2X2,
   Box,
   LockKeyhole,
   Copy,
-  SlidersHorizontal,
+  ArrowLeftRight,
+  ArrowUpDown,
   Play,
   Pause,
   Repeat,
   Activity,
-  Component,
+  ArrowUpRight,
   Waves,
   Gauge,
 } from 'lucide-react'
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
-import { projectionAxes, type ProjectionAxis, type ProjectionReduction } from '@/lib/calculation/boxGridProject'
-import type { BoxGridAnimation, PlotKind } from './boxGridViewData'
-import { ViewerAxisIcon, ViewerToolButton, ViewerToolPanel, ViewerToolPanelBody, ViewerSelectTool } from './ViewerTools'
+import {
+  boxGridTensorComponents,
+  projectionAxes,
+  type ProjectionAxis,
+  type ProjectionReduction,
+} from '@/lib/calculation/boxGridProject'
+import {
+  boxGridVectorComponents,
+  type BoxGridAnimation,
+  type BoxGridComponentChoice,
+  type PlotKind,
+} from './boxGridViewData'
+import {
+  ViewerAxisIcon,
+  ViewerOutputMenuHost,
+  ViewerToolButton,
+  ViewerToolPanelBody,
+  ViewerSelectTool,
+} from './ViewerTools'
 import { plotColor } from './pointCloudData'
 
-const labels = { x: 'x', y: 'y', z: 'z', time: 't', frequency: 'f', component: 'comp', channel: '채널' }
+const labels = { x: 'x', y: 'y', z: 'z', time: 't', frequency: 'f', channel: '채널' }
 const roleColors = {
   space: 'border-2 border-sky-500!',
   statistic: 'border-2 border-violet-500!',
   index: 'border-2 border-orange-500!',
 }
-type ComponentChoice = number | 'magnitude' | 'arrows'
-type IndexAxis = ProjectionAxis | 'component'
-type PanelAxis = IndexAxis | 'channel'
+type PanelAxis = ProjectionAxis | 'channel'
 
 export function BoxGridToolbar(props: {
   leaf: CalculationInputLeaf
@@ -38,18 +53,16 @@ export function BoxGridToolbar(props: {
   axes: ProjectionAxis[]
   reduce: Partial<Record<ProjectionAxis, ProjectionReduction>>
   representation: 'amplitude' | 'phase'
-  component: ComponentChoice
-  arrowsAllowed: boolean
+  component: BoxGridComponentChoice
   onKind: (kind: PlotKind) => void
+  onAxes: (axes: ProjectionAxis[]) => void
   onRole: (axis: ProjectionAxis, role: 'space' | ProjectionReduction['method']) => void
   onRepresentation: (representation: 'amplitude' | 'phase') => void
-  onComponent: (component: ComponentChoice) => void
-  onIndex: (axis: IndexAxis, index: number) => void
+  onComponent: (component: BoxGridComponentChoice) => void
+  onIndex: (axis: ProjectionAxis, index: number) => void
   fixed: readonly [number, number] | null
   range: readonly number[]
   onFixed: (range: [number, number] | null) => void
-  bins?: number
-  onBins: (bins: number | undefined) => void
   wavelengthDisplay: boolean
   onWavelength: (wavelength: boolean) => void
   animation: BoxGridAnimation
@@ -89,9 +102,9 @@ export function BoxGridToolbar(props: {
     setPanels((current) => ({ ...current, [axis]: undefined }))
     if (animation === axis || (axis === 'channel' && animation === 'oscillation')) props.onPause()
   }
-  const indexControls = (axis: IndexAxis) => {
-    const position = axis === 'component' ? 6 : projectionAxes.indexOf(axis)
-    const index = axis === 'component' ? Number(props.component) : (reduce[axis]?.index ?? 0)
+  const indexControls = (axis: ProjectionAxis) => {
+    const position = projectionAxes.indexOf(axis)
+    const index = reduce[axis]?.index ?? 0
     const length = leaf.shape[position]
     return (
       <>
@@ -128,38 +141,53 @@ export function BoxGridToolbar(props: {
   }
   return (
     <>
-      <div aria-label="시각화 도구모음" className="flex flex-col gap-1">
-        {(
-          [
-            { kind: 'histogram', label: 'Histogram', icon: BarChart3 },
-            { kind: 'line', label: 'Line Chart', icon: ChartLine },
-            { kind: 'heatmap', label: 'Heatmap', icon: Grid2X2 },
-            { kind: 'cloud', label: '3D Point cloud', icon: Box },
-          ] as const
-        )
-          .filter(({ kind }) => props.mode !== 'space' && (props.mode !== 'chart' || kind !== 'cloud'))
-          .map(({ kind, label, icon: Icon }) => (
+      {props.mode !== 'chart' && props.mode !== 'space' ? (
+        <div aria-label="시각화 도구모음" className="flex flex-col gap-1">
+          {(
+            [
+              { kind: 'line', label: 'Line Chart', icon: ChartLine },
+              { kind: 'heatmap', label: 'Heatmap', icon: Grid2X2 },
+              { kind: 'cloud', label: '3D Point cloud', icon: Box },
+            ] as const
+          ).map(({ kind, label, icon: Icon }) => (
             <ViewerToolButton key={kind} label={label} active={props.kind === kind} onClick={() => props.onKind(kind)}>
               <Icon />
             </ViewerToolButton>
           ))}
-      </div>
+        </div>
+      ) : null}
       {props.mode === 'space' ? <p>{props.kind === 'cloud' ? 'XYZ · 3D Point cloud' : '공간 Heatmap'}</p> : null}
+      {props.mode !== 'space' ? (
+        <ComponentPicker
+          leaf={leaf}
+          component={props.component}
+          representation={props.representation}
+          onComponent={props.onComponent}
+        />
+      ) : null}
+      {props.mode === 'chart' ? (
+        <ChartAxesPicker
+          kind={props.kind}
+          axes={axes}
+          leaf={leaf}
+          reduce={reduce}
+          onKind={props.onKind}
+          onAxes={props.onAxes}
+          onRole={props.onRole}
+          onIndex={props.onIndex}
+        />
+      ) : null}
       {projectionAxes
-        .filter((axis) => props.mode !== 'space' || !['x', 'y', 'z'].includes(axis))
+        .filter((axis) => props.mode !== 'chart' && (props.mode !== 'space' || !['x', 'y', 'z'].includes(axis)))
         .map((axis) => {
           const reduction = reduce[axis]?.method ?? 'mean'
-          const role = axes.includes(axis) ? 'space' : reduction === 'index' ? 'index' : 'statistic'
-          const title = `${labels[axis]} · ${role === 'space' ? '공간축' : role === 'index' ? `개별 index ${reduce[axis]?.index ?? 0} · ${leaf.axes[projectionAxes.indexOf(axis)].ticks[reduce[axis]?.index ?? 0]} ${leaf.axes[projectionAxes.indexOf(axis)].unit ?? ''}` : reduction}`
+          const selected = axes.includes(axis)
+          const role = selected ? 'space' : reduction === 'index' ? 'index' : 'statistic'
+          const title = `${labels[axis]} · ${selected ? '공간축' : role === 'index' ? `개별 index ${reduce[axis]?.index ?? 0} · ${leaf.axes[projectionAxes.indexOf(axis)].ticks[reduce[axis]?.index ?? 0]} ${leaf.axes[projectionAxes.indexOf(axis)].unit ?? ''}` : reduction}`
           const options = (
             <>
-              <option
-                value="space"
-                disabled={
-                  props.mode === 'space' || (axes.length >= (props.mode === 'chart' ? 2 : 3) && role !== 'space')
-                }
-              >
-                공간축{axes.length >= 3 && role !== 'space' ? ' · 최대 3개' : ''}
+              <option value="space" disabled={props.mode === 'space'}>
+                공간축
               </option>
               {['mean', 'sum', 'min', 'max', 'median', 'std', 'index'].map((method) => (
                 <option key={method} value={method}>
@@ -302,71 +330,6 @@ export function BoxGridToolbar(props: {
           </ViewerToolPanelBody>
         ) : null}
       </div>
-      <div className="flex items-start gap-1">
-        {typeof props.component === 'number' ? (
-          <ViewerToolButton
-            label="comp 축 역할"
-            title={`comp · 개별 index ${props.component}`}
-            className={roleColors.index}
-            aria-expanded={Boolean(panels.component)}
-            onClick={() => openAxis('component', true)}
-          >
-            <Component />
-          </ViewerToolButton>
-        ) : (
-          <ViewerSelectTool
-            label="성분"
-            icon={<Component />}
-            title={`comp · ${props.component}`}
-            className={roleColors.statistic}
-            value={props.component}
-            onChange={(event) => {
-              const value = event.target.value
-              props.onComponent(value === 'magnitude' || value === 'arrows' ? value : Number(value))
-              if (value !== 'magnitude' && value !== 'arrows')
-                setPanels((current) => ({ ...current, component: 'index' }))
-            }}
-          >
-            <option value="magnitude" disabled={props.representation === 'phase'}>
-              절대값 · 벡터 크기
-            </option>
-            {leaf.boxGrid.components.map((label, index) => (
-              <option key={label} value={index}>
-                {label}
-              </option>
-            ))}
-            <option value="arrows" disabled={!props.arrowsAllowed}>
-              화살표 (XYZ 벡터 전용)
-            </option>
-          </ViewerSelectTool>
-        )}
-        {typeof props.component === 'number' && panels.component ? (
-          <ViewerToolPanelBody label="comp 축" onClose={() => closeAxis('component')}>
-            <select
-              aria-label="성분"
-              value={props.component}
-              onChange={(event) => {
-                const value = event.target.value
-                props.onComponent(value === 'magnitude' || value === 'arrows' ? value : Number(value))
-                if (value === 'magnitude' || value === 'arrows') closeAxis('component')
-              }}
-            >
-              <option value="magnitude" disabled={props.representation === 'phase'}>
-                절대값 · 벡터 크기
-              </option>
-              {leaf.boxGrid.components.map((label, index) => (
-                <option key={label} value={index}>
-                  {label}
-                </option>
-              ))}
-              <option value="arrows" disabled={!props.arrowsAllowed}>
-                화살표 (XYZ 벡터 전용)
-              </option>
-            </select>
-            {indexControls('component')}
-          </ViewerToolPanelBody>
-        ) : null}
-      </div>
       <BoxGridRangeControl fixed={props.fixed} range={props.range} onFixed={props.onFixed} />
       <ViewerSelectTool
         label="재생 속도"
@@ -380,23 +343,6 @@ export function BoxGridToolbar(props: {
           </option>
         ))}
       </ViewerSelectTool>
-      {props.kind === 'histogram' ? (
-        <ViewerToolPanel label="Histogram bins" icon={<SlidersHorizontal />}>
-          <input
-            aria-label="Histogram bins"
-            type="number"
-            min={1}
-            max={100}
-            placeholder="자동"
-            value={props.bins ?? ''}
-            onChange={(event) =>
-              props.onBins(
-                event.target.value ? Math.max(1, Math.min(100, Math.trunc(Number(event.target.value)))) : undefined,
-              )
-            }
-          />
-        </ViewerToolPanel>
-      ) : null}
       {leaf.boxGrid.frequencyKind === 'source-sampled' ? (
         <ViewerSelectTool
           label="주파수 표시 단위"
@@ -412,6 +358,240 @@ export function BoxGridToolbar(props: {
         <Copy />
       </ViewerToolButton>
     </>
+  )
+}
+
+function ComponentPicker({
+  leaf,
+  component,
+  representation,
+  onComponent,
+}: {
+  leaf: CalculationInputLeaf
+  component: BoxGridComponentChoice
+  representation: 'amplitude' | 'phase'
+  onComponent: (component: BoxGridComponentChoice) => void
+}) {
+  const menuHost = useContext(ViewerOutputMenuHost)?.host
+  const vector = boxGridVectorComponents(leaf)
+  const tensor = boxGridTensorComponents(leaf)
+  if (!menuHost) return null
+  if (vector) {
+    const choices = ['arrows', 'magnitudeSquared', 'x', 'y', 'z'] as const
+    const selected =
+      component === 'magnitude'
+        ? 'arrows'
+        : typeof component === 'number'
+          ? (['x', 'y', 'z'] as const)[vector.indexOf(component)]
+          : component
+    return createPortal(
+      <section aria-label="Box Grid 성분 설정" className="mb-3">
+        <p className="mb-1 font-medium">성분</p>
+        <div className="flex gap-1">
+          {choices.map((choice) => (
+            <ViewerToolButton
+              key={choice}
+              label={`벡터 ${choice === 'arrows' ? '화살표 |V|' : choice === 'magnitudeSquared' ? '|V|²' : choice.toUpperCase()}`}
+              active={selected === choice}
+              disabled={representation === 'phase' && (choice === 'arrows' || choice === 'magnitudeSquared')}
+              onClick={() =>
+                onComponent(
+                  choice === 'arrows' || choice === 'magnitudeSquared'
+                    ? choice
+                    : vector[['x', 'y', 'z'].indexOf(choice)],
+                )
+              }
+            >
+              {choice === 'arrows' ? (
+                <ArrowUpRight />
+              ) : choice === 'magnitudeSquared' ? (
+                <span className="text-[10px]">|V|²</span>
+              ) : (
+                <span>{choice.toUpperCase()}</span>
+              )}
+            </ViewerToolButton>
+          ))}
+        </div>
+      </section>,
+      menuHost,
+    )
+  }
+  if (tensor) {
+    const choices = ['arrows', 'all', 'x', 'y', 'z'] as const
+    const pair =
+      typeof component === 'object'
+        ? component.tensor
+        : typeof component === 'number'
+          ? (() => {
+              for (let row = 0; row < 3; row++)
+                for (let column = 0; column < 3; column++)
+                  if (tensor[row][column] === component)
+                    return [(['x', 'y', 'z'] as const)[row], (['x', 'y', 'z'] as const)[column]] as const
+              return ['all', 'all'] as const
+            })()
+          : (['all', 'all'] as const)
+    return createPortal(
+      <section aria-label="Box Grid 성분 설정" className="mb-3">
+        <p className="mb-1 font-medium">텐서 성분</p>
+        {[0, 1].map((row) => (
+          <div key={row} className="mb-1 flex items-center gap-1" aria-label={`텐서 ${row + 1}축 성분`}>
+            <span className="w-8">{row + 1}축</span>
+            {choices.map((choice) => (
+              <ViewerToolButton
+                key={choice}
+                label={`텐서 ${row + 1}축 ${choice === 'arrows' ? '화살표' : choice === 'all' ? '|T|' : choice.toUpperCase()}`}
+                active={pair[row] === choice}
+                disabled={representation === 'phase' && (choice === 'arrows' || choice === 'all')}
+                onClick={() => {
+                  const next = [...pair] as ['x' | 'y' | 'z' | 'all' | 'arrows', 'x' | 'y' | 'z' | 'all' | 'arrows']
+                  next[row] = choice
+                  if (choice === 'arrows' && next[1 - row] === 'arrows') next[1 - row] = 'all'
+                  onComponent({ tensor: next })
+                }}
+              >
+                {choice === 'arrows' ? (
+                  <ArrowUpRight />
+                ) : choice === 'all' ? (
+                  <span className="text-[10px]">|T|</span>
+                ) : (
+                  <span>{choice.toUpperCase()}</span>
+                )}
+              </ViewerToolButton>
+            ))}
+          </div>
+        ))}
+      </section>,
+      menuHost,
+    )
+  }
+  return createPortal(
+    <section aria-label="Box Grid 성분 설정" className="mb-3">
+      <label className="flex items-center gap-2">
+        성분
+        <select
+          aria-label="성분"
+          value={typeof component === 'number' ? component : 'magnitude'}
+          onChange={(event) =>
+            onComponent(event.target.value === 'magnitude' ? 'magnitude' : Number(event.target.value))
+          }
+        >
+          <option value="magnitude" disabled={representation === 'phase'}>
+            |V|
+          </option>
+          {leaf.boxGrid.components.map((label, index) => (
+            <option key={label} value={index}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </section>,
+    menuHost,
+  )
+}
+
+function ChartAxesPicker({
+  kind,
+  axes,
+  leaf,
+  reduce,
+  onKind,
+  onAxes,
+  onRole,
+  onIndex,
+}: {
+  kind: PlotKind
+  axes: ProjectionAxis[]
+  leaf: CalculationInputLeaf
+  reduce: Partial<Record<ProjectionAxis, ProjectionReduction>>
+  onKind: (kind: PlotKind) => void
+  onAxes: (axes: ProjectionAxis[]) => void
+  onRole: (axis: ProjectionAxis, role: ProjectionReduction['method']) => void
+  onIndex: (axis: ProjectionAxis, index: number) => void
+}) {
+  const menuHost = useContext(ViewerOutputMenuHost)?.host
+  const primary = axes[axes.length - 1]
+  const secondary = axes.length > 1 ? axes[0] : null
+  const select = (axis: ProjectionAxis, row: 'primary' | 'secondary') => {
+    if (row === 'primary') {
+      if (axis !== primary) onAxes(axis === secondary ? [primary, axis] : secondary ? [secondary, axis] : [axis])
+      return
+    }
+    if (axis === secondary) {
+      if (kind === 'line') onAxes([primary])
+    } else if (axis === primary) {
+      if (secondary) onAxes([primary, secondary])
+    } else onAxes([axis, primary])
+  }
+  if (!menuHost) return null
+  return createPortal(
+    <section aria-label="Box Grid 축 설정" className="w-[42rem] max-w-full pr-1">
+      <div className="mb-3 flex gap-1" aria-label="차트 종류">
+        <ViewerToolButton label="Line Chart" active={kind === 'line'} onClick={() => onKind('line')}>
+          <ChartLine />
+        </ViewerToolButton>
+        <ViewerToolButton label="Heatmap" active={kind === 'heatmap'} onClick={() => onKind('heatmap')}>
+          <Grid2X2 />
+        </ViewerToolButton>
+      </div>
+      <div className="grid gap-2">
+        {projectionAxes.map((axis) => {
+          const selected = axes.includes(axis)
+          const reduction = reduce[axis]?.method ?? 'mean'
+          const index = reduce[axis]?.index ?? 0
+          return (
+            <div key={axis} className="flex min-w-max items-center gap-2" aria-label={`${labels[axis]} 축 설정`}>
+              <span className="flex w-6 shrink-0 justify-center">
+                <ViewerAxisIcon axis={labels[axis]} />
+              </span>
+              <ViewerToolButton
+                label={`${labels[axis]} 주 축`}
+                active={primary === axis}
+                onClick={() => select(axis, 'primary')}
+              >
+                <ArrowLeftRight />
+              </ViewerToolButton>
+              <ViewerToolButton
+                label={`${labels[axis]} 보조축`}
+                active={secondary === axis}
+                onClick={() => select(axis, 'secondary')}
+              >
+                <ArrowUpDown />
+              </ViewerToolButton>
+              {!selected ? (
+                <>
+                  <select
+                    aria-label={`${axis} 적분 방법`}
+                    value={reduction}
+                    onChange={(event) => onRole(axis, event.target.value as ProjectionReduction['method'])}
+                    className="h-8 rounded border border-slate-300 bg-white px-2 text-xs"
+                  >
+                    {['mean', 'sum', 'min', 'max', 'median', 'std', 'index'].map((method) => (
+                      <option key={method} value={method}>
+                        {method === 'index' ? '개별 index' : method}
+                      </option>
+                    ))}
+                  </select>
+                  {reduction === 'index' ? (
+                    <input
+                      type="range"
+                      aria-label={`${axis} index`}
+                      min={0}
+                      max={leaf.shape[projectionAxes.indexOf(axis)] - 1}
+                      step={1}
+                      value={index}
+                      onChange={(event) => onIndex(axis, Number(event.target.value))}
+                      className="min-w-32 flex-1"
+                    />
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+    </section>,
+    menuHost,
   )
 }
 

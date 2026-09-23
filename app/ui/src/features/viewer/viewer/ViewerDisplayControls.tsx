@@ -1,4 +1,4 @@
-import { createContext, useCallback, type Dispatch, type SetStateAction } from 'react'
+import { createContext, useCallback, useContext, type Dispatch, type SetStateAction } from 'react'
 import { Layers, Route, Grid2X2 } from 'lucide-react'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import {
@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger as PopoverTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { RecordedResultContracts } from '@/contracts/results'
-import { GeometryDisplayButton, ViewerToolButton, ViewerToolMenu } from './ViewerTools'
+import { GeometryDisplayButton, ViewerOutputMenuHost, ViewerToolButton, ViewerToolMenu } from './ViewerTools'
 import { visualizationGroups, type GeometryMode, type VisualizationSelection } from './viewerDisplay'
 import { useViewerSetting } from './comparisonSettings'
 
@@ -73,7 +73,6 @@ export function ViewerDisplayControls({
         names={Object.keys(contracts).filter((name) => !name.startsWith('@visualizations.'))}
         value={output}
         select={onOutput}
-        meshHost={meshHost}
       />
       {Object.entries(groups).map(([kind, names]) => {
         const value = visualizations[kind] ?? ''
@@ -135,25 +134,8 @@ function MeshFieldMenu({
   )
 }
 
-function OutputMenu({
-  names,
-  value,
-  select,
-  meshHost,
-}: {
-  names: string[]
-  value: string
-  select: (name: string) => void
-  meshHost: (name: string, host: HTMLDivElement | null) => void
-}) {
-  const spaceHost = useCallback(
-    (host: HTMLDivElement | null) => meshHost(`${value}@output-space`, host),
-    [meshHost, value],
-  )
-  const chartHost = useCallback(
-    (host: HTMLDivElement | null) => meshHost(`${value}@output-chart`, host),
-    [meshHost, value],
-  )
+function OutputMenu({ names, value, select }: { names: string[]; value: string; select: (name: string) => void }) {
+  const settingsHost = useContext(ViewerOutputMenuHost)
   return (
     <Popover modal={false}>
       <PopoverTrigger asChild>
@@ -161,34 +143,32 @@ function OutputMenu({
           <Layers />
         </ViewerToolButton>
       </PopoverTrigger>
-      <PopoverContent align="start" className="max-h-[80vh] w-80 overflow-auto p-2 text-xs" data-capture-exclude>
-        <div role="group" aria-label="Output 선택" className="grid gap-1">
-          {['', ...names].map((name) => (
-            <label key={name} className="flex items-center gap-2 rounded p-1 hover:bg-accent">
-              <input
-                type="radio"
-                role="menuitemradio"
-                name="viewer-output"
-                checked={value === name}
-                onChange={() => select(name)}
-              />
-              {name || '선택 안 함'}
-            </label>
-          ))}
+      <PopoverContent
+        align="start"
+        className="max-h-[80vh] w-max max-w-[calc(100vw-1rem)] overflow-auto p-2 text-xs"
+        data-capture-exclude
+      >
+        <div className="flex min-w-0 items-stretch">
+          <div role="group" aria-label="Output 선택" className="grid w-56 shrink-0 content-start gap-1 overflow-y-auto">
+            {['', ...names].map((name) => (
+              <label key={name} className="flex items-center gap-2 rounded p-1 hover:bg-accent">
+                <input
+                  type="radio"
+                  role="menuitemradio"
+                  name="viewer-output"
+                  checked={value === name}
+                  onChange={() => select(name)}
+                />
+                {name || '선택 안 함'}
+              </label>
+            ))}
+            {value && !names.includes(value) ? <p>{value} · 결과 없음</p> : null}
+          </div>
+          <div
+            ref={settingsHost?.setHost}
+            className="ml-2 min-w-0 flex-1 overflow-auto border-l pl-2 empty:ml-0 empty:hidden empty:border-0 empty:pl-0"
+          />
         </div>
-        {value && !names.includes(value) ? <p>{value} · 결과 없음</p> : null}
-        {value ? (
-          <>
-            <section aria-label="3D 설정" className="mt-2 grid gap-2 border-t pt-2">
-              <strong>3D 설정</strong>
-              <div ref={spaceHost} className="grid gap-2" />
-            </section>
-            <section aria-label="차트 설정" className="mt-2 grid gap-2 border-t pt-2">
-              <strong>차트 설정</strong>
-              <div ref={chartHost} className="grid gap-2" />
-            </section>
-          </>
-        ) : null}
       </PopoverContent>
     </Popover>
   )

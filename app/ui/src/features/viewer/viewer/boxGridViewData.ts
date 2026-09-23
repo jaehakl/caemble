@@ -1,13 +1,21 @@
 import {
+  boxGridTensorComponents,
   projectBoxGrid,
   projectionAxes,
   type ProjectionAxis,
   type BoxGridProjectionOptions,
+  type TensorDirection,
 } from '@/lib/calculation/boxGridProject'
 import type { CalculationAxis, CalculationInputLeaf } from '@/lib/calculation/types'
 
 export type PlotKind = 'histogram' | 'line' | 'heatmap' | 'cloud'
 export type BoxGridAnimation = 'off' | 'oscillation' | ProjectionAxis | 'component'
+export type BoxGridComponentChoice =
+  | number
+  | 'magnitude'
+  | 'magnitudeSquared'
+  | 'arrows'
+  | Readonly<{ tensor: readonly [TensorDirection | 'arrows', TensorDirection | 'arrows'] }>
 
 export type ScalarPlotData = {
   axes: readonly CalculationAxis[]
@@ -39,6 +47,21 @@ export function boxGridVectorComponents(leaf: CalculationInputLeaf) {
   return indices.every((index) => index >= 0) && new Set(indices).size === 3 ? indices : undefined
 }
 
+export function boxGridArrowComponents(
+  leaf: CalculationInputLeaf,
+  component: BoxGridComponentChoice,
+): number[] | undefined {
+  const vector = boxGridVectorComponents(leaf)
+  if (vector && (component === 'arrows' || component === 'magnitude')) return vector
+  if (typeof component !== 'object') return undefined
+  const tensor = boxGridTensorComponents(leaf)
+  const arrowRow = component.tensor.indexOf('arrows')
+  if (!tensor || arrowRow < 0) return undefined
+  const fixed = ['x', 'y', 'z'].indexOf(component.tensor[1 - arrowRow])
+  if (fixed < 0) return undefined
+  return [0, 1, 2].map((axis) => (arrowRow === 0 ? tensor[axis][fixed] : tensor[fixed][axis]))
+}
+
 /** Display conversion only: permute values with ticks, preserving raw RecordedData. */
 export function opticalPlotData(plot: ScalarPlotData, wavelength: boolean, surface: boolean): ScalarPlotData {
   const frequencyAxis = plot.axes.findIndex((axis) => axis.name === 'frequency')
@@ -61,6 +84,7 @@ export type BoxGridViewRequest = {
   leaf: CalculationInputLeaf
   options: BoxGridProjectionOptions
   arrows: boolean
+  vectorComponents?: readonly number[]
   animationRange: boolean
   sweepAxis?: ProjectionAxis | 'component'
   histogramDistribution?: boolean
@@ -69,6 +93,7 @@ export function calculateBoxGridView({
   leaf,
   options,
   arrows,
+  vectorComponents,
   animationRange,
   sweepAxis,
   histogramDistribution,
@@ -85,7 +110,7 @@ export function calculateBoxGridView({
         }),
       )
     : undefined
-  const components = arrows ? boxGridVectorComponents(leaf) : undefined
+  const components = vectorComponents ?? (arrows ? boxGridVectorComponents(leaf) : undefined)
   const vectors = components?.map((component) => scalarPlotData(projectBoxGrid(leaf, { ...options, component })).values)
   if (animationRange && sweepAxis) {
     const axis = sweepAxis === 'component' ? 6 : projectionAxes.indexOf(sweepAxis)
@@ -129,13 +154,18 @@ export function calculateBoxGridView({
       for (let c = 0; c < componentCount; c++) square += leaf.data[i + c] ** 2
       peak = Math.max(peak, Math.sqrt(square))
     }
-    if (distribution) distribution.range = [options.component === 'magnitude' ? 0 : -peak, peak]
+    const nonlinear =
+      options.component === 'magnitude' ||
+      options.component === 'magnitudeSquared' ||
+      typeof options.component === 'object'
+    if (distribution)
+      distribution.range = nonlinear ? [0, options.component === 'magnitudeSquared' ? peak ** 2 : peak] : [-peak, peak]
     for (const [axis, reduction] of Object.entries(options.reduce ?? {})) {
       if (!options.axes.includes(axis as (typeof options.axes)[number]) && reduction.method === 'sum')
         peak *= leaf.shape[['x', 'y', 'z', 'time', 'frequency'].indexOf(axis)]
     }
     bound = Math.max(bound, peak)
-    scalar.range = [options.component === 'magnitude' ? 0 : -bound, bound]
+    scalar.range = nonlinear ? [0, options.component === 'magnitudeSquared' ? bound ** 2 : bound] : [-bound, bound]
   }
   return { scalar, vectors, distribution }
 }

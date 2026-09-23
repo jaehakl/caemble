@@ -2,7 +2,14 @@ import { z } from 'zod'
 
 const index = z.number().int().nonnegative()
 const axis = z.enum(['x', 'y', 'z', 'time', 'frequency'])
-const component = z.union([index, z.enum(['magnitude', 'arrows'])])
+const tensorDirection = z.enum(['x', 'y', 'z', 'all', 'arrows'])
+const component = z.union([
+  index,
+  z.enum(['magnitude', 'magnitudeSquared', 'arrows']),
+  z
+    .object({ tensor: z.tuple([tensorDirection, tensorDirection]) })
+    .refine(({ tensor }) => tensor.filter((direction) => direction === 'arrows').length <= 1),
+])
 const reduction = z.object({
   method: z.enum(['index', 'mean', 'sum', 'min', 'max', 'median', 'std']),
   index: index.optional(),

@@ -2,8 +2,8 @@ import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRe
 import {
   GeometryDisplayManaged,
   ViewerControlTarget,
-  ViewerPanelHost,
   ViewerLayout,
+  ViewerToolHosts,
 } from '@/features/viewer/viewer/ViewerTools'
 import { ViewerDisplayControls, MeshSettingsHost } from '@/features/viewer/viewer/ViewerDisplayControls'
 import {
@@ -378,7 +378,7 @@ function ViewerContent(props: WorkbenchViewerProps) {
       scope={role ? `${name}@output-${role}` : name}
       available={Boolean(validContracts[name])}
     >
-      <OutputControlsTarget name={name} role={role}>
+      <OutputControlsTarget role={role}>
         <RetainedResultLayer
           name={name}
           contracts={contracts}
@@ -661,7 +661,15 @@ function ResultLayer({
       </p>
     )
   if (role === 'chart' && contract.visualization.kind !== 'box-grid')
-    return <ResultTensorView name={name} contract={contract} rules={input.current.rules} data={input.current.data} />
+    return (
+      <ResultTensorView
+        name={name}
+        contract={contract}
+        rules={input.current.rules}
+        data={input.current.data}
+        role={role}
+      />
+    )
   if (field)
     return (
       <MeshFieldResult
@@ -707,20 +715,12 @@ function ResultLayer({
   return <ResultTensorView name={name} contract={contract} rules={input.current.rules} data={input.current.data} />
 }
 
-function OutputControlsTarget({
-  name,
-  role,
-  children,
-}: {
-  name: string
-  role?: 'space' | 'chart'
-  children: React.ReactNode
-}) {
-  const hosts = useContext(MeshSettingsHost)
+function OutputControlsTarget({ role, children }: { role?: 'space' | 'chart'; children: React.ReactNode }) {
+  const hosts = useContext(ViewerToolHosts)
   if (!role) return children
   return (
-    <ViewerControlTarget.Provider value={{ host: hosts[`${name}@output-${role}`] ?? null }}>
-      <ViewerPanelHost.Provider value={null}>{children}</ViewerPanelHost.Provider>
+    <ViewerControlTarget.Provider value={{ host: role === 'chart' ? (hosts?.output ?? null) : null }}>
+      {children}
     </ViewerControlTarget.Provider>
   )
 }

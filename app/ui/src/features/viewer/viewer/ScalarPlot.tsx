@@ -264,7 +264,7 @@ export function ScalarPlot({
   }, [plot, kind, range, bins, unit, lockHistogramRange, nativeSize, histogramMarker])
   return (
     <div className="flex h-full min-h-0 flex-col" data-result-visualization={kind}>
-      {kind === 'line' ? (
+      {kind === 'line' && plot.axes.length > 1 ? (
         <div
           className="flex max-h-16 shrink-0 flex-wrap gap-x-4 gap-y-1 overflow-auto px-3 py-1 text-xs"
           aria-label="Line 범례"

@@ -53,6 +53,27 @@ export function createViewerSettings(defaults?: ViewerDefaults | null) {
     )
       migrated[`${item}@output-space:${setting}`] ??= value
   }
+  const sharedBoxGridSettings = [
+    'box.wavelength',
+    'box.representation',
+    'box.component',
+    'box.reduce',
+    'box.animation',
+    'box.timeSeconds',
+    'box.frameIndex',
+    'box.durationSeconds',
+    'box.playing',
+    'box.repeat',
+    'box.speed',
+    'box.fixed',
+  ]
+  for (const [key, value] of Object.entries(migrated)) {
+    const marker = '@output-space:'
+    const position = key.indexOf(marker)
+    if (position < 0 || !sharedBoxGridSettings.includes(key.slice(position + marker.length))) continue
+    migrated[`${key.slice(0, position)}@output-chart:${key.slice(position + marker.length)}`] ??= value
+    delete migrated[key]
+  }
   return createComparisonSettings({
     ...migrated,
     '@workspace:selectedOutput': display.output,

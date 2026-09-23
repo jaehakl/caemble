@@ -235,31 +235,83 @@ it('keeps legacy mesh Output in the chart while native mesh visualization render
   expect(both).toBeGreaterThan(0)
 })
 
-it('always splits, keeps Geometry on, and isolates Output chart settings in its menu', async () => {
+it('places Output settings below the common toolbar and hides the empty row', async () => {
   const props = viewerDisplayFixture()
   const view = render(<WorkbenchViewer {...props} initialDefaults={{ ...defaults, geometryMode: 0 }} />)
+  const common = screen.getByRole('toolbar', { name: 'Viewer 공통 툴바' })
+  const outputToolbar = screen.getByRole('toolbar', { name: 'Output 설정 툴바' })
+  expect(common.nextElementSibling).toBe(outputToolbar)
   expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeInTheDocument()
   await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1'))
-  await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'line'))
-  expect(screen.queryByLabelText('frequency 역할')).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'heatmap'))
+  expect(within(outputToolbar).queryByRole('button', { name: '축 지정' })).not.toBeInTheDocument()
+  expect(within(outputToolbar).queryByLabelText('frequency 역할')).not.toBeInTheDocument()
+  expect(within(common).queryByLabelText('frequency 역할')).not.toBeInTheDocument()
   fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
-  const space = within(screen.getByRole('region', { name: '3D 설정' }))
-  const chart = within(screen.getByRole('region', { name: '차트 설정' }))
-  expect(space.queryByLabelText('x 역할')).not.toBeInTheDocument()
-  expect(space.queryByRole('button', { name: 'Histogram' })).not.toBeInTheDocument()
-  fireEvent.click(chart.getByRole('button', { name: 'Histogram' }))
-  await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'histogram'))
-  expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1')
+  expect(screen.queryByRole('region', { name: '3D 설정' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: '차트 설정' })).not.toBeInTheDocument()
   expect(screen.getByRole('menu')).toBeInTheDocument()
+  expect(screen.getByRole('region', { name: 'Box Grid 축 설정' })).toBeInTheDocument()
+  expect(screen.getByRole('group', { name: 'Output 선택' }).nextElementSibling).toContainElement(
+    screen.getByRole('region', { name: 'Box Grid 축 설정' }),
+  )
+  expect(within(outputToolbar).queryByRole('button', { name: 'Histogram' })).not.toBeInTheDocument()
+  expect(screen.getByLabelText('frequency 적분 방법')).toBeInTheDocument()
+  expect(screen.getAllByLabelText(/^[xyztf] 축 설정$/)).toHaveLength(5)
+  expect(screen.getByRole('button', { name: 'x 주 축' }).querySelector('svg')).toHaveClass('lucide-arrow-left-right')
+  expect(screen.getByRole('button', { name: 'x 보조축' }).querySelector('svg')).toHaveClass('lucide-arrow-up-down')
+  fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
+  await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'line'))
+  expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1')
   view.rerender(<WorkbenchViewer {...props} resultVarsHash="different" initialDefaults={defaults} />)
   expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'true')
   expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '0')
   expect(screen.getAllByText(/Geometry와 결과의 Vars가 다릅니다/).length).toBeGreaterThan(0)
-  expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'histogram')
+  expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'line')
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
   expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
   expect(screen.getByText('표시할 차트가 없습니다. Output을 선택하세요.')).toBeInTheDocument()
+  expect(outputToolbar).toBeEmptyDOMElement()
+  expect(outputToolbar).toHaveClass('empty:hidden')
+})
+
+it('updates the right side of the open Output menu for each Box Grid and hides it for other Outputs', async () => {
+  const props = viewerDisplayFixture()
+  const second = 'signal2'
+  const signalRule = props.recordedRules!.find((rule) => rule.label === 'signal')!
+  render(
+    <WorkbenchViewer
+      {...props}
+      initialDefaults={defaults}
+      resultContracts={{
+        ...props.resultContracts,
+        [second]: { ...props.resultContracts!.signal, output: second },
+      }}
+      recordedRules={[...props.recordedRules!, { ...signalRule, label: second }]}
+      recordedData={{ ...props.recordedData, [second]: props.recordedData!.signal }}
+    />,
+  )
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
+  const outputMenu = screen.getByRole('menu', { name: 'Output · signal' })
+  const list = within(outputMenu).getByRole('group', { name: 'Output 선택' })
+  const right = list.nextElementSibling
+  expect(right).toContainElement(screen.getByRole('region', { name: 'Box Grid 축 설정' }))
+  fireEvent.click(screen.getByRole('button', { name: 'f 주 축' }))
+  expect(screen.getByRole('button', { name: 'f 주 축' })).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(within(outputMenu).getByRole('menuitemradio', { name: second }))
+  expect(screen.getByRole('menu', { name: `Output · ${second}` })).toBeInTheDocument()
+  expect(right).toContainElement(screen.getByRole('region', { name: 'Box Grid 축 설정' }))
+  expect(screen.getByRole('button', { name: 'f 주 축' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'signal' }))
+  expect(screen.getByRole('button', { name: 'f 주 축' })).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'summary' }))
+  expect(screen.getByRole('menu', { name: 'Output · summary' })).toBeInTheDocument()
+  expect(right).toBeEmptyDOMElement()
+  fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
+  expect(screen.getByRole('menu', { name: 'Output · 선택 안 함' })).toBeInTheDocument()
+  expect(right).toBeEmptyDOMElement()
 })
 
 it('falls back to a spatial Heatmap for a plane and excludes data without spatial positions', async () => {

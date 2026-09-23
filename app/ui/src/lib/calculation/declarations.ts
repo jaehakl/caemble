@@ -32,7 +32,7 @@ type BoxGridProjectionData = number | readonly BoxGridProjectionData[]
 interface BoxGridProjectionOptions {
   readonly axes: readonly BoxGridProjectionAxis[]
   readonly representation?: 'amplitude' | 'phase'
-  readonly component?: number | 'magnitude'
+  readonly component?: number | 'magnitude' | 'magnitudeSquared' | { readonly tensor: readonly ['x' | 'y' | 'z' | 'all', 'x' | 'y' | 'z' | 'all'] }
   readonly reduce?: Partial<Record<BoxGridProjectionAxis, { method: 'sum' | 'mean' | 'min' | 'max' | 'median' | 'std' | 'index'; index?: number }>>
   readonly frame?: { phase?: number; timeSeconds?: number; axis?: 'time' | 'frequency'; index?: number }
 }

@@ -34,7 +34,7 @@ it('unions all mesh bounds without mutating per-layer meshes', () => {
   expect(first.bounds.min).toEqual([-3, 0, 2])
 })
 
-it('migrates legacy Output settings into independent role scopes', async () => {
+it('restores shared Output settings from the chart, falling back to old 3D values', async () => {
   const { createViewerSettings } = await import('./comparisonSettings')
   const settings = createViewerSettings({
     version: 2,
@@ -53,8 +53,17 @@ it('migrates legacy Output settings into independent role scopes', async () => {
   expect(settings.values.get('@workspace:geometryMode')).toBe(0.9)
   expect(settings.values.get('signal@output-chart:box.kind')).toBe('line')
   expect(settings.values.get('signal@output-chart:box.component')).toBe(2)
-  expect(settings.values.get('signal@output-space:box.component')).toBe(1)
+  expect(settings.values.get('signal@output-chart:box.fixed')).toEqual([0, 20])
+  expect(settings.values.has('signal@output-space:box.component')).toBe(false)
   expect(settings.values.has('signal@output-space:box.axes')).toBe(false)
-  settings.set('signal@output-space:box.component', 0)
-  expect(settings.values.get('signal@output-chart:box.component')).toBe(2)
+  const spaceOnly = createViewerSettings({
+    version: 2,
+    geometryMode: 0.9,
+    selectedOutput: 'signal',
+    visualizations: {},
+    camera: null,
+    settings: { 'signal@output-space:box.representation': 'phase' },
+  })
+  expect(spaceOnly.values.get('signal@output-chart:box.representation')).toBe('phase')
+  expect(spaceOnly.values.has('signal@output-space:box.representation')).toBe(false)
 })
