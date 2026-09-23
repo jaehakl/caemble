@@ -1,3 +1,4 @@
+import { useViewerSelectionStore, type ViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { SharedViewerDisplayControls, ViewerResultMenuHost } from '@/features/viewer/viewer/ViewerDisplayControls'
 import { initialViewerDisplay } from '@/features/viewer/viewer/viewerDisplay'
 import { ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
@@ -66,6 +67,7 @@ const controlClass =
   'h-9 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45'
 
 export function MeasurementWorkspace({
+  selectionStore,
   workbench,
   authenticated,
   dataReadable,
@@ -74,12 +76,15 @@ export function MeasurementWorkspace({
   onActivity,
 }: {
   workbench: CaeWorkbenchState
+  selectionStore?: ViewerSelectionStore
   authenticated: boolean
   dataReadable: boolean
   active: boolean
   menubar: ReactNode
   onActivity?: RuntimeActivityCallback
 }) {
+  const localSelection = useViewerSelectionStore(workbench.workspaceSession)
+  const selection = selectionStore ?? localSelection
   const queryScope = usePrivateQueryScope()
   const [vars, setVars] = useState<Readonly<Vars> | null>(
     workbench.candidateVars ?? workbench.selection.variables ?? workbench.experimentDocument.variables,
@@ -104,6 +109,7 @@ export function MeasurementWorkspace({
     return defaults?.version === 2 ? defaults.selectedOutput : ''
   })
   const [comparisonSettings] = useState(() => createViewerSettings(workbench.experimentRecord?.viewer_defaults))
+  const viewerSettings = useMemo(() => ({ ...comparisonSettings, selection }), [comparisonSettings, selection])
   const [resultHosts, updateResultHosts] = useState<Record<string, HTMLElement>>({})
   const setResultHost = useCallback(
     (name: string, host: HTMLDivElement | null) =>
@@ -244,7 +250,7 @@ export function MeasurementWorkspace({
       : 'preview'
   const comparison = useMemo(() => {
     const common = {
-      settings: comparisonSettings,
+      settings: viewerSettings,
       item: selectedResult,
       controlsHost,
       suspended: !active || (!previewFrame && (!ready || forward.predicting)),
@@ -264,7 +270,7 @@ export function MeasurementWorkspace({
       } as ViewerComparison,
     }
   }, [
-    comparisonSettings,
+    viewerSettings,
     camera,
     selectedResult,
     controlsHost,
@@ -775,11 +781,6 @@ export function MeasurementWorkspace({
   const viewerBase = {
     initialDefaults: workbench.experimentRecord?.viewer_defaults,
     experiment: workbench.experiment,
-    selectionQuery: null,
-    selectionSourceStatus: {},
-    onFindSelectionSource: () => {},
-    onSelectionQueryChange: () => {},
-    onSelectionSourcePathsChange: () => {},
     selectedResult,
     onSelectedResultChange: setSelectedResult,
     showToolbar: false,
@@ -1003,7 +1004,7 @@ export function MeasurementWorkspace({
             />
           }
           second={
-            <ViewerPersistenceContext.Provider value={{ settings: comparisonSettings, camera, item: selectedResult }}>
+            <ViewerPersistenceContext.Provider value={{ settings: viewerSettings, camera, item: selectedResult }}>
               <ViewerResultMenuHost.Provider value={resultHosts}>
                 <ViewerLayout>
                   <ViewerControls placement="data">

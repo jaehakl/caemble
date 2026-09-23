@@ -1,3 +1,4 @@
+import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { useCallback, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
@@ -23,6 +24,7 @@ export function Component() {
 function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const navigate = useNavigate()
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated)
+  const selectionStore = useViewerSelectionStore(workbench.workspaceSession)
   const available = useQuery(availableExperimentsQueryOptions(auth.queryScope))
   const initialized = useRef(false)
   const { loadExperiment } = workbench
@@ -67,16 +69,12 @@ function ShowcasePage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           <div className="min-h-0 flex-1">
             {workbench.experimentId ? (
               <WorkbenchViewer
+                selectionStore={selectionStore}
                 initialDefaults={workbench.experimentRecord?.viewer_defaults}
                 presentation={workbench.viewerPresentation}
                 key={`${workbench.experimentId}:${workbench.experimentDocument.resultSessionKey ?? ''}`}
                 experiment={workbench.experiment}
                 experimentDocument={workbench.experimentDocument}
-                onFindSelectionSource={() => {}}
-                onSelectionQueryChange={() => {}}
-                onSelectionSourcePathsChange={() => {}}
-                selectionQuery={null}
-                selectionSourceStatus={{}}
                 autoSelectResult={Boolean(workbench.selection.measurement)}
                 resultContracts={workbench.selection.resultContracts}
                 visualizations={workbench.selection.visualizations}

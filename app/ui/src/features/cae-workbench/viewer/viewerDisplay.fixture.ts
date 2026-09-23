@@ -233,9 +233,7 @@ export function viewerDisplayFixture(): WorkbenchViewerProps {
     visualizations,
     autoSelectResult: true,
     onFindSelectionSource: noop,
-    onSelectionQueryChange: noop,
     onSelectionSourcePathsChange: noop,
-    selectionQuery: null,
     selectionSourceStatus: {},
   }
 }

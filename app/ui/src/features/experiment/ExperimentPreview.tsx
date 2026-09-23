@@ -1,21 +1,19 @@
+import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 
 export function ExperimentPreview({ workbench }: { workbench: CaeWorkbenchState }) {
+  const selectionStore = useViewerSelectionStore(workbench.workspaceSession)
   if (!workbench.experiment)
     return <p className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Experiment를 선택하세요.</p>
   return (
     <WorkbenchViewer
+      selectionStore={selectionStore}
       initialDefaults={workbench.experimentRecord?.viewer_defaults}
       presentation={workbench.viewerPresentation}
       key={`${workbench.workspaceSession}:${workbench.experimentDocument.resultSessionKey ?? ''}`}
       experiment={workbench.experiment}
       experimentDocument={workbench.experimentDocument}
-      onFindSelectionSource={() => {}}
-      onSelectionQueryChange={() => {}}
-      onSelectionSourcePathsChange={() => {}}
-      selectionQuery={null}
-      selectionSourceStatus={{}}
       autoSelectResult={Boolean(workbench.selection.measurement)}
       resultContracts={workbench.selection.resultContracts}
       visualizations={workbench.selection.visualizations}

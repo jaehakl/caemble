@@ -5,7 +5,7 @@ import { ViewerLayout } from './ViewerTools'
 import { ViewerControls } from './comparisonSettings'
 import { ViewerToolbar, type CameraView } from './ViewerToolbar'
 import { viewerScaleBar } from './scaleBar'
-import { useViewerCamera, useViewerComparison, useViewerSetting } from './comparisonSettings'
+import { useViewerCamera, useViewerComparison, useViewerSetting, useViewerSelection } from './comparisonSettings'
 import type { HeatmapRaster, HeatmapRenderData } from './structuredField'
 import { heatmapTiles } from './pointCloudData'
 import { measurements } from '@jscad/modeling'
@@ -28,7 +28,6 @@ import {
   selectedCadViewerBounds,
   type CadViewerPickMode,
   type CadViewerPickingCamera,
-  type CadViewerSelectionQuery,
   type CadViewerSourceLookupStatus,
 } from './selection'
 
@@ -86,10 +85,8 @@ type JscadViewerProps = {
   onRenderError: (message: string) => void
   onRenderStart: () => void
   onFindSelectionSource?: (value: string) => void
-  onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange?: (values: readonly string[]) => void
   onToggleSource?: (source: CadViewerSource) => void
-  selectionQuery?: CadViewerSelectionQuery | null
   polylines?: readonly PolylineBundle[]
   meshRenderData?: MeshRenderData
   preserveCameraOnUpdate?: boolean
@@ -284,7 +281,6 @@ function JscadViewer({
   onRenderError,
   onRenderStart,
   onFindSelectionSource,
-  onSelectionQueryChange,
   onSelectionSourcePathsChange,
   onToggleSource,
   polylines = emptyPolylines,
@@ -294,7 +290,6 @@ function JscadViewer({
   heatmapRenderData,
   heatmapRenderLayers,
   geometryOpacity: requestedGeometryOpacity,
-  selectionQuery = null,
   selectionSourceStatus = {},
   visibleSources,
 }: JscadViewerProps) {
@@ -304,6 +299,7 @@ function JscadViewer({
   const requestedOpacity =
     !managed && geometryControlledLocally ? geometryMode : (requestedGeometryOpacity ?? geometryMode)
   const geometryOpacity = requestedOpacity === 0 ? 0.9 : requestedOpacity
+  const [selectionQuery, selection] = useViewerSelection()
   const savedCamera = useViewerCamera()
   const comparison = useViewerComparison()
   const cameraToken = useRef({})
@@ -449,10 +445,6 @@ function JscadViewer({
   const renderRef = useRef<((options: RendererOptions) => void) | null>(null)
   const renderErrorRef = useRef(onRenderError)
   renderErrorRef.current = onRenderError
-
-  useEffect(() => {
-    if (selectionQuery?.origin === 'viewer' && selectionMatches.length === 0) onSelectionQueryChange?.(null)
-  }, [onSelectionQueryChange, selectionMatches.length, selectionQuery])
 
   useEffect(() => {
     onSelectionSourcePathsChange?.(selectionSourcePaths)
@@ -1059,11 +1051,11 @@ function JscadViewer({
               }
               const hits = pickCadViewerTargets(pickParts, cameraRef.current as CadViewerPickingCamera, point, pickMode)
               if (hits.length === 0) {
-                onSelectionQueryChange?.(null)
+                selection.select(null)
                 return
               }
               const hit = xrayEnabled ? hits[hits.length - 1] : hits[0]
-              onSelectionQueryChange?.({
+              selection.select({
                 kind: pickMode,
                 match: 'exact',
                 origin: 'viewer',
@@ -1184,7 +1176,7 @@ function JscadViewer({
                   className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
                   title="선택 해제"
                   type="button"
-                  onClick={() => onSelectionQueryChange?.(null)}
+                  onClick={() => selection.select(null)}
                 >
                   <X className="size-3" />
                 </button>

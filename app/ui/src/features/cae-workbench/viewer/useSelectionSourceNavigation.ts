@@ -4,7 +4,7 @@ import {
   findCadSourcePathLocationsByValue,
   type CadSourcePathLocation,
 } from '@/features/viewer/editor/cadSelectionSource'
-import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
+import type { CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
 import type { WorkbenchLayoutState, WorkbenchSectionId } from '../types'
 
 type SelectionSourceLookup = Readonly<{
@@ -30,7 +30,6 @@ export function useSelectionSourceNavigation({
   setLayout,
   workspaceSession,
 }: SelectionSourceNavigationOptions) {
-  const [selectionQuery, setSelectionQuery] = useState<CadViewerSelectionQuery | null>(null)
   const [sourceRevealRequest, setSourceRevealRequest] = useState<
     (CadEditorRevealRequest & Readonly<{ path: string }>) | null
   >(null)
@@ -92,16 +91,11 @@ export function useSelectionSourceNavigation({
     )
   }, [])
 
-  const handleCodeSelectionQueryChange = useCallback((query: CadViewerSelectionQuery | null) => {
-    setSelectionQuery((current) => query ?? (current?.origin === 'code' ? null : current))
-  }, [])
-
   const handleSourceRevealRequestHandled = useCallback((id: number) => {
     setSourceRevealRequest((current) => (current?.id === id ? null : current))
   }, [])
 
   useEffect(() => {
-    setSelectionQuery(null)
     setSourcePathPicker(null)
     setSourceRevealRequest(null)
     setSourcePaths([])
@@ -125,12 +119,9 @@ export function useSelectionSourceNavigation({
   return {
     closeSourcePathPicker: () => setSourcePathPicker(null),
     findSelectionSource,
-    handleCodeSelectionQueryChange,
     handleSelectionSourcePathsChange,
     handleSourceRevealRequestHandled,
-    handleViewerSelectionQueryChange: setSelectionQuery,
     revealSourceLocation,
-    selectionQuery,
     selectionSourceStatus,
     sourcePathPicker,
     sourceRevealRequest,

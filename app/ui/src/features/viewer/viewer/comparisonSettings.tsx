@@ -1,4 +1,5 @@
 import { initialViewerDisplay } from './viewerDisplay'
+import { createViewerSelection, type ViewerSelectionStore } from './viewerSelection'
 import type { createComparisonCamera } from './comparisonCamera'
 import { type ViewerDefaults, durableViewerSettings } from '@/contracts/viewerDefaults'
 import {
@@ -16,7 +17,7 @@ import { createPortal } from 'react-dom'
 import { ViewerToolHosts, type ViewerControlPlacement } from './ViewerTools'
 
 /** Owned by the comparison workspace, independently of data and renderer lifetimes. */
-export function createComparisonSettings(initial?: Record<string, unknown>) {
+export function createComparisonSettings(initial?: Record<string, unknown>, selection = createViewerSelection()) {
   const values = new Map<string, unknown>(Object.entries(durableViewerSettings(Object.entries(initial ?? {}))))
   for (const [key, animation] of values) {
     if (!key.endsWith(':box.animation') || !['x', 'y', 'z', 'frequency', 'component'].includes(String(animation)))
@@ -35,6 +36,7 @@ export function createComparisonSettings(initial?: Record<string, unknown>) {
   const seeded = new Set(values.keys())
   const listeners = new Set<() => void>()
   return {
+    selection,
     values,
     seeded,
     subscribe(listener: () => void) {
@@ -51,7 +53,7 @@ export function createComparisonSettings(initial?: Record<string, unknown>) {
   }
 }
 
-export function createViewerSettings(defaults?: ViewerDefaults | null) {
+export function createViewerSettings(defaults?: ViewerDefaults | null, selection?: ViewerSelectionStore) {
   const display = initialViewerDisplay(defaults)
   const migrated = { ...defaults?.settings }
   for (const [key, value] of Object.entries(defaults?.settings ?? {})) {
@@ -88,12 +90,15 @@ export function createViewerSettings(defaults?: ViewerDefaults | null) {
     migrated[`${key.slice(0, position)}@output-chart:${key.slice(position + marker.length)}`] ??= value
     delete migrated[key]
   }
-  return createComparisonSettings({
-    ...migrated,
-    '@workspace:selectedOutput': display.output,
-    '@workspace:geometryMode': display.geometry,
-    '@workspace:visualizations': display.visualizations,
-  })
+  return createComparisonSettings(
+    {
+      ...migrated,
+      '@workspace:selectedOutput': display.output,
+      '@workspace:geometryMode': display.geometry,
+      '@workspace:visualizations': display.visualizations,
+    },
+    selection,
+  )
 }
 
 export type ComparisonSettings = ReturnType<typeof createComparisonSettings>
@@ -120,6 +125,15 @@ export const ViewerComparisonContext = createContext<ViewerComparison | null>(nu
 
 export function useViewerComparison() {
   return useContext(ViewerComparisonContext)
+}
+
+export function useViewerSelection() {
+  const comparison = useViewerComparison()
+  const persistent = useContext(ViewerPersistenceContext)
+  const [local] = useState(createViewerSelection)
+  const store = (comparison ?? persistent)?.settings.selection ?? local
+  const query = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  return [query, store] as const
 }
 
 /** Observe a control's setting without seeding its defaults before the control mounts. */

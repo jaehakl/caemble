@@ -6,9 +6,15 @@ import { prepareRender } from '@jscad/regl-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { StrictMode } from 'react'
 import JscadViewer from './JscadViewer'
-import { createComparisonSettings, ViewerComparisonContext, type ViewerComparison } from './comparisonSettings'
+import {
+  createComparisonSettings,
+  ViewerComparisonContext,
+  ViewerPersistenceContext,
+  type ViewerComparison,
+} from './comparisonSettings'
 import { createRenderParts } from './renderParts'
 import { primitives } from '@jscad/modeling'
+import type { JscadViewerLayer } from './model'
 
 const mocks = vi.hoisted(() => ({ draw: vi.fn(), render: vi.fn(), texture: vi.fn(() => ({ destroy: vi.fn() })) }))
 
@@ -54,6 +60,144 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+})
+
+it('selects Geometry and Surface locally, keeps missing paths, and clears through Viewer controls', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const layers: JscadViewerLayer[] = [
+    {
+      source: 'experiment',
+      lengthUnit: 'm',
+      parts: [
+        {
+          id: 'body',
+          geometry: primitives.cuboid(),
+          materialRole: 'body',
+          surfaces: Array.from({ length: 6 }, (_, index) => ({
+            id: `body/surface/${index}`,
+            surfaceIndex: index,
+            label: `Face ${index}`,
+            polygonIndices: [index],
+          })),
+        },
+      ],
+      tree: { key: 'root', label: 'Geometry', children: [] },
+    },
+  ]
+  const props = { lengthUnit: 'm' as const, onRenderStart: vi.fn(), onRenderEnd: vi.fn(), onRenderError: vi.fn() }
+  const view = render(<JscadViewer {...props} layers={layers} />)
+  const canvas = view.container.querySelector('canvas')!
+  Object.assign(canvas, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+  const clickCanvas = (x = 400, y = 300) => {
+    fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: x, clientY: y })
+    fireEvent.pointerUp(canvas, { button: 0, clientX: x, clientY: y })
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Set z camera view' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Selection mode geometry' }))
+  clickCanvas()
+  expect(screen.getByRole('button', { name: 'Focus Viewer on body' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Find .* in Source/ })).not.toBeInTheDocument()
+
+  view.rerender(<JscadViewer {...props} layers={[]} />)
+  expect(screen.getByText('찾지 못함')).toBeInTheDocument()
+  expect(screen.getByText('body')).toBeInTheDocument()
+  view.rerender(<JscadViewer {...props} layers={layers} />)
+  expect(screen.getByRole('button', { name: 'Focus Viewer on body' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Selection mode surface' }))
+  clickCanvas()
+  expect(screen.getByRole('button', { name: /^Focus Viewer on body\/surface\// })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Clear Viewer selection' }))
+  expect(screen.queryByRole('button', { name: 'Clear Viewer selection' })).not.toBeInTheDocument()
+  clickCanvas()
+  expect(screen.getByRole('button', { name: 'Clear Viewer selection' })).toBeInTheDocument()
+  clickCanvas(799, 599)
+  expect(screen.queryByRole('button', { name: 'Clear Viewer selection' })).not.toBeInTheDocument()
+  expect(props.onRenderError).not.toHaveBeenCalled()
+})
+
+it('shares pointer selection across comparison panes and retains it when either or both scenes disappear', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+    },
+  )
+  const camera = createComparisonCamera()
+  const settings = createComparisonSettings()
+  const comparison: ViewerComparison = {
+    settings,
+    camera,
+    item: '',
+    side: 'preview',
+    controlsHost: null,
+    controlsOwner: false,
+    suspended: false,
+  }
+  const layer: JscadViewerLayer = {
+    source: 'experiment',
+    lengthUnit: 'm',
+    parts: [{ id: 'body', geometry: primitives.cuboid(), materialRole: 'body', surfaces: [] }],
+    tree: { key: 'root', label: 'Geometry', children: [] },
+  }
+  const props = { lengthUnit: 'm' as const, onRenderStart: vi.fn(), onRenderEnd: vi.fn(), onRenderError: vi.fn() }
+  const content = (left: boolean, right: boolean, item = '') => (
+    <>
+      <ComparisonToolbar camera={camera} />
+      <ViewerComparisonContext.Provider value={{ ...comparison, item }}>
+        <JscadViewer {...props} key={`left:${item}`} layers={left ? [layer] : []} />
+      </ViewerComparisonContext.Provider>
+      <ViewerComparisonContext.Provider value={{ ...comparison, side: 'actual', item }}>
+        <JscadViewer {...props} key={`right:${item}`} layers={right ? [layer] : []} />
+      </ViewerComparisonContext.Provider>
+    </>
+  )
+  const view = render(content(true, true))
+  fireEvent.click(screen.getByRole('button', { name: 'Selection mode geometry' }))
+  for (const canvas of view.container.querySelectorAll('canvas')) {
+    Object.assign(canvas, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+    fireEvent.pointerDown(canvas, { button: 0, buttons: 1, clientX: 400, clientY: 300 })
+    fireEvent.pointerUp(canvas, { button: 0, clientX: 400, clientY: 300 })
+    expect(screen.getAllByRole('button', { name: 'Focus Viewer on body' })).toHaveLength(2)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear Viewer selection' })[0])
+    expect(settings.selection.getSnapshot()).toBeNull()
+  }
+  act(() =>
+    settings.selection.select({
+      kind: 'geometry',
+      match: 'exact',
+      origin: 'viewer',
+      scope: { source: 'experiment' },
+      value: 'body',
+    }),
+  )
+  view.rerender(content(false, true))
+  expect(screen.getAllByRole('button', { name: 'Focus Viewer on body' })).toHaveLength(1)
+  expect(screen.getAllByText('찾지 못함')).toHaveLength(1)
+  view.rerender(content(false, false))
+  expect(screen.getAllByText('찾지 못함')).toHaveLength(2)
+  view.rerender(content(true, true, 'other-output'))
+  expect(screen.getAllByRole('button', { name: 'Focus Viewer on body' })).toHaveLength(2)
+  expect(props.onRenderError).not.toHaveBeenCalled()
 })
 
 it('keeps Geometry render work stable when only the scene wrapper and loading props change', () => {
@@ -657,7 +801,13 @@ it('rotates around the selected Geometry center and fits its bounds only on butt
     onRenderEnd: vi.fn(),
     onRenderError: vi.fn(),
   }
-  const view = render(<JscadViewer {...props} selectionQuery={selectionQuery} />)
+  const persistent = { settings: createComparisonSettings(), camera: createComparisonCamera(), item: '' }
+  persistent.settings.selection.selectFromCode(selectionQuery)
+  const view = render(
+    <ViewerPersistenceContext.Provider value={persistent}>
+      <JscadViewer {...props} />
+    </ViewerPersistenceContext.Provider>,
+  )
   const camera = (
     vi.mocked(prepareRender).mock.calls[0][0] as unknown as {
       camera: { position: number[]; target: number[]; up: number[] }
@@ -681,7 +831,7 @@ it('rotates around the selected Geometry center and fits its bounds only on butt
   fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
   expect(camera.target).toEqual([10, 0, 0])
   const selectedDistance = Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))
-  view.rerender(<JscadViewer {...props} selectionQuery={null} />)
+  act(() => persistent.settings.selection.select(null))
   fireEvent.click(screen.getByRole('button', { name: 'Set default camera view' }))
   expect(camera.target).toEqual([0, 0, 0])
   expect(Math.hypot(...camera.position.map((value, axis) => value - camera.target[axis]))).toBeGreaterThan(
@@ -715,6 +865,7 @@ it('fits selected Geometry across comparison viewers with different layer units'
     scope: { source: 'experiment' },
     value: 'chosen',
   } as const
+  comparison.settings.selection.selectFromCode(selected)
   const props = { lengthUnit: 'm' as const, onRenderStart: vi.fn(), onRenderEnd: vi.fn(), onRenderError: vi.fn() }
   const layers = (lengthUnit: 'm' | 'mm', center: number) => [
     {
@@ -744,10 +895,10 @@ it('fits selected Geometry across comparison viewers with different layer units'
     <>
       <ComparisonToolbar camera={camera} />
       <ViewerComparisonContext.Provider value={comparison}>
-        <JscadViewer {...props} layers={layers('m', 1)} selectionQuery={selected} />
+        <JscadViewer {...props} layers={layers('m', 1)} />
       </ViewerComparisonContext.Provider>
       <ViewerComparisonContext.Provider value={{ ...comparison, side: 'actual' }}>
-        <JscadViewer {...props} layers={layers('mm', 5000)} selectionQuery={selected} />
+        <JscadViewer {...props} layers={layers('mm', 5000)} />
       </ViewerComparisonContext.Provider>
     </>,
   )
@@ -978,7 +1129,7 @@ it('shares camera gestures and one toolbar, preserving the pose through late mou
   expect(camera.current).toEqual(finalPose)
 })
 
-it('shares selection mode and Task visibility while keeping selection focus local', () => {
+it('shares Geometry selection, selection mode and Task visibility', () => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -997,6 +1148,13 @@ it('shares selection mode and Task visibility while keeping selection focus loca
     camera,
   }
   const actual: ViewerComparison = { ...preview, side: 'actual' }
+  preview.settings.selection.selectFromCode({
+    kind: 'geometry',
+    match: 'exact',
+    origin: 'code',
+    scope: { source: 'experiment' },
+    value: 'body',
+  })
   const scene = {
     lengthUnit: 'm' as const,
     parts: [{ id: 'body', geometry: primitives.cuboid({ center: [3, 0, 0] }), materialRole: 'body', surfaces: [] }],
@@ -1009,17 +1167,7 @@ it('shares selection mode and Task visibility while keeping selection focus loca
     <>
       <ComparisonToolbar camera={camera} />
       <ViewerComparisonContext.Provider value={{ ...preview, item }}>
-        <CadViewer
-          {...props}
-          experiment={{ scene }}
-          selectionQuery={{
-            kind: 'geometry',
-            match: 'exact',
-            origin: 'code',
-            scope: { source: 'experiment' },
-            value: 'body',
-          }}
-        />
+        <CadViewer {...props} experiment={{ scene }} />
       </ViewerComparisonContext.Provider>
       <ViewerComparisonContext.Provider value={{ ...actual, item }}>
         <CadViewer {...props} experiment={{ scene, taskScenes: { other: scene } }} />
@@ -1032,8 +1180,8 @@ it('shares selection mode and Task visibility while keeping selection focus loca
   const canvases = view.container.querySelectorAll('canvas')
   fireEvent.click(screen.getByRole('button', { name: 'Selection mode geometry' }))
   for (const canvas of canvases) expect(canvas.className).toContain('cursor-crosshair')
-  expect(screen.getAllByRole('button', { name: 'Focus Viewer on body' })).toHaveLength(1)
-  fireEvent.click(screen.getByRole('button', { name: 'Focus Viewer on body' }))
+  expect(screen.getAllByRole('button', { name: 'Focus Viewer on body' })).toHaveLength(2)
+  fireEvent.click(screen.getAllByRole('button', { name: 'Focus Viewer on body' })[0])
   const cameras = vi
     .mocked(prepareRender)
     .mock.calls.slice(-2)

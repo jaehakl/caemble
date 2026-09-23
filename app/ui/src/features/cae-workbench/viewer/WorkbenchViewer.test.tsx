@@ -113,9 +113,7 @@ function gridSelectionProps(grids: Record<string, readonly [number, number, numb
     experiment: null,
     experimentDocument: {} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument'],
     onFindSelectionSource: vi.fn(),
-    onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    selectionQuery: null,
     selectionSourceStatus: {},
     autoSelectResult: true,
     recordedData,
@@ -239,9 +237,7 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
       experiment={null}
       experimentDocument={{} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument']}
       onFindSelectionSource={vi.fn()}
-      onSelectionQueryChange={vi.fn()}
       onSelectionSourcePathsChange={vi.fn()}
-      selectionQuery={null}
       selectionSourceStatus={{}}
       loading
       downloadProgress={{ completed: 4, total: 40 }}
@@ -285,9 +281,7 @@ it('offers deformation fields only from the selected native result invocation', 
         } as WorkbenchViewerProps['experimentDocument']
       }
       onFindSelectionSource={vi.fn()}
-      onSelectionQueryChange={vi.fn()}
       onSelectionSourcePathsChange={vi.fn()}
-      selectionQuery={null}
       selectionSourceStatus={{}}
       selectedResult=""
       resultSourceHash="fixture"
@@ -323,9 +317,7 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
       typeof WorkbenchViewer
     >[0]['experimentDocument'],
     onFindSelectionSource: vi.fn(),
-    onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    selectionQuery: null,
     selectionSourceStatus: {},
     resultSourceHash: 'source',
     resultVarsHash: materialVarsHash({}),
@@ -391,9 +383,7 @@ it('shows the selected result error instead of an empty Box Grid renderer', () =
       experiment={null}
       experimentDocument={{} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument']}
       onFindSelectionSource={vi.fn()}
-      onSelectionQueryChange={vi.fn()}
       onSelectionSourcePathsChange={vi.fn()}
-      selectionQuery={null}
       selectionSourceStatus={{}}
     />,
   )
@@ -418,9 +408,7 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
       typeof WorkbenchViewer
     >[0]['experimentDocument'],
     onFindSelectionSource: vi.fn(),
-    onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    selectionQuery: null,
     selectionSourceStatus: {},
     resultContracts: { first: contract, second: contract },
     resultSourceHash: 'source',

@@ -6,11 +6,14 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
 import type { AnalysisWorkspaceProps } from '@/features/analysis/AnalysisPage'
+import type { ViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
+import type { CadViewerSelectionQuery } from '@/features/viewer/viewer/model'
 
 const mocks = vi.hoisted(() => ({
   measurement: null as { id: number; recorded_at: string | null } | null,
   viewerMounts: 0,
   viewerProps: {} as Record<string, unknown>,
+  editorProps: {} as Record<string, unknown>,
   isDemo: false,
   manageable: false,
   restoring: false,
@@ -30,7 +33,7 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
     experimentIsDemo: mocks.isDemo,
     experimentManageable: mocks.manageable,
     selectionRestoring: mocks.restoring,
-    workspaceSession: {},
+    workspaceSession: 1,
     selection: {
       recordedData: {},
       flatRecordedData: { savedMeasurement: 'sentinel', ...(mocks.measurement ? { id: mocks.measurement.id } : {}) },
@@ -188,7 +191,10 @@ vi.mock('@/features/measurement/usePreflight', () => ({
 }))
 vi.mock('@/features/cae-workbench/dialogs', () => ({ ConfirmWorkbenchDialog: () => null }))
 vi.mock('@/features/cae-workbench/editors', () => ({
-  ExperimentEditor: () => <div data-testid="experiment-editor" />,
+  ExperimentEditor: (props: Record<string, unknown>) => {
+    mocks.editorProps = props
+    return <div data-testid="experiment-editor" />
+  },
   SourcePathPickerDialog: () => null,
 }))
 vi.mock('@/features/experiment', () => ({ ExperimentManager: () => null }))
@@ -242,6 +248,30 @@ beforeEach(() => {
 })
 
 describe('Workbench section navigation', () => {
+  it('connects editor selection directly to the same store used by the Viewer', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const selection = mocks.viewerProps.selectionStore as ViewerSelectionStore
+    const fromEditor = mocks.editorProps.onViewerSelectionQueryChange as (query: CadViewerSelectionQuery | null) => void
+    const query: CadViewerSelectionQuery = {
+      kind: 'geometry',
+      match: 'exact',
+      origin: 'code',
+      scope: { source: 'experiment' },
+      value: 'body',
+    }
+    act(() => fromEditor(query))
+    expect(selection.getSnapshot()).toEqual(query)
+    act(() => selection.select({ ...query, origin: 'viewer', value: 'clicked' }))
+    act(() => fromEditor(null))
+    expect(selection.getSnapshot()?.value).toBe('clicked')
+  })
+
   it('fills the Experiment right pane with the Source editor and omits the retired Detail tabs', () => {
     render(
       <QueryClientProvider client={new QueryClient()}>

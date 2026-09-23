@@ -268,9 +268,7 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
     recordedRules: preview.rules,
     autoSelectResult: true,
     onFindSelectionSource: vi.fn(),
-    onSelectionQueryChange: vi.fn(),
     onSelectionSourcePathsChange: vi.fn(),
-    selectionQuery: null,
     selectionSourceStatus: {},
   }
   const { rerender } = render(<WorkbenchViewer {...props} />)

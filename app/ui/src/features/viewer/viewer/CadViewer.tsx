@@ -5,7 +5,7 @@ import { useCallback, useMemo } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
-import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from './selection'
+import type { CadViewerSourceLookupStatus } from './selection'
 import type { UcumUnit } from '@/lib/cad/model'
 import type { PolylineBundle } from '@/lib/cad/model'
 
@@ -19,7 +19,6 @@ export type CadViewerProps = {
   onRenderError: (message: string, sources: readonly CadViewerSource[]) => void
   onRenderStart: (sources: readonly CadViewerSource[]) => void
   onFindSelectionSource?: (value: string) => void
-  onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange?: (values: readonly string[]) => void
   polylines?: readonly PolylineBundle[]
   meshRenderData?: MeshRenderData
@@ -29,7 +28,6 @@ export type CadViewerProps = {
   heatmapRenderData?: HeatmapRenderData
   geometryOpacity?: number
   displayUnit?: UcumUnit
-  selectionQuery?: CadViewerSelectionQuery | null
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
 }
 
@@ -41,7 +39,6 @@ export function CadViewer({
   onRenderError,
   onRenderStart,
   onFindSelectionSource,
-  onSelectionQueryChange,
   onSelectionSourcePathsChange,
   polylines,
   meshRenderData,
@@ -51,7 +48,6 @@ export function CadViewer({
   heatmapRenderLayers,
   geometryOpacity,
   displayUnit,
-  selectionQuery,
   selectionSourceStatus,
 }: CadViewerProps) {
   const experimentVisible = true
@@ -98,7 +94,6 @@ export function CadViewer({
         layers={content.layers}
         lengthUnit={displayUnit ?? content.lengthUnit}
         onFindSelectionSource={onFindSelectionSource}
-        onSelectionQueryChange={onSelectionQueryChange}
         onSelectionSourcePathsChange={onSelectionSourcePathsChange}
         polylines={polylines}
         meshRenderData={meshRenderData}
@@ -107,7 +102,6 @@ export function CadViewer({
         heatmapRenderData={heatmapRenderData}
         heatmapRenderLayers={heatmapRenderLayers}
         geometryOpacity={geometryOpacity}
-        selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         visibleSources={
           availableSources

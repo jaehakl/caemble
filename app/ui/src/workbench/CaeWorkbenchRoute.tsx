@@ -1,3 +1,4 @@
+import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { varsFingerprint } from '@/lib/cad/model/vars'
 import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
 import { useExperimentWarnings } from '@/features/cae-workbench/useExperimentWarnings'
@@ -131,17 +132,16 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [predictionActivated, setPredictionActivated] = useState(false)
   const [measurementActivated, setMeasurementActivated] = useState(false)
   const commandSequence = useRef(0)
+  const viewerSelection = useViewerSelectionStore(workbench.workspaceSession)
+  const measurementSelection = useViewerSelectionStore(workbench.workspaceSession)
   const selectionSourceFiles =
     workbench.experiment?.kind === 'experiment' ? workbench.experiment.sourceBundle.files : null
   const {
     closeSourcePathPicker,
     findSelectionSource,
-    handleCodeSelectionQueryChange,
     handleSelectionSourcePathsChange,
     handleSourceRevealRequestHandled,
-    handleViewerSelectionQueryChange,
     revealSourceLocation,
-    selectionQuery: viewerSelectionQuery,
     selectionSourceStatus,
     sourcePathPicker,
     sourceRevealRequest,
@@ -293,7 +293,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onActiveFileChange={page.setActiveExperimentFile}
             onAuthoringStateChange={setExperimentAuthoringState}
             onSourceRevealRequestHandled={handleSourceRevealRequestHandled}
-            onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
+            onViewerSelectionQueryChange={viewerSelection.selectFromCode}
             sourceRevealRequest={sourceRevealRequest}
           />
         </div>
@@ -403,7 +403,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           experiment={preview?.experiment ?? workbench.experiment}
           experimentDocument={preview?.document ?? workbench.experimentDocument}
           onFindSelectionSource={findSelectionSource}
-          onSelectionQueryChange={handleViewerSelectionQueryChange}
           onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
 
           key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
@@ -433,7 +432,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           }
           loading={isPrediction ? false : !preview && (workbench.selection.loading || workbench.selectionRestoring)}
           downloadProgress={workbench.selection.downloadProgress}
-          selectionQuery={viewerSelectionQuery}
+          selectionStore={viewerSelection}
           selectionSourceStatus={selectionSourceStatus}
         />
       </div>
@@ -471,6 +470,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               hidden={page.activeSection !== 'measurement'}
             >
               <MeasurementWorkspace
+                selectionStore={measurementSelection}
                 key={`${workbench.workspaceSession}:${JSON.stringify(workbench.experiment?.sourceBundle)}`}
                 workbench={workbench}
                 authenticated={auth.isAuthenticated}

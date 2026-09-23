@@ -1,3 +1,4 @@
+import { createViewerSelection, type ViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { ViewerPlaybackAvailable } from '@/features/viewer/viewer/viewerPlaybackState'
 import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
 import { GeometryDisplayManaged, ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
@@ -41,7 +42,7 @@ import { parseResultPolylines } from '@/features/viewer/viewer/resultPolylines'
 import { ResultTensorView } from '@/features/viewer/viewer/ResultTensorView'
 import { experimentTaskName, type ExperimentSourceDocument } from '@/lib/cad/source'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
-import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
+import type { CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { isDataTensor } from '@/lib/cad/model/dataTensor'
 import { parseRecordedMeshFields } from '@/features/viewer/viewer/meshFields'
@@ -56,6 +57,7 @@ const emptyData = {}
 const emptyRules: readonly RecordedDataRule[] = []
 
 export type WorkbenchViewerProps = {
+  selectionStore?: ViewerSelectionStore
   onGeometryRequiredChange?: (required: boolean) => void
   pendingExperimentDocument?: CadDocumentController
   initialDefaults?: ViewerDefaults | null
@@ -64,16 +66,14 @@ export type WorkbenchViewerProps = {
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
   experimentDocument: CadDocumentController
-  onFindSelectionSource: (value: string) => void
-  onSelectionQueryChange: (query: CadViewerSelectionQuery | null) => void
-  onSelectionSourcePathsChange: (values: readonly string[]) => void
+  onFindSelectionSource?: (value: string) => void
+  onSelectionSourcePathsChange?: (values: readonly string[]) => void
   resultErrors?: Readonly<Record<string, string>>
   resultContracts?: RecordedResultContracts | null
   visualizations?: MeasurementVisualizations
   resultSourceHash?: string | null
   resultVarsHash?: string | null
-  selectionQuery: CadViewerSelectionQuery | null
-  selectionSourceStatus: Readonly<Record<string, CadViewerSourceLookupStatus>>
+  selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   recordedData?: RecordedData
   recordedRules?: readonly RecordedDataRule[]
   loading?: boolean
@@ -90,14 +90,18 @@ export type WorkbenchViewerProps = {
 }
 
 export function WorkbenchViewer(props: WorkbenchViewerProps) {
+  const [localSelection] = useState(createViewerSelection)
+  const selection = props.selectionStore ?? localSelection
   const sessions = useRef(new Map<string, ViewerPersistence>())
   const sessionKey = props.persistenceKey ?? 'default'
   if (!sessions.current.has(sessionKey))
     sessions.current.set(sessionKey, {
-      settings: createViewerSettings(props.initialDefaults),
+      settings: createViewerSettings(props.initialDefaults, selection),
       camera: createComparisonCamera(props.initialDefaults?.camera),
       item: '',
     })
+  const session = sessions.current.get(sessionKey)!
+  const persistent = useMemo(() => ({ ...session, settings: { ...session.settings, selection } }), [session, selection])
   const previous = useRef<WorkbenchViewerProps | null>(null)
   if (previous.current?.persistenceKey !== props.persistenceKey || previous.current?.experiment !== props.experiment)
     previous.current = null
@@ -111,7 +115,7 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
   const pending = props.resultPlaceholder ? previous.current : null
   return (
     <GeometryDisplayManaged.Provider value>
-      <ViewerPersistenceContext.Provider value={sessions.current.get(sessionKey)!}>
+      <ViewerPersistenceContext.Provider value={persistent}>
         <ViewerComparisonContext.Provider value={props.comparison ?? null}>
           <ViewerContent
             key={sessionKey}
@@ -435,9 +439,7 @@ function ViewerContent(props: WorkbenchViewerProps) {
           onRenderEnd={document.handleRenderEnd}
           onRenderStart={document.handleRenderStart}
           onRenderError={document.handleRenderError}
-          onSelectionQueryChange={props.onSelectionQueryChange}
           onSelectionSourcePathsChange={props.onSelectionSourcePathsChange}
-          selectionQuery={props.selectionQuery}
           selectionSourceStatus={props.selectionSourceStatus}
         />
       </div>
