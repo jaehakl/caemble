@@ -1,12 +1,7 @@
 import { ViewerPlaybackAvailable } from '@/features/viewer/viewer/viewerPlaybackState'
 import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
-import {
-  GeometryDisplayManaged,
-  ViewerControlTarget,
-  ViewerLayout,
-  ViewerToolHosts,
-} from '@/features/viewer/viewer/ViewerTools'
-import { ViewerDisplayControls, MeshSettingsHost } from '@/features/viewer/viewer/ViewerDisplayControls'
+import { GeometryDisplayManaged, ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
+import { ViewerDisplayControls, ViewerResultMenuHost } from '@/features/viewer/viewer/ViewerDisplayControls'
 import {
   initialViewerDisplay,
   initializeVisualizations,
@@ -19,6 +14,7 @@ import {
   combineMeshes,
   SceneLayersContext,
   ViewerSceneLayer,
+  ViewerSceneOnly,
   ViewerResultScope,
   type SceneLayer,
 } from '@/features/viewer/viewer/ViewerSceneLayers'
@@ -139,11 +135,11 @@ function ViewerContent(props: WorkbenchViewerProps) {
   const initialDefaults = useRef(props.initialDefaults).current
   const comparison = useViewerComparison()
   const persistent = useContext(ViewerPersistenceContext)!
-  const sharedMeshHost = useContext(MeshSettingsHost)
-  const [localMeshHost, updateMeshHosts] = useState<Record<string, HTMLElement>>({})
-  const setMeshHost = useCallback(
+  const sharedResultHosts = useContext(ViewerResultMenuHost)
+  const [localResultHosts, updateResultHosts] = useState<Record<string, HTMLElement>>({})
+  const setResultHost = useCallback(
     (name: string, host: HTMLDivElement | null) =>
-      updateMeshHosts((current) => {
+      updateResultHosts((current) => {
         if ((current[name] ?? null) === host) return current
         const next = { ...current }
         if (host) next[name] = host
@@ -379,37 +375,34 @@ function ViewerContent(props: WorkbenchViewerProps) {
       scope={role ? `${name}@output-${role}` : name}
       available={Boolean(validContracts[name])}
     >
-      <OutputControlsTarget role={role}>
-        <RetainedResultLayer
-          name={name}
-          contracts={contracts}
-          data={data}
-          rules={rules}
-          errors={errors}
-          blocked={role === 'chart' ? undefined : blocked[name]}
-          role={role}
-          displayUnit={displayUnit}
-          mesh={mesh}
-          lines={lines}
-          motions={motions}
-          particles={particles}
-          calculationSource={props.calculationSource}
-          loading={loading}
-          provenance={provenance}
-        />
-      </OutputControlsTarget>
+      <RetainedResultLayer
+        name={name}
+        contracts={contracts}
+        data={data}
+        rules={rules}
+        errors={errors}
+        blocked={role === 'chart' ? undefined : blocked[name]}
+        role={role}
+        displayUnit={displayUnit}
+        mesh={mesh}
+        lines={lines}
+        motions={motions}
+        particles={particles}
+        calculationSource={props.calculationSource}
+        loading={loading}
+        provenance={provenance}
+      />
     </ViewerResultScope>
   )
   const scene = (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="max-h-40 shrink-0 overflow-auto [&_.h-full]:h-auto">
-        {spatialNames.map((name) => result(name, name === output ? 'space' : undefined))}
+      <div className="shrink-0 overflow-auto" data-viewer-scene-results>
+        <ViewerSceneOnly.Provider value={true}>
+          {spatialNames
+            .filter((name) => name !== output || !contracts[name] || contracts[name].visualization.kind === 'box-grid')
+            .map((name) => result(name, name === output ? 'space' : undefined))}
+        </ViewerSceneOnly.Provider>
       </div>
-      {deformed && activeLayers.some((layer) => layer.lines?.length) ? (
-        <p role="status" className="p-2 text-xs">
-          변형 표시 중에는 원래 좌표의 ray를 표시하지 않습니다.
-        </p>
-      ) : null}
       {!hasGeometry ? (
         <p role="status" className="p-2 text-xs">
           Geometry가 준비되지 않았습니다.
@@ -451,7 +444,7 @@ function ViewerContent(props: WorkbenchViewerProps) {
     </div>
   )
   return (
-    <MeshSettingsHost.Provider value={{ ...sharedMeshHost, ...localMeshHost }}>
+    <ViewerResultMenuHost.Provider value={{ ...sharedResultHosts, ...localResultHosts }}>
       <SceneLayersContext.Provider value={publish}>
         <ViewerLayout>
           {props.presentation ? (
@@ -490,7 +483,7 @@ function ViewerContent(props: WorkbenchViewerProps) {
                 onGeometry={setGeometry}
                 visualizations={visualizations}
                 onVisualizations={setVisualizations}
-                meshHost={setMeshHost}
+                resultHost={setResultHost}
               />
             </ViewerControls>
           ) : null}
@@ -540,11 +533,12 @@ function ViewerContent(props: WorkbenchViewerProps) {
           </div>
         </ViewerLayout>
       </SceneLayersContext.Provider>
-    </MeshSettingsHost.Provider>
+    </ViewerResultMenuHost.Provider>
   )
 }
 
 function RetainedResultLayer(props: Parameters<typeof ResultLayer>[0]) {
+  const sceneOnly = useContext(ViewerSceneOnly)
   const previous = useRef<typeof props | null>(null)
   const present =
     Boolean(props.contracts[props.name]) &&
@@ -561,7 +555,7 @@ function RetainedResultLayer(props: Parameters<typeof ResultLayer>[0]) {
             (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
         </p>
       ) : null}
-      <div className={unavailable ? 'hidden' : 'h-full min-h-0'}>
+      <div className={unavailable ? 'hidden' : sceneOnly ? 'contents' : 'h-full min-h-0'}>
         {unavailable ? previous.current ? <ResultLayer {...previous.current} /> : null : <ResultLayer {...props} />}
       </div>
     </ViewerPlaybackAvailable.Provider>
@@ -714,14 +708,4 @@ function ResultLayer({
       />
     )
   return <ResultTensorView name={name} contract={contract} rules={input.current.rules} data={input.current.data} />
-}
-
-function OutputControlsTarget({ role, children }: { role?: 'space' | 'chart'; children: React.ReactNode }) {
-  const hosts = useContext(ViewerToolHosts)
-  if (!role) return children
-  return (
-    <ViewerControlTarget.Provider value={{ host: role === 'chart' ? (hosts?.data ?? null) : null }}>
-      {children}
-    </ViewerControlTarget.Provider>
-  )
 }

@@ -498,6 +498,26 @@ describe('recorded mesh fields', () => {
     ).toBe(true)
   })
 
+  it.each([
+    { labels: ['xx', 'yy', 'zz', 'xy', 'yz', 'xz'], values: [1, 2, 3, 4, 5, 6] },
+    { labels: ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz'], values: [1, 4, 6, 4, 2, 5, 6, 5, 3] },
+  ])('renders $labels.length-component tensor directions and norms', ({ labels, values }) => {
+    const input = fixture(true)
+    const field = {
+      ...parseRecordedMeshFields(input.rules, input.data, input.contracts).fields[0],
+      componentCount: labels.length,
+      components: labels,
+      values: new Float64Array(values),
+    }
+    expect(createMeshFieldRenderData(field, { ...view, component: { tensor: ['x', 'y'] } }).maximum).toBe(4)
+    expect(createMeshFieldRenderData(field, { ...view, component: { tensor: ['x', 'all'] } }).maximum).toBeCloseTo(
+      Math.sqrt(53),
+    )
+    expect(createMeshFieldRenderData(field, { ...view, component: { tensor: ['all', 'all'] } }).maximum).toBeCloseTo(
+      Math.sqrt(168),
+    )
+  })
+
   it('keeps a pure moment load location visible without inventing a force arrow', () => {
     const input = fixture()
     const field = {

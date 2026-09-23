@@ -209,7 +209,7 @@ function Pair({
           onGeometry={() => {}}
           visualizations={{}}
           onVisualizations={() => {}}
-          meshHost={() => {}}
+          resultHost={() => {}}
         />
       </ViewerControls>
       {views}

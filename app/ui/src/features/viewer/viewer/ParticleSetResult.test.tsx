@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { ParticleSetResult } from './ParticleSetResult'
+import { ViewerSceneOnly } from './ViewerSceneLayers'
 import type { RecordedParticleSet } from './particleSets'
 
 const particles: RecordedParticleSet = {
@@ -30,15 +31,16 @@ it('selects recorded time, physical quantity and component while retaining ident
     />,
   )
   expect(screen.getByText(/ID 90 · Material Steel/)).toBeTruthy()
+  fireEvent.keyDown(screen.getByRole('button', { name: 'particles 설정' }), { key: 'ArrowDown' })
   fireEvent.change(screen.getByLabelText('Particle 물리량'), { target: { value: 'velocity' } })
   fireEvent.change(screen.getByLabelText('Particle 성분'), { target: { value: '2' } })
   expect(screen.getByText('kinematics.Velocity · m.s-1')).toBeTruthy()
   fireEvent.keyDown(screen.getByRole('button', { name: '재생 제어' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByRole('button', { name: '다음 프레임' }))
   expect(screen.getByTestId('particles')).toHaveAttribute('data-position', '2')
+  fireEvent.keyDown(screen.getByRole('button', { name: 'particles 설정' }), { key: 'ArrowDown' })
   fireEvent.change(screen.getByRole('combobox', { name: 'Particle ID' }), { target: { value: '2' } })
   expect(screen.getByText(/ID 2 · Material Fluid/)).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '점 크기' }))
   expect(screen.getByLabelText('Particle 점 크기')).toBeTruthy()
 })
 
@@ -58,4 +60,16 @@ it('keeps physical DEM radius separate from the continuum point size control', (
   )
   expect(screen.queryByLabelText('Particle 점 크기')).toBeNull()
   expect(screen.getByText(/실제 반경/)).toBeTruthy()
+})
+
+it('publishes particles without result text in the shared scene', () => {
+  const { container } = render(
+    <ViewerSceneOnly.Provider value={true}>
+      <ParticleSetResult particles={particles} renderViewer={() => <output data-testid="particles" />} />
+    </ViewerSceneOnly.Provider>,
+  )
+  expect(container.querySelector('[data-result-visualization="particle-set"]')?.textContent).toBe('')
+  expect(screen.getByTestId('particles')).toBeInTheDocument()
+  fireEvent.keyDown(screen.getByRole('button', { name: 'particles 설정' }), { key: 'ArrowDown' })
+  expect(screen.getByLabelText('Particle ID')).toBeInTheDocument()
 })

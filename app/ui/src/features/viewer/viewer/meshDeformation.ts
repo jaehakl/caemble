@@ -1,5 +1,6 @@
 import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
-import type { RecordedMeshField, MeshFieldView } from './meshFields'
+import { tensorComponentIndices } from '@/lib/calculation/boxGridProject'
+import { meshFieldScalarValue, type RecordedMeshField, type MeshFieldView } from './meshFields'
 
 /** Returns displacement in the target mesh's node order, only for the same recorded domain. */
 export function matchMeshDisplacement(field: RecordedMeshField, candidate: RecordedMeshField) {
@@ -164,21 +165,21 @@ export function meshHarmonicRange(
 ) {
   const offset = frequencyOffset(field, frequencyHz)
   const count = field.values.length / field.spectrum!.frequencies.length
-  const signed = typeof component === 'number' || field.componentCount === 1
-  const squaredValue = (values: number[]) => {
-    if (component === 'vonMises') {
-      const [xx, yy, zz, xy, yz, xz] = (values.length === 6 ? [0, 1, 2, 3, 4, 5] : [0, 4, 8, 1, 5, 2]).map(
-        (index) => values[index],
-      )
-      return ((xx - yy) ** 2 + (yy - zz) ** 2 + (zz - xx) ** 2) / 2 + 3 * (xy ** 2 + yz ** 2 + xz ** 2)
-    }
-    return values.reduce((sum, value, index) => sum + value ** 2 * (values.length === 6 && index >= 3 ? 2 : 1), 0)
-  }
+  const signed =
+    typeof component === 'number' ||
+    field.componentCount === 1 ||
+    (typeof component === 'object' && component.tensor.every((direction) => direction !== 'all'))
+  const tensor = tensorComponentIndices(field.components)
+  const squaredValue = (values: number[]) => meshFieldScalarValue(values, component, tensor) ** 2
   let maximum = 0
   for (let index = offset; index < offset + count; index += field.componentCount) {
     if (signed) {
-      const position = index + (typeof component === 'number' ? component : 0)
-      maximum = Math.max(maximum, Math.hypot(field.values[position], field.spectrum!.imaginaryValues[position]))
+      const real = Array.from(field.values.subarray(index, index + field.componentCount))
+      const imaginary = Array.from(field.spectrum!.imaginaryValues.subarray(index, index + field.componentCount))
+      maximum = Math.max(
+        maximum,
+        Math.hypot(meshFieldScalarValue(real, component, tensor), meshFieldScalarValue(imaginary, component, tensor)),
+      )
     } else {
       const real = Array.from(field.values.subarray(index, index + field.componentCount))
       const imaginary = Array.from(field.spectrum!.imaginaryValues.subarray(index, index + field.componentCount))

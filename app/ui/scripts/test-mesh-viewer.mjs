@@ -322,22 +322,14 @@ try {
       const button = page.getByRole('button', { name: 'mesh-field 설정', exact: true })
       if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
     }
+    const openParticleSettings = async (label) => {
+      const button = page.getByRole('button', { name: `${label} 설정`, exact: true })
+      if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
+    }
     const openTools = async () => {
       if (await page.getByRole('menu').count()) await page.getByRole('menu').press('Escape')
-      for (const name of [
-        '단면',
-        '성분',
-        '주파수',
-        '위상',
-        '변위 결과',
-        '재생 제어',
-        '물리량',
-        'Particle ID',
-        '점 크기',
-      ]) {
-        const button = page.getByRole('button', { name, exact: true })
-        if ((await button.count()) && (await button.getAttribute('aria-expanded')) !== 'true') await button.click()
-      }
+      const playback = page.getByRole('button', { name: '재생 제어', exact: true })
+      if (await playback.count()) await playback.click()
     }
     const errors = []
     page.on('pageerror', (error) => {
@@ -359,6 +351,7 @@ try {
     const section = await canvas.screenshot()
     assert.ok(!initial.equals(section), 'A section must change the rendered volume, not just the controls.')
     await page.getByRole('menu').press('Escape')
+    await openMeshSettings()
     await page.getByLabel('Displacement field component').selectOption('material')
     assert.equal(await page.getByText('Steel', { exact: true }).count(), 1)
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
@@ -397,6 +390,7 @@ try {
     await fixturePicker.selectOption('displacement')
     await page.getByRole('article', { name: 'Harmonic displacement mesh field' }).waitFor()
     await openTools()
+    await openMeshSettings()
     assert.equal(await page.getByLabel('Harmonic displacement frequency').inputValue(), '40')
     assert.equal(await page.getByLabel('Harmonic displacement phase degrees').inputValue(), '0')
     await page.getByText('40 Hz · 0° · 순간값 Re(Q exp(iφ)) · peak phasor', { exact: true }).waitFor()
@@ -412,12 +406,13 @@ try {
     await fixturePicker.selectOption('stress')
     await page.getByRole('article', { name: 'Harmonic stress mesh field' }).waitFor()
     await openTools()
-    assert.equal(await page.getByLabel('Harmonic stress frequency').inputValue(), '90')
     await openMeshSettings()
+    assert.equal(await page.getByLabel('Harmonic stress frequency').inputValue(), '90')
     assert.equal(await page.getByLabel('Deformation result').inputValue(), 'Harmonic displacement')
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     await page.getByRole('menu').press('Escape')
     const stressPhaseZero = await canvas.screenshot()
+    await openMeshSettings()
     await page.getByLabel('Harmonic stress phase degrees').fill('90')
     assert.ok(
       !stressPhaseZero.equals(await canvas.screenshot()),
@@ -429,6 +424,7 @@ try {
       (await page.getByLabel('Harmonic stress section position').locator('..').textContent()).includes('0.5000'),
     )
     await page.getByRole('menu').press('Escape')
+    await openMeshSettings()
     await page.getByLabel('Harmonic stress frequency').selectOption('40')
     await page.getByText('40 Hz · 90° · 순간값 Re(Q exp(iφ)) · peak phasor', { exact: true }).waitFor()
     assert.equal(await page.getByRole('alert').count(), 0)
@@ -437,6 +433,7 @@ try {
     await fixturePicker.selectOption('pressure')
     await page.getByRole('article', { name: 'Harmonic pressure mesh field' }).waitFor()
     await openTools()
+    await openMeshSettings()
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     assert.equal(await page.getByLabel('Deformation result').count(), 0)
     await page.getByText('-2.0000', { exact: true }).waitFor()
@@ -481,6 +478,7 @@ try {
     await page.screenshot({ path: path.join(outputDirectory, 'mesh-viewer-harmonic-pressure.png') })
     await page.getByRole('button', { name: 'Replace pressure sweep with 61 Hz', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '선택한 주파수 90 Hz' }).waitFor()
+    await openMeshSettings()
     assert.equal(await page.getByLabel('Harmonic pressure frequency').inputValue(), '90')
     assert.equal(await canvas.count(), 0, 'An unavailable frequency must not silently display another sample.')
     await page.getByLabel('Harmonic pressure frequency').selectOption('61')
@@ -544,6 +542,7 @@ try {
         await fixturePicker.selectOption('record:' + selected.label)
         await page.getByRole('article', { name: `${selected.label} mesh field` }).waitFor()
         await openTools()
+        await openMeshSettings()
         await canvas.waitFor()
         if (selected.weighting === 'reference-volume') await page.getByText(/기준 체적 가중 평균/).waitFor()
         if (selected.signConvention === 'compression-positive') await page.getByText(/압축 양수/).waitFor()
@@ -599,6 +598,7 @@ try {
         const article = page.getByRole('article', { name: `${selected.label} particles` })
         await article.waitFor()
         await canvas.waitFor()
+        await openParticleSettings(selected.label)
         assert.equal(await page.getByLabel('Particle 점 크기').count(), selected.physicalRadius ? 0 : 1)
         await page.getByRole('combobox', { name: 'Particle ID', exact: true }).selectOption(String(selected.ids.at(-1)))
         await article
@@ -608,7 +608,6 @@ try {
           .waitFor()
         for (const attribute of selected.attributes) {
           await page.getByLabel('Particle 물리량', { exact: true }).selectOption(attribute.name)
-          await openTools()
           const frames =
             attribute.rowConfiguration && attribute.columnConfiguration
               ? ' · 행: 현재 Cartesian · 열: 기준 Cartesian'
@@ -632,6 +631,7 @@ try {
             .some((value, index) => Math.abs(value - item.positions[last + index]) > 1e-6)
         }, selected.label)
         if (selected.times.length > 1) {
+          await openTools()
           await page.getByLabel('재생 위치').evaluate((input, time) => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(time))
             input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -896,8 +896,10 @@ try {
           })
         if (step === 1 || step === 2)
           assert.equal(await page.evaluate(() => window.meshUpdateCanvas === document.querySelector('canvas')), true)
-        await page.getByLabel(`${selected.label} field component`).selectOption('material')
         await openMeshSettings()
+        const component = page.getByLabel(`${selected.label} field component`)
+        if (await component.count()) await component.selectOption('material')
+        else await page.getByRole('button', { name: 'Material regions' }).click()
         for (const label of ['Mesh 경계선', '구속 / 하중'])
           await page.getByRole('checkbox', { name: label, exact: true }).uncheck()
         await openMeshSettings()

@@ -1,10 +1,11 @@
-import { Component, Circle, Fingerprint, Shapes } from 'lucide-react'
-import { ViewerLayout, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { ViewerLayout, ViewerToolHosts } from './ViewerTools'
+import { ViewerResultSettings } from './ViewerDisplayControls'
+import { ViewerSceneOnly } from './ViewerSceneLayers'
+import { useCallback, useContext, useMemo, type ReactNode } from 'react'
 import type { UcumUnit } from '@/lib/cad/model'
 import { MeshPlayback } from './MeshPlayback'
 import { meshFrameAtTime } from './meshDeformation'
-import { useViewerSetting, ViewerControls } from './comparisonSettings'
+import { useViewerSetting } from './comparisonSettings'
 import { createParticleRenderData, particleFrameValues, type RecordedParticleSet } from './particleSets'
 import type { MeshRenderData } from './meshFields'
 
@@ -19,6 +20,8 @@ export function ParticleSetResult({
   renderViewer: (data: MeshRenderData, showGeometry: boolean) => ReactNode
   canOverlayGeometry?: boolean
 }) {
+  const parentLayout = useContext(ViewerToolHosts)
+  const sceneOnly = useContext(ViewerSceneOnly)
   const [time, setTime] = useViewerSetting(
     'particles.time',
     particles.times[0],
@@ -59,75 +62,52 @@ export function ParticleSetResult({
   const selectFrame = useCallback((next: number) => setTime(particles.times[next]), [particles.times, setTime])
   return (
     <ViewerLayout>
-      <article
-        className="flex h-full min-h-0 flex-col bg-white"
-        data-result-visualization="particle-set"
-        aria-label={`${particles.label} particles`}
-      >
-        <h3 className="px-2 pt-2 text-sm font-semibold">{particles.label.replace(/^@visualizations\./u, '')}</h3>
-        <p className="px-2 text-xs text-slate-500">
-          {particles.particleIds.length} particles ·{' '}
-          {particles.radius ? `실제 반경 · ${displayUnit}` : `위치 ${displayUnit} · 화면 점 크기`}
-        </p>
-        <div className="px-2 text-xs">
-          {' '}
-          {quantity ? (
-            <span>
-              {quantity.quantityKind} · {quantity.unit}
-              {quantity.rowConfiguration && quantity.columnConfiguration
-                ? ' · 행: 현재 Cartesian · 열: 기준 Cartesian'
-                : ''}
-            </span>
-          ) : null}
-        </div>
-        <ViewerControls>
-          <MeshPlayback
-            name={particles.label}
-            times={particles.times}
-            unit="s"
-            frame={frame}
-            onFrame={selectFrame}
-            time={time}
-            onTime={setTime}
-          />
-          <ViewerSelectTool
-            label="물리량"
-            icon={<Shapes />}
-            aria-label="Particle 물리량"
-            value={attribute}
-            onChange={(event) => {
-              setAttribute(event.target.value)
-              setComponent(0)
-            }}
-          >
-            <option value="material">Material</option>
-            {Object.keys(particles.attributes).map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-            {attribute !== 'material' && !quantity ? <option value={attribute}>{attribute} · 없음</option> : null}
-          </ViewerSelectTool>
-          {quantity?.components.length ? (
-            <ViewerSelectTool
-              label="성분"
-              icon={<Component />}
-              aria-label="Particle 성분"
-              value={selectedComponent}
-              onChange={(event) =>
-                setComponent(event.target.value === 'magnitude' ? 'magnitude' : Number(event.target.value))
-              }
+      <ViewerResultSettings name={particles.label} standalone={!parentLayout}>
+        <div
+          className="grid w-64 max-w-full gap-3 text-xs [&_select]:rounded [&_select]:border [&_select]:p-1"
+          aria-label="Particle 설정"
+        >
+          <label className="grid gap-1">
+            물리량
+            <select
+              aria-label="Particle 물리량"
+              value={attribute}
+              onChange={(event) => {
+                setAttribute(event.target.value)
+                setComponent(0)
+              }}
             >
-              {quantity.components.map((name, index) => (
-                <option key={name} value={index}>
+              <option value="material">Material</option>
+              {Object.keys(particles.attributes).map((name) => (
+                <option key={name} value={name}>
                   {name}
                 </option>
               ))}
-              <option value="magnitude">Norm</option>
-            </ViewerSelectTool>
+              {attribute !== 'material' && !quantity ? <option value={attribute}>{attribute} · 없음</option> : null}
+            </select>
+          </label>
+          {quantity?.components.length ? (
+            <label className="grid gap-1">
+              성분
+              <select
+                aria-label="Particle 성분"
+                value={selectedComponent}
+                onChange={(event) =>
+                  setComponent(event.target.value === 'magnitude' ? 'magnitude' : Number(event.target.value))
+                }
+              >
+                {quantity.components.map((name, index) => (
+                  <option key={name} value={index}>
+                    {name}
+                  </option>
+                ))}
+                <option value="magnitude">Norm</option>
+              </select>
+            </label>
           ) : null}
           {!particles.radius ? (
-            <ViewerToolPanel label="점 크기" icon={<Circle />}>
+            <label className="grid gap-1">
+              점 크기 · {pointSize}
               <input
                 aria-label="Particle 점 크기"
                 type="range"
@@ -136,23 +116,61 @@ export function ParticleSetResult({
                 value={pointSize}
                 onChange={(event) => setPointSize(Number(event.target.value))}
               />
-            </ViewerToolPanel>
+            </label>
           ) : null}
-          <ViewerSelectTool
-            label="Particle ID"
-            icon={<Fingerprint />}
-            aria-label="Particle ID"
-            value={particleId}
-            onChange={(event) => setParticleId(Number(event.target.value))}
-          >
-            {particles.particleIds.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-            {selectedParticle < 0 ? <option value={particleId}>{particleId} · 없음</option> : null}
-          </ViewerSelectTool>
-        </ViewerControls>
+          <label className="grid gap-1">
+            Particle ID
+            <select
+              aria-label="Particle ID"
+              value={particleId}
+              onChange={(event) => setParticleId(Number(event.target.value))}
+            >
+              {particles.particleIds.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+              {selectedParticle < 0 ? <option value={particleId}>{particleId} · 없음</option> : null}
+            </select>
+          </label>
+        </div>
+      </ViewerResultSettings>
+      <MeshPlayback
+        name={particles.label}
+        times={particles.times}
+        unit="s"
+        frame={frame}
+        onFrame={selectFrame}
+        time={time}
+        onTime={setTime}
+      />
+      <article
+        className={sceneOnly ? 'contents' : 'flex h-full min-h-0 flex-col bg-white'}
+        data-result-visualization="particle-set"
+        aria-label={`${particles.label} particles`}
+      >
+        {!sceneOnly ? (
+          <h3 className="px-2 pt-2 text-sm font-semibold">{particles.label.replace(/^@visualizations\./u, '')}</h3>
+        ) : null}
+        {!sceneOnly ? (
+          <p className="px-2 text-xs text-slate-500">
+            {particles.particleIds.length} particles ·{' '}
+            {particles.radius ? `실제 반경 · ${displayUnit}` : `위치 ${displayUnit} · 화면 점 크기`}
+          </p>
+        ) : null}
+        {!sceneOnly ? (
+          <div className="px-2 text-xs">
+            {' '}
+            {quantity ? (
+              <span>
+                {quantity.quantityKind} · {quantity.unit}
+                {quantity.rowConfiguration && quantity.columnConfiguration
+                  ? ' · 행: 현재 Cartesian · 열: 기준 Cartesian'
+                  : ''}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {!available ? (
           <p role="status" className="p-2 text-xs">
             선택한 시각이 현재 결과에 없습니다. 재생 시각을 조정하세요.
@@ -164,11 +182,11 @@ export function ParticleSetResult({
           </p>
         ) : null}
         {rendered ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>
             {renderViewer(rendered, showGeometry && canOverlayGeometry)}
           </div>
         ) : null}
-        {available && selectedParticle >= 0 ? (
+        {!sceneOnly && available && selectedParticle >= 0 ? (
           <div className="max-h-32 overflow-auto border-t p-2 text-xs">
             <p>
               ID {particleId} · Material {particles.materialNames[particles.materialIndices[selectedParticle]]} · t ={' '}
@@ -201,7 +219,7 @@ export function ParticleSetResult({
             })}
           </div>
         ) : null}
-        {rendered?.minimum !== undefined ? (
+        {!sceneOnly && rendered?.minimum !== undefined ? (
           <p className="border-t px-2 text-xs">
             색상 범위 {rendered.minimum.toPrecision(4)} … {rendered.maximum?.toPrecision(4)} {quantity?.unit}
           </p>

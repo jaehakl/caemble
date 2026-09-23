@@ -3,6 +3,7 @@ import { z } from 'zod'
 const index = z.number().int().nonnegative()
 const axis = z.enum(['x', 'y', 'z', 'time', 'frequency'])
 const tensorDirection = z.enum(['x', 'y', 'z', 'all', 'arrows'])
+const meshTensorDirection = z.enum(['x', 'y', 'z', 'all'])
 const component = z.union([
   index,
   z.enum(['magnitude', 'magnitudeSquared', 'arrows']),
@@ -46,7 +47,11 @@ export const viewerSettingSchemas: Record<string, z.ZodType> = {
     .refine(([min, max]) => min <= max)
     .nullable(),
   'mesh.view': z.object({
-    component: z.union([index, z.enum(['magnitude', 'vonMises', 'material'])]),
+    component: z.union([
+      index,
+      z.enum(['magnitude', 'vonMises', 'material']),
+      z.object({ tensor: z.tuple([meshTensorDirection, meshTensorDirection]) }),
+    ]),
     wireframe: z.boolean(),
     overlays: z.boolean(),
     clipAxis: z.union([z.literal(-1), z.literal(0), z.literal(1), z.literal(2)]),

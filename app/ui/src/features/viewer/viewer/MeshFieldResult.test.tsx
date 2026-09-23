@@ -1,4 +1,4 @@
-import { MeshSettingsHost } from './ViewerDisplayControls'
+import { ViewerResultMenuHost } from './ViewerDisplayControls'
 import { ViewerPersistenceContext, createComparisonSettings } from './comparisonSettings'
 import { createComparisonCamera } from './comparisonCamera'
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -76,7 +76,7 @@ describe('mesh field inspection controls', () => {
     const { rerender } = render(
       <MeshFieldResult field={stress} displacementFields={[displacement]} renderViewer={show} />,
     )
-    fireEvent.click(screen.getByRole('button', { name: '위상' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field 설정' }), { key: 'ArrowDown' })
     expect(screen.getByLabelText('stress frequency')).toHaveValue('91')
     expect(screen.getByLabelText('stress phase degrees')).toHaveValue(0)
     expect(screen.getByText(/91 Hz · 0° · 순간값/)).toBeInTheDocument()
@@ -131,14 +131,14 @@ describe('mesh field inspection controls', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     render(
-      <MeshSettingsHost.Provider value={{ stress: host }}>
+      <ViewerResultMenuHost.Provider value={{ stress: host }}>
         <ViewerPersistenceContext.Provider value={{ settings, item: 'stress', camera: createComparisonCamera() }}>
           <MeshFieldResult
             field={displacement}
             renderViewer={(data) => <output data-testid="deformation">{data?.bounds.min[0]}</output>}
           />
         </ViewerPersistenceContext.Provider>
-      </MeshSettingsHost.Provider>,
+      </ViewerResultMenuHost.Provider>,
     )
     expect(Number(screen.getByTestId('deformation').textContent)).toBeCloseTo(0.02)
     fireEvent.click(screen.getByRole('checkbox', { name: '변형 표시' }))
@@ -159,7 +159,7 @@ describe('mesh field inspection controls', () => {
       spectrum: { frequencies: new Float64Array([50]), imaginaryValues: new Float64Array([2, 2, 2, 2]) },
     }
     render(<MeshFieldResult field={pressure} />)
-    fireEvent.click(screen.getByRole('button', { name: '위상' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field 설정' }), { key: 'ArrowDown' })
     expect(screen.getByLabelText('pressure frequency')).toHaveValue('50')
     expect(screen.getByText('Value (Pa)')).toBeInTheDocument()
     expect(screen.queryByText('magnitude (Pa)')).not.toBeInTheDocument()
@@ -174,10 +174,11 @@ describe('mesh field inspection controls', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field 설정' }), { key: 'ArrowDown' })
     expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '10')
     expect(screen.getByText('vonMises (Pa)')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('stress field component'), { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: '텐서 1축 Y' }))
+    fireEvent.click(screen.getByRole('button', { name: '텐서 2축 Y' }))
     expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '0')
-    expect(screen.getByText('yy (Pa)')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('stress field component'), { target: { value: 'material' } })
+    expect(screen.getByText('T(Y, Y) (Pa)')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Material regions' }))
     expect(screen.getByText('steel')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('stress section axis'), { target: { value: '0' } })
     fireEvent.change(screen.getByLabelText('stress section position'), { target: { value: '0.25' } })
@@ -193,7 +194,8 @@ it('retains checkboxes and component/section settings while replacing field data
   fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field 설정' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByLabelText('Mesh 경계선'))
   fireEvent.click(screen.getByLabelText('구속 / 하중'))
-  fireEvent.change(screen.getByLabelText('stress field component'), { target: { value: '0' } })
+  fireEvent.click(screen.getByRole('button', { name: '텐서 1축 X' }))
+  fireEvent.click(screen.getByRole('button', { name: '텐서 2축 X' }))
   fireEvent.change(screen.getByLabelText('stress section axis'), { target: { value: '0' } })
   fireEvent.change(screen.getByLabelText('stress section position'), { target: { value: '0.25' } })
   rerender(
@@ -201,7 +203,7 @@ it('retains checkboxes and component/section settings while replacing field data
   )
   expect(screen.getByLabelText('Mesh 경계선')).not.toBeChecked()
   expect(screen.getByLabelText('구속 / 하중')).not.toBeChecked()
-  expect(screen.getByLabelText('stress field component')).toHaveValue('0')
+  expect(screen.getByRole('button', { name: '텐서 1축 X' })).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-maximum', '20')
   expect(screen.getByTestId('rendered-mesh')).toHaveAttribute('data-cut', '0.25')
 })

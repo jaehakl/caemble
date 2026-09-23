@@ -84,6 +84,17 @@ describe('mesh deformation', () => {
     expect(createMeshFieldRenderData(meshHarmonicAtPhase(stress, 17, 0), view).maximum).toBe(0)
     expect(createMeshFieldRenderData(meshHarmonicAtPhase(stress, 17, 90), view).maximum).toBeCloseTo(Math.sqrt(75))
     expect(meshHarmonicRange(stress, 17, 'vonMises')[1]).toBeCloseTo(Math.sqrt(75))
+    const directed = {
+      ...stress,
+      components: ['xx', 'yy', 'zz', 'xy', 'yz', 'xz'],
+      spectrum: {
+        frequencies: stress.spectrum!.frequencies,
+        imaginaryValues: new Float64Array([1, 2, 3, 4, 5, 6]),
+      },
+    }
+    expect(meshHarmonicRange(directed, 17, { tensor: ['x', 'y'] })[1]).toBe(4)
+    expect(meshHarmonicRange(directed, 17, { tensor: ['x', 'all'] })[1]).toBeCloseTo(Math.sqrt(53))
+    expect(meshHarmonicRange(directed, 17, { tensor: ['all', 'all'] })[1]).toBeCloseTo(Math.sqrt(168))
   })
   it('interpolates vector components before section magnitude and fixes harmonic cuts to reference bounds', () => {
     const opposing = { ...field, values: new Float64Array([-0.001, 0, 0, 0.001, 0, 0, -0.001, 0, 0, -0.001, 0, 0]) }

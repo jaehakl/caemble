@@ -9,6 +9,7 @@ import {
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { BoxGridOutputSettings } from './BoxGridOutputSettings'
+import { ViewerSceneOnly } from './ViewerSceneLayers'
 import { ViewerPlaybackRegistration } from './ViewerPlayback'
 import type { ViewerPlaybackSource } from './viewerPlaybackState'
 import { Copy, Layers } from 'lucide-react'
@@ -149,6 +150,7 @@ function BoxGridControls({
   role?: 'space' | 'chart'
 }) {
   const comparison = useViewerComparison()
+  const sceneOnly = useContext(ViewerSceneOnly)
   const comparing = Boolean(comparison)
   const sharedItem = role === 'space' ? `${name}@output-chart` : undefined
   const surfacePower = leaf.boxGrid.sampling === 'surface-integral'
@@ -752,7 +754,7 @@ function BoxGridControls({
       },
     })
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div className={sceneOnly ? 'contents' : 'flex h-full min-h-0 flex-col overflow-hidden bg-white'}>
       {controlsOwner ? (
         <>
           <ViewerPlaybackRegistration sources={playbackSources} />
@@ -814,72 +816,78 @@ function BoxGridControls({
           />
         </>
       ) : null}
-      <div className="flex shrink-0 flex-wrap items-center gap-3 px-3 py-2 text-xs text-slate-600" role="status">
-        <strong>{name}</strong>
-        {surfacePower ? (
+      {!sceneOnly ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-3 px-3 py-2 text-xs text-slate-600" role="status">
+          <strong>{name}</strong>
+          {surfacePower ? (
+            <span>
+              픽셀 적분 전력 [W] · 기하광학 응답
+              {role !== 'chart' ? (
+                <>
+                  {' · '}
+                  {(['x', 'y', 'z'] as const)
+                    .filter((axis) => !axes.includes(axis))
+                    .map((axis) => `${labels[axis]} ${reduce[axis]?.method ?? 'mean'}`)
+                    .join(' · ')}
+                </>
+              ) : null}
+            </span>
+          ) : null}
+          {leaf.boxGrid.configuration ? (
+            <span>{leaf.boxGrid.configuration === 'reference' ? '기준 배치' : '현재 배치'}</span>
+          ) : null}
+          {leaf.boxGrid.weighting === 'material-volume' ? <span>재료 체적 가중 평균</span> : null}
           <span>
-            픽셀 적분 전력 [W] · 기하광학 응답
-            {role !== 'chart' ? (
-              <>
-                {' · '}
-                {(['x', 'y', 'z'] as const)
-                  .filter((axis) => !axes.includes(axis))
-                  .map((axis) => `${labels[axis]} ${reduce[axis]?.method ?? 'mean'}`)
-                  .join(' · ')}
-              </>
-            ) : null}
+            {animation === 'oscillation'
+              ? '순간값 · 공통 시간'
+              : representation === 'phase'
+                ? 'Phase'
+                : 'Amplitude / Value'}{' '}
+            · {componentLabel} [{unit}]
           </span>
-        ) : null}
-        {leaf.boxGrid.configuration ? (
-          <span>{leaf.boxGrid.configuration === 'reference' ? '기준 배치' : '현재 배치'}</span>
-        ) : null}
-        {leaf.boxGrid.weighting === 'material-volume' ? <span>재료 체적 가중 평균</span> : null}
-        <span>
-          {animation === 'oscillation'
-            ? '순간값 · 공통 시간'
-            : representation === 'phase'
-              ? 'Phase'
-              : 'Amplitude / Value'}{' '}
-          · {componentLabel} [{unit}]
-        </span>
-        {role === 'chart' ? (
-          <span aria-label="차트 축 설정" className="flex flex-wrap gap-x-3 gap-y-1">
-            {projectionAxes
-              .filter((axis) => !axes.includes(axis))
-              .map((axis) => {
-                const reduction = effectiveReduce[axis]
-                const method = reduction?.method ?? 'mean'
-                const index = reduction?.index ?? 0
-                const dimension = leaf.axes[projectionAxes.indexOf(axis)]
-                return (
-                  <span key={axis}>
-                    {labels[axis]} ·{' '}
-                    {method === 'index'
-                      ? `개별 index ${index} · ${String(dimension.ticks[index] ?? '현재 데이터 범위 밖')} ${dimension.unit ?? ''}`
-                      : method}
-                  </span>
-                )
-              })}
+          {role === 'chart' ? (
+            <span aria-label="차트 축 설정" className="flex flex-wrap gap-x-3 gap-y-1">
+              {projectionAxes
+                .filter((axis) => !axes.includes(axis))
+                .map((axis) => {
+                  const reduction = effectiveReduce[axis]
+                  const method = reduction?.method ?? 'mean'
+                  const index = reduction?.index ?? 0
+                  const dimension = leaf.axes[projectionAxes.indexOf(axis)]
+                  return (
+                    <span key={axis}>
+                      {labels[axis]} ·{' '}
+                      {method === 'index'
+                        ? `개별 index ${index} · ${String(dimension.ticks[index] ?? '현재 데이터 범위 밖')} ${dimension.unit ?? ''}`
+                        : method}
+                    </span>
+                  )
+                })}
+            </span>
+          ) : null}
+          <span
+            aria-hidden={!showCalculationStatus}
+            className={`shrink-0 whitespace-nowrap ${showCalculationStatus ? '' : 'invisible'}`}
+          >
+            계산 중…
           </span>
-        ) : null}
-        <span
-          aria-hidden={!showCalculationStatus}
-          className={`shrink-0 whitespace-nowrap ${showCalculationStatus ? '' : 'invisible'}`}
-        >
+        </div>
+      ) : showCalculationStatus ? (
+        <p role="status" className="p-2 text-xs">
           계산 중…
-        </span>
-      </div>
+        </p>
+      ) : null}
       {invalidSetting || error || renderError || range[0] > range[1] ? (
         <p role="alert" className="p-3 text-red-700">
           {invalidSetting || error || renderError || '범위 최솟값은 최댓값 이하여야 합니다.'}
         </p>
       ) : null}
-      <div className="min-h-0 flex-1" aria-busy={busy}>
+      <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1'} aria-busy={busy}>
         {result && !invalidSetting && range[0] <= range[1] ? (
           role !== 'chart' && (kind === 'cloud' || (kind === 'heatmap' && spatial && canOverlayGeometry)) ? (
             renderData ? (
-              <div className="flex h-full min-h-0 flex-col">
-                <div className="min-h-0 flex-1">
+              <div className={sceneOnly ? 'contents' : 'flex h-full min-h-0 flex-col'}>
+                <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1'}>
                   {spatial && canOverlayGeometry ? (
                     renderViewer(renderData, geometryOpacity)
                   ) : (
@@ -896,7 +904,7 @@ function BoxGridControls({
                 </div>
               </div>
             ) : null
-          ) : (
+          ) : !sceneOnly ? (
             <ScalarPlot
               plot={opticalPlotData(
                 result.distribution ?? result.scalar,
@@ -908,7 +916,7 @@ function BoxGridControls({
               unit={unit}
               lockHistogramRange={animation !== 'off'}
             />
-          )
+          ) : null
         ) : null}
       </div>
     </div>

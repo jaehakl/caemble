@@ -1,7 +1,8 @@
-import { Layers, Waves } from 'lucide-react'
-import { ViewerAxisIcon, ViewerLayout, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
-import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
-import { useMemo } from 'react'
+import { ViewerLayout, ViewerToolHosts } from './ViewerTools'
+import { ViewerResultSettings } from './ViewerDisplayControls'
+import { ViewerSceneOnly } from './ViewerSceneLayers'
+import { useViewerComparison, useViewerSetting } from './comparisonSettings'
+import { useContext, useMemo } from 'react'
 import type { RecordedResultContract } from '@/contracts/results'
 import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
@@ -20,6 +21,8 @@ export function ResultTensorView({
   data?: RecordedData | null
   role?: 'space' | 'chart'
 }) {
+  const parentLayout = useContext(ViewerToolHosts)
+  const sceneOnly = useContext(ViewerSceneOnly)
   const comparison = useViewerComparison()
   const members = rules.filter((rule) => rule.label === name || rule.label.startsWith(`${name}.`))
   const preferred = contract.visualization.valuePath ? `${name}.${contract.visualization.valuePath}` : name
@@ -124,19 +127,18 @@ export function ResultTensorView({
   }, [rule, value, axes, indices, contract, representation, comparison])
   return (
     <ViewerLayout>
-      <div className="h-full overflow-auto p-3" data-result-visualization={contract.visualization.kind}>
-        {contract.visualization.kind === 'bundle' ? (
-          <p className="mb-3 text-xs text-slate-500">
-            구성 데이터의 상세 보기입니다. 구조 변형 재생에는 mesh와 전체 절점의 시간 이력이 연결된 결과가 필요합니다.
-          </p>
-        ) : null}
-        {rule?.result.dtype === 'complex64' || members.length > 1 || result.accessor?.shape.length ? (
-          <ViewerControls>
-            <div className={`flex gap-1 text-xs ${role === 'chart' ? 'flex-row' : 'flex-col'}`}>
-              {rule?.result.dtype === 'complex64' ? (
-                <ViewerSelectTool
-                  label="복소수 표현"
-                  icon={<Waves />}
+      {role !== 'space' &&
+      (rule?.result.dtype === 'complex64' || members.length > 1 || result.accessor?.shape.length) ? (
+        <ViewerResultSettings name={name} standalone={!parentLayout}>
+          <div
+            className="grid w-72 max-w-full gap-3 text-xs [&_select]:rounded [&_select]:border [&_select]:p-1"
+            aria-label={`${name} 텐서 설정`}
+          >
+            {rule?.result.dtype === 'complex64' ? (
+              <label className="grid gap-1">
+                복소수 표현
+                <select
+                  aria-label="복소수 표현"
                   value={representation}
                   onChange={(event) => setRepresentation(event.target.value)}
                 >
@@ -144,12 +146,13 @@ export function ResultTensorView({
                   <option value="re">실수부</option>
                   <option value="im">허수부</option>
                   <option value="arg">위상 (rad)</option>
-                </ViewerSelectTool>
-              ) : null}
-              {members.length > 1 ? (
-                <ViewerSelectTool
-                  label="구성 데이터"
-                  icon={<Layers />}
+                </select>
+              </label>
+            ) : null}
+            {members.length > 1 ? (
+              <label className="grid gap-1">
+                구성 데이터
+                <select
                   aria-label="결과 구성 데이터"
                   value={rule?.label ?? ''}
                   onChange={(event) => {
@@ -163,72 +166,73 @@ export function ResultTensorView({
                       {item.label}
                     </option>
                   ))}
-                </ViewerSelectTool>
-              ) : null}
-              {result.accessor?.shape.map((length, axis) => {
-                const name = rule?.result.axes?.[axis]?.name ?? `Axis ${axis}`
-                const selected = result.selected?.includes(axis) ?? false
-                const changeRole = (role: string) =>
-                  setAxes(
-                    role === 'space'
-                      ? [...(result.selected ?? []).slice(-1), axis].sort((a, b) => a - b)
-                      : (result.selected ?? []).filter((item) => item !== axis),
-                  )
-                const options = (
-                  <>
-                    <option value="space">공간축</option>
-                    <option value="index">개별 index</option>
-                  </>
+                </select>
+              </label>
+            ) : null}
+            {result.accessor?.shape.map((length, axis) => {
+              const axisName = rule?.result.axes?.[axis]?.name ?? `Axis ${axis}`
+              const selected = result.selected?.includes(axis) ?? false
+              const changeRole = (next: string) =>
+                setAxes(
+                  next === 'space'
+                    ? [...(result.selected ?? []).slice(-1), axis].sort((a, b) => a - b)
+                    : (result.selected ?? []).filter((item) => item !== axis),
                 )
-                return selected ? (
-                  <ViewerSelectTool
-                    key={axis}
-                    label={`${name} 축`}
-                    aria-label={`표시 축 ${axis}`}
-                    title={`${name} · 공간축`}
-                    className="border-2 border-sky-500!"
-                    icon={<ViewerAxisIcon axis={name} />}
-                    value="space"
-                    onChange={(event) => changeRole(event.target.value)}
-                  >
-                    {options}
-                  </ViewerSelectTool>
-                ) : (
-                  <ViewerToolPanel key={axis} label={`${name} 축`} icon={<ViewerAxisIcon axis={name} />} initialOpen>
+              return (
+                <section key={axis} className="grid gap-1 border-t pt-2" aria-label={`${axisName} 축 설정`}>
+                  <label className="grid gap-1">
+                    {axisName} 축
                     <select
                       aria-label={`표시 축 ${axis}`}
-                      value="index"
+                      value={selected ? 'space' : 'index'}
                       onChange={(event) => changeRole(event.target.value)}
                     >
-                      {options}
+                      <option value="space">공간축</option>
+                      <option value="index">개별 index</option>
                     </select>
-                    <input
-                      aria-label={`축 ${axis} index`}
-                      type="range"
-                      min={0}
-                      max={Math.max(0, length - 1)}
-                      value={indices[axis] ?? 0}
-                      onChange={(event) =>
-                        setIndices({
-                          ...indices,
-                          [axis]: Math.min(length - 1, Math.max(0, Math.trunc(Number(event.target.value) || 0))),
-                        })
-                      }
-                    />
-                    <output className="font-mono break-words">
-                      {indices[axis] ?? 0} ·{' '}
-                      {String(result.accessor?.tensor.axes?.[axis]?.ticks?.[indices[axis] ?? 0] ?? indices[axis] ?? 0)}{' '}
-                      {rule?.result.axes?.[axis]?.unit ?? ''}
-                    </output>
-                  </ViewerToolPanel>
-                )
-              })}
-            </div>
-          </ViewerControls>
+                  </label>
+                  {!selected ? (
+                    <>
+                      <input
+                        aria-label={`축 ${axis} index`}
+                        type="range"
+                        min={0}
+                        max={Math.max(0, length - 1)}
+                        value={indices[axis] ?? 0}
+                        onChange={(event) =>
+                          setIndices({
+                            ...indices,
+                            [axis]: Math.min(length - 1, Math.max(0, Math.trunc(Number(event.target.value) || 0))),
+                          })
+                        }
+                      />
+                      <output className="font-mono break-words">
+                        {indices[axis] ?? 0} ·{' '}
+                        {String(
+                          result.accessor?.tensor.axes?.[axis]?.ticks?.[indices[axis] ?? 0] ?? indices[axis] ?? 0,
+                        )}{' '}
+                        {rule?.result.axes?.[axis]?.unit ?? ''}
+                      </output>
+                    </>
+                  ) : null}
+                </section>
+              )
+            })}
+          </div>
+        </ViewerResultSettings>
+      ) : null}
+      <div
+        className={sceneOnly ? 'contents' : 'h-full overflow-auto p-3'}
+        data-result-visualization={contract.visualization.kind}
+      >
+        {!sceneOnly && contract.visualization.kind === 'bundle' ? (
+          <p className="mb-3 text-xs text-slate-500">
+            구성 데이터의 상세 보기입니다. 구조 변형 재생에는 mesh와 전체 절점의 시간 이력이 연결된 결과가 필요합니다.
+          </p>
         ) : null}
         {result.error ? (
           <p role="alert">{result.error}</p>
-        ) : result.rule && result.tensor ? (
+        ) : !sceneOnly && result.rule && result.tensor ? (
           <RecordedDataResults
             quantityKinds={new Map()}
             rules={[result.rule]}

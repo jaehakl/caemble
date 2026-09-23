@@ -11,6 +11,7 @@ export type SceneLayer = {
   deformed?: boolean
 }
 export const SceneLayersContext = createContext<(name: string, layer: SceneLayer | null) => void>(() => {})
+export const ViewerSceneOnly = createContext(false)
 
 /** Result controllers publish render data; the owning Viewer draws one shared canvas. */
 export function ViewerSceneLayer({ name, mesh, heatmap, lines, deformed }: SceneLayer & { name: string }) {

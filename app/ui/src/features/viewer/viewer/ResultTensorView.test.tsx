@@ -63,6 +63,8 @@ it('slices spatial axes and indexes time and component using the frozen contract
     [0, 3],
     [6, 9],
   ])
+  expect(screen.queryByRole('toolbar', { name: '데이터 도구모음' })).not.toBeInTheDocument()
+  fireEvent.keyDown(screen.getByRole('button', { name: 'arbitrary 설정' }), { key: 'ArrowDown' })
   fireEvent.change(screen.getByLabelText('축 0 index'), { target: { value: '1' } })
   fireEvent.change(screen.getByLabelText('축 1 index'), { target: { value: '1' } })
   fireEvent.change(screen.getByLabelText('축 4 index'), { target: { value: '2' } })

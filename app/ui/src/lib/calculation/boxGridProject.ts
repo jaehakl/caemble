@@ -23,9 +23,14 @@ export type BoxGridProjection = Readonly<{ dtype: 'float64'; data: ProjectionDat
 /** Map tensor directions to the flattened component axis, including symmetric six-component tensors. */
 export function boxGridTensorComponents(leaf: CalculationInputLeaf): number[][] | undefined {
   if (leaf.tensorOrder !== 2 || ![6, 9].includes(leaf.boxGrid.components.length)) return undefined
+  return tensorComponentIndices(leaf.boxGrid.components)
+}
+
+export function tensorComponentIndices(components: readonly string[]): number[][] | undefined {
+  if (![6, 9].includes(components.length)) return undefined
   const directions = ['x', 'y', 'z']
   const indices = Array.from({ length: 3 }, () => Array<number>(3).fill(-1))
-  for (const [index, label] of leaf.boxGrid.components.entries()) {
+  for (const [index, label] of components.entries()) {
     const match = label
       .toLowerCase()
       .replace(/[^a-z]/g, '')
@@ -36,7 +41,7 @@ export function boxGridTensorComponents(leaf: CalculationInputLeaf): number[][] 
     if (indices[row][column] !== -1) return undefined
     indices[row][column] = index
   }
-  if (leaf.boxGrid.components.length === 6) {
+  if (components.length === 6) {
     for (let row = 0; row < 3; row++)
       for (let column = row + 1; column < 3; column++) {
         if ((indices[row][column] === -1) === (indices[column][row] === -1)) return undefined

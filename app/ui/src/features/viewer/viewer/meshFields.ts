@@ -3,6 +3,7 @@ import type { ResultVisualization } from '@/contracts/solver'
 import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, type DataTensorAccessor } from '@/lib/cad/model/dataTensor'
 import type { ResultMetadata } from '@/contracts/resultMetadata'
+import { tensorComponentIndices, type TensorComponent } from '@/lib/calculation/boxGridProject'
 
 export type RecordedMeshField = Readonly<{
   cellType?: 'tet4' | 'tri3'
@@ -59,7 +60,7 @@ export type MeshRenderData = {
 }
 
 export type MeshFieldView = Readonly<{
-  component: number | 'magnitude' | 'vonMises' | 'material'
+  component: number | 'magnitude' | 'vonMises' | 'material' | TensorComponent
   wireframe: boolean
   overlays: boolean
   clipAxis: -1 | 0 | 1 | 2
@@ -418,8 +419,22 @@ export function parseRecordedMeshFields(
 
 type MeshVertex = { point: number[]; value: number; components?: number[] }
 
-function scalarValue(values: readonly number[], component: MeshFieldView['component']) {
+export function meshFieldScalarValue(
+  values: readonly number[],
+  component: MeshFieldView['component'],
+  tensor?: number[][],
+) {
   if (typeof component === 'number') return values[component]
+  if (typeof component === 'object') {
+    if (!tensor) throw new Error('텐서 성분 방향을 현재 Mesh Field에 적용할 수 없습니다.')
+    const directions = ['x', 'y', 'z']
+    const rows = component.tensor[0] === 'all' ? [0, 1, 2] : [directions.indexOf(component.tensor[0])]
+    const columns = component.tensor[1] === 'all' ? [0, 1, 2] : [directions.indexOf(component.tensor[1])]
+    if (rows.some((row) => row < 0) || columns.some((column) => column < 0))
+      throw new Error('지원하지 않는 텐서 방향입니다.')
+    const selected = rows.flatMap((row) => columns.map((column) => values[tensor[row][column]]))
+    return selected.length === 1 ? selected[0] : Math.hypot(...selected)
+  }
   if (component === 'vonMises' && (values.length === 6 || values.length === 9)) {
     const [xx, yy, zz, xy, yz, xz] = (values.length === 6 ? [0, 1, 2, 3, 4, 5] : [0, 4, 8, 1, 5, 2]).map(
       (index) => values[index],
@@ -455,14 +470,16 @@ export function createMeshFieldRenderData(
       coordinate * lengthScale + (displacementScale ? displacement!.values[index] * displacementScale : 0),
   )
   const bounds = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
+  const tensor = tensorComponentIndices(field.components)
   for (let index = 0; index < points.length; index += 1) {
     bounds.min[index % 3] = Math.min(bounds.min[index % 3], points[index])
     bounds.max[index % 3] = Math.max(bounds.max[index % 3], points[index])
   }
   const scalars = Float64Array.from({ length: field.values.length / field.componentCount }, (_, row) =>
-    scalarValue(
+    meshFieldScalarValue(
       Array.from(field.values.subarray(row * field.componentCount, (row + 1) * field.componentCount)),
       view.component,
+      tensor,
     ),
   )
   let minimum = Infinity
@@ -542,7 +559,7 @@ export function createMeshFieldRenderData(
     return {
       point: a.point.map((coordinate, index) => coordinate + t * (b.point[index] - coordinate)),
       components,
-      value: components ? scalarValue(components, view.component) : a.value + t * (b.value - a.value),
+      value: components ? meshFieldScalarValue(components, view.component, tensor) : a.value + t * (b.value - a.value),
     }
   }
   const emitPolygon = (polygon: readonly MeshVertex[], cell: number) => {

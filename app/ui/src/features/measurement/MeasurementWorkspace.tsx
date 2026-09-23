@@ -1,4 +1,4 @@
-import { SharedViewerDisplayControls, MeshSettingsHost } from '@/features/viewer/viewer/ViewerDisplayControls'
+import { SharedViewerDisplayControls, ViewerResultMenuHost } from '@/features/viewer/viewer/ViewerDisplayControls'
 import { initialViewerDisplay } from '@/features/viewer/viewer/viewerDisplay'
 import { ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
 import { ViewerControls } from '@/features/viewer/viewer/comparisonSettings'
@@ -104,10 +104,10 @@ export function MeasurementWorkspace({
     return defaults?.version === 2 ? defaults.selectedOutput : ''
   })
   const [comparisonSettings] = useState(() => createViewerSettings(workbench.experimentRecord?.viewer_defaults))
-  const [meshHost, updateMeshHosts] = useState<Record<string, HTMLElement>>({})
-  const setMeshHost = useCallback(
+  const [resultHosts, updateResultHosts] = useState<Record<string, HTMLElement>>({})
+  const setResultHost = useCallback(
     (name: string, host: HTMLDivElement | null) =>
-      updateMeshHosts((current) => {
+      updateResultHosts((current) => {
         if ((current[name] ?? null) === host) return current
         const next = { ...current }
         if (host) next[name] = host
@@ -1004,7 +1004,7 @@ export function MeasurementWorkspace({
           }
           second={
             <ViewerPersistenceContext.Provider value={{ settings: comparisonSettings, camera, item: selectedResult }}>
-              <MeshSettingsHost.Provider value={meshHost}>
+              <ViewerResultMenuHost.Provider value={resultHosts}>
                 <ViewerLayout>
                   <ViewerControls placement="data">
                     <SharedViewerDisplayControls
@@ -1014,7 +1014,7 @@ export function MeasurementWorkspace({
                         resultSelectionMade.current = true
                         setSelectedResult(name)
                       }}
-                      meshHost={setMeshHost}
+                      resultHost={setResultHost}
                     />
                   </ViewerControls>
                   <ComparisonToolbar camera={camera} />
@@ -1135,7 +1135,7 @@ export function MeasurementWorkspace({
                     />
                   </div>
                 </ViewerLayout>
-              </MeshSettingsHost.Provider>
+              </ViewerResultMenuHost.Provider>
             </ViewerPersistenceContext.Provider>
           }
         />

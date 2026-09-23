@@ -1,9 +1,7 @@
-import { createPortal } from 'react-dom'
-import { MeshSettingsHost } from './ViewerDisplayControls'
-import { ViewerToolMenu } from './ViewerTools'
-import { Component, Activity, Waves } from 'lucide-react'
-import { ViewerLayout, ViewerToolPanel, ViewerSelectTool } from './ViewerTools'
-import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'
+import { ViewerResultSettings } from './ViewerDisplayControls'
+import { ViewerLayout, ViewerToolButton, ViewerToolHosts } from './ViewerTools'
+import { ViewerSceneOnly } from './ViewerSceneLayers'
+import { useViewerComparison, useViewerSetting } from './comparisonSettings'
 import { useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   matchMeshDisplacement,
@@ -17,6 +15,7 @@ import { MeshPlayback } from './MeshPlayback'
 import JscadViewer from './JscadViewer'
 import { createMeshFieldRenderData, meshMaterialColors, type MeshFieldView, type RecordedMeshField } from './meshFields'
 import type { JscadViewerLayer } from './model'
+import { tensorComponentIndices, type TensorDirection } from '@/lib/calculation/boxGridProject'
 
 const noFields: readonly RecordedMeshField[] = Object.freeze([])
 const noLayers: readonly JscadViewerLayer[] = Object.freeze([])
@@ -34,8 +33,10 @@ export function MeshFieldResult({
   displayUnit?: typeof field.lengthUnit
   renderViewer?: (data: ReturnType<typeof createMeshFieldRenderData>, view: MeshFieldView) => ReactNode
 }) {
-  const settingsHost = useContext(MeshSettingsHost)[field.label]
+  const parentLayout = useContext(ViewerToolHosts)
+  const sceneOnly = useContext(ViewerSceneOnly)
   const comparison = useViewerComparison()
+  const tensor = useMemo(() => tensorComponentIndices(field.components), [field.components])
   const [view, setView] = useViewerSetting<MeshFieldView>(
     'mesh.view',
     {
@@ -49,8 +50,10 @@ export function MeshFieldResult({
     'item',
     (value) =>
       typeof value.component === 'number'
-        ? value.component < field.componentCount
-        : value.component !== 'vonMises' || field.valueKind === 'stress',
+        ? value.component >= 0 && value.component < field.componentCount
+        : typeof value.component === 'object'
+          ? Boolean(tensor && value.component.tensor.every((direction) => ['x', 'y', 'z', 'all'].includes(direction)))
+          : value.component !== 'vonMises' || field.valueKind === 'stress',
   )
   const candidates = useMemo(
     () =>
@@ -90,11 +93,12 @@ export function MeshFieldResult({
     if (comparison) return
     setFrame(frame)
     setView((current) =>
-      typeof current.component === 'number' && current.component >= field.componentCount
+      (typeof current.component === 'number' && current.component >= field.componentCount) ||
+      (typeof current.component === 'object' && !tensor)
         ? { ...current, component: 'magnitude' }
         : current,
     )
-  }, [field, frame, comparison, setFrame, setView])
+  }, [field, frame, comparison, setFrame, setView, tensor])
   const canDeform = Boolean(displacement?.location === 'node' && displacement.componentCount === 3)
   const invalidSetting =
     field.spectrum &&
@@ -109,6 +113,7 @@ export function MeshFieldResult({
               frame >= (field.times?.length ?? 1) ||
               (typeof view.component === 'number' && (view.component < 0 || view.component >= field.componentCount)) ||
               (view.component === 'vonMises' && field.valueKind !== 'stress') ||
+              (typeof view.component === 'object' && !tensor) ||
               (selectedDisplacement && !displacement))
           ? '저장된 성분·프레임·변위 설정을 현재 데이터에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
           : ''
@@ -195,11 +200,150 @@ export function MeshFieldResult({
   const component =
     typeof view.component === 'number'
       ? field.components[view.component]
-      : view.component === 'magnitude' && field.componentCount === 1
-        ? 'Value'
-        : view.component
+      : typeof view.component === 'object'
+        ? `T(${view.component.tensor.map((direction) => (direction === 'all' ? '|T|' : direction.toUpperCase())).join(', ')})`
+        : view.component === 'magnitude' && field.componentCount === 1
+          ? 'Value'
+          : view.component
+  const tensorPair: readonly [TensorDirection, TensorDirection] =
+    typeof view.component === 'object'
+      ? view.component.tensor
+      : typeof view.component === 'number' && tensor
+        ? (() => {
+            for (let row = 0; row < 3; row++)
+              for (let column = 0; column < 3; column++)
+                if (tensor[row][column] === view.component)
+                  return [['x', 'y', 'z'][row], ['x', 'y', 'z'][column]] as [TensorDirection, TensorDirection]
+            return ['all', 'all'] as const
+          })()
+        : ['all', 'all']
   const meshSettings = (
-    <div className="grid gap-2 text-xs" aria-label="mesh-field 설정">
+    <div
+      className="grid w-80 max-w-full gap-2 text-xs [&_select]:max-w-full [&_select]:rounded [&_select]:border [&_select]:p-1"
+      aria-label="mesh-field 설정"
+    >
+      {field.spectrum ? (
+        <>
+          <label className="grid gap-1">
+            주파수
+            <select
+              aria-label={`${field.label} frequency`}
+              value={frequencyHz}
+              onChange={(event) => setFrequencyHz(Number(event.target.value))}
+            >
+              {!field.spectrum.frequencies.includes(frequencyHz) ? (
+                <option value={frequencyHz}>{frequencyHz} Hz · 결과 없음</option>
+              ) : null}
+              {Array.from(field.spectrum.frequencies, (frequency) => (
+                <option key={frequency} value={frequency}>
+                  {frequency} Hz
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1">
+            위상 · {phaseDegrees}°
+            <input
+              aria-label={`${field.label} phase`}
+              type="range"
+              min={0}
+              max={360}
+              step={1}
+              value={phaseDegrees}
+              onChange={(event) => setPhaseDegrees(Number(event.target.value))}
+            />
+            <input
+              aria-label={`${field.label} phase degrees`}
+              type="number"
+              min={0}
+              max={360}
+              step="any"
+              value={phaseDegrees}
+              onChange={(event) => setPhaseDegrees(Number(event.target.value))}
+            />
+          </label>
+          <span>
+            {frequencyHz} Hz · {phaseDegrees}° · 순간값 Re(Q exp(iφ)) · peak phasor
+          </span>
+        </>
+      ) : null}
+      {tensor ? (
+        <section aria-label="mesh-field 텐서 성분 설정" className="grid gap-1">
+          <p className="font-medium">텐서 성분</p>
+          <div className="flex flex-wrap gap-1">
+            <ViewerToolButton
+              label="텐서 |T|"
+              active={view.component === 'magnitude'}
+              onClick={() => setView({ ...view, component: 'magnitude' })}
+            >
+              |T|
+            </ViewerToolButton>
+            {field.valueKind === 'stress' ? (
+              <ViewerToolButton
+                label="텐서 von Mises"
+                active={view.component === 'vonMises'}
+                onClick={() => setView({ ...view, component: 'vonMises' })}
+              >
+                VM
+              </ViewerToolButton>
+            ) : null}
+            <ViewerToolButton
+              label="Material regions"
+              active={view.component === 'material'}
+              onClick={() => setView({ ...view, component: 'material' })}
+            >
+              M
+            </ViewerToolButton>
+          </div>
+          {([0, 1] as const).map((axis) => (
+            <div key={axis} className="flex items-center gap-1" aria-label={`텐서 ${axis + 1}축 성분`}>
+              <span className="w-8 shrink-0">{axis + 1}축</span>
+              {(['all', 'x', 'y', 'z'] as const).map((direction) => (
+                <ViewerToolButton
+                  key={direction}
+                  label={`텐서 ${axis + 1}축 ${direction === 'all' ? '|T|' : direction.toUpperCase()}`}
+                  active={
+                    (typeof view.component === 'object' || typeof view.component === 'number') &&
+                    tensorPair[axis] === direction
+                  }
+                  onClick={() => {
+                    const next: [TensorDirection, TensorDirection] = [...tensorPair]
+                    next[axis] = direction
+                    setView({ ...view, component: { tensor: next } })
+                  }}
+                >
+                  {direction === 'all' ? '|T|' : direction.toUpperCase()}
+                </ViewerToolButton>
+              ))}
+            </div>
+          ))}
+        </section>
+      ) : (
+        <label className="grid gap-1">
+          성분
+          <select
+            aria-label={`${field.label} field component`}
+            value={String(view.component)}
+            onChange={(event) =>
+              setView({
+                ...view,
+                component: /^\d+$/u.test(event.target.value)
+                  ? Number(event.target.value)
+                  : (event.target.value as MeshFieldView['component']),
+              })
+            }
+          >
+            <option value="magnitude">{field.componentCount === 1 ? 'Value' : 'Magnitude'}</option>
+            {field.valueKind === 'stress' ? <option value="vonMises">von Mises</option> : null}
+            {field.components.map((name, index) => (
+              <option key={index} value={index}>
+                {name}
+              </option>
+            ))}
+            <option value="material">Material regions</option>
+          </select>
+        </label>
+      )}
       <label>
         <input
           type="checkbox"
@@ -276,109 +420,31 @@ export function MeshFieldResult({
   )
   return (
     <ViewerLayout>
-      {settingsHost && (!comparison || comparison.controlsOwner) ? (
-        createPortal(meshSettings, settingsHost)
-      ) : !renderViewer ? (
-        <ViewerControls placement="data">
-          <ViewerToolMenu modal={false} label="mesh-field 설정" icon={<Component />}>
-            {meshSettings}
-          </ViewerToolMenu>
-        </ViewerControls>
+      <ViewerResultSettings name={field.label} label="mesh-field 설정" standalone={!parentLayout}>
+        {meshSettings}
+      </ViewerResultSettings>
+      {field.times ? (
+        <MeshPlayback name={field.label} times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
       ) : null}
       <article
-        className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
+        className={sceneOnly ? 'contents' : 'flex h-full min-h-0 flex-col overflow-hidden bg-white'}
         data-result-visualization="mesh field"
         aria-label={`${field.label} mesh field`}
       >
-        <h3 className="px-2 pt-2 text-sm font-semibold text-slate-900">{field.label}</h3>
-        <p className="px-2 text-xs text-slate-500">
-          {(field.points.length / 3).toLocaleString()} nodes ·{' '}
-          {(field.cells.length / (field.cellType === 'tri3' ? 3 : 4)).toLocaleString()}{' '}
-          {field.cellType === 'tri3' ? 'triangles' : 'tetrahedra'} · {field.location} values · coordinates{' '}
-          {field.lengthUnit}
-          {field.configuration ? ` · ${field.configuration === 'reference' ? '기준 배치' : '현재 배치'}` : ''}
-          {field.weighting === 'reference-volume' ? ' · 기준 체적 가중 평균' : ''}
-          {field.signConvention === 'compression-positive' ? ' · 압축 양수' : ''}
-          {field.snapshotTime !== undefined ? ` · time ${field.snapshotTime} ${field.snapshotTimeUnit ?? 's'}` : ''}
-        </p>
-        <ViewerControls>
-          {field.spectrum ? (
-            <>
-              <ViewerSelectTool
-                label="주파수"
-                icon={<Activity />}
-                aria-label={`${field.label} frequency`}
-                value={frequencyHz}
-                onChange={(event) => setFrequencyHz(Number(event.target.value))}
-              >
-                {!field.spectrum.frequencies.includes(frequencyHz) ? (
-                  <option value={frequencyHz}>{frequencyHz} Hz · 결과 없음</option>
-                ) : null}
-                {Array.from(field.spectrum.frequencies, (frequency) => (
-                  <option key={frequency} value={frequency}>
-                    {frequency} Hz
-                  </option>
-                ))}
-              </ViewerSelectTool>
-              <ViewerToolPanel label="위상" icon={<Waves />}>
-                <input
-                  aria-label={`${field.label} phase`}
-                  type="range"
-                  min={0}
-                  max={360}
-                  step={1}
-                  value={phaseDegrees}
-                  onChange={(event) => setPhaseDegrees(Number(event.target.value))}
-                />
-                <input
-                  aria-label={`${field.label} phase degrees`}
-                  type="number"
-                  min={0}
-                  max={360}
-                  step="any"
-                  value={phaseDegrees}
-                  onChange={(event) => setPhaseDegrees(Number(event.target.value))}
-                />
-                <span>
-                  {frequencyHz} Hz · {phaseDegrees}° · 순간값 Re(Q exp(iφ)) · peak phasor
-                </span>
-              </ViewerToolPanel>
-            </>
-          ) : null}
-          <ViewerSelectTool
-            label="성분"
-            icon={<Component />}
-            aria-label={`${field.label} field component`}
-            value={String(view.component)}
-            onChange={(event) =>
-              setView({
-                ...view,
-                component: /^\d+$/u.test(event.target.value)
-                  ? Number(event.target.value)
-                  : (event.target.value as MeshFieldView['component']),
-              })
-            }
-          >
-            <option value="magnitude">{field.componentCount === 1 ? 'Value' : 'Magnitude'}</option>
-            {field.valueKind === 'stress' ? <option value="vonMises">von Mises</option> : null}
-            {field.components.map((name, index) => (
-              <option key={index} value={index}>
-                {name}
-              </option>
-            ))}
-            <option value="material">Material regions</option>
-          </ViewerSelectTool>
-          {field.times ? (
-            <MeshPlayback
-              name={field.label}
-              times={field.times}
-              unit={field.timeUnit!}
-              frame={frame}
-              onFrame={setFrame}
-            />
-          ) : null}
-        </ViewerControls>
-        {field.valueKind === 'displacement' && !field.times && !field.spectrum ? (
+        {!sceneOnly ? <h3 className="px-2 pt-2 text-sm font-semibold text-slate-900">{field.label}</h3> : null}
+        {!sceneOnly ? (
+          <p className="px-2 text-xs text-slate-500">
+            {(field.points.length / 3).toLocaleString()} nodes ·{' '}
+            {(field.cells.length / (field.cellType === 'tri3' ? 3 : 4)).toLocaleString()}{' '}
+            {field.cellType === 'tri3' ? 'triangles' : 'tetrahedra'} · {field.location} values · coordinates{' '}
+            {field.lengthUnit}
+            {field.configuration ? ` · ${field.configuration === 'reference' ? '기준 배치' : '현재 배치'}` : ''}
+            {field.weighting === 'reference-volume' ? ' · 기준 체적 가중 평균' : ''}
+            {field.signConvention === 'compression-positive' ? ' · 압축 양수' : ''}
+            {field.snapshotTime !== undefined ? ` · time ${field.snapshotTime} ${field.snapshotTimeUnit ?? 's'}` : ''}
+          </p>
+        ) : null}
+        {!sceneOnly && field.valueKind === 'displacement' && !field.times && !field.spectrum ? (
           <p className="my-2 text-xs text-slate-500">
             단일 상태의 변위입니다. 애니메이션에는 mesh와 전체 절점의 시간 이력이 필요합니다.
           </p>
@@ -389,7 +455,7 @@ export function MeshFieldResult({
           </p>
         ) : null}
         {rendered.data ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>
             {renderViewer ? (
               renderViewer(rendered.data, effectiveView)
             ) : (
@@ -405,32 +471,34 @@ export function MeshFieldResult({
             )}
           </div>
         ) : null}
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-t p-2 text-xs text-slate-600">
-          {view.component === 'material' ? (
-            field.regionIds.map((name, index) => (
-              <span className="flex items-center gap-1" key={name}>
+        {!sceneOnly ? (
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-t p-2 text-xs text-slate-600">
+            {view.component === 'material' ? (
+              field.regionIds.map((name, index) => (
+                <span className="flex items-center gap-1" key={name}>
+                  <span
+                    className="size-3 rounded-sm"
+                    style={{ background: meshMaterialColors[index % meshMaterialColors.length] }}
+                  />
+                  {name}
+                </span>
+              ))
+            ) : (
+              <>
+                <span>
+                  {component} ({field.valueUnit})
+                </span>
+                <span>{rendered.data?.minimum.toPrecision(5)}</span>
                 <span
-                  className="size-3 rounded-sm"
-                  style={{ background: meshMaterialColors[index % meshMaterialColors.length] }}
+                  className="h-2 w-40 rounded"
+                  style={{ background: 'linear-gradient(to right, #0000ff, #00ffff, #ffff00, #ff0000)' }}
                 />
-                {name}
-              </span>
-            ))
-          ) : (
-            <>
-              <span>
-                {component} ({field.valueUnit})
-              </span>
-              <span>{rendered.data?.minimum.toPrecision(5)}</span>
-              <span
-                className="h-2 w-40 rounded"
-                style={{ background: 'linear-gradient(to right, #0000ff, #00ffff, #ffff00, #ff0000)' }}
-              />
-              <span>{rendered.data?.maximum.toPrecision(5)}</span>
-            </>
-          )}
-          {view.overlays ? <span>Green: fixed nodes · Red: load locations (arrows: force direction)</span> : null}
-        </div>
+                <span>{rendered.data?.maximum.toPrecision(5)}</span>
+              </>
+            )}
+            {view.overlays ? <span>Green: fixed nodes · Red: load locations (arrows: force direction)</span> : null}
+          </div>
+        ) : null}
       </article>
     </ViewerLayout>
   )

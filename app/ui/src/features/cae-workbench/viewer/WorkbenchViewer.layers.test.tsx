@@ -142,10 +142,30 @@ it('composes independent Geometry, Output, mesh and ray layers and cycles only G
   expect(screen.getByTestId('scene')).toHaveAttribute('data-opacity', '0.9')
 })
 
+it('keeps the shared 3D scene free of result descriptions while output controls and charts remain available', async () => {
+  const { container } = render(<WorkbenchViewer {...viewerDisplayFixture()} initialDefaults={defaults} />)
+  const sceneResults = container.querySelector('[data-viewer-scene-results]')
+  expect(sceneResults).not.toBeNull()
+  await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1'))
+  await waitFor(() => expect(sceneResults?.textContent?.trim()).toBe(''))
+  expect(screen.getByTestId('chart')).toBeInTheDocument()
+
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
+  expect(screen.getByRole('region', { name: 'Box Grid 축 설정' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'summary' }))
+  expect(screen.getByLabelText('summary 텐서 설정')).toBeInTheDocument()
+  expect(sceneResults?.textContent?.trim()).toBe('')
+  expect(screen.getByTestId('scene')).toBeInTheDocument()
+})
+
 it('moves mesh controls into its persistent menu and applies deformation without clearing ray selection', async () => {
   render(<WorkbenchViewer {...viewerDisplayFixture()} initialDefaults={defaults} />)
+  expect(screen.queryByRole('toolbar', { name: '데이터 도구모음' })).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Mesh 경계선')).not.toBeInTheDocument()
   fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field · sample.field' }), { key: 'ArrowDown' })
+  expect(screen.getByRole('radiogroup', { name: 'mesh-field 선택' }).nextElementSibling).toContainElement(
+    screen.getByLabelText('mesh-field 설정'),
+  )
   expect(screen.getByRole('menu')).toContainElement(screen.getByLabelText('Mesh 경계선'))
   fireEvent.click(screen.getByLabelText('Mesh 경계선'))
   expect(screen.getByRole('menu')).toBeInTheDocument()
@@ -155,7 +175,7 @@ it('moves mesh controls into its persistent menu and applies deformation without
   expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'true')
   fireEvent.click(screen.getByLabelText('변형 표시'))
   expect(screen.getByTestId('scene')).toHaveAttribute('data-rays', '1')
-  fireEvent.click(screen.getByRole('radio', { name: '선택 안 함' }))
+  fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
   expect(screen.queryByLabelText('Mesh 경계선')).not.toBeInTheDocument()
   expect(screen.getByTestId('scene')).toHaveAttribute('data-mesh', '0')
 })
@@ -229,9 +249,9 @@ it('keeps legacy mesh Output in the chart while native mesh visualization render
   )
   const both = Number(screen.getByTestId('scene').dataset.mesh)
   fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field · sample.field' }), { key: 'ArrowDown' })
-  fireEvent.click(screen.getByRole('radio', { name: '선택 안 함' }))
+  fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
   expect(Number(screen.getByTestId('scene').dataset.mesh)).toBe(0)
-  expect(screen.getByText(/이 Output은 XYZ point cloud/)).toBeInTheDocument()
+  expect(screen.queryByText(/이 Output은 XYZ point cloud/)).not.toBeInTheDocument()
   expect(both).toBeGreaterThan(0)
 })
 
@@ -297,7 +317,7 @@ it('keeps Output settings in its menu and exposes playback and copy in the commo
   expect(within(common).queryByRole('button', { name: '변환 코드 복사' })).not.toBeInTheDocument()
 })
 
-it('updates the right side of the open Output menu for each Box Grid and hides it for other Outputs', async () => {
+it('updates the right side of the open Output menu for Box Grids and tensor Outputs', async () => {
   const props = viewerDisplayFixture()
   const second = 'signal2'
   const signalRule = props.recordedRules!.find((rule) => rule.label === 'signal')!
@@ -328,7 +348,7 @@ it('updates the right side of the open Output menu for each Box Grid and hides i
   expect(screen.getByRole('button', { name: 'f 주 축' })).toHaveAttribute('aria-pressed', 'true')
   fireEvent.click(screen.getByRole('menuitemradio', { name: 'summary' }))
   expect(screen.getByRole('menu', { name: 'Output · summary' })).toBeInTheDocument()
-  expect(right).toBeEmptyDOMElement()
+  expect(right).toContainElement(screen.getByLabelText('summary 텐서 설정'))
   fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
   expect(screen.getByRole('menu', { name: 'Output · 선택 안 함' })).toBeInTheDocument()
   expect(right).toBeEmptyDOMElement()

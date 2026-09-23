@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { MeshPlayback } from './MeshPlayback'
 import { ViewerLayout } from './ViewerTools'
 import { MeshTransformResult } from './MeshTransformResult'
+import { ViewerSceneOnly } from './ViewerSceneLayers'
 import type { RecordedMeshTransform } from './meshTransforms'
 import type { MeshRenderData } from './meshFields'
 
@@ -80,4 +81,15 @@ it('uses the refreshed result callbacks even when the displayed timeline stays t
   fireEvent.click(screen.getByRole('button', { name: '다음 프레임' }))
   expect(first).not.toHaveBeenCalled()
   expect(second).toHaveBeenCalledWith(1)
+})
+
+it('keeps the animated mesh without its description in the shared scene', () => {
+  const { container } = render(
+    <ViewerSceneOnly.Provider value={true}>
+      <MeshTransformResult motion={motion} renderViewer={renderViewer} />
+    </ViewerSceneOnly.Provider>,
+  )
+  expect(container.querySelector('[data-result-visualization="mesh transform"]')?.textContent).toBe('')
+  expect(screen.getByTestId('pose')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '재생 제어' })).toBeInTheDocument()
 })

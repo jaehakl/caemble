@@ -13,7 +13,7 @@ import {
   type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ViewerControlTarget, ViewerToolHosts, type ViewerControlPlacement } from './ViewerTools'
+import { ViewerToolHosts, type ViewerControlPlacement } from './ViewerTools'
 
 /** Owned by the comparison workspace, independently of data and renderer lifetimes. */
 export function createComparisonSettings(initial?: Record<string, unknown>) {
@@ -177,19 +177,10 @@ export function useViewerSetting<T>(
   return settings ? [value, setValue] : [local, setLocal]
 }
 
-export function ViewerControls({
-  children,
-  placement = 'side',
-}: {
-  children: ReactNode
-  placement?: ViewerControlPlacement
-}) {
+export function ViewerControls({ children, placement }: { children: ReactNode; placement: ViewerControlPlacement }) {
   const comparison = useViewerComparison()
   const hosts = useContext(ViewerToolHosts)
-  const target = useContext(ViewerControlTarget)
   if (comparison && !comparison.controlsOwner && placement !== 'presentation') return null
-  if (target && placement === 'side') return target.host ? createPortal(children, target.host) : null
-  if (comparison?.controlsHost && placement === 'side') return createPortal(children, comparison.controlsHost)
   if (hosts) return hosts[placement] ? createPortal(children, hosts[placement]) : null
   if (!comparison) return children
   return comparison.controlsOwner && comparison.controlsHost ? createPortal(children, comparison.controlsHost) : null

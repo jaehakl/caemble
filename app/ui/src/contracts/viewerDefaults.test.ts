@@ -56,3 +56,16 @@ it('restores vector and tensor component choices while rejecting malformed tenso
     'tensor:box.component': { tensor: ['arrows', 'y'] },
   })
 })
+
+it('preserves mesh tensor directions in an initial viewer view', () => {
+  const view = {
+    component: { tensor: ['x', 'all'] },
+    wireframe: true,
+    overlays: false,
+    clipAxis: -1,
+    clipFraction: 0.5,
+    deformationScale: 0,
+  }
+  expect(durableViewerSettings([['stress:mesh.view', view]])).toEqual({ 'stress:mesh.view': view })
+  expect(durableViewerSettings([['stress:mesh.view', { ...view, component: { tensor: ['x', 'arrows'] } }]])).toEqual({})
+})
