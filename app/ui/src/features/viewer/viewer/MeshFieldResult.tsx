@@ -369,7 +369,13 @@ export function MeshFieldResult({
             <option value="material">Material regions</option>
           </ViewerSelectTool>
           {field.times ? (
-            <MeshPlayback times={field.times} unit={field.timeUnit!} frame={frame} onFrame={setFrame} />
+            <MeshPlayback
+              name={field.label}
+              times={field.times}
+              unit={field.timeUnit!}
+              frame={frame}
+              onFrame={setFrame}
+            />
           ) : null}
         </ViewerControls>
         {field.valueKind === 'displacement' && !field.times && !field.spectrum ? (

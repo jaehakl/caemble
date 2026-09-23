@@ -18,6 +18,7 @@ const reduction = z.object({
 /** Only durable display controls are serialized; runtime busy/picking state stays local. */
 export const viewerSettingSchemas: Record<string, z.ZodType> = {
   selectedOutput: z.string().max(512),
+  'playback.source': z.string().max(1024),
   geometryMode: z.union([z.literal(0), z.literal(0.5), z.literal(0.9)]),
   visualizations: z.record(z.string(), z.string().max(512)),
   experimentVisible: z.boolean(),

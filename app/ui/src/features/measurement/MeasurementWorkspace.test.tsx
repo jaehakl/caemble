@@ -437,7 +437,7 @@ describe('Measurement workspace integration', () => {
     expect(mocks.predict).toHaveBeenCalledTimes(3)
     expect(preview.getByLabelText('Viewer data')).toHaveTextContent('prediction:2')
     expect(screen.getAllByRole('button', { name: /Output ·/ })).toHaveLength(1)
-    expect(screen.getAllByRole('toolbar', { name: 'Output 설정 툴바' })).toHaveLength(1)
+    expect(screen.queryByRole('toolbar', { name: 'Output 설정 툴바' })).not.toBeInTheDocument()
   })
 
   it('keeps the last frame and ignores a late prediction after cancellation', async () => {
@@ -581,7 +581,7 @@ describe('Measurement workspace integration', () => {
     expect(within(actual).getByLabelText('Viewer Vars')).toHaveTextContent('0.25')
     expect(within(actual).getByText('비교 기준 · 현재 Vars와 다름')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /Output ·/ })).toHaveLength(1)
-    expect(screen.getAllByRole('toolbar', { name: 'Output 설정 툴바' })).toHaveLength(1)
+    expect(screen.queryByRole('toolbar', { name: 'Output 설정 툴바' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Output · 선택 안 함' }))
     await user.click(screen.getByRole('menuitemradio', { name: 'result' }))
     expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer selected result')).toHaveTextContent(

@@ -51,6 +51,7 @@ export function MeshTransformResult({
         </p>
         <ViewerControls>
           <MeshPlayback
+            name={motion.label}
             times={motion.times}
             unit="s"
             frame={meshFrameAtTime(motion.times, time)}

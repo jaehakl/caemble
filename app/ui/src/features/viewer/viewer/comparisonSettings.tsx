@@ -18,6 +18,20 @@ import { ViewerControlTarget, ViewerToolHosts, type ViewerControlPlacement } fro
 /** Owned by the comparison workspace, independently of data and renderer lifetimes. */
 export function createComparisonSettings(initial?: Record<string, unknown>) {
   const values = new Map<string, unknown>(Object.entries(durableViewerSettings(Object.entries(initial ?? {}))))
+  for (const [key, animation] of values) {
+    if (!key.endsWith(':box.animation') || !['x', 'y', 'z', 'frequency', 'component'].includes(String(animation)))
+      continue
+    const prefix = key.slice(0, -'box.animation'.length)
+    const index = values.get(`${prefix}box.frameIndex`) ?? 0
+    if (animation === 'component') values.set(`${prefix}box.component`, index)
+    else
+      values.set(`${prefix}box.reduce`, {
+        ...(values.get(`${prefix}box.reduce`) as Record<string, unknown> | undefined),
+        [String(animation)]: { method: 'index', index },
+      })
+    values.set(key, 'off')
+    values.set(`${prefix}box.playing`, false)
+  }
   const seeded = new Set(values.keys())
   const listeners = new Set<() => void>()
   return {

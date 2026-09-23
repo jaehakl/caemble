@@ -330,7 +330,7 @@ try {
         '주파수',
         '위상',
         '변위 결과',
-        'Transient playback',
+        '재생 제어',
         '물리량',
         'Particle ID',
         '점 크기',
@@ -380,7 +380,7 @@ try {
     await page.getByRole('article', { name: 'Rigid motion mesh transform' }).waitFor()
     await openTools()
     const rigidInitial = await canvas.screenshot()
-    await page.getByLabel('Animation time').evaluate((input) => {
+    await page.getByLabel('재생 위치').evaluate((input) => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '0.5')
       input.dispatchEvent(new Event('input', { bubbles: true }))
       input.dispatchEvent(new Event('change', { bubbles: true }))
@@ -400,7 +400,7 @@ try {
     assert.equal(await page.getByLabel('Harmonic displacement frequency').inputValue(), '40')
     assert.equal(await page.getByLabel('Harmonic displacement phase degrees').inputValue(), '0')
     await page.getByText('40 Hz · 0° · 순간값 Re(Q exp(iφ)) · peak phasor', { exact: true }).waitFor()
-    assert.equal(await page.getByLabel('Transient playback').count(), 0)
+    assert.equal(await page.getByLabel('재생 제어').count(), 0)
     assert.equal(await page.getByLabel(/변형 배율/u).count(), 0)
     const displacementPhaseZero = await canvas.screenshot()
     await page.getByLabel('Harmonic displacement phase degrees').fill('90')
@@ -579,7 +579,7 @@ try {
         const initial = await canvas.screenshot()
         if (selected.times.length > 1) {
           const middle = (selected.times[0] + selected.times.at(-1)) / 2
-          await page.getByLabel('Animation time').evaluate((input, time) => {
+          await page.getByLabel('재생 위치').evaluate((input, time) => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(time))
             input.dispatchEvent(new Event('input', { bubbles: true }))
             input.dispatchEvent(new Event('change', { bubbles: true }))
@@ -632,7 +632,7 @@ try {
             .some((value, index) => Math.abs(value - item.positions[last + index]) > 1e-6)
         }, selected.label)
         if (selected.times.length > 1) {
-          await page.getByLabel('Animation time').evaluate((input, time) => {
+          await page.getByLabel('재생 위치').evaluate((input, time) => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(time))
             input.dispatchEvent(new Event('input', { bubbles: true }))
             input.dispatchEvent(new Event('change', { bubbles: true }))

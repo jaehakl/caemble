@@ -1,5 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
+import { MeshPlayback } from './MeshPlayback'
+import { ViewerLayout } from './ViewerTools'
 import { MeshTransformResult } from './MeshTransformResult'
 import type { RecordedMeshTransform } from './meshTransforms'
 import type { MeshRenderData } from './meshFields'
@@ -25,9 +27,9 @@ function renderViewer(data: MeshRenderData) {
 
 it('seeks to continuous physical time with rigid interpolation and no deformation multiplier controls', () => {
   render(<MeshTransformResult motion={motion} renderViewer={renderViewer} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Transient playback' }))
-  fireEvent.change(screen.getByLabelText('Animation time'), { target: { value: '0.5' } })
-  expect(screen.getByLabelText('Animation time')).toHaveValue('0.5')
+  fireEvent.keyDown(screen.getByRole('button', { name: '재생 제어' }), { key: 'ArrowDown' })
+  fireEvent.change(screen.getByLabelText('재생 위치'), { target: { value: '0.5' } })
+  expect(screen.getByLabelText('재생 위치')).toHaveValue('0.5')
   const vertices = JSON.parse(screen.getByTestId('pose').getAttribute('data-vertices')!)
   expect(vertices[0]).toBe(1)
   expect(vertices[3]).toBeCloseTo(1)
@@ -36,9 +38,9 @@ it('seeks to continuous physical time with rigid interpolation and no deformatio
   expect(screen.queryByText('자동 확대')).toBeNull()
   expect(screen.queryByLabelText(/displacement scale/)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '다음 프레임' }))
-  expect(screen.getByLabelText('Animation time')).toHaveValue('1')
+  expect(screen.getByLabelText('재생 위치')).toHaveValue('1')
   fireEvent.click(screen.getByRole('button', { name: '이전 프레임' }))
-  expect(screen.getByLabelText('Animation time')).toHaveValue('0')
+  expect(screen.getByLabelText('재생 위치')).toHaveValue('0')
 })
 
 it('keeps a single snapshot visible with playback disabled', () => {
@@ -54,9 +56,28 @@ it('keeps a single snapshot visible with playback disabled', () => {
     />,
   )
   expect(screen.getByTestId('pose')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Transient playback' }))
-  expect(screen.getByLabelText('Animation time')).toBeDisabled()
+  fireEvent.keyDown(screen.getByRole('button', { name: '재생 제어' }), { key: 'ArrowDown' })
+  expect(screen.getByLabelText('재생 위치')).toBeDisabled()
   expect(screen.getByRole('button', { name: '재생' })).toBeDisabled()
   expect(screen.getByRole('button', { name: '이전 프레임' })).toBeDisabled()
   expect(screen.getByRole('button', { name: '다음 프레임' })).toBeDisabled()
+})
+
+it('uses the refreshed result callbacks even when the displayed timeline stays the same', () => {
+  const first = vi.fn(),
+    second = vi.fn()
+  const view = render(
+    <ViewerLayout>
+      <MeshPlayback name="motion" times={motion.times} unit="s" frame={0} onFrame={first} />
+    </ViewerLayout>,
+  )
+  fireEvent.keyDown(screen.getByRole('button', { name: '재생 제어' }), { key: 'ArrowDown' })
+  view.rerender(
+    <ViewerLayout>
+      <MeshPlayback name="motion" times={motion.times} unit="s" frame={0} onFrame={second} />
+    </ViewerLayout>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: '다음 프레임' }))
+  expect(first).not.toHaveBeenCalled()
+  expect(second).toHaveBeenCalledWith(1)
 })

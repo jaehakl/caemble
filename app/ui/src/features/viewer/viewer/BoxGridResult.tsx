@@ -6,10 +6,13 @@ import {
   useViewerSetting,
   ViewerControls,
 } from './comparisonSettings'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { BoxGridToolbar } from './BoxGridToolbar'
-import { ViewerLayout } from './ViewerTools'
+import { BoxGridOutputSettings } from './BoxGridOutputSettings'
+import { ViewerPlaybackRegistration } from './ViewerPlayback'
+import type { ViewerPlaybackSource } from './viewerPlaybackState'
+import { Copy, Layers } from 'lucide-react'
+import { ViewerLayout, ViewerToolHosts, ViewerToolButton, ViewerOutputMenuHost, ViewerToolMenu } from './ViewerTools'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
@@ -57,6 +60,7 @@ export function BoxGridResult({
   recordReference?: string
   role?: 'space' | 'chart'
 }) {
+  const parentLayout = useContext(ViewerToolHosts)
   const parsed = useMemo(() => {
     try {
       const rule = rules.find((rule) => rule.label === name),
@@ -98,6 +102,7 @@ export function BoxGridResult({
     )
   return (
     <ViewerLayout>
+      {!parentLayout ? <StandaloneOutputMenu name={name} /> : null}
       <BoxGridControls
         key={name}
         name={name}
@@ -110,6 +115,17 @@ export function BoxGridResult({
         recordReference={recordReference ?? `record[${JSON.stringify(name)}]`}
       />
     </ViewerLayout>
+  )
+}
+
+function StandaloneOutputMenu({ name }: { name: string }) {
+  const menu = useContext(ViewerOutputMenuHost)
+  return (
+    <ViewerControls placement="data">
+      <ViewerToolMenu label={`Output · ${name}`} icon={<Layers />} modal={false}>
+        <div ref={menu?.setHost} className="max-h-[80vh] max-w-[calc(100vw-1rem)] overflow-auto p-2 text-xs" />
+      </ViewerToolMenu>
+    </ViewerControls>
   )
 }
 
@@ -252,7 +268,7 @@ function BoxGridControls({
       'box.frameIndex',
       0,
       'item',
-      (value) => chartSpatialAnimation || value < animationLength,
+      (value) => !animationAxis || chartSpatialAnimation || value < animationLength,
       sharedItem,
     )
   const [durationOverride, setDurationOverride] = useViewerSetting<number | null>(
@@ -660,93 +676,144 @@ function BoxGridControls({
     setFixed(null)
   }
   const ready =
-    !busy && completedKey === requestKey && !error && !invalidSetting && !name.startsWith('@visualizations.')
+    ((!busy && completedKey === requestKey) || frameUpdate) &&
+    !error &&
+    !invalidSetting &&
+    !name.startsWith('@visualizations.')
+  const controlsOwner = role !== 'space' && (!comparison || comparison.controlsOwner)
+  const seekOscillation = (time: number) => {
+    setPlaying(false)
+    if (animation !== 'oscillation') stopAnimation()
+    setRepresentation('amplitude')
+    setAnimation('oscillation')
+    setTimeSeconds(time)
+  }
+  const timeIndex = animation === 'time' ? frameIndex : (reduce.time?.index ?? 0)
+  const seekTime = (index: number) => {
+    stopAnimation()
+    setAnimation('time')
+    setFrameIndex(index)
+  }
+  const playbackCommon = {
+    repeat,
+    speed,
+    onRepeat: setRepeat,
+    onSpeed: setSpeed,
+    pause: () => setPlaying(false),
+    error: error || invalidSetting,
+  }
+  const playbackSources: ViewerPlaybackSource[] = []
+  if (leaf.shape[3] > 1)
+    playbackSources.push({
+      ...playbackCommon,
+      id: `box:${name}:time`,
+      label: `${name} · t축`,
+      disabled: axes.includes('time') ? 't가 차트 표시 축입니다' : undefined,
+      preferred: animation === 'time',
+      playing: playing && animation === 'time',
+      position: timeIndex,
+      minimum: 0,
+      maximum: leaf.shape[3] - 1,
+      step: 1,
+      positionLabel: `${String(leaf.axes[3].ticks[timeIndex] ?? timeIndex)} ${leaf.axes[3].unit ?? ''} · ${timeIndex + 1}/${leaf.shape[3]}`,
+      seek: seekTime,
+      previous: () => seekTime(Math.max(0, timeIndex - 1)),
+      next: () => seekTime(Math.min(leaf.shape[3] - 1, timeIndex + 1)),
+      play: () => {
+        seekTime(timeIndex >= leaf.shape[3] - 1 ? 0 : timeIndex)
+        setPlaying(true)
+      },
+    })
+  if (leaf.shape[5] === 2)
+    playbackSources.push({
+      ...playbackCommon,
+      id: `box:${name}:oscillation`,
+      label: `${name} · 진폭·위상 시간 전개`,
+      error: oscillationError || playbackCommon.error,
+      preferred: animation === 'oscillation',
+      playing: playing && animation === 'oscillation',
+      position: timeSeconds,
+      minimum: 0,
+      maximum: durationSeconds,
+      step: 'any',
+      positionLabel: `${timeSeconds.toExponential(5)} s`,
+      duration: durationSeconds,
+      onDuration: (duration) => {
+        setPlaying(false)
+        setTimeSeconds(0)
+        setDurationOverride(duration)
+      },
+      seek: seekOscillation,
+      previous: () => seekOscillation(Math.max(0, timeSeconds - timeStep)),
+      next: () => seekOscillation(Math.min(durationSeconds, timeSeconds + timeStep)),
+      play: () => {
+        seekOscillation(timeSeconds >= durationSeconds ? 0 : timeSeconds)
+        setPlaying(true)
+      },
+    })
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
-      <ViewerControls>
-        <BoxGridToolbar
-          leaf={leaf}
-          mode={role}
-          kind={kind}
-          axes={axes}
-          reduce={effectiveReduce}
-          representation={representation}
-          component={animation === 'component' ? frameIndex : component}
-          onKind={changeKind}
-          onAxes={changeAxes}
-          onRole={changeRole}
-          onRepresentation={(next) => {
-            stopAnimation()
-            setRepresentation(next)
-            if (next === 'phase') setComponent(0)
-            setFixed(null)
-          }}
-          onComponent={(next) => {
-            stopAnimation()
-            setComponent(next)
-            setFixed(null)
-          }}
-          onIndex={(axis, index) => {
-            stopAnimation()
-            setReduce((current) => ({ ...current, [axis]: { method: 'index', index } }))
-          }}
-          fixed={fixed}
-          range={range}
-          onFixed={setFixed}
-          wavelengthDisplay={wavelengthDisplay}
-          onWavelength={setWavelengthDisplay}
-          animation={animation}
-          playing={playing}
-          repeat={repeat}
-          speed={speed}
-          timeSeconds={timeSeconds}
-          durationSeconds={durationSeconds}
-          oscillationError={oscillationError}
-          playbackError={error || invalidSetting}
-          onPlay={(axis) => {
-            if (axis === animation) {
-              setPlaying(!playing)
-              return
-            }
-            stopAnimation()
-            setAnimation(axis)
-            setFrameIndex(
-              axis === 'component'
-                ? typeof component === 'number'
-                  ? component
-                  : 0
-                : axis === 'oscillation'
-                  ? 0
-                  : (reduce[axis]?.index ?? 0),
-            )
-            setPlaying(true)
-          }}
-          onPause={() => setPlaying(false)}
-          onRepeat={setRepeat}
-          onSpeed={setSpeed}
-          onTime={(time) => {
-            setPlaying(false)
-            setAnimation('oscillation')
-            setTimeSeconds(time)
-          }}
-          onDuration={(duration) => {
-            setPlaying(false)
-            setTimeSeconds(0)
-            setDurationOverride(duration)
-          }}
-          ready={ready}
-          onCopy={async () => {
-            try {
-              await navigator.clipboard.writeText(
-                projectionCode(recordReference, options, arrowsAllowed ? arrowComponents : undefined),
-              )
-              toast.success('Calculation 변환식을 복사했습니다.')
-            } catch {
-              toast.error('클립보드에 복사하지 못했습니다.')
-            }
-          }}
-        />
-      </ViewerControls>
+      {controlsOwner ? (
+        <>
+          <ViewerPlaybackRegistration sources={playbackSources} />
+          <ViewerControls placement="actions">
+            <ViewerToolButton
+              label="변환 코드 복사"
+              disabled={!ready}
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(
+                    projectionCode(recordReference, options, arrowsAllowed ? arrowComponents : undefined),
+                  )
+                  toast.success('Calculation 변환식을 복사했습니다.')
+                } catch {
+                  toast.error('클립보드에 복사하지 못했습니다.')
+                }
+              }}
+            >
+              <Copy />
+            </ViewerToolButton>
+          </ViewerControls>
+          <BoxGridOutputSettings
+            leaf={leaf}
+            mode={role}
+            kind={kind}
+            axes={axes}
+            reduce={effectiveReduce}
+            representation={representation}
+            component={animation === 'component' ? frameIndex : component}
+            onKind={changeKind}
+            onAxes={changeAxes}
+            onRole={changeRole}
+            onRepresentation={(next) => {
+              stopAnimation()
+              setRepresentation(next)
+              if (next === 'phase') setComponent(0)
+              setFixed(null)
+            }}
+            onComponent={(next) => {
+              setPlaying(false)
+              if (animation !== 'oscillation') stopAnimation()
+              setComponent(next)
+              setFixed(null)
+            }}
+            onIndex={(axis, index) => {
+              stopAnimation()
+              setReduce((current) => ({ ...current, [axis]: { method: 'index', index } }))
+            }}
+            fixed={fixed}
+            range={range}
+            onFixed={setFixed}
+            wavelengthDisplay={wavelengthDisplay}
+            onWavelength={setWavelengthDisplay}
+            animation={animation}
+            timeSeconds={timeSeconds}
+            durationSeconds={durationSeconds}
+            oscillationError={oscillationError}
+            onTime={seekOscillation}
+          />
+        </>
+      ) : null}
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-3 py-2 text-xs text-slate-600" role="status">
         <strong>{name}</strong>
         {surfacePower ? (

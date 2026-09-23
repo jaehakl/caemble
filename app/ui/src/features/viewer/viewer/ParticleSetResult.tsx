@@ -82,6 +82,7 @@ export function ParticleSetResult({
         </div>
         <ViewerControls>
           <MeshPlayback
+            name={particles.label}
             times={particles.times}
             unit="s"
             frame={frame}

@@ -1,11 +1,11 @@
-import { Clock, Play, Pause, SkipBack, SkipForward, Repeat } from 'lucide-react'
-import { ViewerToolButton, ViewerToolPanel } from './ViewerTools'
+import { ViewerPlaybackRegistration } from './ViewerPlayback'
 import { useViewerComparison, useViewerSetting } from './comparisonSettings'
 import { useEffect, useRef } from 'react'
 import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
 import { meshFrameAtTime } from './meshDeformation'
 
 export function MeshPlayback({
+  name,
   times,
   unit,
   frame,
@@ -13,6 +13,7 @@ export function MeshPlayback({
   time,
   onTime,
 }: {
+  name: string
   times: Float64Array
   unit: UcumUnit
   frame: number
@@ -37,7 +38,7 @@ export function MeshPlayback({
       duration <= 0 ||
       !Number.isFinite(timeRef.current) ||
       comparison?.suspended ||
-      (onTime && comparison && !comparison.controlsOwner)
+      (comparison && !comparison.controlsOwner)
     )
       return
     const startTime = timeRef.current
@@ -64,72 +65,43 @@ export function MeshPlayback({
     if (onTime) onTime(times[value])
     else onFrame(value)
   }
+  if (comparison && !comparison.controlsOwner) return null
   return (
-    <ViewerToolPanel label="Transient playback" icon={<Clock />} active={playing} onClose={() => setPlaying(false)}>
-      <div className="grid gap-2 text-xs">
-        <div className="flex gap-1">
-          <ViewerToolButton
-            label="이전 프레임"
-            disabled={currentTime <= times[0]}
-            onClick={() => seek(currentTime > times[frame] ? frame : frame - 1)}
-          >
-            <SkipBack />
-          </ViewerToolButton>
-          <ViewerToolButton
-            label={playing ? '일시정지' : '재생'}
-            active={playing}
-            disabled={times.length < 2}
-            onClick={() => {
-              if (!playing && currentTime >= times[times.length - 1]) {
-                timeRef.current = times[0]
-                if (onTime) onTime(times[0])
-                else onFrame(0)
-              }
-              setPlaying(!playing)
-            }}
-          >
-            {playing ? <Pause /> : <Play />}
-          </ViewerToolButton>
-          <ViewerToolButton label="다음 프레임" disabled={frame === times.length - 1} onClick={() => seek(frame + 1)}>
-            <SkipForward />
-          </ViewerToolButton>
-          <ViewerToolButton label="반복" active={repeat} onClick={() => setRepeat(!repeat)}>
-            <Repeat />
-          </ViewerToolButton>
-        </div>
-        <input
-          aria-label="Animation time"
-          type="range"
-          min={times[0]}
-          max={times[times.length - 1]}
-          step="any"
-          value={currentTime}
-          disabled={times.length < 2}
-          onChange={(event) => {
-            if (onTime) {
-              setPlaying(false)
-              onTime(Number(event.target.value))
-            } else seek(meshFrameAtTime(times, Number(event.target.value)))
-          }}
-        />
-        <span>
-          {currentTime?.toPrecision(5)} {unit} · {frame + 1}/{times.length}
-        </span>
-        <label>
-          재생 속도{' '}
-          <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-            {[0.25, 0.5, 1, 2, 4].map((value) => (
-              <option key={value} value={value}>
-                {value}×
-              </option>
-            ))}
-          </select>
-        </label>
-        <span>
-          실제 시간 대비 {((convertUcumValue(duration, unit, 's', 'Playback speed') / 5) * speed).toPrecision(4)}× ·
-          전체 {(5 / speed).toPrecision(3)}초
-        </span>
-      </div>
-    </ViewerToolPanel>
+    <ViewerPlaybackRegistration
+      sources={[
+        {
+          id: `transient:${name}`,
+          label: `${name.replace(/^@visualizations\./u, '')} · Transient`,
+          playing,
+          repeat,
+          speed,
+          position: currentTime,
+          minimum: times[0],
+          maximum: times[times.length - 1],
+          step: 'any',
+          positionLabel: `${currentTime?.toPrecision(5)} ${unit} · ${frame + 1}/${times.length}`,
+          error: times.length < 2 || duration <= 0 ? '시간 표본이 두 개 이상 필요합니다.' : undefined,
+          timingLabel: `실제 시간 대비 ${((convertUcumValue(duration, unit, 's', 'Playback speed') / 5) * speed).toPrecision(4)}× · 전체 ${(5 / speed).toPrecision(3)}초`,
+          play: () => {
+            if (currentTime >= times[times.length - 1]) {
+              timeRef.current = times[0]
+              if (onTime) onTime(times[0])
+              else onFrame(0)
+            }
+            setPlaying(true)
+          },
+          pause: () => setPlaying(false),
+          seek: (value) => {
+            setPlaying(false)
+            if (onTime) onTime(value)
+            else onFrame(meshFrameAtTime(times, value))
+          },
+          previous: () => seek(currentTime > times[frame] ? frame : Math.max(0, frame - 1)),
+          next: () => seek(Math.min(times.length - 1, frame + 1)),
+          onRepeat: setRepeat,
+          onSpeed: setSpeed,
+        },
+      ]}
+    />
   )
 }

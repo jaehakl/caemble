@@ -1,3 +1,4 @@
+import { ViewerPlaybackAvailable } from '@/features/viewer/viewer/viewerPlaybackState'
 import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
 import {
   GeometryDisplayManaged,
@@ -552,7 +553,7 @@ function RetainedResultLayer(props: Parameters<typeof ResultLayer>[0]) {
   const unavailable = !present || Boolean(props.errors[props.name])
   if (!unavailable) previous.current = props
   return (
-    <>
+    <ViewerPlaybackAvailable.Provider value={!unavailable}>
       {unavailable ? (
         <p role={props.errors[props.name] ? 'alert' : 'status'} className="p-2 text-xs">
           {props.name}:{' '}
@@ -563,7 +564,7 @@ function RetainedResultLayer(props: Parameters<typeof ResultLayer>[0]) {
       <div className={unavailable ? 'hidden' : 'h-full min-h-0'}>
         {unavailable ? previous.current ? <ResultLayer {...previous.current} /> : null : <ResultLayer {...props} />}
       </div>
-    </>
+    </ViewerPlaybackAvailable.Provider>
   )
 }
 
@@ -719,7 +720,7 @@ function OutputControlsTarget({ role, children }: { role?: 'space' | 'chart'; ch
   const hosts = useContext(ViewerToolHosts)
   if (!role) return children
   return (
-    <ViewerControlTarget.Provider value={{ host: role === 'chart' ? (hosts?.output ?? null) : null }}>
+    <ViewerControlTarget.Provider value={{ host: role === 'chart' ? (hosts?.data ?? null) : null }}>
       {children}
     </ViewerControlTarget.Provider>
   )

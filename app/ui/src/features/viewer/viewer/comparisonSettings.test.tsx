@@ -6,6 +6,7 @@ import type { BoxGridData } from '@/contracts/boxGrid'
 import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import { BoxGridResult } from './BoxGridResult'
+import { MeshPlayback } from './MeshPlayback'
 import { ViewerDisplayControls } from './ViewerDisplayControls'
 import { ViewerLayout } from './ViewerTools'
 import { WorkbenchViewer, type WorkbenchViewerProps } from '@/features/cae-workbench/viewer/WorkbenchViewer'
@@ -24,18 +25,24 @@ vi.mock('./ScalarPlot', () => ({
 vi.mock('./JscadViewer', () => ({ default: () => <div>3D scene</div> }))
 const projectionRequests: BoxGridViewRequest[] = []
 
-function openPanel(name: string) {
-  const button = screen.queryByRole('button', { name })
-  if (!button) return
-  if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button)
-}
 function openComponent() {
-  const output = screen.getAllByRole('button', { name: /^Output ·/ })[0]
-  if (output.getAttribute('aria-expanded') !== 'true') fireEvent.keyDown(output, { key: 'ArrowDown' })
+  const outputs = screen.getAllByRole('button', { name: /^Output ·/ })
+  const output = outputs[outputs.length - 1]
+  if (output.getAttribute('aria-expanded') === 'true') return
+  const menu = screen.queryByRole('menu')
+  if (menu) fireEvent.keyDown(menu, { key: 'Escape' })
+  fireEvent.keyDown(output, { key: 'ArrowDown' })
 }
+function openPlayback() {
+  const button = screen.getByRole('button', { name: '재생 제어' })
+  if (button.getAttribute('aria-expanded') === 'true') return
+  const menu = screen.queryByRole('menu')
+  if (menu) fireEvent.keyDown(menu, { key: 'Escape' })
+  fireEvent.keyDown(button, { key: 'ArrowDown' })
+}
+
 function changeRole(axis: 'time' | 'frequency' | 'y', role: string) {
-  const label = axis === 'time' ? 't' : axis === 'frequency' ? 'f' : axis
-  openPanel(`${label} 축 역할`)
+  openComponent()
   fireEvent.change(screen.getByLabelText(`${axis} 역할`), { target: { value: role } })
 }
 
@@ -263,6 +270,8 @@ it.each([
 )
 
 it('shows loading for initial and changed views but keeps frame calculations visually quiet', async () => {
+  const writeText = vi.fn(async (_text: string) => {})
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
   const pending: (() => void)[] = []
   vi.stubGlobal(
     'Worker',
@@ -282,6 +291,8 @@ it('shows loading for initial and changed views but keeps frame calculations vis
     [4, 8],
   ] as const
   const view = render(<Pair settings={settings} times={1} frequencies={frequencies} />)
+  const copy = screen.getByRole('button', { name: '변환 코드 복사' })
+  expect(copy).toBeDisabled()
   const complete = async () => {
     await act(async () => {
       pending.splice(0).forEach((finish) => finish())
@@ -289,17 +300,22 @@ it('shows loading for initial and changed views but keeps frame calculations vis
   }
   screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
   await complete()
-  openPanel('채널 축 역할')
+  openComponent()
   fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'oscillation' } })
   screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
   await complete()
+  expect(copy).toBeEnabled()
   fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
   expect(settings.values.get('busy:actual:signal')).toBe(true)
+  expect(copy).toBeEnabled()
+  fireEvent.click(copy)
+  expect(writeText.mock.calls[0][0]).toContain('"timeSeconds":0.125')
   screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'true'))
   expect(screen.getByLabelText('Animation 시간')).toHaveTextContent('1.25000e-1 s')
   await complete()
   openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
+  expect(copy).toBeDisabled()
   screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
   await complete()
   view.rerender(<Pair settings={settings} times={1} frequencies={frequencies} scale={2} />)
@@ -317,10 +333,12 @@ it('synthesizes different frequency grids at one shared time and uses their comb
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
   openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
-  openPanel('채널 축 역할')
+  openComponent()
   fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'oscillation' } })
   await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
+  openPlayback()
   expect(screen.getByLabelText('재생 구간 (s)')).toHaveValue(1)
+  openComponent()
   fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
   await waitFor(() => {
     const plots = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).plot)
@@ -328,7 +346,8 @@ it('synthesizes different frequency grids at one shared time and uses their comb
     expect(plots[1].values[0]).toBeCloseTo(0)
   })
   vi.useFakeTimers()
-  fireEvent.click(screen.getByRole('button', { name: '시간 전개 재생' }))
+  openPlayback()
+  fireEvent.click(screen.getByRole('button', { name: '재생' }))
   await act(async () => {
     await vi.advanceTimersByTimeAsync(100)
   })
@@ -344,7 +363,8 @@ it('synthesizes different frequency grids at one shared time and uses their comb
   expect(settings.values.get('signal:box.playing')).toBe(false)
   fireEvent.change(screen.getByLabelText('재생 속도'), { target: { value: '4' } })
   await act(async () => {})
-  fireEvent.click(screen.getByRole('button', { name: '시간 전개 재생' }))
+  openPlayback()
+  fireEvent.click(screen.getByRole('button', { name: '재생' }))
   await act(async () => {
     await vi.advanceTimersByTimeAsync(25)
   })
@@ -357,7 +377,7 @@ it('synthesizes different frequency grids at one shared time and uses their comb
     await vi.advanceTimersByTimeAsync(25)
   })
   expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
-  fireEvent.click(within(screen.getByRole('region', { name: '채널 패널' })).getByRole('button', { name: '반복' }))
+  fireEvent.click(within(screen.getByRole('region', { name: '재생 제어 패널' })).getByRole('button', { name: '반복' }))
   await act(async () => {
     await vi.advanceTimersByTimeAsync(25)
   })
@@ -369,11 +389,14 @@ it('synthesizes different frequency grids at one shared time and uses their comb
   changeRole('frequency', 'index')
   expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
   fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'oscillation' } })
+  openPlayback()
   expect(screen.getByLabelText('재생 구간 (s)')).toHaveValue(1)
+  openComponent()
   fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.1' } })
   fireEvent.change(screen.getByLabelText('frequency index'), { target: { value: '1' } })
   expect(settings.values.get('signal:box.timeSeconds')).toBe(0)
   fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'oscillation' } })
+  openPlayback()
   expect(screen.getByLabelText('재생 구간 (s)')).toHaveValue(0.5)
 })
 
@@ -390,7 +413,7 @@ it('disables common-time playback when the selected frequency is DC in both pane
     />,
   )
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
-  openPanel('채널 축 역할')
+  openComponent()
   expect(screen.getByRole('option', { name: '시간 전개' })).not.toBeDisabled()
   changeRole('frequency', 'index')
   await waitFor(() => expect(screen.getByRole('option', { name: '시간 전개' })).toBeDisabled())
@@ -400,6 +423,7 @@ it('shares one toolbar, retains settings through replacement and remount, and co
   const settings = restoredSettings()
   const view = render(<Pair settings={settings} />)
   await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
+  openComponent()
   expect(screen.getAllByLabelText('시각화 도구모음')).toHaveLength(1)
   const ranges = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)
   expect(ranges[1][1]).toBeCloseTo(ranges[0][1] * 10)
@@ -452,7 +476,8 @@ it('advances shared playback only once and pauses without resetting during refre
   changeRole('y', 'space')
   await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
   vi.useFakeTimers()
-  fireEvent.click(screen.getByRole('button', { name: 't 재생' }))
+  openPlayback()
+  fireEvent.click(screen.getByRole('button', { name: '재생' }))
   await act(async () => {})
   await act(async () => {
     await vi.advanceTimersByTimeAsync(100)
@@ -644,16 +669,16 @@ it('restores a single saved chart axis from Histogram as a line and copies that 
   expect(writeText.mock.calls[0][0]).toContain('boxGrid.project(record["signal"], {"axes":["frequency"]')
 })
 
-it('opens index controls on selection, toggles them with the icon, and preserves their coordinate', async () => {
+it('keeps index controls in Output and preserves their coordinate when the menu reopens', async () => {
   const settings = restoredSettings()
   render(<Pair settings={settings} />)
   await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
   expect(screen.queryByRole('region', { name: 'f 축 패널' })).not.toBeInTheDocument()
   changeRole('frequency', 'index')
   fireEvent.change(screen.getByLabelText('frequency index'), { target: { value: '1' } })
-  fireEvent.click(screen.getByRole('button', { name: 'f 축 역할' }))
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
   expect(screen.queryByLabelText('frequency index')).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'f 축 역할' }))
+  openComponent()
   expect(screen.getByLabelText('frequency index')).toHaveValue('1')
   fireEvent.change(screen.getByLabelText('frequency 역할'), { target: { value: 'sum' } })
   expect(screen.queryByRole('region', { name: 'f 축 패널' })).not.toBeInTheDocument()
@@ -664,6 +689,7 @@ it('retains the last valid fixed range during invalid input and supports constan
   const settings = restoredSettings()
   render(<Pair settings={settings} />)
   await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
+  openComponent()
   fireEvent.click(screen.getByRole('button', { name: '값 범위 고정' }))
   fireEvent.change(screen.getByLabelText('범위 최솟값'), { target: { value: '-1' } })
   fireEvent.change(screen.getByLabelText('범위 최댓값'), { target: { value: '1' } })
@@ -673,30 +699,24 @@ it('retains the last valid fixed range during invalid input and supports constan
   fireEvent.change(screen.getByLabelText('범위 최솟값'), { target: { value: '1' } })
   expect(settings.values.get('signal:box.fixed')).toEqual([1, 1])
   expect(screen.getAllByLabelText('값 colorbar')).toHaveLength(1)
+  openComponent()
   fireEvent.click(screen.getByRole('button', { name: '값 범위 고정' }))
   expect(settings.values.get('signal:box.fixed')).toBeNull()
   expect(screen.queryByLabelText('값 colorbar')).not.toBeInTheDocument()
 })
 
-it('keeps spatial playback ranges stable without a component toolbar button', async () => {
-  const settings = restoredSettings()
-  render(<Pair settings={settings} />)
-  await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
-  fireEvent.change(screen.getByLabelText('x 역할'), { target: { value: 'index' } })
-  openComponent()
-  fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
-  await waitFor(() => expect(settings.values.get('busy:actual:signal')).toBe(false))
-  vi.useFakeTimers()
-  fireEvent.click(screen.getByRole('button', { name: 'x 재생' }))
-  await act(async () => {})
-  const ranges = screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(100)
-  })
-  expect(settings.values.get('signal:box.frameIndex')).toBe(1)
-  expect(screen.getAllByTestId('plot').map((node) => JSON.parse(node.textContent!).range)).toEqual(ranges)
-  expect(screen.queryByRole('button', { name: 'comp 재생' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'comp 축 역할' })).not.toBeInTheDocument()
+it('restores removed axis playback as a stopped index selection', () => {
+  for (const axis of ['x', 'y', 'z', 'frequency', 'component']) {
+    const settings = createComparisonSettings({
+      'signal:box.animation': axis,
+      'signal:box.frameIndex': 1,
+      'signal:box.playing': true,
+    })
+    expect(settings.values.get('signal:box.animation')).toBe('off')
+    expect(settings.values.get('signal:box.playing')).toBe(false)
+    if (axis === 'component') expect(settings.values.get('signal:box.component')).toBe(1)
+    else expect(settings.values.get('signal:box.reduce')).toEqual({ [axis]: { method: 'index', index: 1 } })
+  }
 })
 
 it('shares Output playback between chart and 3D while advancing it once', async () => {
@@ -729,15 +749,14 @@ it('shares Output playback between chart and 3D while advancing it once', async 
   )
   await waitFor(() => expect(settings.values.get('busy:actual:signal@output-space')).toBe(false))
   await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
-  const controls = within(screen.getByTestId('chart-pair'))
-  if (!controls.queryByLabelText('Animation 프레임'))
-    fireEvent.click(controls.getByRole('button', { name: '채널 축 역할' }))
-  fireEvent.change(controls.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
+  openComponent()
+  fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
   await waitFor(() => expect(settings.values.get('busy:preview:signal@output-space')).toBe(false))
   expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBe(0.125)
   expect(settings.values.has('signal@output-space:box.timeSeconds')).toBe(false)
   vi.useFakeTimers()
-  fireEvent.click(controls.getByRole('button', { name: '시간 전개 재생' }))
+  openPlayback()
+  fireEvent.click(screen.getByRole('button', { name: '재생' }))
   await act(async () => {
     await vi.advanceTimersByTimeAsync(100)
   })
@@ -845,5 +864,67 @@ it('keeps a saved chart spatial frame without applying that animation to 3D', as
   expect(projectionRequests.some(({ options, sweepAxis }) => options.axes.join(',') === 'x,y,z' && !sweepAxis)).toBe(
     true,
   )
-  expect(projectionRequests.some(({ sweepAxis }) => sweepAxis === 'x')).toBe(true)
+  expect(projectionRequests.some(({ sweepAxis }) => sweepAxis === 'x')).toBe(false)
+  expect(settings.values.get('signal@output-chart:box.reduce')).toMatchObject({ x: { method: 'index', index: 1 } })
+})
+
+it('offers only eligible time sources and disables t playback while t is a chart axis', async () => {
+  const settings = createComparisonSettings()
+  const view = render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  openPlayback()
+  expect(screen.getByRole('option', { name: /signal · t축/ })).toBeDisabled()
+  expect(screen.queryByRole('option', { name: /진폭·위상 시간 전개/ })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '재생' })).toBeDisabled()
+  openComponent()
+  fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
+  selectChartAxis('x', '주 축')
+  selectChartAxis('t', '보조축')
+  openPlayback()
+  expect(screen.getByRole('option', { name: /signal · t축/ })).not.toBeDisabled()
+  expect(screen.getByRole('button', { name: '재생' })).not.toBeDisabled()
+  view.unmount()
+  render(<Pair role="chart" settings={createComparisonSettings()} times={1} />)
+  await waitFor(() => expect(screen.getAllByTestId('plot')).toHaveLength(2))
+  expect(screen.queryByRole('button', { name: '재생 제어' })).not.toBeInTheDocument()
+})
+
+it('selects one Box Grid or Transient source and pauses the previous clock', async () => {
+  const settings = createComparisonSettings({ 'signal@output-chart:box.axes': ['y', 'x'] })
+  const onFrame = vi.fn()
+  const times = new Float64Array([0, 1, 2])
+  render(
+    <ViewerLayout>
+      <Pair role="chart" settings={settings} frequencies={[[1], [1]]} />
+      <MeshPlayback name="motion" times={times} unit="s" frame={0} onFrame={onFrame} />
+    </ViewerLayout>,
+  )
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(screen.getAllByRole('button', { name: '재생 제어' })).toHaveLength(1)
+  expect(screen.queryByRole('button', { name: 'Transient playback' })).not.toBeInTheDocument()
+  openPlayback()
+  expect(screen.getAllByRole('option').map((item) => item.textContent)).toEqual(
+    expect.arrayContaining(['signal · t축', 'signal · 진폭·위상 시간 전개', 'motion · Transient']),
+  )
+  fireEvent.change(screen.getByLabelText('재생 대상'), { target: { value: 'box:signal:oscillation' } })
+  fireEvent.click(screen.getByRole('button', { name: '재생' }))
+  expect(settings.values.get('signal@output-chart:box.playing')).toBe(true)
+  fireEvent.change(screen.getByLabelText('재생 대상'), { target: { value: 'transient:motion' } })
+  expect(settings.values.get('signal@output-chart:box.playing')).toBe(false)
+  expect(settings.values.get('@workspace:playback.source')).toBe('transient:motion')
+  vi.useFakeTimers()
+  fireEvent.click(screen.getByRole('button', { name: '재생' }))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(100)
+  })
+  expect(onFrame).toHaveBeenCalled()
+  fireEvent.change(screen.getByLabelText('재생 대상'), { target: { value: 'box:signal:time' } })
+  const count = onFrame.mock.calls.length
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(100)
+  })
+  expect(onFrame).toHaveBeenCalledTimes(count)
+  fireEvent.change(screen.getByLabelText('재생 위치'), { target: { value: '1' } })
+  expect(settings.values.get('signal@output-chart:box.frameIndex')).toBe(1)
+  expect(settings.values.get('signal@output-chart:box.animation')).toBe('time')
 })

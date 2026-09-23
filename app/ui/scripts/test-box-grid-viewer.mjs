@@ -50,7 +50,7 @@ const server = await createServer({
       window.renderBox = (compatible=true)=>root.render(<ViewerLayout><ViewerControls placement="data"><ViewerDisplayControls contracts={{}} output="signal" onOutput={noop} geometry={0} onGeometry={noop} visualizations={{}} onVisualizations={noop} meshHost={noop}/></ViewerControls><BoxGridResult name="signal" rules={[rule]} data={{signal:tensor}} displayUnit="m" recordReference="samples['signal']" canOverlayGeometry={compatible} renderViewer={(data,geometryOpacity)=><JscadViewer layers={layers} lengthUnit="m" heatmapRenderData={data} geometryOpacity={geometryOpacity} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>}/></ViewerLayout>);
       window.renderComparison=()=>{
         const settings=createComparisonSettings(), camera=createComparisonCamera();
-        root.render(<ViewerLayout><ComparisonToolbar camera={camera}/><div className="flex h-full">
+        root.render(<ViewerLayout><ViewerControls placement="data"><ViewerDisplayControls contracts={{}} output="signal" onOutput={noop} geometry={0} onGeometry={noop} visualizations={{}} onVisualizations={noop} meshHost={noop}/></ViewerControls><ComparisonToolbar camera={camera}/><div className="flex h-full">
           {['preview','actual'].map(side=><ViewerComparisonContext.Provider key={side} value={{settings,camera,item:'signal',side,controlsHost:null,controlsOwner:side==='actual',suspended:false}}>
             <div className="min-w-0 flex-1" data-comparison-pane={side}><BoxGridResult name="signal" rules={[rule]} data={{signal:tensor}} displayUnit="m" canOverlayGeometry renderViewer={(data,geometryOpacity)=><JscadViewer layers={layers} lengthUnit="m" heatmapRenderData={data} geometryOpacity={geometryOpacity} onRenderStart={noop} onRenderEnd={noop} onRenderError={message=>{throw new Error(message)}}/>}/></div>
           </ViewerComparisonContext.Provider>)}
@@ -327,8 +327,12 @@ try {
     await page.waitForFunction(() => !document.querySelector('button[aria-label="변환 코드 복사"]').disabled)
   }
   const open = async (name) => {
+    if (name.endsWith('축 역할')) name = 'Output · signal'
     const button = page.getByRole('button', { name, exact: true })
-    if ((await button.count()) && (await button.getAttribute('aria-expanded')) !== 'true') await button.click()
+    if ((await button.count()) && (await button.getAttribute('aria-expanded')) !== 'true') {
+      if (await page.getByRole('menu').count()) await page.keyboard.press('Escape')
+      await button.click()
+    }
   }
   const role = async (axis, value) => {
     await open(`${{ time: 't', frequency: 'f' }[axis] ?? axis} 축 역할`)
@@ -336,6 +340,7 @@ try {
     await ready()
   }
   const closePanels = async () => {
+    if (await page.getByRole('menu').count()) await page.keyboard.press('Escape')
     const buttons = page.locator('[aria-orientation="vertical"] button[aria-expanded="true"]')
     while (await buttons.count()) await buttons.first().click()
   }
@@ -347,6 +352,10 @@ try {
     }, value)
   await ready()
   await mkdir('node_modules/.tmp/viewer-qa', { recursive: true })
+  const copyBounds = await page.getByRole('button', { name: '변환 코드 복사', exact: true }).boundingBox()
+  assert.ok(Math.abs(copyBounds.x + copyBounds.width - 1276) <= 1, 'Copy stays at the right edge of the toolbar')
+
+  await open('Output · signal')
   assert.equal(
     await page.getByRole('button', { name: '3D Point cloud', exact: true }).getAttribute('aria-pressed'),
     'true',
@@ -429,9 +438,10 @@ try {
     .slice(0, 3)
     .forEach((output, c) => assert.ok(Math.abs(output.data[0][0][0] - expected.components[c]) < 1e-10))
   assert.ok(Math.abs(synthesized.outputs[3].data[0][0][0] - expected.magnitude) < 1e-10)
-  await page.getByRole('button', { name: '시간 전개 재생', exact: true }).click()
-  await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) !== 0.025)
-  await page.getByRole('button', { name: '시간 전개 일시정지', exact: true }).click()
+  await open('재생 제어')
+  await page.getByRole('button', { name: '재생', exact: true }).click()
+  await page.waitForFunction(() => Number(document.querySelector('[aria-label="재생 위치"]').value) !== 0.025)
+  await page.getByRole('button', { name: '일시정지', exact: true }).click()
   await ready()
   await closePanels()
   await role('z', 'index')
@@ -448,7 +458,7 @@ try {
   for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i].top >= boxes[i - 1].bottom, 'Popovers must not overlap')
   await setRange('frequency index', 1)
   await ready()
-  await page.getByRole('button', { name: 'f 축 역할', exact: true }).click()
+  await closePanels()
   assert.equal(await page.getByRole('slider', { name: 'frequency index', exact: true }).count(), 0)
   await open('f 축 역할')
   assert.equal(await page.getByRole('slider', { name: 'frequency index', exact: true }).inputValue(), '1')
@@ -471,20 +481,23 @@ try {
   const narrow = await page.locator('[data-viewer-canvas]').boundingBox()
   assert.deepEqual(await page.locator('[data-viewer-canvas]').boundingBox(), narrow)
   assert.ok(narrow.width > 400)
+  const narrowCopyBounds = await page.getByRole('button', { name: '변환 코드 복사', exact: true }).boundingBox()
+  assert.ok(
+    Math.abs(narrowCopyBounds.x + narrowCopyBounds.width - 476) <= 1,
+    'Copy remains visible at the right edge on narrow screens',
+  )
+
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/narrow.png' })
   await page.setViewportSize({ width: 850, height: 650 })
   await page.evaluate(() => window.renderComparison())
   await page.waitForFunction(() => document.querySelectorAll('[data-viewer-canvas]').length === 2)
   assert.equal(await page.getByRole('toolbar', { name: 'Viewer 공통 툴바', exact: true }).count(), 1)
-  assert.equal(await page.getByRole('toolbar', { name: '데이터 도구모음', exact: true }).count(), 1)
+  assert.equal(await page.getByRole('toolbar', { name: '데이터 도구모음', exact: true }).count(), 0)
+  assert.equal(await page.getByRole('button', { name: '재생 제어', exact: true }).count(), 1)
   assert.equal(await page.getByRole('button', { name: 'Set z camera view', exact: true }).count(), 1)
-  const spatialBorder = await page
-    .getByRole('combobox', { name: 'x 역할', exact: true })
-    .evaluate((node) => getComputedStyle(node.parentElement).borderColor)
-  const statisticBorder = await page
-    .getByRole('combobox', { name: 'frequency 역할', exact: true })
-    .evaluate((node) => getComputedStyle(node.parentElement).borderColor)
-  assert.notEqual(spatialBorder, statisticBorder, 'Axis roles need distinct visible border colors')
+  await open('Output · signal')
+  assert.equal(await page.getByLabel('x 역할', { exact: true }).inputValue(), 'space')
+  assert.equal(await page.getByRole('button', { name: 'f 축 역할', exact: true }).count(), 0)
   const paneSizes = await page
     .locator('[data-comparison-pane]')
     .evaluateAll((nodes) => nodes.map((node) => [node.clientWidth, node.clientHeight]))
@@ -511,6 +524,7 @@ try {
   await page.waitForSelector('[data-result-visualization="point-cloud"] canvas')
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/calculation-3d.png' })
   await page.evaluate(() => window.renderLargeBox())
+  await open('Output · signal')
   await page.getByRole('button', { name: 'Line Chart', exact: true }).click()
   await ready()
   assert.equal(await page.getByRole('alert').count(), 0)
@@ -525,7 +539,8 @@ try {
   await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
   await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
   await page.getByRole('button', { name: 'Output · signal', exact: true }).click()
-  const chartSettings = page.getByRole('toolbar', { name: 'Output 설정 툴바', exact: true })
+  assert.equal(await page.getByRole('toolbar', { name: 'Output 설정 툴바', exact: true }).count(), 0)
+  const chartSettings = page.getByRole('toolbar', { name: 'Viewer 공통 툴바', exact: true })
   assert.equal(await page.getByRole('region', { name: '3D 설정', exact: true }).count(), 0)
   assert.equal(await page.getByRole('region', { name: '차트 설정', exact: true }).count(), 0)
   assert.equal(await chartSettings.getByRole('button', { name: '축 지정', exact: true }).count(), 0)
@@ -539,6 +554,15 @@ try {
   assert.equal(await axisSettings.locator('[aria-label$="축 설정"]').count(), 5)
   assert.equal(await axisSettings.getByRole('button', { name: 'Line Chart', exact: true }).count(), 1)
   assert.equal(await axisSettings.getByRole('button', { name: 'Heatmap', exact: true }).count(), 1)
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/output-settings.png' })
+  await open('재생 제어')
+  assert.equal(await page.getByLabel('재생 대상').locator('option').count(), 2)
+  await page.getByLabel('재생 대상').selectOption('box:signal:time')
+  await setRange('재생 위치', 1)
+  await ready()
+  await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/playback-controls.png' })
+  await open('Output · signal')
+
   await axisSettings.getByRole('button', { name: 'Line Chart', exact: true }).click()
   await axisSettings.getByRole('button', { name: 'y 주 축', exact: true }).click()
   await ready()
@@ -568,7 +592,7 @@ try {
   assert.ok(narrowBounds.x >= 0 && narrowBounds.x + narrowBounds.width <= 480)
   assert.ok(
     await narrowMenu.getByRole('region', { name: 'Box Grid 축 설정' }).evaluate((section) => {
-      const right = section.parentElement
+      const right = section.parentElement.parentElement
       return right.scrollWidth > right.clientWidth
     }),
     'The axis area scrolls horizontally in a narrow Output menu',
@@ -617,6 +641,7 @@ try {
   }
   await page.evaluate(() => window.renderPixel())
   await ready()
+  await open('Output · signal')
   assert.equal(await page.getByRole('button', { name: 'Heatmap', exact: true }).getAttribute('aria-pressed'), 'true')
   await open('f 축 역할')
   assert.equal(await page.getByLabel('frequency 역할').inputValue(), 'index')
@@ -783,6 +808,7 @@ try {
     await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
     assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
     await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-geometry-modes.png' })
+    await open('Output · signal')
     await page.getByRole('button', { name: '값 범위 고정', exact: true }).click()
     await page.getByLabel('범위 최댓값').fill('0.05')
     await ready()
@@ -793,9 +819,8 @@ try {
     await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
     assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
     await role('frequency', 'index')
-    await page.getByRole('button', { name: 'f 재생', exact: true }).click()
-    await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) > 0)
-    await page.getByRole('button', { name: 'f 일시정지', exact: true }).click()
+    assert.equal(await page.getByRole('button', { name: 'f 재생', exact: true }).count(), 0)
+    await setRange('frequency index', 1)
     await ready()
     await page.evaluate(() => window.renderRecordedSensor())
     await page.getByRole('button', { name: 'Set z camera view', exact: true }).click()

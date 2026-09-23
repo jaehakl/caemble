@@ -235,18 +235,18 @@ it('keeps legacy mesh Output in the chart while native mesh visualization render
   expect(both).toBeGreaterThan(0)
 })
 
-it('places Output settings below the common toolbar and hides the empty row', async () => {
+it('keeps Output settings in its menu and exposes playback and copy in the common toolbar', async () => {
   const props = viewerDisplayFixture()
   const view = render(<WorkbenchViewer {...props} initialDefaults={{ ...defaults, geometryMode: 0 }} />)
   const common = screen.getByRole('toolbar', { name: 'Viewer 공통 툴바' })
-  const outputToolbar = screen.getByRole('toolbar', { name: 'Output 설정 툴바' })
-  expect(common.nextElementSibling).toBe(outputToolbar)
+  expect(screen.queryByRole('toolbar', { name: 'Output 설정 툴바' })).not.toBeInTheDocument()
+  expect(within(common).getByRole('button', { name: '변환 코드 복사' })).toBeInTheDocument()
   expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeInTheDocument()
   await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1'))
   await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'heatmap'))
-  expect(within(outputToolbar).queryByRole('button', { name: '축 지정' })).not.toBeInTheDocument()
-  expect(within(outputToolbar).queryByLabelText('frequency 역할')).not.toBeInTheDocument()
+  expect(within(common).queryByRole('button', { name: '축 지정' })).not.toBeInTheDocument()
+  expect(within(common).queryByLabelText('frequency 역할')).not.toBeInTheDocument()
   expect(within(common).queryByLabelText('frequency 역할')).not.toBeInTheDocument()
   fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
   expect(screen.queryByRole('region', { name: '3D 설정' })).not.toBeInTheDocument()
@@ -256,9 +256,29 @@ it('places Output settings below the common toolbar and hides the empty row', as
   expect(screen.getByRole('group', { name: 'Output 선택' }).nextElementSibling).toContainElement(
     screen.getByRole('region', { name: 'Box Grid 축 설정' }),
   )
-  expect(within(outputToolbar).queryByRole('button', { name: 'Histogram' })).not.toBeInTheDocument()
+  expect(within(common).queryByRole('button', { name: 'Histogram' })).not.toBeInTheDocument()
   expect(screen.getByLabelText('frequency 적분 방법')).toBeInTheDocument()
   expect(screen.getAllByLabelText(/^[xyztf] 축 설정$/)).toHaveLength(5)
+  const settings = screen.getByLabelText('Box Grid Output 설정')
+  expect(
+    [...settings.querySelectorAll('[aria-label]')]
+      .map((node) => node.getAttribute('aria-label'))
+      .filter(
+        (label) =>
+          /^[xyztf] 축 설정$/.test(label!) ||
+          ['Amplitude/Phase 설정', 'Box Grid 성분 설정', '값 범위'].includes(label!),
+      ),
+  ).toEqual([
+    'x 축 설정',
+    'y 축 설정',
+    'z 축 설정',
+    't 축 설정',
+    'f 축 설정',
+    'Amplitude/Phase 설정',
+    'Box Grid 성분 설정',
+    '값 범위',
+  ])
+
   expect(screen.getByRole('button', { name: 'x 주 축' }).querySelector('svg')).toHaveClass('lucide-arrow-left-right')
   expect(screen.getByRole('button', { name: 'x 보조축' }).querySelector('svg')).toHaveClass('lucide-arrow-up-down')
   fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
@@ -273,8 +293,8 @@ it('places Output settings below the common toolbar and hides the empty row', as
   fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
   expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
   expect(screen.getByText('표시할 차트가 없습니다. Output을 선택하세요.')).toBeInTheDocument()
-  expect(outputToolbar).toBeEmptyDOMElement()
-  expect(outputToolbar).toHaveClass('empty:hidden')
+  expect(screen.queryByRole('toolbar', { name: 'Output 설정 툴바' })).not.toBeInTheDocument()
+  expect(within(common).queryByRole('button', { name: '변환 코드 복사' })).not.toBeInTheDocument()
 })
 
 it('updates the right side of the open Output menu for each Box Grid and hides it for other Outputs', async () => {

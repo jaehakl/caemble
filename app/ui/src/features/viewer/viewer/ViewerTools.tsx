@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Box } from 'lucide-react'
 import type { GeometryMode } from './viewerDisplay'
+import { ViewerPlaybackProvider } from './viewerPlaybackState'
 
 export const GeometryDisplayManaged = createContext(false)
 export const ViewerControlTarget = createContext<{ host: HTMLElement | null } | null>(null)
@@ -36,7 +37,7 @@ export function GeometryDisplayButton({
   )
 }
 
-export type ViewerControlPlacement = 'presentation' | 'camera' | 'data' | 'output' | 'side'
+export type ViewerControlPlacement = 'presentation' | 'camera' | 'data' | 'actions' | 'side'
 export const ViewerToolHosts = createContext<Partial<Record<ViewerControlPlacement, HTMLDivElement | null>> | null>(
   null,
 )
@@ -52,53 +53,51 @@ export function ViewerLayout({ children }: { children: ReactNode }) {
   const [presentation, setPresentation] = useState<HTMLDivElement | null>(null)
   const [camera, setCamera] = useState<HTMLDivElement | null>(null)
   const [data, setData] = useState<HTMLDivElement | null>(null)
-  const [output, setOutput] = useState<HTMLDivElement | null>(null)
+  const [actions, setActions] = useState<HTMLDivElement | null>(null)
   const [outputMenu, setOutputMenu] = useState<HTMLDivElement | null>(null)
   const [side, setSide] = useState<HTMLDivElement | null>(null)
   const [panels, setPanels] = useState<HTMLDivElement | null>(null)
   if (parent) return children
   return (
-    <ViewerToolHosts.Provider value={{ presentation, camera, data, output, side }}>
-      <ViewerOutputMenuHost.Provider value={{ host: outputMenu, setHost: setOutputMenu }}>
-        <ViewerPanelHost.Provider value={panels}>
-          <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white" data-viewer-layout>
-            <div
-              aria-label="Viewer 공통 툴바"
-              role="toolbar"
-              className="flex shrink-0 items-center gap-1 overflow-x-auto border-b p-1 empty:hidden"
-              data-capture-exclude
-            >
-              <div ref={setPresentation} className="flex shrink-0 items-center gap-1 empty:hidden" />
-              <div ref={setCamera} className="flex shrink-0 items-center gap-1 empty:hidden" />
-              <div ref={setData} className="flex shrink-0 items-center gap-1 empty:hidden" />
-            </div>
-            <div
-              ref={setOutput}
-              aria-label="Output 설정 툴바"
-              role="toolbar"
-              className="flex shrink-0 items-center gap-1 overflow-x-auto border-b p-1 text-xs empty:hidden"
-              data-capture-exclude
-            />
-            <div className="relative flex min-h-0 min-w-0 flex-1">
+    <ViewerToolHosts.Provider value={{ presentation, camera, data, actions, side }}>
+      <ViewerPlaybackProvider>
+        <ViewerOutputMenuHost.Provider value={{ host: outputMenu, setHost: setOutputMenu }}>
+          <ViewerPanelHost.Provider value={panels}>
+            <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white" data-viewer-layout>
               <div
-                ref={setSide}
+                aria-label="Viewer 공통 툴바"
                 role="toolbar"
-                aria-label="데이터 도구모음"
-                aria-orientation="vertical"
+                className="flex shrink-0 items-center gap-1 overflow-hidden border-b p-1 empty:hidden"
                 data-capture-exclude
-                className="flex w-11 shrink-0 flex-col gap-1 overflow-x-hidden overflow-y-auto border-r p-1 text-xs empty:hidden"
-              />
-              <div className="min-h-0 min-w-0 flex-1">{children}</div>
-              <div
-                ref={setPanels}
-                data-capture-exclude
-                aria-label="Viewer 설정 패널"
-                className="pointer-events-none absolute inset-y-0 left-12 z-20 flex w-64 max-w-[calc(100%-3.25rem)] flex-col overflow-x-hidden overflow-y-auto p-1"
-              />
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+                  <div ref={setPresentation} className="flex shrink-0 items-center gap-1 empty:hidden" />
+                  <div ref={setCamera} className="flex shrink-0 items-center gap-1 empty:hidden" />
+                  <div ref={setData} className="flex shrink-0 items-center gap-1 empty:hidden" />
+                </div>
+                <div ref={setActions} className="ml-auto flex shrink-0 items-center gap-1 empty:hidden" />
+              </div>
+              <div className="relative flex min-h-0 min-w-0 flex-1">
+                <div
+                  ref={setSide}
+                  role="toolbar"
+                  aria-label="데이터 도구모음"
+                  aria-orientation="vertical"
+                  data-capture-exclude
+                  className="flex w-11 shrink-0 flex-col gap-1 overflow-x-hidden overflow-y-auto border-r p-1 text-xs empty:hidden"
+                />
+                <div className="min-h-0 min-w-0 flex-1">{children}</div>
+                <div
+                  ref={setPanels}
+                  data-capture-exclude
+                  aria-label="Viewer 설정 패널"
+                  className="pointer-events-none absolute inset-y-0 left-12 z-20 flex w-64 max-w-[calc(100%-3.25rem)] flex-col overflow-x-hidden overflow-y-auto p-1"
+                />
+              </div>
             </div>
-          </div>
-        </ViewerPanelHost.Provider>
-      </ViewerOutputMenuHost.Provider>
+          </ViewerPanelHost.Provider>
+        </ViewerOutputMenuHost.Provider>
+      </ViewerPlaybackProvider>
     </ViewerToolHosts.Provider>
   )
 }

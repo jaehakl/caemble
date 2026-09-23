@@ -33,7 +33,7 @@ it('selects recorded time, physical quantity and component while retaining ident
   fireEvent.change(screen.getByLabelText('Particle 물리량'), { target: { value: 'velocity' } })
   fireEvent.change(screen.getByLabelText('Particle 성분'), { target: { value: '2' } })
   expect(screen.getByText('kinematics.Velocity · m.s-1')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Transient playback' }))
+  fireEvent.keyDown(screen.getByRole('button', { name: '재생 제어' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByRole('button', { name: '다음 프레임' }))
   expect(screen.getByTestId('particles')).toHaveAttribute('data-position', '2')
   fireEvent.change(screen.getByRole('combobox', { name: 'Particle ID' }), { target: { value: '2' } })
