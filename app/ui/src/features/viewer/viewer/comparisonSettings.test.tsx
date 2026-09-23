@@ -602,6 +602,50 @@ it('preserves saved chart axes and maps them to heatmap rows and line series', a
   expect(line.plot.shape).toEqual([3, 2])
 })
 
+it('shows the current seven-axis BoxGrid shape beside the chart kind buttons', async () => {
+  const settings = createComparisonSettings()
+  const { rerender } = render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  openChartAxes()
+  const shape = screen.getByLabelText('BoxGrid shape (x, y, z, time, frequency, amplitudePhase, component)')
+  expect(shape).toHaveTextContent('Shape: 2 × 2 × 1 × 3 × 2 × 1 × 2')
+
+  rerender(<Pair role="chart" settings={settings} times={4} spatialShape={[3, 1, 1]} />)
+  expect(shape).toHaveTextContent('Shape: 3 × 1 × 1 × 4 × 2 × 1 × 2')
+  fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
+  expect(screen.getByRole('button', { name: 'Line Chart' })).toHaveAttribute('aria-pressed', 'true')
+  expect(shape).toHaveTextContent('Shape: 3 × 1 × 1 × 4 × 2 × 1 × 2')
+})
+
+it('shares and restores the Heatmap square-pixel setting from Output', async () => {
+  const settings = createComparisonSettings()
+  const { unmount } = render(<Pair role="chart" settings={settings} />)
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  expect(settings.values.get('signal@output-chart:box.squarePixels')).toBe(true)
+  openChartAxes()
+  const toggle = screen.getByRole('button', { name: '정사각 픽셀' })
+  expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  expect(settings.values.get('signal@output-chart:box.squarePixels')).toBe(false)
+  expect(screen.getAllByTestId('plot').map((plot) => JSON.parse(plot.textContent!).squarePixels)).toEqual([
+    false,
+    false,
+  ])
+  fireEvent.click(screen.getByRole('button', { name: 'Line Chart' }))
+  expect(toggle).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Heatmap' }))
+  expect(toggle).toBeEnabled()
+  expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+  unmount()
+  const restored = createComparisonSettings(Object.fromEntries(settings.values))
+  render(<Pair role="chart" settings={restored} />)
+  await waitFor(() => expect(restored.values.get('busy:actual:signal@output-chart')).toBe(false))
+  openChartAxes()
+  expect(screen.getByRole('button', { name: '정사각 픽셀' })).toHaveAttribute('aria-pressed', 'false')
+})
+
 it('swaps chart axes and lets a line omit its secondary axis without changing kind', async () => {
   const settings = createComparisonSettings()
   render(<Pair role="chart" settings={settings} />)

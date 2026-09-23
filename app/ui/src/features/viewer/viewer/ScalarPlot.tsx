@@ -24,9 +24,36 @@ export function buildPlotHistogram(values: readonly number[], count?: number, do
   return result
 }
 
+export function heatmapLayout(
+  width: number,
+  height: number,
+  edges: readonly (readonly number[])[],
+  squarePixels: boolean,
+) {
+  const availableWidth = width - 100,
+    availableHeight = height - 90
+  const rows = edges[0].length - 1,
+    columns = edges[1].length - 1
+  const cellSize = squarePixels ? Math.min(availableWidth / columns, availableHeight / rows) : 0
+  const w = squarePixels ? columns * cellSize : availableWidth,
+    h = squarePixels ? rows * cellSize : availableHeight
+  return {
+    left: 75 + (availableWidth - w) / 2,
+    top: 25 + (availableHeight - h) / 2,
+    w,
+    h,
+    normalized: edges.map((axis) =>
+      axis.map((edge, index) =>
+        squarePixels ? index / (axis.length - 1) : (edge - axis[0]) / (axis[axis.length - 1] - axis[0]),
+      ),
+    ),
+  }
+}
+
 export function ScalarPlot({
   plot,
   kind,
+  squarePixels = true,
   range = plot.range,
   bins,
   unit,
@@ -35,6 +62,7 @@ export function ScalarPlot({
 }: {
   plot: ScalarPlotData
   kind: 'histogram' | 'line' | 'heatmap'
+  squarePixels?: boolean
   range?: readonly number[]
   bins?: number
   unit?: string
@@ -43,7 +71,6 @@ export function ScalarPlot({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
-  const [nativeSize, setNativeSize] = useState(false)
   const [hover, setHover] = useState('')
   const heatmapProbe = useRef<((x: number, y: number) => string) | undefined>(undefined)
   const targets = useRef<{ x: number; y: number; label: string }[]>([])
@@ -61,7 +88,7 @@ export function ScalarPlot({
     )
     const rgba = kind === 'heatmap' ? heatmapPixels(plot.values, range) : undefined
     const tiles =
-      rgba && uniform
+      rgba && (uniform || squarePixels)
         ? Array.from(heatmapTiles({ width: plot.shape[1], height: plot.shape[0], rgba }, 2048), (tile) => {
             const image = document.createElement('canvas')
             image.width = tile.width
@@ -84,11 +111,11 @@ export function ScalarPlot({
       if (!ctx) return
       ctx.scale(ratio, ratio)
       ctx.clearRect(0, 0, width, height)
-      const native = kind === 'heatmap' && nativeSize
-      const left = 75 - (native ? viewport.scrollLeft : 0),
-        top = 25 - (native ? viewport.scrollTop : 0),
-        w = native ? plot.shape[1] : width - 100,
-        h = native ? plot.shape[0] : height - 90,
+      const layout = kind === 'heatmap' ? heatmapLayout(width, height, edges, squarePixels) : undefined
+      const left = layout?.left ?? 75,
+        top = layout?.top ?? 25,
+        w = layout?.w ?? width - 100,
+        h = layout?.h ?? height - 90,
         right = left + w,
         bottom = top + h
       ctx.font = '12px sans-serif'
@@ -102,16 +129,17 @@ export function ScalarPlot({
       targets.current = []
       heatmapProbe.current = undefined
       const tickText = (value: number) => Number(value.toPrecision(4)).toString()
-      const axis = (min: number, max: number, vertical: boolean, label: string) => {
+      const axis = (min: number, max: number, vertical: boolean, label: string, ticks?: readonly number[]) => {
         ctx.fillStyle = '#334155'
         ctx.textAlign = vertical ? 'right' : 'center'
         for (let i = 0; i <= 4; i++) {
           const t = i / 4
-          ctx.fillText(
-            tickText(min + (max - min) * t),
-            vertical ? left - 8 : left + w * t,
-            vertical ? bottom - h * t : bottom + 20,
-          )
+          const position = t * ((ticks?.length ?? 1) - 1)
+          const lower = Math.floor(position)
+          const value = ticks
+            ? ticks[lower] + (ticks[Math.min(lower + 1, ticks.length - 1)] - ticks[lower]) * (position - lower)
+            : min + (max - min) * t
+          ctx.fillText(tickText(value), vertical ? left - 8 : left + w * t, vertical ? bottom - h * t : bottom + 20)
         }
         ctx.textAlign = 'center'
         if (vertical) {
@@ -204,9 +232,9 @@ export function ScalarPlot({
       } else {
         const rows = plot.shape[0],
           columns = plot.shape[1]
-        const normalized = edges.map((axis) => axis.map((edge) => (edge - axis[0]) / (axis[axis.length - 1] - axis[0])))
+        const normalized = layout!.normalized
         ctx.imageSmoothingEnabled = false
-        if (uniform) {
+        if (uniform || squarePixels) {
           ctx.save()
           ctx.translate(left, bottom)
           ctx.scale(w / columns, -h / rows)
@@ -244,24 +272,34 @@ export function ScalarPlot({
           const [row, column] = indices
           return `${plot.axes[0].name}=${plot.axes[0].ticks[row]}, ${plot.axes[1].name}=${plot.axes[1].ticks[column]} · ${plot.values[row * columns + column]} ${unit ?? ''}`
         }
-        axis(edges[1][0], edges[1][columns], false, `${plot.axes[1].name} (${plot.axes[1].unit ?? 'unitless'})`)
-        axis(edges[0][0], edges[0][rows], true, `${plot.axes[0].name} (${plot.axes[0].unit ?? 'unitless'})`)
+        axis(
+          edges[1][0],
+          edges[1][columns],
+          false,
+          `${plot.axes[1].name} (${plot.axes[1].unit ?? 'unitless'})`,
+          squarePixels ? edges[1] : undefined,
+        )
+        axis(
+          edges[0][0],
+          edges[0][rows],
+          true,
+          `${plot.axes[0].name} (${plot.axes[0].unit ?? 'unitless'})`,
+          squarePixels ? edges[0] : undefined,
+        )
       }
     }
     const observer = new ResizeObserver(draw)
     observer.observe(viewport)
-    viewport.addEventListener('scroll', draw)
     draw()
     return () => {
       observer.disconnect()
-      viewport.removeEventListener('scroll', draw)
       heatmapProbe.current = undefined
       for (const tile of tiles) {
         tile.image.width = 0
         tile.image.height = 0
       }
     }
-  }, [plot, kind, range, bins, unit, lockHistogramRange, nativeSize, histogramMarker])
+  }, [plot, kind, range, bins, unit, lockHistogramRange, squarePixels, histogramMarker])
   return (
     <div className="flex h-full min-h-0 flex-col" data-result-visualization={kind}>
       {kind === 'line' && plot.axes.length > 1 ? (
@@ -279,43 +317,11 @@ export function ScalarPlot({
           )}
         </div>
       ) : null}
-      {kind === 'heatmap' ? (
-        <div className="flex shrink-0 gap-2 px-3 py-1 text-xs" aria-label="Heatmap 보기 크기">
-          <button
-            className="rounded border px-2 py-1 aria-pressed:bg-slate-200"
-            type="button"
-            aria-pressed={!nativeSize}
-            onClick={() => setNativeSize(false)}
-          >
-            화면 맞춤
-          </button>
-          <button
-            className="rounded border px-2 py-1 aria-pressed:bg-slate-200"
-            type="button"
-            aria-pressed={nativeSize}
-            onClick={() => setNativeSize(true)}
-          >
-            원본 크기
-          </button>
-        </div>
-      ) : null}
       <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto" onMouseLeave={() => setHover('')}>
-        <div
-          style={
-            kind === 'heatmap' && nativeSize
-              ? {
-                  width: Math.max(320, plot.shape[1] + 100),
-                  height: Math.max(220, plot.shape[0] + 90),
-                  minWidth: '100%',
-                  minHeight: '100%',
-                }
-              : { width: '100%', height: '100%', minWidth: 320, minHeight: 220 }
-          }
-        >
+        <div style={{ width: '100%', height: '100%', minWidth: 320, minHeight: 220 }}>
           <canvas
             ref={canvasRef}
-            // Rounded client dimensions must not overflow a fractional-sized viewport and toggle its scrollbars.
-            className="sticky top-0 left-0 block max-h-full max-w-full"
+            className="block"
             role="img"
             aria-label={`${kind} 차트`}
             onMouseLeave={() => setHover('')}

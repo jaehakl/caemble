@@ -192,6 +192,7 @@ function BoxGridControls({
       value !== 'histogram' &&
       (role !== 'chart' || value === 'line' || (value === 'heatmap' && storedAxes.length === 2)),
   )
+  const [squarePixels, setSquarePixels] = useViewerSetting('box.squarePixels', true, 'item', undefined, sharedItem)
   const spatialAxes = positionAxes
   const spaceKind = spatialAxes.length === 3 ? 'cloud' : 'heatmap'
   const kind = role === 'space' ? spaceKind : storedKind
@@ -780,11 +781,13 @@ function BoxGridControls({
             leaf={leaf}
             mode={role}
             kind={kind}
+            squarePixels={squarePixels}
             axes={axes}
             reduce={effectiveReduce}
             representation={representation}
             component={animation === 'component' ? frameIndex : component}
             onKind={changeKind}
+            onSquarePixels={setSquarePixels}
             onAxes={changeAxes}
             onRole={changeRole}
             onRepresentation={(next) => {
@@ -912,6 +915,7 @@ function BoxGridControls({
                 surfacePower,
               )}
               kind={kind === 'cloud' ? 'heatmap' : kind}
+              squarePixels={squarePixels}
               range={range}
               unit={unit}
               lockHistogramRange={animation !== 'off'}

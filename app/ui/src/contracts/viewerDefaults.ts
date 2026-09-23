@@ -28,6 +28,7 @@ export const viewerSettingSchemas: Record<string, z.ZodType> = {
   overlay: z.array(z.string()),
   'box.wavelength': z.boolean(),
   'box.kind': z.enum(['histogram', 'line', 'heatmap', 'cloud']),
+  'box.squarePixels': z.boolean(),
   'box.axes': z.array(axis).max(3),
   'box.representation': z.enum(['amplitude', 'phase']),
   'box.component': component,

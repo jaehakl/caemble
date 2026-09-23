@@ -1,6 +1,6 @@
 import { useContext, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChartLine, Grid2X2, Box, LockKeyhole, ArrowLeftRight, ArrowUpDown, ArrowUpRight } from 'lucide-react'
+import { ChartLine, Grid2X2, Box, LockKeyhole, ArrowLeftRight, ArrowUpDown, ArrowUpRight, Square } from 'lucide-react'
 import type { CalculationInputLeaf } from '@/lib/calculation/types'
 import {
   boxGridTensorComponents,
@@ -23,11 +23,13 @@ export function BoxGridOutputSettings(props: {
   leaf: CalculationInputLeaf
   mode?: 'space' | 'chart'
   kind: PlotKind
+  squarePixels: boolean
   axes: ProjectionAxis[]
   reduce: Partial<Record<ProjectionAxis, ProjectionReduction>>
   representation: 'amplitude' | 'phase'
   component: BoxGridComponentChoice
   onKind: (kind: PlotKind) => void
+  onSquarePixels: (value: boolean) => void
   onAxes: (axes: ProjectionAxis[]) => void
   onRole: (axis: ProjectionAxis, role: 'space' | ProjectionReduction['method']) => void
   onRepresentation: (representation: 'amplitude' | 'phase') => void
@@ -314,10 +316,12 @@ function ComponentPicker({
 
 function ChartAxesPicker({
   kind,
+  squarePixels,
   axes,
   leaf,
   reduce,
   onKind,
+  onSquarePixels,
   onAxes,
   onRole,
   onIndex,
@@ -327,10 +331,12 @@ function ChartAxesPicker({
   wavelengthDisplay: boolean
   onWavelength: (value: boolean) => void
   kind: PlotKind
+  squarePixels: boolean
   axes: ProjectionAxis[]
   leaf: CalculationInputLeaf
   reduce: Partial<Record<ProjectionAxis, ProjectionReduction>>
   onKind: (kind: PlotKind) => void
+  onSquarePixels: (value: boolean) => void
   onAxes: (axes: ProjectionAxis[]) => void
   onRole: (axis: ProjectionAxis, role: ProjectionReduction['method']) => void
   onIndex: (axis: ProjectionAxis, index: number) => void
@@ -350,13 +356,28 @@ function ChartAxesPicker({
   }
   return (
     <section aria-label="Box Grid 축 설정" className="w-[42rem] max-w-full pr-1">
-      <div className="mb-3 flex gap-1" aria-label="차트 종류">
+      <div className="mb-3 flex flex-wrap items-center gap-1" aria-label="차트 종류">
         <ViewerToolButton label="Line Chart" active={kind === 'line'} onClick={() => onKind('line')}>
           <ChartLine />
         </ViewerToolButton>
         <ViewerToolButton label="Heatmap" active={kind === 'heatmap'} onClick={() => onKind('heatmap')}>
           <Grid2X2 />
         </ViewerToolButton>
+        <ViewerToolButton
+          label="정사각 픽셀"
+          title={`정사각 픽셀 · ${squarePixels ? '켜짐' : '꺼짐'}`}
+          active={kind === 'heatmap' && squarePixels}
+          disabled={kind !== 'heatmap'}
+          onClick={() => onSquarePixels(!squarePixels)}
+        >
+          <Square />
+        </ViewerToolButton>
+        <output
+          aria-label="BoxGrid shape (x, y, z, time, frequency, amplitudePhase, component)"
+          className="ml-auto min-w-0 text-right font-mono text-slate-600 tabular-nums"
+        >
+          Shape: {leaf.shape.join(' × ')}
+        </output>
       </div>
       <div className="grid gap-2">
         {projectionAxes.map((axis) => {
