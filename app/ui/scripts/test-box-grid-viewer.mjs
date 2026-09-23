@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createServer } from 'vite'
@@ -304,11 +304,17 @@ try {
   assert.equal(fitLayout.scrollWidth, fitLayout.width)
   assert.equal(fitLayout.scrollHeight, fitLayout.height)
   await layoutPage.close()
-  const ready = () =>
-    page
-      .getByRole('button', { name: '변환 코드 복사', exact: true })
-      .waitFor()
-      .then(() => page.waitForFunction(() => !document.querySelector('button[aria-label="변환 코드 복사"]').disabled))
+  const ready = async () => {
+    if (await page.getByRole('button', { name: /^Output ·/ }).count()) {
+      await page.locator('[aria-busy]').first().waitFor({ state: 'attached' })
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('[aria-busy]')].every((node) => node.getAttribute('aria-busy') === 'false'),
+      )
+      return
+    }
+    await page.getByRole('button', { name: '변환 코드 복사', exact: true }).waitFor()
+    await page.waitForFunction(() => !document.querySelector('button[aria-label="변환 코드 복사"]').disabled)
+  }
   const open = async (name) => {
     const button = page.getByRole('button', { name, exact: true })
     if ((await button.count()) && (await button.getAttribute('aria-expanded')) !== 'true') await button.click()
@@ -505,15 +511,21 @@ try {
   assert.ok((await page.locator('[data-viewer-canvas]').boundingBox()).height > 350)
   await page.setViewportSize({ width: 1200, height: 850 })
   await page.evaluate(() => window.renderWorkbench())
+  await page.getByRole('button', { name: 'Output · signal', exact: true }).waitFor()
   await ready()
-  assert.equal(await page.getByRole('button', { name: 'Output · signal', exact: true }).count(), 1)
-  assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
-  await role('z', 'index')
-  await role('time', 'space')
-  assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
-  assert.equal(await page.getByRole('separator', { name: '3D와 Output 높이 조절', exact: true }).count(), 1)
-  await role('time', 'index')
-  await role('z', 'space')
+  await page.getByRole('separator', { name: '3D와 Output 높이 조절', exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
+  await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
+  await page.getByRole('button', { name: 'Output · signal', exact: true }).click()
+  const spaceSettings = page.getByRole('region', { name: '3D 설정', exact: true })
+  const chartSettings = page.getByRole('region', { name: '차트 설정', exact: true })
+  assert.equal(await spaceSettings.getByLabel('x 역할', { exact: true }).count(), 0)
+  assert.equal(await spaceSettings.getByRole('button', { name: 'Heatmap', exact: true }).count(), 0)
+  await chartSettings.getByRole('button', { name: 'Line Chart', exact: true }).click()
+  await ready()
+  assert.equal(await page.getByRole('menu', { name: 'Output · signal', exact: true }).count(), 1)
+  assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
+  await page.keyboard.press('Escape')
   for (const mismatch of ['source', 'vars']) {
     await page.evaluate((value) => window.renderWorkbench(value), mismatch)
     await ready()
@@ -522,13 +534,14 @@ try {
       await page
         .getByText(
           mismatch === 'source' ? 'Geometry와 결과의 source가 다릅니다.' : 'Geometry와 결과의 Vars가 다릅니다.',
-          { exact: true },
+          { exact: false },
         )
         .count(),
       1,
     )
   }
   await page.evaluate(() => window.renderWorkbench())
+  await page.getByRole('button', { name: 'Output · signal', exact: true }).waitFor()
   await ready()
   assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
   for (const deviceScaleFactor of [1, 2]) {
@@ -723,8 +736,7 @@ try {
     await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
     await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
     assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
-    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-geometry-off.png' })
-    await page.getByRole('button', { name: 'Geometry · off', exact: true }).click()
+    await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/spectrometer-heatmap-geometry-modes.png' })
     await page.getByRole('button', { name: '값 범위 고정', exact: true }).click()
     await page.getByLabel('범위 최댓값').fill('0.05')
     await ready()
@@ -734,7 +746,6 @@ try {
     await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).click()
     await page.getByRole('button', { name: 'Geometry · 50%', exact: true }).click()
     assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
-    await page.getByRole('button', { name: 'Geometry · off', exact: true }).click()
     await role('frequency', 'index')
     await page.getByRole('button', { name: 'f 재생', exact: true }).click()
     await page.waitForFunction(() => Number(document.querySelector('[aria-label="Animation 프레임"]').value) > 0)

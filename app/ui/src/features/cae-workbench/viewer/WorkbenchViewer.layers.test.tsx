@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ScalarPlotData } from '@/features/viewer/viewer/boxGridViewData'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { CadViewerProps } from '@/features/viewer/viewer/CadViewer'
 import { calculateBoxGridView, type BoxGridViewRequest } from '@/features/viewer/viewer/boxGridViewData'
@@ -9,6 +10,12 @@ import { isDataTensor } from '@/lib/cad/model/dataTensor'
 import { createViewerSettings } from '@/features/viewer/viewer/comparisonSettings'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 
+vi.mock('@/features/viewer/viewer/ScalarPlot', () => ({
+  ScalarPlot: ({ plot, kind }: { plot: ScalarPlotData; kind: string }) => (
+    <output data-testid="chart" data-kind={kind} data-axes={plot.axes.map((axis) => axis.name).join(',')} />
+  ),
+}))
+
 vi.mock('@/features/viewer/viewer/CadViewer', () => ({
   default: (props: CadViewerProps) => (
     <output
@@ -18,6 +25,7 @@ vi.mock('@/features/viewer/viewer/CadViewer', () => ({
       data-mesh={props.meshRenderData?.geometries.length ?? 0}
       data-rays={props.polylines?.length ?? 0}
       data-fields={props.heatmapRenderLayers?.length ?? 0}
+      data-spatial-raster={Boolean(props.heatmapRenderLayers?.[0]?.raster)}
       data-maximum-x={props.meshRenderData?.bounds.max[0]}
       data-wireframes={
         props.meshRenderData?.geometries.filter((geometry) => geometry.primitive === 'lines').length ?? 0
@@ -128,10 +136,9 @@ it('composes independent Geometry, Output, mesh and ray layers and cycles only G
   fireEvent.click(screen.getByRole('button', { name: 'Geometry · 90%' }))
   expect(screen.getByTestId('scene')).toHaveAttribute('data-opacity', '0.5')
   fireEvent.click(screen.getByRole('button', { name: 'Geometry · 50%' }))
-  expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'false')
+  expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'true')
   expect(screen.getByTestId('scene')).toHaveAttribute('data-rays', '1')
   expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1')
-  fireEvent.click(screen.getByRole('button', { name: 'Geometry · off' }))
   expect(screen.getByTestId('scene')).toHaveAttribute('data-opacity', '0.9')
 })
 
@@ -145,7 +152,7 @@ it('moves mesh controls into its persistent menu and applies deformation without
   expect(screen.getByTestId('scene')).toHaveAttribute('data-wireframes', '1') // load arrow remains
   fireEvent.click(screen.getByLabelText('변형 표시'))
   expect(screen.getByTestId('scene')).toHaveAttribute('data-rays', '0')
-  expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'false')
+  expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'true')
   fireEvent.click(screen.getByLabelText('변형 표시'))
   expect(screen.getByTestId('scene')).toHaveAttribute('data-rays', '1')
   fireEvent.click(screen.getByRole('radio', { name: '선택 안 함' }))
@@ -196,7 +203,7 @@ it('isolates missing or incompatible visualization data without dropping valid s
   expect(Number(screen.getByTestId('scene').dataset.mesh)).toBeGreaterThan(0)
 })
 
-it('composes two independently configured mesh layers instead of replacing one with the other', () => {
+it('keeps legacy mesh Output in the chart while native mesh visualization renders above', () => {
   const props = viewerDisplayFixture()
   const native = visualizationData({ sample: { field: props.visualizations!.sample.field } })
   const prefix = '@visualizations.sample.field'
@@ -223,6 +230,61 @@ it('composes two independently configured mesh layers instead of replacing one w
   const both = Number(screen.getByTestId('scene').dataset.mesh)
   fireEvent.keyDown(screen.getByRole('button', { name: 'mesh-field · sample.field' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByRole('radio', { name: '선택 안 함' }))
-  expect(Number(screen.getByTestId('scene').dataset.mesh)).toBe(both / 2)
+  expect(Number(screen.getByTestId('scene').dataset.mesh)).toBe(0)
+  expect(screen.getByText(/이 Output은 XYZ point cloud/)).toBeInTheDocument()
   expect(both).toBeGreaterThan(0)
+})
+
+it('always splits, keeps Geometry on, and isolates Output chart settings in its menu', async () => {
+  const props = viewerDisplayFixture()
+  const view = render(<WorkbenchViewer {...props} initialDefaults={{ ...defaults, geometryMode: 0 }} />)
+  expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1'))
+  await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'line'))
+  expect(screen.queryByLabelText('frequency 역할')).not.toBeInTheDocument()
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
+  const space = within(screen.getByRole('region', { name: '3D 설정' }))
+  const chart = within(screen.getByRole('region', { name: '차트 설정' }))
+  expect(space.queryByLabelText('x 역할')).not.toBeInTheDocument()
+  expect(space.queryByRole('button', { name: 'Histogram' })).not.toBeInTheDocument()
+  fireEvent.click(chart.getByRole('button', { name: 'Histogram' }))
+  await waitFor(() => expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'histogram'))
+  expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '1')
+  expect(screen.getByRole('menu')).toBeInTheDocument()
+  view.rerender(<WorkbenchViewer {...props} resultVarsHash="different" initialDefaults={defaults} />)
+  expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'true')
+  expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '0')
+  expect(screen.getAllByText(/Geometry와 결과의 Vars가 다릅니다/).length).toBeGreaterThan(0)
+  expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'histogram')
+  fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
+  expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
+  expect(screen.getByText('표시할 차트가 없습니다. Output을 선택하세요.')).toBeInTheDocument()
+})
+
+it('falls back to a spatial Heatmap for a plane and excludes data without spatial positions', async () => {
+  const props = viewerDisplayFixture()
+  const tensor = props.recordedData!.signal
+  if (!isDataTensor(tensor)) throw new Error('Expected fixture tensor')
+  const axes = [...tensor.axes!]
+  axes[2] = { implicitOrdinal: true }
+  const view = render(
+    <WorkbenchViewer
+      {...props}
+      initialDefaults={defaults}
+      recordedData={{ ...props.recordedData, signal: { ...tensor, axes } }}
+    />,
+  )
+  await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-spatial-raster', 'true'))
+  axes[1] = { implicitOrdinal: true }
+  view.rerender(
+    <WorkbenchViewer
+      {...props}
+      initialDefaults={defaults}
+      recordedData={{ ...props.recordedData, signal: { ...tensor, axes: [...axes] } }}
+    />,
+  )
+  await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '0'))
+  expect(screen.getByText(/XYZ 좌표 또는 평면 배치 정보가 없어/)).toBeInTheDocument()
+  expect(screen.getByTestId('chart')).toBeInTheDocument()
 })

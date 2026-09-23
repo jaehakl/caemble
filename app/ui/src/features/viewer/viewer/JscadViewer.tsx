@@ -307,18 +307,15 @@ function JscadViewer({
   const managed = useContext(GeometryDisplayManaged)
   const [geometryMode, setGeometryMode] = useViewerSetting<GeometryMode>('geometryMode', 0.9, 'workspace')
   const [geometryControlledLocally, setGeometryControlledLocally] = useState(false)
-  const geometryOpacity =
+  const requestedOpacity =
     !managed && geometryControlledLocally ? geometryMode : (requestedGeometryOpacity ?? geometryMode)
-  const geometryOff = geometryOpacity === 0
+  const geometryOpacity = requestedOpacity === 0 ? 0.9 : requestedOpacity
   const savedCamera = useViewerCamera()
   const comparison = useViewerComparison()
   const cameraToken = useRef({})
   const [pickMode, setPickMode] = useViewerSetting<CadViewerPickMode>('pickMode', 'off', 'workspace')
   const xrayEnabled = false
-  const displayLayers = useMemo(
-    () => (geometryOff ? [] : scaleViewerLayers(layers, lengthUnit)),
-    [layers, lengthUnit, geometryOff],
-  )
+  const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
   const parts = useMemo(() => displayLayers.flatMap((layer) => layer.parts), [displayLayers])
   const selectionMatches = useMemo(
     () => resolveCadViewerSelection(displayLayers, selectionQuery),
@@ -888,9 +885,7 @@ function JscadViewer({
   }
 
   const toolbar = {
-    geometryMode: managed
-      ? undefined
-      : ((geometryOpacity === 0 ? 0 : geometryOpacity < 0.7 ? 0.5 : 0.9) as GeometryMode),
+    geometryMode: managed ? undefined : ((geometryOpacity > 0 && geometryOpacity < 0.7 ? 0.5 : 0.9) as GeometryMode),
     onGeometryModeChange: (mode: GeometryMode) => {
       setGeometryControlledLocally(true)
       setGeometryMode(mode)

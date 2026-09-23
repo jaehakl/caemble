@@ -25,10 +25,12 @@ export function ViewerSceneLayer({ name, mesh, heatmap, lines, deformed }: Scene
 export function ViewerResultScope({
   name,
   available,
+  scope = name,
   children,
 }: {
   name: string
   available: boolean
+  scope?: string
   children: ReactNode
 }) {
   const persistent = useContext(ViewerPersistenceContext)
@@ -36,17 +38,17 @@ export function ViewerResultScope({
   const settings = comparison?.settings
   const side = comparison?.side
   useLayoutEffect(() => {
-    settings?.set(`available:${name}:${side}`, available)
-    return () => settings?.set(`available:${name}:${side}`, false)
-  }, [settings, name, side, available])
+    settings?.set(`available:${scope}:${side}`, available)
+    return () => settings?.set(`available:${scope}:${side}`, false)
+  }, [settings, scope, side, available])
   const subscribe = useCallback((listener: () => void) => settings?.subscribe(listener) ?? (() => {}), [settings])
-  const snapshot = useCallback(() => Boolean(settings?.values.get(`available:${name}:actual`)), [settings, name])
+  const snapshot = useCallback(() => Boolean(settings?.values.get(`available:${scope}:actual`)), [settings, scope])
   const actualAvailable = useSyncExternalStore(subscribe, snapshot, snapshot)
   const controlsOwner = actualAvailable ? side === 'actual' : available ? side === 'preview' : comparison?.controlsOwner
   return (
-    <ViewerPersistenceContext.Provider value={persistent ? { ...persistent, item: name } : null}>
+    <ViewerPersistenceContext.Provider value={persistent ? { ...persistent, item: scope } : null}>
       <ViewerComparisonContext.Provider
-        value={comparison ? { ...comparison, item: name, controlsOwner: Boolean(controlsOwner) } : null}
+        value={comparison ? { ...comparison, item: scope, controlsOwner: Boolean(controlsOwner) } : null}
       >
         {children}
       </ViewerComparisonContext.Provider>

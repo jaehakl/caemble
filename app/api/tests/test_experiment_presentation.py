@@ -31,6 +31,16 @@ DEFAULTS = dict(version=1, selectedResult="signal", settings={
 
 
 class PresentationValidationTests(unittest.TestCase):
+    def test_output_role_settings_are_independent_and_validated(self):
+        settings = {"signal@output-space:box.component": 1, "signal@output-chart:box.component": 2,
+                    "signal@output-chart:box.kind": "heatmap", "signal@output-space:box.fixed": [0, 10]}
+        request = PresentationUpdateRequest(initialView={"version": 2, "geometryMode": 0.9,
+            "selectedOutput": "signal", "visualizations": {}, "settings": settings, "camera": None, "measurementId": 1})
+        self.assertEqual(request.initialView.settings, settings)
+        with self.assertRaises(ValueError):
+            PresentationUpdateRequest(initialView={**DEFAULTS, "measurementId": 1,
+                "settings": {"signal@output-space:mesh.deformed": True}})
+
     def test_v2_independent_selections_round_trip(self):
         defaults = dict(version=2, geometryMode=0.5, selectedOutput="signal",
                         visualizations={"polyline": "", "mesh-field": "@visualizations.solid.field"},

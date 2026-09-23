@@ -21,11 +21,12 @@ function currentResult() {
 }
 
 vi.mock('@/features/viewer/viewer/BoxGridResult', () => ({
-  BoxGridResult: ({ name }: { name: string }) => {
+  BoxGridResult: ({ name, role }: { name: string; role?: string }) => {
     const [opacity, setOpacity] = useViewerSetting('box.geometryOpacity', 0.5)
     const [overlay, setOverlay] = useViewerSetting('box.overlay', true)
     const [experimentVisible, setExperimentVisible] = useViewerSetting('experimentVisible', true, 'workspace')
     const [taskVisible, setTaskVisible] = useViewerSetting('taskVisible', true, 'workspace')
+    if (role === 'space') return <div>Spatial Box Grid {name}</div>
     return (
       <div>
         Box Grid {name}
@@ -127,6 +128,14 @@ it('selects a native rigid animation beside numerical Outputs through its semant
   render(
     <WorkbenchViewer
       {...props}
+      resultSourceHash="fixture"
+      resultVarsHash={materialVarsHash({})}
+      experimentDocument={
+        {
+          scene: {},
+          evaluatedSnapshot: { sourceHash: 'fixture', variables: {} },
+        } as WorkbenchViewerProps['experimentDocument']
+      }
       visualizations={{
         movement: {
           pose: {
@@ -238,12 +247,13 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
       downloadProgress={{ completed: 4, total: 40 }}
     />,
   )
-  expect(screen.getByText(/표시할 데이터가 없습니다/)).toBeTruthy()
+  expect(screen.getByText(/표시할 차트가 없습니다/)).toBeTruthy()
   selectResult('displacement')
-  expect(screen.getByText('Stored volume field')).toBeTruthy()
+  expect(screen.getByText('Geometry preview')).toBeTruthy()
+  expect(screen.queryByText('Stored volume field')).toBeNull()
   expect(screen.getByText(/4\/40/)).toBeTruthy()
   selectResult('')
-  expect(screen.getByText(/표시할 데이터가 없습니다/)).toBeTruthy()
+  expect(screen.getByText(/표시할 차트가 없습니다/)).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
 })
 
@@ -268,13 +278,20 @@ it('offers deformation fields only from the selected native result invocation', 
   render(
     <WorkbenchViewer
       experiment={null}
-      experimentDocument={{} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument']}
+      experimentDocument={
+        {
+          scene: {},
+          evaluatedSnapshot: { sourceHash: 'fixture', variables: {} },
+        } as WorkbenchViewerProps['experimentDocument']
+      }
       onFindSelectionSource={vi.fn()}
       onSelectionQueryChange={vi.fn()}
       onSelectionSourcePathsChange={vi.fn()}
       selectionQuery={null}
       selectionSourceStatus={{}}
-      selectedResult="@visualizations.solid.stress"
+      selectedResult=""
+      resultSourceHash="fixture"
+      resultVarsHash={materialVarsHash({})}
       visualizations={{
         solid: {
           stress: visual,
@@ -381,7 +398,7 @@ it('shows the selected result error instead of an empty Box Grid renderer', () =
     />,
   )
   selectResult('field')
-  expect(screen.getAllByText('field: 응답에 선언된 결과 데이터가 없습니다.')).toHaveLength(1)
+  expect(screen.getAllByText('field: 응답에 선언된 결과 데이터가 없습니다.')).toHaveLength(2)
   expect(screen.queryByText('기록된 장 데이터가 없습니다.')).toBeNull()
 })
 
@@ -418,7 +435,7 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   expect(random).toHaveBeenCalledTimes(calls)
   expect(currentResult()).toBe('second')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} resultContracts={{ first: contract }} />)
-  expect(screen.getByText('second: 선택한 데이터가 없습니다. 설정은 유지됩니다.')).toBeInTheDocument()
+  expect(screen.getAllByText('second: 선택한 데이터가 없습니다. 설정은 유지됩니다.')[0]).toBeInTheDocument()
   selectResult('')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
   expect(currentResult()).toBe('')
@@ -442,7 +459,7 @@ it('retains the previous result during prediction, preserves BoxGrid controls an
   selectResult('')
   rerender(<WorkbenchViewer {...props} />)
   expect(currentResult()).toBe('')
-  expect(screen.getByText(/표시할 데이터가 없습니다/)).toBeInTheDocument()
+  expect(screen.getByText(/표시할 차트가 없습니다/)).toBeInTheDocument()
   rerender(<WorkbenchViewer {...gridSelectionProps({ saved: [3, 3, 1] })} />)
   expect(currentResult()).toBe('saved')
   rerender(<WorkbenchViewer {...props} />)
@@ -497,7 +514,7 @@ it('isolates the next Experiment and applies its own defaults', () => {
   expect(screen.getByLabelText('Grid opacity')).toHaveValue(0.5)
 })
 
-it('keeps Geometry demand independent of Output and retains its off mode during prediction updates', () => {
+it('keeps Geometry required during Output and prediction updates', () => {
   const required = vi.fn()
   const props = {
     ...gridSelectionProps({ field: [2, 2, 1] }),
@@ -510,20 +527,20 @@ it('keeps Geometry demand independent of Output and retains its off mode during 
   fireEvent.click(screen.getByRole('button', { name: 'Geometry · 90%' }))
   expect(required).toHaveBeenLastCalledWith(true)
   fireEvent.click(screen.getByRole('button', { name: 'Geometry · 50%' }))
-  expect(required).toHaveBeenLastCalledWith(false)
+  expect(required).toHaveBeenLastCalledWith(true)
   const count = required.mock.calls.length
   rerender(<WorkbenchViewer {...props} recordedData={undefined} resultContracts={{}} resultPlaceholder="Updating" />)
   expect(required).toHaveBeenCalledTimes(count)
   expect(screen.getByText('Box Grid field')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Geometry · off' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeInTheDocument()
   rerender(<WorkbenchViewer {...props} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Geometry · off' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Geometry · 90%' }))
   expect(required).toHaveBeenLastCalledWith(true)
   selectResult('')
   expect(required).toHaveBeenLastCalledWith(true)
 })
 
-it('does not build Geometry before the first prediction determines its view, and respects saved overlay settings', () => {
+it('requires Geometry before prediction and migrates saved overlay off to 90%', () => {
   const required = vi.fn()
   const props = {
     ...gridSelectionProps({ field: [2, 2, 1] }),
@@ -539,9 +556,9 @@ it('does not build Geometry before the first prediction determines its view, and
   const { rerender } = render(
     <WorkbenchViewer {...props} recordedData={undefined} resultContracts={{}} resultPlaceholder="Updating" />,
   )
-  expect(required).toHaveBeenLastCalledWith(false)
-  expect(screen.queryByText('Geometry preview')).not.toBeInTheDocument()
+  expect(required).toHaveBeenLastCalledWith(true)
+  expect(screen.getByText('Geometry preview')).toBeInTheDocument()
   rerender(<WorkbenchViewer {...props} />)
-  expect(required).not.toHaveBeenCalledWith(true)
+  expect(required).toHaveBeenLastCalledWith(true)
   expect(currentResult()).toBe('field')
 })

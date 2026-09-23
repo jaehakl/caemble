@@ -1,12 +1,16 @@
 import type { RecordedResultContracts } from '@/contracts/results'
 import type { ViewerDefaults } from '@/contracts/viewerDefaults'
 
-export type GeometryMode = 0 | 0.5 | 0.9
+export type GeometryMode = 0.5 | 0.9
 export type VisualizationSelection = Record<string, string>
 
 export function initialViewerDisplay(defaults?: ViewerDefaults | null) {
   if (defaults?.version === 2)
-    return { geometry: defaults.geometryMode, output: defaults.selectedOutput, visualizations: defaults.visualizations }
+    return {
+      geometry: defaults.geometryMode === 0.5 ? (0.5 as const) : (0.9 as const),
+      output: defaults.selectedOutput,
+      visualizations: defaults.visualizations,
+    }
   const name = defaults?.selectedResult ?? ''
   const settings = defaults?.settings ?? {}
   const opacity = settings[`${name}:box.geometryOpacity`]
@@ -15,7 +19,7 @@ export function initialViewerDisplay(defaults?: ViewerDefaults | null) {
     settings[`${name}:box.overlay`] === false ||
     settings[`${name}:particles.geometry`] === false
   return {
-    geometry: (off ? 0 : typeof opacity === 'number' && opacity < 0.7 ? 0.5 : 0.9) as GeometryMode,
+    geometry: (off ? 0.9 : typeof opacity === 'number' && opacity < 0.7 ? 0.5 : 0.9) as GeometryMode,
     output: name.startsWith('@visualizations.') ? '' : name,
     visualizations: {} as VisualizationSelection,
   }

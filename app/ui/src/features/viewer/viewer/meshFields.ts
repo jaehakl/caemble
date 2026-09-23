@@ -594,16 +594,6 @@ export function createMeshFieldRenderData(
       emitPolygon(intersections, cell)
     }
   }
-  if (view.compareOriginal && displacementScale) {
-    for (let face = 0; face < field.boundaryCells.length; face++) {
-      const triangle = [0, 1, 2].map((index) => {
-        const node = field.boundaryFaces[face * 3 + index]
-        return { point: [0, 1, 2].map((axis) => field.points[node * 3 + axis] * lengthScale), value: 0 }
-      })
-      for (let edge = 0; edge < 3; edge++)
-        emit('lines', [triangle[edge], triangle[(edge + 1) % 3]], 0, [0.55, 0.55, 0.55])
-    }
-  }
   if (view.overlays) {
     const size = Math.hypot(...bounds.max.map((maximum, index) => maximum - bounds.min[index])) * 0.012
     for (const node of field.supportNodes) {

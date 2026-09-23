@@ -16,6 +16,7 @@ import { Box } from 'lucide-react'
 import type { GeometryMode } from './viewerDisplay'
 
 export const GeometryDisplayManaged = createContext(false)
+export const ViewerControlTarget = createContext<{ host: HTMLElement | null } | null>(null)
 
 export function GeometryDisplayButton({
   mode,
@@ -28,7 +29,7 @@ export function GeometryDisplayButton({
     <ViewerToolButton
       label={`Geometry · ${mode ? `${mode * 100}%` : 'off'}`}
       active={mode > 0}
-      onClick={() => onChange(mode === 0.9 ? 0.5 : mode === 0.5 ? 0 : 0.9)}
+      onClick={() => onChange(mode === 0.9 ? 0.5 : 0.9)}
     >
       <Box />
     </ViewerToolButton>
@@ -39,7 +40,7 @@ export type ViewerControlPlacement = 'presentation' | 'camera' | 'data' | 'side'
 export const ViewerToolHosts = createContext<Partial<Record<ViewerControlPlacement, HTMLDivElement | null>> | null>(
   null,
 )
-const ViewerPanelHost = createContext<HTMLDivElement | null>(null)
+export const ViewerPanelHost = createContext<HTMLDivElement | null>(null)
 
 /** The outermost viewer owns the toolbar hosts, including both panes of a comparison. */
 export function ViewerLayout({ children }: { children: ReactNode }) {

@@ -33,6 +33,7 @@ type PanelAxis = IndexAxis | 'channel'
 
 export function BoxGridToolbar(props: {
   leaf: CalculationInputLeaf
+  mode?: 'space' | 'chart'
   kind: PlotKind
   axes: ProjectionAxis[]
   reduce: Partial<Record<ProjectionAxis, ProjectionReduction>>
@@ -135,72 +136,82 @@ export function BoxGridToolbar(props: {
             { kind: 'heatmap', label: 'Heatmap', icon: Grid2X2 },
             { kind: 'cloud', label: '3D Point cloud', icon: Box },
           ] as const
-        ).map(({ kind, label, icon: Icon }) => (
-          <ViewerToolButton key={kind} label={label} active={props.kind === kind} onClick={() => props.onKind(kind)}>
-            <Icon />
-          </ViewerToolButton>
-        ))}
-      </div>
-      {projectionAxes.map((axis) => {
-        const reduction = reduce[axis]?.method ?? 'mean'
-        const role = axes.includes(axis) ? 'space' : reduction === 'index' ? 'index' : 'statistic'
-        const title = `${labels[axis]} · ${role === 'space' ? '공간축' : role === 'index' ? `개별 index ${reduce[axis]?.index ?? 0} · ${leaf.axes[projectionAxes.indexOf(axis)].ticks[reduce[axis]?.index ?? 0]} ${leaf.axes[projectionAxes.indexOf(axis)].unit ?? ''}` : reduction}`
-        const options = (
-          <>
-            <option value="space" disabled={axes.length >= 3 && role !== 'space'}>
-              공간축{axes.length >= 3 && role !== 'space' ? ' · 최대 3개' : ''}
-            </option>
-            {['mean', 'sum', 'min', 'max', 'median', 'std', 'index'].map((method) => (
-              <option key={method} value={method}>
-                {method === 'index' ? '개별 index' : method}
-              </option>
-            ))}
-          </>
         )
-        const changeRole = (next: string) => {
-          props.onRole(axis, next as 'space' | ProjectionReduction['method'])
-          setPanels((current) => ({ ...current, [axis]: next === 'index' ? 'index' : undefined }))
-        }
-        return (
-          <div key={axis} className="flex items-start gap-1">
-            {role === 'index' ? (
-              <ViewerToolButton
-                label={`${labels[axis]} 축 역할`}
-                title={title}
-                className={roleColors.index}
-                aria-expanded={Boolean(panels[axis])}
-                onClick={() => openAxis(axis, true)}
+          .filter(({ kind }) => props.mode !== 'space' && (props.mode !== 'chart' || kind !== 'cloud'))
+          .map(({ kind, label, icon: Icon }) => (
+            <ViewerToolButton key={kind} label={label} active={props.kind === kind} onClick={() => props.onKind(kind)}>
+              <Icon />
+            </ViewerToolButton>
+          ))}
+      </div>
+      {props.mode === 'space' ? <p>{props.kind === 'cloud' ? 'XYZ · 3D Point cloud' : '공간 Heatmap'}</p> : null}
+      {projectionAxes
+        .filter((axis) => props.mode !== 'space' || !['x', 'y', 'z'].includes(axis))
+        .map((axis) => {
+          const reduction = reduce[axis]?.method ?? 'mean'
+          const role = axes.includes(axis) ? 'space' : reduction === 'index' ? 'index' : 'statistic'
+          const title = `${labels[axis]} · ${role === 'space' ? '공간축' : role === 'index' ? `개별 index ${reduce[axis]?.index ?? 0} · ${leaf.axes[projectionAxes.indexOf(axis)].ticks[reduce[axis]?.index ?? 0]} ${leaf.axes[projectionAxes.indexOf(axis)].unit ?? ''}` : reduction}`
+          const options = (
+            <>
+              <option
+                value="space"
+                disabled={
+                  props.mode === 'space' || (axes.length >= (props.mode === 'chart' ? 2 : 3) && role !== 'space')
+                }
               >
-                <ViewerAxisIcon axis={labels[axis]} />
-              </ViewerToolButton>
-            ) : (
-              <ViewerSelectTool
-                label={`${labels[axis]} 축 역할`}
-                aria-label={`${axis} 역할`}
-                title={title}
-                className={roleColors[role]}
-                icon={<ViewerAxisIcon axis={labels[axis]} />}
-                value={role === 'space' ? 'space' : reduction}
-                onChange={(event) => changeRole(event.target.value)}
-              >
-                {options}
-              </ViewerSelectTool>
-            )}
-            {role === 'index' && panels[axis] ? (
-              <ViewerToolPanelBody label={`${labels[axis]} 축`} onClose={() => closeAxis(axis)}>
-                <select
+                공간축{axes.length >= 3 && role !== 'space' ? ' · 최대 3개' : ''}
+              </option>
+              {['mean', 'sum', 'min', 'max', 'median', 'std', 'index'].map((method) => (
+                <option key={method} value={method}>
+                  {method === 'index' ? '개별 index' : method}
+                </option>
+              ))}
+            </>
+          )
+          const changeRole = (next: string) => {
+            props.onRole(axis, next as 'space' | ProjectionReduction['method'])
+            setPanels((current) => ({ ...current, [axis]: next === 'index' ? 'index' : undefined }))
+          }
+          return (
+            <div key={axis} className="flex items-start gap-1">
+              {role === 'index' ? (
+                <ViewerToolButton
+                  label={`${labels[axis]} 축 역할`}
+                  title={title}
+                  className={roleColors.index}
+                  aria-expanded={Boolean(panels[axis])}
+                  onClick={() => openAxis(axis, true)}
+                >
+                  <ViewerAxisIcon axis={labels[axis]} />
+                </ViewerToolButton>
+              ) : (
+                <ViewerSelectTool
+                  label={`${labels[axis]} 축 역할`}
                   aria-label={`${axis} 역할`}
-                  value={reduction}
+                  title={title}
+                  className={roleColors[role]}
+                  icon={<ViewerAxisIcon axis={labels[axis]} />}
+                  value={role === 'space' ? 'space' : reduction}
                   onChange={(event) => changeRole(event.target.value)}
                 >
                   {options}
-                </select>
-                {indexControls(axis)}
-              </ViewerToolPanelBody>
-            ) : null}
-          </div>
-        )
-      })}
+                </ViewerSelectTool>
+              )}
+              {role === 'index' && panels[axis] ? (
+                <ViewerToolPanelBody label={`${labels[axis]} 축`} onClose={() => closeAxis(axis)}>
+                  <select
+                    aria-label={`${axis} 역할`}
+                    value={reduction}
+                    onChange={(event) => changeRole(event.target.value)}
+                  >
+                    {options}
+                  </select>
+                  {indexControls(axis)}
+                </ViewerToolPanelBody>
+              ) : null}
+            </div>
+          )
+        })}
       <div className="flex items-start gap-1">
         {animation === 'oscillation' ? (
           <ViewerToolButton

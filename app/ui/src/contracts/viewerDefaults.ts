@@ -121,6 +121,13 @@ export function durableViewerSettings(entries: Iterable<[string, unknown]>) {
       'xrayEnabled',
     ].includes(name)
     if ((key.slice(0, separator) === '@workspace') !== workspace) continue
+    const scope = key.slice(0, separator)
+    if (
+      (scope.endsWith('@output-space') || scope.endsWith('@output-chart')) &&
+      !name.startsWith('box.') &&
+      !name.startsWith('tensor.')
+    )
+      continue
     const parsed = viewerSettingSchemas[name]?.safeParse(value)
     if (parsed?.success) settings[key] = parsed.data
   }

@@ -13,7 +13,7 @@ import {
   type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ViewerToolHosts, type ViewerControlPlacement } from './ViewerTools'
+import { ViewerControlTarget, ViewerToolHosts, type ViewerControlPlacement } from './ViewerTools'
 
 /** Owned by the comparison workspace, independently of data and renderer lifetimes. */
 export function createComparisonSettings(initial?: Record<string, unknown>) {
@@ -39,8 +39,22 @@ export function createComparisonSettings(initial?: Record<string, unknown>) {
 
 export function createViewerSettings(defaults?: ViewerDefaults | null) {
   const display = initialViewerDisplay(defaults)
+  const migrated = { ...defaults?.settings }
+  for (const [key, value] of Object.entries(defaults?.settings ?? {})) {
+    const separator = key.lastIndexOf(':')
+    const item = key.slice(0, separator),
+      setting = key.slice(separator + 1)
+    if (item === '@workspace' || item.endsWith('@output-space') || item.endsWith('@output-chart')) continue
+    if (!setting.startsWith('box.') && !setting.startsWith('tensor.')) continue
+    migrated[`${item}@output-chart:${setting}`] ??= value
+    if (
+      setting.startsWith('box.') &&
+      !['box.kind', 'box.axes', 'box.animation', 'box.playing', 'box.frameIndex'].includes(setting)
+    )
+      migrated[`${item}@output-space:${setting}`] ??= value
+  }
   return createComparisonSettings({
-    ...defaults?.settings,
+    ...migrated,
     '@workspace:selectedOutput': display.output,
     '@workspace:geometryMode': display.geometry,
     '@workspace:visualizations': display.visualizations,
@@ -137,7 +151,9 @@ export function ViewerControls({
 }) {
   const comparison = useViewerComparison()
   const hosts = useContext(ViewerToolHosts)
+  const target = useContext(ViewerControlTarget)
   if (comparison && !comparison.controlsOwner && placement !== 'presentation') return null
+  if (target && placement === 'side') return target.host ? createPortal(children, target.host) : null
   if (comparison?.controlsHost && placement === 'side') return createPortal(children, comparison.controlsHost)
   if (hosts) return hosts[placement] ? createPortal(children, hosts[placement]) : null
   if (!comparison) return children

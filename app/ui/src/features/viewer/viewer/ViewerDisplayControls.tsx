@@ -69,23 +69,12 @@ export function ViewerDisplayControls({
   return (
     <>
       <GeometryDisplayButton mode={geometry} onChange={onGeometry} />
-      {contracts[output]?.visualization.kind === 'mesh-field' ? (
-        <MeshFieldMenu
-          label={`Output · ${output}`}
-          names={Object.keys(contracts).filter((name) => !name.startsWith('@visualizations.'))}
-          value={output}
-          select={onOutput}
-          meshHost={meshHost}
-        />
-      ) : (
-        <ViewerToolMenu label={`Output · ${output || '선택 안 함'}`} icon={<Layers />}>
-          {choices(
-            Object.keys(contracts).filter((name) => !name.startsWith('@visualizations.')),
-            output,
-            onOutput,
-          )}
-        </ViewerToolMenu>
-      )}
+      <OutputMenu
+        names={Object.keys(contracts).filter((name) => !name.startsWith('@visualizations.'))}
+        value={output}
+        select={onOutput}
+        meshHost={meshHost}
+      />
       {Object.entries(groups).map(([kind, names]) => {
         const value = visualizations[kind] ?? ''
         const label = `${kind === 'polyline' ? 'ray' : kind} · ${value.replace(/^@visualizations\./u, '') || '선택 안 함'}`
@@ -141,6 +130,65 @@ function MeshFieldMenu({
         </div>
         {value && !names.includes(value) ? <p>{value} · 결과 없음</p> : null}
         <div ref={host} className="mt-2 grid gap-2 border-t pt-2 empty:hidden" />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function OutputMenu({
+  names,
+  value,
+  select,
+  meshHost,
+}: {
+  names: string[]
+  value: string
+  select: (name: string) => void
+  meshHost: (name: string, host: HTMLDivElement | null) => void
+}) {
+  const spaceHost = useCallback(
+    (host: HTMLDivElement | null) => meshHost(`${value}@output-space`, host),
+    [meshHost, value],
+  )
+  const chartHost = useCallback(
+    (host: HTMLDivElement | null) => meshHost(`${value}@output-chart`, host),
+    [meshHost, value],
+  )
+  return (
+    <Popover modal={false}>
+      <PopoverTrigger asChild>
+        <ViewerToolButton label={`Output · ${value || '선택 안 함'}`}>
+          <Layers />
+        </ViewerToolButton>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="max-h-[80vh] w-80 overflow-auto p-2 text-xs" data-capture-exclude>
+        <div role="group" aria-label="Output 선택" className="grid gap-1">
+          {['', ...names].map((name) => (
+            <label key={name} className="flex items-center gap-2 rounded p-1 hover:bg-accent">
+              <input
+                type="radio"
+                role="menuitemradio"
+                name="viewer-output"
+                checked={value === name}
+                onChange={() => select(name)}
+              />
+              {name || '선택 안 함'}
+            </label>
+          ))}
+        </div>
+        {value && !names.includes(value) ? <p>{value} · 결과 없음</p> : null}
+        {value ? (
+          <>
+            <section aria-label="3D 설정" className="mt-2 grid gap-2 border-t pt-2">
+              <strong>3D 설정</strong>
+              <div ref={spaceHost} className="grid gap-2" />
+            </section>
+            <section aria-label="차트 설정" className="mt-2 grid gap-2 border-t pt-2">
+              <strong>차트 설정</strong>
+              <div ref={chartHost} className="grid gap-2" />
+            </section>
+          </>
+        ) : null}
       </PopoverContent>
     </Popover>
   )

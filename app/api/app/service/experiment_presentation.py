@@ -125,6 +125,8 @@ class ViewerSettings(BaseModel):
             scope, name = key.rsplit(":", 1)
             if (scope == "@workspace") != (name in {"selectedOutput", "geometryMode", "visualizations", "experimentVisible", "taskVisible", "xrayEnabled"}):
                 raise ValueError("Invalid Viewer setting scope")
+            if scope.endswith(("@output-space", "@output-chart")) and not name.startswith(("box.", "tensor.")):
+                raise ValueError("Invalid Output setting scope")
             validator = SETTING_VALIDATORS.get(name)
             if validator is None:
                 raise ValueError(f"Unknown Viewer setting: {name}")

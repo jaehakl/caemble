@@ -270,15 +270,6 @@ export function MeshFieldResult({
             <input type="checkbox" aria-label="변형 표시" checked={deformed} onChange={() => setDeformed(!deformed)} />{' '}
             변형 표시 · 실제 크기 1×
           </label>
-          <label>
-            <input
-              type="checkbox"
-              aria-label="원형 윤곽 비교"
-              checked={view.compareOriginal ?? false}
-              onChange={() => setView({ ...view, compareOriginal: !view.compareOriginal })}
-            />{' '}
-            원형 윤곽 비교
-          </label>
         </>
       ) : null}
     </div>

@@ -287,7 +287,7 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
   ] as const) {
     rerender(<WorkbenchViewer {...props} {...override} />)
     expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeEnabled()
-    expect(screen.getByText(reason)).toBeInTheDocument()
+    expect(screen.getAllByText(reason)[0]).toBeInTheDocument()
   }
   rerender(
     <WorkbenchViewer

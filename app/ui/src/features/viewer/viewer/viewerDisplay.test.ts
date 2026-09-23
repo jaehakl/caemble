@@ -22,8 +22,8 @@ it('initializes each type once, retains explicit none, and migrates v1 selection
     'mesh-field': '',
     polyline: '@visualizations.sample.rays',
   })
-  expect(initialViewerDisplay({ ...legacy, settings: { 'signal:box.overlay': false } }).geometry).toBe(0)
-  expect(initialViewerDisplay({ ...legacy, settings: { 'signal:particles.geometry': false } }).geometry).toBe(0)
+  expect(initialViewerDisplay({ ...legacy, settings: { 'signal:box.overlay': false } }).geometry).toBe(0.9)
+  expect(initialViewerDisplay({ ...legacy, settings: { 'signal:particles.geometry': false } }).geometry).toBe(0.9)
   expect(initialViewerDisplay({ ...legacy, settings: { '@workspace:xrayEnabled': true } }).geometry).toBe(0.9)
 })
 
@@ -32,4 +32,29 @@ it('unions all mesh bounds without mutating per-layer meshes', () => {
   const second = { geometries: [], bounds: { min: [0, -2, 1], max: [6, 7, 3] } }
   expect(combineMeshes([{ mesh: first }, { mesh: second }])?.bounds).toEqual({ min: [-3, -2, 1], max: [6, 7, 4] })
   expect(first.bounds.min).toEqual([-3, 0, 2])
+})
+
+it('migrates legacy Output settings into independent role scopes', async () => {
+  const { createViewerSettings } = await import('./comparisonSettings')
+  const settings = createViewerSettings({
+    version: 2,
+    geometryMode: 0,
+    selectedOutput: 'signal',
+    visualizations: {},
+    camera: null,
+    settings: {
+      'signal:box.kind': 'line',
+      'signal:box.axes': ['time'],
+      'signal:box.component': 1,
+      'signal:box.fixed': [0, 20],
+      'signal@output-chart:box.component': 2,
+    },
+  })
+  expect(settings.values.get('@workspace:geometryMode')).toBe(0.9)
+  expect(settings.values.get('signal@output-chart:box.kind')).toBe('line')
+  expect(settings.values.get('signal@output-chart:box.component')).toBe(2)
+  expect(settings.values.get('signal@output-space:box.component')).toBe(1)
+  expect(settings.values.has('signal@output-space:box.axes')).toBe(false)
+  settings.set('signal@output-space:box.component', 0)
+  expect(settings.values.get('signal@output-chart:box.component')).toBe(2)
 })

@@ -42,6 +42,7 @@ export function BoxGridResult({
   renderViewer,
   canOverlayGeometry,
   recordReference,
+  role,
 }: {
   name: string
   rules: readonly RecordedDataRule[]
@@ -51,6 +52,7 @@ export function BoxGridResult({
   canOverlayGeometry: boolean
   geometryBlockedReason?: string
   recordReference?: string
+  role?: 'space' | 'chart'
 }) {
   const parsed = useMemo(() => {
     try {
@@ -65,13 +67,22 @@ export function BoxGridResult({
         axes: accessor.shape.map((_, axis) => ({
           name: axis < 5 ? projectionAxes[axis] : axis === 5 ? 'amplitudePhase' : 'component',
           unit: rule.result.axes?.[axis]?.unit,
-          ticks: accessor.tensor.axes?.[axis]?.ticks ?? [],
+          ticks:
+            accessor.tensor.axes?.[axis]?.ticks ??
+            (axis < 3 && accessor.shape[axis] === 1 ? [tensor.boxGrid!.size[axis] / 2] : []),
         })),
         tensorOrder: Number('tensorOrder' in rule.result ? rule.result.tensorOrder : 0),
         boxGrid: tensor.boxGrid,
         unit: rule.result.unit,
       }
-      return { leaf }
+      const positionAxes = projectionAxes.slice(0, 3).filter((_, index) => {
+        const ticks = accessor.tensor.axes?.[index]?.ticks
+        return (
+          ticks?.length === leaf.shape[index] &&
+          ticks.every((tick) => typeof tick === 'number' && Number.isFinite(tick))
+        )
+      })
+      return { leaf, positionAxes }
     } catch (error) {
       return { error: String(error instanceof Error ? error.message : error) }
     }
@@ -87,7 +98,9 @@ export function BoxGridResult({
       <BoxGridControls
         key={name}
         name={name}
+        role={role}
         leaf={parsed.leaf}
+        positionAxes={parsed.positionAxes}
         displayUnit={displayUnit}
         renderViewer={renderViewer}
         canOverlayGeometry={canOverlayGeometry}
@@ -98,19 +111,23 @@ export function BoxGridResult({
 }
 
 function BoxGridControls({
+  positionAxes,
   name,
   leaf,
   displayUnit,
   renderViewer,
   canOverlayGeometry,
   recordReference,
+  role,
 }: {
   name: string
   leaf: CalculationInputLeaf
+  positionAxes: ProjectionAxis[]
   displayUnit: UcumUnit
   renderViewer: (data: HeatmapRenderData, geometryOpacity: number) => ReactNode
   canOverlayGeometry: boolean
   recordReference: string
+  role?: 'space' | 'chart'
 }) {
   const comparison = useViewerComparison()
   const comparing = Boolean(comparison)
@@ -123,8 +140,38 @@ function BoxGridControls({
       [...projectionAxes].sort((a, b) => leaf.shape[projectionAxes.indexOf(b)] - leaf.shape[projectionAxes.indexOf(a)]),
     [leaf],
   )
-  const [kind, setKind] = useViewerSetting<PlotKind>('box.kind', surfacePower ? 'heatmap' : 'cloud')
-  const [axes, setAxes] = useViewerSetting<ProjectionAxis[]>('box.axes', surfacePower ? ['y', 'x'] : ['x', 'y', 'z'])
+  const chartAxes = useMemo(
+    () => longest.filter((axis) => leaf.shape[projectionAxes.indexOf(axis)] > 1).slice(0, 2),
+    [longest, leaf],
+  )
+  const [storedKind, setKind] = useViewerSetting<PlotKind>(
+    'box.kind',
+    role === 'chart'
+      ? chartAxes.length === 2
+        ? 'heatmap'
+        : chartAxes.length === 1
+          ? 'line'
+          : 'histogram'
+      : surfacePower
+        ? 'heatmap'
+        : 'cloud',
+  )
+  const [storedAxes, setAxes] = useViewerSetting<ProjectionAxis[]>(
+    'box.axes',
+    role === 'chart' ? chartAxes : surfacePower ? ['y', 'x'] : ['x', 'y', 'z'],
+  )
+  const spatialAxes = positionAxes
+  const spaceKind = spatialAxes.length === 3 ? 'cloud' : 'heatmap'
+  const kind = role === 'space' ? spaceKind : role === 'chart' && storedKind === 'cloud' ? 'heatmap' : storedKind
+  const axes = useMemo<ProjectionAxis[]>(
+    () =>
+      role === 'space'
+        ? spatialAxes
+        : role === 'chart'
+          ? storedAxes.slice(0, kind === 'heatmap' ? 2 : kind === 'line' ? 2 : storedAxes.length)
+          : storedAxes,
+    [role, storedAxes, kind, spatialAxes],
+  )
   const [representation, setRepresentation] = useViewerSetting<'amplitude' | 'phase'>('box.representation', 'amplitude')
   const [component, setComponent] = useViewerSetting<number | 'magnitude' | 'arrows'>(
     'box.component',
@@ -186,7 +233,7 @@ function BoxGridControls({
   const rangeCache = useRef<{ key: string; value: [number, number]; distribution?: [number, number] } | null>(null)
   const vectorComponents = boxGridVectorComponents(leaf)
   const spatial = axes.every((axis) => ['x', 'y', 'z'].includes(axis))
-  const arrowsAllowed = kind === 'cloud' && spatial && !!vectorComponents && representation !== 'phase'
+  const arrowsAllowed = !role && kind === 'cloud' && spatial && !!vectorComponents && representation !== 'phase'
   const actualComponent =
     animation === 'component'
       ? frameIndex
@@ -269,23 +316,28 @@ function BoxGridControls({
   const frameUpdate = animation !== 'off' && result && completedView?.leaf === leaf && completedView.key === viewKey
   const showCalculationStatus = busy && !frameUpdate
   const invalidSetting =
-    animation === 'oscillation' && oscillationError
-      ? oscillationError
-      : comparison &&
-          ((typeof component === 'number' &&
-            (!Number.isInteger(component) || component < 0 || component >= leaf.shape[6])) ||
-            (representation === 'phase' && leaf.shape[5] !== 2) ||
-            (component === 'arrows' && !arrowsAllowed) ||
-            (animationAxis && (!Number.isInteger(frameIndex) || frameIndex < 0 || frameIndex >= animationLength)) ||
-            Object.entries(reduce).some(
-              ([axis, reduction]) =>
-                reduction.method === 'index' &&
-                (!Number.isInteger(reduction.index ?? 0) ||
-                  (reduction.index ?? 0) < 0 ||
-                  (reduction.index ?? 0) >= leaf.shape[projectionAxes.indexOf(axis as ProjectionAxis)]),
-            ))
-        ? '저장된 성분·프레임·집계 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
-        : ''
+    role === 'space' &&
+    (spatialAxes.length < 2 ||
+      (spatialAxes.length === 2 &&
+        projectionAxes.slice(0, 3).some((axis, index) => !spatialAxes.includes(axis) && leaf.shape[index] !== 1)))
+      ? 'XYZ 좌표 또는 평면 배치 정보가 없어 상단에 표시할 수 없습니다.'
+      : animation === 'oscillation' && oscillationError
+        ? oscillationError
+        : comparison &&
+            ((typeof component === 'number' &&
+              (!Number.isInteger(component) || component < 0 || component >= leaf.shape[6])) ||
+              (representation === 'phase' && leaf.shape[5] !== 2) ||
+              (component === 'arrows' && !arrowsAllowed) ||
+              (animationAxis && (!Number.isInteger(frameIndex) || frameIndex < 0 || frameIndex >= animationLength)) ||
+              Object.entries(reduce).some(
+                ([axis, reduction]) =>
+                  reduction.method === 'index' &&
+                  (!Number.isInteger(reduction.index ?? 0) ||
+                    (reduction.index ?? 0) < 0 ||
+                    (reduction.index ?? 0) >= leaf.shape[projectionAxes.indexOf(axis as ProjectionAxis)]),
+              ))
+          ? '저장된 성분·프레임·집계 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.'
+          : ''
   const comparisonBusy = useComparisonBusy(busy || Boolean(invalidSetting) || completedKey !== requestKey)
   useEffect(() => {
     rangeCache.current = null
@@ -435,6 +487,7 @@ function BoxGridControls({
   const range = useMemo(() => fixed ?? result?.distribution?.range ?? result?.scalar.range ?? [0, 0], [fixed, result])
   const renderData = useMemo(() => {
     if (
+      role === 'chart' ||
       !result ||
       result.scalar.axes.map((axis) => axis.name).join(',') !== axesKey ||
       kind === 'histogram' ||
@@ -465,6 +518,7 @@ function BoxGridControls({
       },
     )
   }, [
+    role,
     result,
     kind,
     axes,
@@ -503,10 +557,10 @@ function BoxGridControls({
     if (component === 'arrows' && (next !== 'cloud' || !selected.every((axis) => ['x', 'y', 'z'].includes(axis))))
       setComponent('magnitude')
   }
-  const changeRole = (axis: ProjectionAxis, role: 'space' | ProjectionReduction['method']) => {
+  const changeRole = (axis: ProjectionAxis, reductionRole: 'space' | ProjectionReduction['method']) => {
     stopAnimation()
-    const selected = role === 'space' ? [...new Set([...axes, axis])] : axes.filter((item) => item !== axis)
-    if (selected.length > 3) return
+    const selected = reductionRole === 'space' ? [...new Set([...axes, axis])] : axes.filter((item) => item !== axis)
+    if (selected.length > (role === 'chart' ? 2 : 3)) return
     const ordered = projectionAxes.filter((item) => selected.includes(item))
     if (selected.length !== axes.length) {
       const nextKind =
@@ -521,7 +575,7 @@ function BoxGridControls({
       setAxes(nextKind === 'heatmap' ? [...ordered].reverse() : ordered)
       setResult(undefined)
     }
-    if (role !== 'space') setReduce((current) => ({ ...current, [axis]: { method: role, index: 0 } }))
+    if (reductionRole !== 'space') setReduce((current) => ({ ...current, [axis]: { method: reductionRole, index: 0 } }))
     if (component === 'arrows' && (selected.length !== 3 || !selected.every((item) => ['x', 'y', 'z'].includes(item))))
       setComponent('magnitude')
     setFixed(null)
@@ -533,6 +587,7 @@ function BoxGridControls({
       <ViewerControls>
         <BoxGridToolbar
           leaf={leaf}
+          mode={role}
           kind={kind}
           axes={axes}
           reduce={effectiveReduce}
@@ -657,7 +712,7 @@ function BoxGridControls({
       ) : null}
       <div className="min-h-0 flex-1" aria-busy={busy}>
         {result && !invalidSetting && range[0] <= range[1] ? (
-          kind === 'cloud' || (kind === 'heatmap' && spatial && canOverlayGeometry) ? (
+          role !== 'chart' && (kind === 'cloud' || (kind === 'heatmap' && spatial && canOverlayGeometry)) ? (
             renderData ? (
               <div className="flex h-full min-h-0 flex-col">
                 <div className="min-h-0 flex-1">
@@ -677,6 +732,10 @@ function BoxGridControls({
                 </div>
               </div>
             ) : null
+          ) : role === 'chart' && chartAxes.length === 0 && axes.length === 0 ? (
+            <output aria-label="Output scalar" className="block p-3 text-lg">
+              {result.scalar.values[0]} {unit}
+            </output>
           ) : (
             <ScalarPlot
               plot={opticalPlotData(
@@ -685,7 +744,7 @@ function BoxGridControls({
                 surfacePower,
               )}
               histogramMarker={result.distribution ? result.scalar.values[0] : undefined}
-              kind={kind}
+              kind={kind === 'cloud' ? 'heatmap' : kind}
               range={range}
               bins={bins}
               unit={unit}

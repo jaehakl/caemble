@@ -1,5 +1,10 @@
 import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
-import { GeometryDisplayManaged, ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
+import {
+  GeometryDisplayManaged,
+  ViewerControlTarget,
+  ViewerPanelHost,
+  ViewerLayout,
+} from '@/features/viewer/viewer/ViewerTools'
 import { ViewerDisplayControls, MeshSettingsHost } from '@/features/viewer/viewer/ViewerDisplayControls'
 import {
   initialViewerDisplay,
@@ -25,7 +30,6 @@ import {
   ViewerComparisonContext,
   useViewerComparison,
   useViewerSetting,
-  useViewerSettingValue,
   ViewerControls,
   type ViewerPersistence,
   type ViewerComparison,
@@ -266,28 +270,13 @@ function ViewerContent(props: WorkbenchViewerProps) {
     persistent.settings,
     setOutput,
   ])
-  const surface = isDataTensor(data[output]) && data[output].boxGrid?.sampling === 'surface-integral'
-  const boxKind = useViewerSettingValue('box.kind', surface ? 'heatmap' : 'cloud', output)
-  const defaultAxes = useMemo(() => (surface ? ['y', 'x'] : ['x', 'y', 'z']), [surface])
-  const boxAxes = useViewerSettingValue<readonly string[]>('box.axes', defaultAxes, output)
-  const previousKinds = useRef<Record<string, string>>({})
-  for (const [name, contract] of Object.entries(contracts)) previousKinds.current[name] = contract.visualization.kind
-  const outputKind = contracts[output]?.visualization.kind ?? previousKinds.current[output]
-  const outputSpatial =
-    ['mesh-field', 'mesh-transform', 'particle-set', 'polyline'].includes(outputKind ?? '') ||
-    (outputKind === 'box-grid' &&
-      ['cloud', 'heatmap'].includes(boxKind) &&
-      boxAxes.every((axis) => ['x', 'y', 'z'].includes(axis)))
   const selected = useMemo(() => {
     const kinds = [...new Set([...Object.keys(visualizationGroups(contracts)), ...Object.keys(visualizations)])]
     return [output, ...kinds.map((kind) => visualizations[kind])].filter(
       (name, index, names) => name && names.indexOf(name) === index,
     )
   }, [output, visualizations, contracts])
-  const spatialNames = useMemo(
-    () => selected.filter((name) => name !== output || outputSpatial),
-    [selected, output, outputSpatial],
-  )
+  const spatialNames = selected
   const provenance = useMemo(
     () =>
       Object.fromEntries(
@@ -303,6 +292,21 @@ function ViewerContent(props: WorkbenchViewerProps) {
     const blocked: Record<string, string> = {}
     for (const name of spatialNames) {
       if (!validContracts[name]) continue
+      if (frameReason) {
+        blocked[name] = frameReason
+        continue
+      }
+      if (name === output && contracts[name].visualization.kind !== 'box-grid') {
+        blocked[name] = '이 Output은 XYZ point cloud 또는 공간 Heatmap으로 표시할 수 없습니다. 아래 차트를 확인하세요.'
+        continue
+      }
+      if (
+        contracts[name].visualization.kind !== 'box-grid' &&
+        contracts[name].visualization.coordinateSpace !== 'experiment'
+      ) {
+        blocked[name] = 'Geometry와 좌표계가 달라 함께 표시할 수 없습니다.'
+        continue
+      }
       const reference = accepted[0]
       if (reference) {
         const coordinates = (key: string) =>
@@ -316,12 +320,8 @@ function ViewerContent(props: WorkbenchViewerProps) {
       accepted.push(name)
     }
     return { accepted, blocked }
-  }, [spatialNames, validContracts, contracts, provenance])
+  }, [spatialNames, validContracts, contracts, provenance, frameReason, output])
   const primary = accepted[0]
-  const primaryCoordinates =
-    !primary ||
-    contracts[primary].visualization.kind === 'box-grid' ||
-    contracts[primary].visualization.coordinateSpace === 'experiment'
   const primaryUnit =
     mesh.fields.find((field) => field.label === primary)?.lengthUnit ??
     motions.motions.find((motion) => motion.label === primary)?.lengthUnit ??
@@ -367,54 +367,57 @@ function ViewerContent(props: WorkbenchViewerProps) {
   const hasGeometry = availableSources
     ? availableSources.includes('experiment') || (taskVisible && availableSources.includes('task'))
     : Boolean(document.scene) || (taskVisible && Object.keys(document.taskScenes ?? {}).length > 0)
-  const geometryAllowed = geometry > 0 && primaryCoordinates && (!primary || !frameReason) && !deformed
-  const geometryRequired = geometry > 0 && hasGeometry && primaryCoordinates && !deformed
   useEffect(() => {
-    onGeometryRequiredChange?.(geometryRequired)
-  }, [geometryRequired, onGeometryRequiredChange])
-  useEffect(() => () => onGeometryRequiredChange?.(false), [onGeometryRequiredChange])
-  const hasScene = (geometry > 0 && hasGeometry) || spatialNames.length > 0
-  const nonspatial = output && !outputSpatial
-  const result = (name: string) => (
-    <ViewerResultScope key={name} name={name} available={Boolean(validContracts[name])}>
-      <RetainedResultLayer
-        name={name}
-        contracts={contracts}
-        data={data}
-        rules={rules}
-        errors={errors}
-        blocked={blocked[name]}
-        displayUnit={displayUnit}
-        mesh={mesh}
-        lines={lines}
-        motions={motions}
-        particles={particles}
-        calculationSource={props.calculationSource}
-        loading={loading}
-        provenance={provenance}
-      />
+    onGeometryRequiredChange?.(true)
+    return () => onGeometryRequiredChange?.(false)
+  }, [onGeometryRequiredChange])
+  const result = (name: string, role?: 'space' | 'chart') => (
+    <ViewerResultScope
+      key={`${name}:${role ?? 'visualization'}`}
+      name={name}
+      scope={role ? `${name}@output-${role}` : name}
+      available={Boolean(validContracts[name])}
+    >
+      <OutputControlsTarget name={name} role={role}>
+        <RetainedResultLayer
+          name={name}
+          contracts={contracts}
+          data={data}
+          rules={rules}
+          errors={errors}
+          blocked={role === 'chart' ? undefined : blocked[name]}
+          role={role}
+          displayUnit={displayUnit}
+          mesh={mesh}
+          lines={lines}
+          motions={motions}
+          particles={particles}
+          calculationSource={props.calculationSource}
+          loading={loading}
+          provenance={provenance}
+        />
+      </OutputControlsTarget>
     </ViewerResultScope>
   )
   const scene = (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="max-h-40 shrink-0 overflow-auto [&_.h-full]:h-auto">{spatialNames.map(result)}</div>
+      <div className="max-h-40 shrink-0 overflow-auto [&_.h-full]:h-auto">
+        {spatialNames.map((name) => result(name, name === output ? 'space' : undefined))}
+      </div>
       {deformed && activeLayers.some((layer) => layer.lines?.length) ? (
         <p role="status" className="p-2 text-xs">
           변형 표시 중에는 원래 좌표의 ray를 표시하지 않습니다.
         </p>
       ) : null}
-      {geometry > 0 && primary && !geometryAllowed ? (
+      {!hasGeometry ? (
         <p role="status" className="p-2 text-xs">
-          {frameReason ??
-            (!primaryCoordinates
-              ? '이 결과는 Geometry 좌표계의 공간 표시를 지원하지 않습니다.'
-              : '변형 표시 중에는 원래 Geometry를 겹치지 않습니다.')}
+          Geometry가 준비되지 않았습니다.
         </p>
       ) : null}
       <div className="min-h-0 flex-1">
         <CadViewer
           experiment={
-            geometryAllowed && props.experiment
+            props.experiment
               ? {
                   scene: document.scene,
                   sceneHash: document.sceneHash,
@@ -511,20 +514,20 @@ function ViewerContent(props: WorkbenchViewerProps) {
               </p>
             ) : null}
             <div ref={capture} className="min-h-0 flex-1 overflow-hidden">
-              {hasScene && nonspatial ? (
-                <ResizableSplit vertical label="3D와 Output 높이 조절" first={scene} second={result(output)} />
-              ) : nonspatial ? (
-                result(output)
-              ) : hasScene ? (
-                scene
-              ) : (
-                <>
-                  <div className="max-h-32 overflow-auto">{spatialNames.map(result)}</div>
-                  <p role="status" className="p-3 text-sm">
-                    표시할 데이터가 없습니다. Geometry, Output 또는 Visualization을 선택하세요.
-                  </p>
-                </>
-              )}
+              <ResizableSplit
+                vertical
+                label="3D와 Output 높이 조절"
+                first={scene}
+                second={
+                  output ? (
+                    result(output, 'chart')
+                  ) : (
+                    <p role="status" className="p-3 text-sm">
+                      표시할 차트가 없습니다. Output을 선택하세요.
+                    </p>
+                  )
+                }
+              />
             </div>
             {Object.entries(errors)
               .filter(([name]) => !selected.includes(name))
@@ -579,6 +582,7 @@ function ResultLayer({
   calculationSource,
   loading,
   provenance,
+  role,
 }: {
   name: string
   contracts: RecordedResultContracts
@@ -594,6 +598,7 @@ function ResultLayer({
   calculationSource?: string
   loading?: boolean
   provenance: Record<string, unknown>
+  role?: 'space' | 'chart'
 }) {
   // Keep asynchronous Output calculations stable when an unrelated visualization changes.
   const input = useRef<{ rules: readonly RecordedDataRule[]; data: RecordedData } | null>(null)
@@ -655,6 +660,8 @@ function ResultLayer({
         {name}: {loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.'}
       </p>
     )
+  if (role === 'chart' && contract.visualization.kind !== 'box-grid')
+    return <ResultTensorView name={name} contract={contract} rules={input.current.rules} data={input.current.data} />
   if (field)
     return (
       <MeshFieldResult
@@ -687,6 +694,7 @@ function ResultLayer({
   if (contract.visualization.kind === 'box-grid')
     return (
       <BoxGridResult
+        role={role}
         name={name}
         rules={input.current.rules}
         data={input.current.data}
@@ -697,4 +705,22 @@ function ResultLayer({
       />
     )
   return <ResultTensorView name={name} contract={contract} rules={input.current.rules} data={input.current.data} />
+}
+
+function OutputControlsTarget({
+  name,
+  role,
+  children,
+}: {
+  name: string
+  role?: 'space' | 'chart'
+  children: React.ReactNode
+}) {
+  const hosts = useContext(MeshSettingsHost)
+  if (!role) return children
+  return (
+    <ViewerControlTarget.Provider value={{ host: hosts[`${name}@output-${role}`] ?? null }}>
+      <ViewerPanelHost.Provider value={null}>{children}</ViewerPanelHost.Provider>
+    </ViewerControlTarget.Provider>
+  )
 }

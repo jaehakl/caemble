@@ -96,6 +96,7 @@ function fixture(name: string, scale: number, times = 3, frequencies?: readonly 
 
 function Pair({
   settings,
+  role,
   name = 'signal',
   scale = 1,
   times = 3,
@@ -105,6 +106,7 @@ function Pair({
   componentCount = 2,
 }: {
   settings: ComparisonSettings
+  role?: 'space' | 'chart'
   name?: string
   scale?: number
   times?: number
@@ -125,14 +127,14 @@ function Pair({
     () =>
       ['preview', 'actual'].map((side): ViewerComparison => ({
         settings,
-        item: name,
+        item: role ? `${name}@output-${role}` : name,
         side: side as ViewerComparison['side'],
         controlsHost: host,
         controlsOwner: side === 'actual',
         suspended,
         camera: createComparisonCamera(),
       })),
-    [settings, name, host, suspended],
+    [settings, name, host, suspended, role],
   )
   return (
     <>
@@ -143,6 +145,7 @@ function Pair({
             <BoxGridResult
               key={name}
               name={name}
+              role={role}
               {...input[index]}
               displayUnit="m"
               canOverlayGeometry={false}
@@ -424,7 +427,7 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
     onSelectionSourcePathsChange: vi.fn(),
     selectionQuery: null,
     selectionSourceStatus: {},
-    showToolbar: false,
+    showToolbar: true,
     selectedResult: 'signal',
     recordedData: input.data,
     recordedRules: input.rules,
@@ -440,7 +443,11 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
       },
     },
     comparison: {
-      settings: restoredSettings(),
+      settings: createComparisonSettings(
+        Object.fromEntries(
+          [...restoredSettings().values].map(([key, value]) => [key.replace('signal:', 'signal@output-chart:'), value]),
+        ),
+      ),
       item: 'signal',
       side: 'actual',
       controlsHost: screen.getByTestId('toolbar-host'),
@@ -451,15 +458,16 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
   }
   const view = render(<WorkbenchViewer {...props} />)
   await waitFor(() => expect(screen.getByTestId('plot')).toBeInTheDocument())
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
   openPanel('comp 축 역할')
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '1' } })
   fireEvent.click(screen.getByLabelText('값 범위 고정'))
   fireEvent.change(screen.getByLabelText('범위 최댓값'), { target: { value: '123' } })
   view.rerender(<WorkbenchViewer {...props} recordedData={undefined} loading />)
-  expect(screen.getByText(/데이터 갱신 중… 설정을 유지합니다/)).toBeInTheDocument()
+  expect(screen.getAllByText(/데이터 갱신 중… 설정을 유지합니다/)[0]).toBeInTheDocument()
   expect(screen.getByLabelText('범위 최댓값')).toHaveValue(123)
   view.rerender(<WorkbenchViewer {...props} resultErrors={{ signal: 'Prediction failed' }} />)
-  expect(screen.getByText(/Prediction failed/)).toBeInTheDocument()
+  expect(screen.getAllByText(/Prediction failed/)[0]).toBeInTheDocument()
   openPanel('comp 축 역할')
   expect(screen.getByLabelText('성분')).toHaveValue('1')
   view.rerender(<WorkbenchViewer {...props} recordedData={fixture('signal', 5).data} />)
@@ -574,4 +582,51 @@ it('switches index playback between spatial and component axes with stable range
   })
   expect(settings.values.get('signal:box.playing')).toBe(false)
   expect(settings.values.get('signal:box.frameIndex')).toBe(1)
+})
+
+it('shares Output playback within each comparison role without advancing the other role', async () => {
+  const settings = createComparisonSettings()
+  render(
+    <>
+      <section data-testid="space-pair">
+        <Pair
+          role="space"
+          times={1}
+          frequencies={[
+            [1, 2],
+            [4, 8],
+          ]}
+          settings={settings}
+        />
+      </section>
+      <section data-testid="chart-pair">
+        <Pair
+          role="chart"
+          times={1}
+          frequencies={[
+            [1, 2],
+            [4, 8],
+          ]}
+          settings={settings}
+        />
+      </section>
+    </>,
+  )
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-space')).toBe(false))
+  await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
+  const controls = within(screen.getByTestId('space-pair'))
+  if (!controls.queryByLabelText('Animation 프레임'))
+    fireEvent.click(controls.getByRole('button', { name: '채널 축 역할' }))
+  fireEvent.change(controls.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
+  await waitFor(() => expect(settings.values.get('busy:preview:signal@output-space')).toBe(false))
+  expect(settings.values.get('signal@output-space:box.timeSeconds')).toBe(0.125)
+  expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBe(0)
+  vi.useFakeTimers()
+  fireEvent.click(controls.getByRole('button', { name: '시간 전개 재생' }))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(100)
+  })
+  expect(Number(settings.values.get('signal@output-space:box.timeSeconds'))).toBeGreaterThan(0.125)
+  expect(settings.values.get('signal@output-chart:box.timeSeconds')).toBe(0)
+  expect(settings.values.get('signal@output-chart:box.playing')).toBe(false)
 })

@@ -42,7 +42,7 @@ Box Grid 데이터는 float32 또는 float64이며 축 순서는 항상 `[x, y, 
 tet4 displacement 결과는 변형 표시와 자동 확대가 기본입니다. 자동 확대는 전체
 시간 구간의 최대 변위를 원래 mesh bounding box 대각선의 10%로 맞춥니다.
 화면에 표시되는 배율은 좌표에만 적용되며 물리 값과 색상 범례는 바뀌지 않습니다.
-`실제 크기 1×` 또는 `직접 입력`으로 배율을 바꾸고, `원형 윤곽 비교`로 기준 mesh를
+`실제 크기 1×`로 변형을 표시하고, 함께 표시되는 원래 Geometry로 기준 형상을
 함께 볼 수 있습니다. 변형 표시에서는 원래 Geometry의 불투명 면을 숨깁니다.
 
 stress 결과는 같은 Task와 domain, 절점 ID, 연결성, 좌표계가 확인된 정적 displacement를
@@ -59,8 +59,8 @@ stress 결과는 같은 Task와 domain, 절점 ID, 연결성, 좌표계가 확�
 
 직접 확인하려면 Catalog의 **structural-analysis-modes** 예제를 새로 빌드·실행한 뒤
 transient Task의 자동 displacement history 시각화를 선택합니다. 전체 절점 이력은
-별도 output이나 `sim.record` 선언 없이 포함됩니다. 초기 자동 확대, 실제 크기 1×,
-원형 윤곽 비교, 시간 슬라이더와 재생을 차례로 확인하세요. 재생 중 카메라를 이동해도
+별도 output이나 `sim.record` 선언 없이 포함됩니다. 실제 크기 1×,
+원래 Geometry와 비교, 시간 슬라이더와 재생을 차례로 확인하세요. 재생 중 카메라를 이동해도
 자동으로 맞춤이 반복되지 않아야 하고, Measurement를 바꾸면 재생과 선택이 초기화되어야
 합니다. 마지막 상태와 전체 시간 이력은 각 자동 시각화에서 확인합니다.
 상세한 output 문법은 현재 Catalog 계약과 이 예제 소스를 기준으로 확인하세요.
@@ -78,8 +78,7 @@ Spectral field와 시간 기록 모두 `[x, y, z, time, frequency, amplitudePhas
 진폭은 장의 물리 단위, 위상은 rad이며 진폭이 0인 표본의 저장 위상도 0입니다.
 저장·attachment·CLI export는 같은 7차원 형식을 사용합니다.
 
-Box Grid의 표시 방식은 **Histogram / Line Chart / Heatmap / 3D Point cloud**에서
-선택합니다. 공간 축만 사용하는 Heatmap과 3D는 저장된 Box의 origin, rotation과
+Viewer는 항상 위 3D / 아래 차트로 나뉩니다. 상단 Output은 XYZ point cloud를 우선하고 평면 배치만 가능하면 공간 Heatmap을 표시합니다. 아래 차트는 **Histogram / Line Chart / Heatmap**에서 선택합니다. 두 영역의 설정과 재생은 Output 드롭다운 안에서 독립적으로 조절합니다. 공간 축만 사용하는 Heatmap과 3D는 저장된 Box의 origin, rotation과
 길이 단위로 Geometry에 겹칩니다. x·y·z ticks는 Box local 셀 중심이며 해석
 영역 밖 표본은 0입니다. Geometry와 결과의 source/Vars가 일치해야 겹칠 수 있습니다.
 
@@ -111,7 +110,7 @@ x/y/z/t/f 축을 **개별 index**로 지정하면 아이콘 옆 슬라이더에�
 Gold FCC Array의 새 결과에서 `referenceScattered`, `incident`, `scattered`를
 선택하고 Heatmap의 공간 축과 frequency 개별 index를 지정하세요. 성분과
 Amplitude·Phase를 바꾸고, **시간 전개** 및 **f index 재생**을
-차례로 확인합니다. Geometry의 90%·50%·off 순환, 값 범위 고정과 좌표 hover 정보도 확인하세요.
+차례로 확인합니다. Geometry의 90%·50% 전환, 값 범위 고정과 좌표 hover 정보도 확인하세요.
 
 ### Catalog·Draft에서 임시 실행
 
