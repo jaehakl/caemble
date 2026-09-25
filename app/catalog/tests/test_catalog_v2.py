@@ -145,12 +145,12 @@ class CatalogV3Tests(unittest.TestCase):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
                 expected_version = "1.0.0" if example["key"] == "hyperelastic-uniaxial" else "7.1.2" if example["repository"] == "fea" else {
-                    "layered-cutaways": "6.0.0", "random-sphere-hcp-array": "6.0.0", "folded-ray-tracing": "7.0.4", "czerny-turner-spectrometer": "7.0.4",
+                    "layered-cutaways": "6.0.0", "random-sphere-hcp-array": "7.0.0", "random-curved-edge-cylinder-array": "6.0.0", "folded-ray-tracing": "7.0.4", "czerny-turner-spectrometer": "7.0.4",
                     "continuous-ray-optics": "1.0.4", "pixel-monochromatic-response": "1.0.3", "transmission-grating-response": "1.0.1",
                     "transmission-imaging-spectrometer": "1.0.0",
                     "fiber-bundle": "7.0.0", "electro-thermal-notched-bar": "6.0.2", "steady-microheater": "1.2.0",
                     "feedback-microheater": "1.0.0", "pulsed-microheater": "1.1.0",
-                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "7.0.0", "structural-optical-results": "6.0.4",
+                    "fdtd-drude-slab": "6.0.0", "gold-fcc-fresnel": "8.0.0", "structural-optical-results": "6.0.4",
                     "matched-impedance-duct": "1.1.0", "plate-driven-duct": "1.1.4",
                     "transient-matched-impedance-duct": "1.0.0", "transient-plate-driven-duct": "1.1.0",
                     "asymmetric-rigid-bodies": "2.0.0", "sliding-contact": "1.0.0",

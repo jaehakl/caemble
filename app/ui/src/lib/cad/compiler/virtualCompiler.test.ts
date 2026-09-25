@@ -9,6 +9,7 @@ import { catalogRuntimeTypes } from './catalogTypeEnvironment'
 import { compileVirtualCadDocument } from './virtualCompiler'
 import type { CadCompilationInput } from './compilerProtocol'
 import type { CadCompilationError } from './compilationError'
+import { inspectCompiledDocument } from '../execution/userModule'
 
 const mocks = vi.hoisted(() => ({ compile: vi.fn() }))
 vi.mock('./compilerClient', () => ({ compileInWorker: mocks.compile }))
@@ -43,6 +44,32 @@ const inputs = templates.map((entry) => {
 })
 
 describe('real Monaco TypeScript engine with isolated virtual files', () => {
+  it('enforces the varsSchema rank limit in browser and Node authoring', async () => {
+    for (const shape of [undefined, [], [3], [13, 4], [1, 1, 1], [2, 3, 4, 5]]) {
+      const sources = {
+        'material.tsx': 'export {}',
+        'experiment.tsx': `import { Box, experiment } from '@caemble/core'
+export default experiment({
+  lengthUnit: 'mm', varsSchema: { input: ${JSON.stringify({ shape, min: 0, max: 1 })} },
+  geometry: () => <Box id="probe" size={[1, 1, 1]} />, recordedData: {},
+})`,
+      }
+      const input = { sourceHash: `rank-${JSON.stringify(shape)}`, sources, catalogTypes: 'export {}' }
+      const compileNode = () =>
+        compileNodeCadDocument(sources, input.sourceHash, catalog, path.resolve('src/lib/cad/api'))
+      if ((shape?.length ?? 0) > 2) {
+        await expect(compileVirtualCadDocument(input)).rejects.toMatchObject({ errorType: 'type' })
+        expect(compileNode).toThrow()
+      } else {
+        const browser = await compileVirtualCadDocument(input)
+        const node = compileNode()
+        for (const compiled of [browser, node]) {
+          expect(inspectCompiledDocument(compiled).varsSchema.input.shape).toEqual(shape ?? [])
+        }
+      }
+    }
+  }, 30_000)
+
   it('compiles fluid, elastic, optical and fluid templates without leaking declarations', async () => {
     for (const input of [...inputs, inputs[0]]) {
       const result = await compileVirtualCadDocument(input)

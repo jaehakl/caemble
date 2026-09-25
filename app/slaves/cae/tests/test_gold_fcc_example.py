@@ -21,15 +21,16 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
         example = catalog.experiment("gold-fcc-fresnel")
     directory = tmp_path / "source"
     for name, content in example["sourceBundle"]["files"].items():
-        if name == "experiment.tsx":
-            content = content.replace("min: 100, max: 200", f"min: {diameter_nm}, max: {diameter_nm}")
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     build = tmp_path / "build"
+    variables = {"particles": [[0.5, 0.5, 0.5, (diameter_nm - 100) / 100] for _ in range(13)]}
+    values = tmp_path / "vars.json"
+    values.write_text(json.dumps(variables), encoding="utf-8")
     result = subprocess.run([
         "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "experiment", "build", str(directory),
-        "--vars-mode", "nominal", "--out", str(build),
+        "--mode", "candidate", "--vars", str(values), "--out", str(build),
     ], cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads((build / "manifest.json").read_text(encoding="utf-8"))
@@ -38,10 +39,8 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
     assert set(experiment["simulationProgram"]["recordedData"]) == {
         "scattered", "referenceScattered", "incident",
     }
-    for layer, size in (("lower", 3), ("upper", 2)):
-        np.testing.assert_array_equal(experiment["variables"][layer + "DiameterNm"], np.full((size, size), diameter_nm))
-        assert experiment["varsSchema"][layer + "DiameterNm"]["shape"] == [size, size]
-        assert experiment["varsSchema"][layer + "PositionOffsetNm"]["shape"] == [size, size, 3]
+    assert experiment["variables"] == variables
+    assert experiment["varsSchema"] == {"particles": {"shape": [13, 4], "min": 0, "max": 1}}
     roots = experiment["scene"]["roots"]
     assert len(roots) == 13
     centers = []
@@ -71,32 +70,21 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
 @pytest.mark.parametrize("scenario", ["single", "varied", "max_offsets", "collision", "touch", "interlayer"])
 async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
     repo = Path(__file__).resolve().parents[4]
-    variables = {}
-    for layer, n in (("lower", 3), ("upper", 2)):
-        variables[layer + "DiameterNm"] = np.full((n, n), 150.).tolist()
-        variables[layer + "PositionOffsetNm"] = np.zeros((n, n, 3)).tolist()
+    particles = np.full((13, 4), 0.5)
     if scenario == "max_offsets":
-        for layer, n in (("lower", 3), ("upper", 2)):
-            variables[layer+"DiameterNm"] = np.full((n, n), 200.).tolist()
-            variables[layer+"PositionOffsetNm"] = np.full((n, n, 3), 50.).tolist()
+        particles[:] = 1
     elif scenario == "single":
-        variables["upperDiameterNm"][1][1] = 180
-        variables["upperPositionOffsetNm"][1][1] = [50, -50, 50]
+        particles[12] = [1, 0, 1, 0.8]
     elif scenario == "varied":
-        for layer, n in (("lower", 3), ("upper", 2)):
-            for x in range(n):
-                for y in range(n):
-                    i = x*n+y
-                    variables[layer+"DiameterNm"][x][y] = 100+2*i
-                    variables[layer+"PositionOffsetNm"][x][y] = [5*np.sin(i), 7*np.cos(i), 6*np.sin(i+.3)]
+        for i in range(13):
+            particles[i] = [0.5 + .05*np.sin(i), 0.5 + .07*np.cos(i), 0.5 + .06*np.sin(i+.3), .02*i]
     elif scenario == "interlayer":
-        variables["lowerDiameterNm"][0][0] = variables["upperDiameterNm"][0][0] = 200
-        variables["lowerPositionOffsetNm"][0][0] = [50, 50, 50]
-        variables["upperPositionOffsetNm"][0][0] = [-50, -50, -50]
+        particles[0] = [1, 1, 1, 1]
+        particles[9] = [0, 0, 0, 1]
     else:
-        variables["lowerDiameterNm"][0][0] = variables["lowerDiameterNm"][1][0] = 200
-        variables["lowerPositionOffsetNm"][0][0] = [50, 0, 0]
-        variables["lowerPositionOffsetNm"][1][0] = [-50 if scenario == "collision" else 0, 0, 0]
+        particles[0] = [1, 0.5, 0.5, 1]
+        particles[3] = [0 if scenario == "collision" else 0.5, 0.5, 0.5, 1]
+    variables = {"particles": particles.tolist()}
     values = tmp_path / "vars.json"
     values.write_text(json.dumps(variables), encoding="utf-8")
     build = tmp_path / "build"
@@ -114,7 +102,7 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
         for x in range(n):
             for y in range(n):
                 center = np.array([(x-(n-1)/2)*.25, (y-(n-1)/2)*.25, z])
-                center += np.array(variables[layer+"PositionOffsetNm"][x][y])*.001
+                center += (100 * particles[index, :3] - 50)*.001
                 node = scene["roots"][index]["node"]
                 transform = np.eye(4)
                 while node["kind"] in {"transform", "instance"}:
@@ -125,7 +113,7 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
                 assert np.all(np.abs(mesh.vertices) < np.array([.46, .46, .30]) - .01)
                 radius = np.linalg.norm(mesh.vertices-center, axis=1).max()
                 parameters = node["parameters"]
-                assert parameters["radius"] * 2000 == pytest.approx(variables[layer+"DiameterNm"][x][y])
+                assert parameters["radius"] * 2000 == pytest.approx(100 + 100 * particles[index, 3])
                 assert radius == pytest.approx(parameters["radius"], rel=2e-6)
                 edges = np.sort(np.concatenate([mesh.triangles[:,[0,1]], mesh.triangles[:,[1,2]], mesh.triangles[:,[2,0]]]),axis=1)
                 assert np.all(np.unique(edges,axis=0,return_counts=True)[1] == 2)

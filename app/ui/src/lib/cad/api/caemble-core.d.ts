@@ -347,7 +347,10 @@ export class Material {
 }
 
 export type VarsSchemaDefinition = Readonly<
-  Record<string, Readonly<{ shape?: readonly number[]; min: number; max: number }>>
+  Record<
+    string,
+    Readonly<{ shape?: readonly [] | readonly [number] | readonly [number, number]; min: number; max: number }>
+  >
 >
 
 type FixedLengthTensor<

@@ -6,7 +6,7 @@ import type { UcumUnit } from './units'
 import type { VarsSchemaEntry } from './vars'
 
 export type VarsSchemaDefinition = Readonly<
-  Record<string, Readonly<{ shape?: readonly number[]; min: number; max: number }>>
+  Record<string, Readonly<{ shape?: readonly [] | readonly [number] | readonly [number, number]; min: number; max: number }>>
 >
 type FixedLengthTensor<Length extends number, Value, Result extends readonly Value[] = readonly []> = number extends Length
   ? readonly Value[]
@@ -98,10 +98,13 @@ export class ExperimentDefinition<
     this.lengthUnit = options.lengthUnit
     this.varsSchema = Object.freeze(
       Object.fromEntries(
-        Object.entries(options.varsSchema).map(([key, entry]) => [
-          key,
-          Object.freeze({ shape: Object.freeze([...(entry.shape ?? [])]), min: entry.min, max: entry.max }),
-        ]),
+        Object.entries(options.varsSchema).map(([key, entry]) => {
+          const shape = entry.shape ?? []
+          if (shape.length > 2) {
+            throw new Error(`varsSchema.${key}.shape supports at most 2 dimensions; received ${shape.length}.`)
+          }
+          return [key, Object.freeze({ shape: Object.freeze([...shape]), min: entry.min, max: entry.max })]
+        }),
       ),
     )
     this.geometryGroup = normalizeGeometryGroup(options.geometryGroup, 'geometryGroup', 'Experiment')
