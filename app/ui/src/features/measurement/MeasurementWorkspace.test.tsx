@@ -7,9 +7,6 @@ import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWor
 import type { Vars } from '@/lib/cad/model/types'
 import { MeasurementWorkspace as MeasurementWorkspaceView } from './MeasurementWorkspace'
 import { useMeasurementSession } from './useMeasurementSession'
-import { MeasurementCandidatePreparation } from './MeasurementCandidatePreparation'
-import { MeasurementSamplingControls, MeasurementBatchControls } from './MeasurementSamplingControls'
-import { MeasurementCandidateList } from './MeasurementCandidateList'
 import { fitMeasurementProjection, type VarsPoint } from './measurementSpace'
 import type { VarsSchema } from '@/lib/cad/model/vars'
 
@@ -144,18 +141,7 @@ function MeasurementWorkspace({
   ...props
 }: Omit<Parameters<typeof MeasurementWorkspaceView>[0], 'session'> & { authenticated: boolean }) {
   const session = useMeasurementSession({ ...props, authenticated })
-  return (
-    <>
-      {session.preparation ? (
-        <MeasurementCandidatePreparation
-          request={session.preparation}
-          experiment={props.workbench.experiment}
-          key={session.preparation.input.candidateId}
-        />
-      ) : null}
-      <MeasurementWorkspaceView {...props} session={session} />
-    </>
-  )
+  return <MeasurementWorkspaceView {...props} session={session} />
 }
 function view(active = true, state = workbench, authenticated = true) {
   return (
@@ -178,215 +164,6 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-// Both screens use one mounted session, as in the Workbench route. No execution screen is mounted initially.
-function SharedScreens({
-  sourceVersion = 1,
-  externalBusy = false,
-}: {
-  sourceVersion?: number
-  externalBusy?: boolean
-}) {
-  const [state, setState] = useState(workbench)
-  const [execution, setExecution] = useState(false)
-  const [generated, setGenerated] = useState(false)
-  const current = { ...state, workspaceSession: sourceVersion }
-  const session = useMeasurementSession({
-    workbench: current,
-    authenticated: true,
-    dataReadable: true,
-    active: execution,
-    externalBusy,
-    onGenerated: () => setGenerated(true),
-    onCandidateSelected: (vars) =>
-      setState((previous) => ({
-        ...previous,
-        candidateVars: vars,
-        selection: { ...previous.selection, measurement: null, variables: undefined },
-      })),
-    onMeasurementSelected: async (row) =>
-      setState((previous) => ({
-        ...previous,
-        candidateVars: row.vars as Vars,
-        selection: { ...previous.selection, measurement: row, variables: row.vars as Vars },
-      })),
-  })
-  return (
-    <>
-      <button onClick={() => setExecution(!execution)}>화면 전환</button>
-      <output aria-label="구성 Vars">{JSON.stringify(state.candidateVars)}</output>
-      <output aria-label="구성 Measurement">{state.selection.measurement?.id ?? '없음'}</output>
-      <output aria-label="생성 후 목록 열림">{String(generated)}</output>
-      {session.preparation ? (
-        <MeasurementCandidatePreparation
-          key={session.preparation.input.candidateId}
-          request={session.preparation}
-          experiment={current.experiment}
-        />
-      ) : null}
-      {execution ? (
-        <MeasurementWorkspaceView workbench={current} session={session} dataReadable active menubar={null} />
-      ) : (
-        <>
-          <MeasurementSamplingControls session={session} />
-          <MeasurementBatchControls session={session} />
-          <MeasurementCandidateList session={session} />
-          <input
-            aria-label="구성 Vars 편집"
-            type="number"
-            value={(session.vars?.x as number) ?? 0}
-            onChange={(event) => session.changeVars({ x: Number(event.target.value) })}
-          />
-          {session.error ? <p role="alert">{session.error}</p> : null}
-        </>
-      )}
-    </>
-  )
-}
-
-describe('shared configuration and execution session', () => {
-  it.each(['random', 'empty-lhs'])(
-    'generates %s before visiting execution and preserves candidates across editing and tab changes',
-    async (algorithm) => {
-      render(
-        <QueryClientProvider client={new QueryClient()}>
-          <SharedScreens />
-        </QueryClientProvider>,
-      )
-      await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-      fireEvent.change(screen.getByLabelText('샘플 생성 방식'), { target: { value: algorithm } })
-      fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '2' } })
-      fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-      expect(screen.getByLabelText('생성 후 목록 열림')).toHaveTextContent('true')
-      expect(screen.getByRole('button', { name: '후보 1 대기' })).toHaveAttribute('aria-current', 'true')
-      const firstVars = screen.getByLabelText('구성 Vars').textContent
-      expect(screen.getByLabelText('구성 Measurement')).toHaveTextContent('없음')
-      expect(mocks.run).not.toHaveBeenCalled()
-      expect(mocks.save).not.toHaveBeenCalled()
-      fireEvent.change(screen.getByLabelText('구성 Vars 편집'), { target: { value: '0.42' } })
-      expect(screen.getByRole('button', { name: '후보 1 대기' })).not.toHaveAttribute('aria-current')
-      fireEvent.click(screen.getByRole('button', { name: '후보 1 대기' }))
-      expect(screen.getByLabelText('구성 Vars').textContent).toBe(firstVars)
-      fireEvent.click(screen.getByRole('button', { name: '화면 전환' }))
-      expect(screen.getByLabelText('샘플 생성 방식')).toHaveValue(algorithm)
-      expect(screen.getByLabelText('샘플 생성 개수 N')).toHaveValue(2)
-      expect((screen.getByLabelText('점 선택') as HTMLSelectElement).value).toMatch(/^candidate:/)
-      fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '3' } })
-      fireEvent.click(screen.getByRole('button', { name: '화면 전환' }))
-      expect(screen.getByLabelText('샘플 생성 개수 N')).toHaveValue(3)
-      expect(screen.getByRole('button', { name: '후보 1 대기' })).toHaveAttribute('aria-current', 'true')
-      expect(screen.getByRole('button', { name: '후보 2 대기' })).toBeVisible()
-    },
-  )
-
-  it('executes the generated queue once from configuration and keeps it running across screen changes', async () => {
-    const first = deferred<{ measurementId: number }>()
-    mocks.run.mockImplementation((input) => {
-      const id = rows.length + 100
-      rows.push({ ...initialRows[0], id, vars: input.vars })
-      return mocks.run.mock.calls.length === 1 ? first.promise : Promise.resolve({ measurementId: id })
-    })
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <SharedScreens />
-      </QueryClientProvider>,
-    )
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '2' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '전체 실행' })).toBeEnabled())
-    const runAll = screen.getByRole('button', { name: '전체 실행' })
-    fireEvent.click(runAll)
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('button', { name: '샘플 생성' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '화면 전환' }))
-    expect(screen.getByRole('button', { name: '취소' })).toBeVisible()
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: '화면 전환' }))
-    expect(screen.getByRole('button', { name: '전체 실행 취소' })).toBeVisible()
-    await act(async () => first.resolve({ measurementId: 102 }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.queryByLabelText('저장 전 후보')).not.toBeInTheDocument())
-    await waitFor(() => expect(screen.getByLabelText('구성 Measurement')).toHaveTextContent('103'))
-    expect(screen.getByLabelText('구성 Vars').textContent).toBe(JSON.stringify(mocks.run.mock.calls[1][0].vars))
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
-  })
-
-  it('preserves a later explicit candidate selection when a pending result completes', async () => {
-    const completion = deferred<{ measurementId: number }>()
-    mocks.run.mockImplementationOnce((input) => {
-      rows.push({ ...initialRows[0], id: 100, vars: input.vars })
-      return completion.promise
-    })
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <SharedScreens />
-      </QueryClientProvider>,
-    )
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '2' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '전체 실행' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '전체 실행' }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByRole('button', { name: '후보 2 대기' }))
-    const explicit = screen.getByLabelText('구성 Vars').textContent
-    await act(async () => completion.resolve({ measurementId: 100 }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '전체 실행 취소' })).not.toBeInTheDocument())
-    expect(screen.getByLabelText('구성 Vars').textContent).toBe(explicit)
-    expect(screen.getByLabelText('구성 Measurement')).toHaveTextContent('없음')
-  })
-
-  it('blocks generation and batch execution during a single run and clears candidates on context replacement', async () => {
-    const client = new QueryClient()
-    const { rerender } = render(
-      <QueryClientProvider client={client}>
-        <SharedScreens externalBusy />
-      </QueryClientProvider>,
-    )
-    await screen.findByRole('button', { name: '샘플 생성' })
-    expect(screen.getByRole('button', { name: '샘플 생성' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
-    rerender(
-      <QueryClientProvider client={client}>
-        <SharedScreens />
-      </QueryClientProvider>,
-    )
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    expect(screen.getByLabelText('저장 전 후보')).toBeVisible()
-    rerender(
-      <QueryClientProvider client={client}>
-        <SharedScreens sourceVersion={2} />
-      </QueryClientProvider>,
-    )
-    expect(screen.queryByLabelText('저장 전 후보')).not.toBeInTheDocument()
-  })
-
-  it('cancels preparation from configuration and retries the retained candidate', async () => {
-    const prediction = deferred<{ data: undefined; error: string }>()
-    mocks.predict.mockReturnValueOnce(prediction.promise)
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <SharedScreens />
-      </QueryClientProvider>,
-    )
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '전체 실행' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '전체 실행' }))
-    await waitFor(() => expect(mocks.predict).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByRole('button', { name: '전체 실행 취소' }))
-    await act(async () => prediction.resolve({ data: undefined, error: '' }))
-    expect(await screen.findByRole('button', { name: '후보 1 취소' })).toBeVisible()
-    expect(mocks.run).not.toHaveBeenCalled()
-    expect(mocks.cancel).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: '전체 실행' }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(screen.queryByLabelText('저장 전 후보')).not.toBeInTheDocument())
-  })
-})
 beforeEach(() => {
   vi.clearAllMocks()
   rows = [...initialRows]
@@ -420,6 +197,65 @@ beforeEach(() => {
 })
 
 describe('Measurement workspace integration', () => {
+  it.each(['draft', 'measurement:2'])(
+    'runs only the selected %s and removes the waiting-candidate controls',
+    async (id) => {
+      render(view())
+      await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+      expect(screen.getByRole('button', { name: '실행' })).toBeDisabled()
+      for (const name of ['전체 실행', '샘플 추가', '샘플 생성', '선택 후보 삭제']) {
+        expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+      }
+      fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: id } })
+      await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: '실행' }))
+      await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1))
+      expect(mocks.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          candidateId: id,
+          vars: { x: id === 'draft' ? 0.25 : 0.8 },
+          measurementId: id === 'draft' ? undefined : 2,
+          materialSnapshot: snapshot,
+        }),
+        expect.any(Function),
+        expect.any(Function),
+      )
+      await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    },
+  )
+
+  it('does not overwrite a newer explicit selection when a single run finishes late', async () => {
+    const completion = deferred<{ candidateId: string; measurementId: number }>()
+    mocks.run.mockReturnValue(completion.promise)
+    render(view())
+    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'draft' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '실행' }))
+    await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'measurement:2' } })
+    await act(async () => completion.resolve({ candidateId: 'draft', measurementId: 1 }))
+    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:2')
+  })
+
+  it('retains recorded results when their subsequent Calculation fails', async () => {
+    mocks.run.mockImplementation(async (_input, progress, recorded) => {
+      progress({ state: 'succeeded', measurementId: 1, error: null })
+      recorded(1)
+      throw new Error('Calculation failed')
+    })
+    render(view())
+    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1'))
+    fireEvent.change(screen.getByLabelText('점 선택'), { target: { value: 'draft' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '실행' }))
+    await waitFor(() => expect(screen.getByText('Calculation failed')).toBeInTheDocument())
+    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1')
+    expect(within(screen.getByLabelText('실제 결과 Viewer')).getByLabelText('Viewer data')).toHaveTextContent(
+      'actual:0.25',
+    )
+  })
+
   it('deletes a Recorded measurement and clears its displayed results only after success', async () => {
     mocks.confirm.mockReturnValueOnce(false)
     mocks.deleteMeasurements.mockResolvedValueOnce(false)
@@ -465,7 +301,7 @@ describe('Measurement workspace integration', () => {
     )
     fireEvent.change(screen.getByLabelText('x', { exact: true }), { target: { value: '2' } })
     expect(screen.getByRole('button', { name: '실행' })).toBeDisabled()
-    expect(screen.getByText('선택 후보 삭제')).toBeDisabled()
+    expect(screen.queryByText('선택 후보 삭제')).not.toBeInTheDocument()
     expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled()
     fireEvent.click(screen.getByText('선택 Measurement 삭제'))
     expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining('1개'))
@@ -479,65 +315,6 @@ describe('Measurement workspace integration', () => {
       expect(screen.queryByRole('button', { name: 'Measurement #2 · prepared' })).not.toBeInTheDocument(),
     )
   })
-
-  it.each(['candidate', 'mixed'] as const)(
-    'deletes the Prepared linked to a failed candidate with %s selection and removes both points',
-    async (selection) => {
-      mocks.run.mockImplementationOnce(async (input, progress) => {
-        rows = [...rows, { ...initialRows[1], id: 100, vars: input.vars }]
-        progress({ measurementId: 100, state: 'failed', error: 'Solver failed' })
-        throw new Error('Solver failed')
-      })
-      render(view())
-      await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-      fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '1' } })
-      fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-      await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-      fireEvent.click(screen.getByRole('button', { name: '실행' }))
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Measurement #100 · prepared' })).toBeInTheDocument(),
-      )
-      await waitFor(() => expect(screen.getByText('선택 Measurement 삭제')).toBeEnabled())
-      const candidateVars = mocks.run.mock.calls[0][0].vars
-      mocks.confirm.mockReturnValueOnce(false)
-      fireEvent.click(screen.getByText('선택 Measurement 삭제'))
-      expect(mocks.deleteMeasurements).not.toHaveBeenCalled()
-      expect(screen.getByRole('option', { name: /후보 1 · failed/ })).toBeInTheDocument()
-      if (selection === 'mixed') {
-        fireEvent.keyDown(screen.getByRole('button', { name: 'Measurement #100 · prepared' }), {
-          key: 'Enter',
-          ctrlKey: true,
-        })
-        fireEvent.keyDown(screen.getByRole('button', { name: 'Measurement #1 · recorded' }), {
-          key: 'Enter',
-          ctrlKey: true,
-        })
-      }
-      fireEvent.click(screen.getByText('선택 Measurement 삭제'))
-      await waitFor(() => expect(screen.queryByRole('option', { name: '#100 · Prepared' })).not.toBeInTheDocument())
-      expect(mocks.deleteMeasurements).toHaveBeenCalledExactlyOnceWith(
-        selection === 'mixed'
-          ? [initialRows[0], expect.objectContaining({ id: 100 })]
-          : [expect.objectContaining({ id: 100 })],
-      )
-      expect(screen.queryByRole('option', { name: /후보 1 · failed/ })).not.toBeInTheDocument()
-      await waitFor(() => expect(screen.queryByRole('button', { name: '후보 1 · failed' })).not.toBeInTheDocument())
-      expect(screen.queryByRole('button', { name: 'Measurement #100 · prepared' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      if (selection === 'candidate') {
-        expect(screen.getByLabelText('점 선택')).toHaveValue('draft')
-        expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer Vars').textContent).toBe(
-          JSON.stringify(candidateVars),
-        )
-      } else {
-        expect(screen.getByLabelText('점 선택')).toHaveValue('draft')
-        expect(screen.queryByRole('option', { name: '#1 · Recorded' })).not.toBeInTheDocument()
-        expect(screen.getByText('Recorded Measurement를 선택하면 실제 결과를 표시합니다.')).toBeInTheDocument()
-      }
-      expect(screen.getByText('선택 Measurement 삭제')).toBeDisabled()
-      expect(screen.getByText('선택 후보 삭제')).toBeDisabled()
-    },
-  )
 
   it('keeps the selection and data when Prepared deletion is cancelled or rejected', async () => {
     mocks.confirm.mockReturnValueOnce(false)
@@ -593,215 +370,6 @@ describe('Measurement workspace integration', () => {
     expect(mocks.deleteMeasurements).toHaveBeenCalledTimes(1)
   })
 
-  it('retains both frames through three candidates and publishes actual results before Calculation finishes', async () => {
-    const cad = Array.from({ length: 3 }, () => deferred<void>())
-    const training = Array.from({ length: 4 }, () => deferred<{ session: null; error: string }>())
-    const predictions = Array.from({ length: 3 }, () =>
-      deferred<{ data: { result: string }; rules: never[]; error: string }>(),
-    )
-    const completions = Array.from({ length: 3 }, () => deferred<{ measurementId: number }>())
-    const downloads = Array.from({ length: 3 }, () => deferred<void>())
-    const recorded: Array<() => void> = []
-    mocks.evaluate.mockImplementation(() => cad[mocks.evaluate.mock.calls.length - 1].promise)
-    mocks.prepare.mockImplementation(() => training[mocks.prepare.mock.calls.length - 1].promise)
-    mocks.predict.mockImplementation(() => predictions[mocks.predict.mock.calls.length - 1].promise)
-    mocks.load.mockImplementation(async (value) => {
-      if (typeof value !== 'number') return value
-      if (value >= 100) await downloads[value - 100].promise
-      return rows.find((row) => row.id === value)
-    })
-    mocks.run.mockImplementation((input, progress, onRecorded) => {
-      const index = mocks.run.mock.calls.length - 1
-      recorded[index] = () => {
-        rows.push({ ...rows[0], id: 100 + index, vars: input.vars })
-        progress({ measurementId: 100 + index, state: 'succeeded', error: null })
-        onRecorded(100 + index)
-      }
-      return completions[index].promise
-    })
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '3' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-    const preview = within(screen.getByLabelText('미리보기 Viewer'))
-    const actual = within(screen.getByLabelText('실제 결과 Viewer'))
-    const initialPreview = preview.getByLabelText('Viewer Vars').textContent
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.evaluate).toHaveBeenCalledTimes(1))
-    await act(async () => training[0].resolve({ session: null, error: '' }))
-    expect(mocks.predict).not.toHaveBeenCalled()
-    expect(preview.getByLabelText('Viewer Vars').textContent).toBe(initialPreview)
-
-    for (let index = 0; index < 3; index++) {
-      await act(async () => {
-        cad[index].resolve()
-        training[index].resolve({ session: null, error: '' })
-      })
-      await waitFor(() => expect(mocks.predict).toHaveBeenCalledTimes(index + 1))
-      if (index) {
-        expect(preview.getByLabelText('Viewer data')).toHaveTextContent(`prediction:${index - 1}`)
-        expect(actual.getByLabelText('Viewer Vars').textContent).toBe(
-          JSON.stringify(mocks.run.mock.calls[index - 1][0].vars),
-        )
-      }
-      await act(async () =>
-        predictions[index].resolve({ data: { result: `prediction:${index}` }, rules: [], error: '' }),
-      )
-      await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(index + 1))
-      const input = mocks.run.mock.calls[index][0]
-      expect(preview.getByLabelText('Viewer Vars').textContent).toBe(JSON.stringify(input.vars))
-      expect(preview.getByLabelText('Viewer data')).toHaveTextContent(`prediction:${index}`)
-      const previousActual = actual.getByLabelText('Viewer Vars').textContent
-      await act(async () => recorded[index]())
-      await waitFor(() => expect(mocks.prepare).toHaveBeenCalledTimes(index + 2))
-      if (index < 2) await waitFor(() => expect(mocks.evaluate).toHaveBeenCalledTimes(index + 2))
-      expect(actual.getByLabelText('Viewer Vars').textContent).toBe(previousActual)
-      await act(async () => downloads[index].resolve())
-      await waitFor(() => expect(actual.getByLabelText('Viewer Vars').textContent).toBe(JSON.stringify(input.vars)))
-      expect(preview.getByLabelText('Viewer data')).toHaveTextContent(`prediction:${index}`)
-      expect(mocks.run).toHaveBeenCalledTimes(index + 1)
-      await act(async () => completions[index].resolve({ measurementId: 100 + index }))
-    }
-    await act(async () => training[3].resolve({ session: null, error: '' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument())
-    expect(mocks.prepare).toHaveBeenCalledTimes(4)
-    expect(mocks.predict).toHaveBeenCalledTimes(3)
-    expect(preview.getByLabelText('Viewer data')).toHaveTextContent('prediction:2')
-    expect(screen.getAllByRole('button', { name: /Output ·/ })).toHaveLength(1)
-    expect(screen.queryByRole('toolbar', { name: 'Output 설정 툴바' })).not.toBeInTheDocument()
-  })
-
-  it('keeps the last frame and ignores a late prediction after cancellation', async () => {
-    const prediction = deferred<{ data: { result: string }; error: string }>()
-    mocks.predict.mockReturnValue(prediction.promise)
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-    const previous = screen.getAllByLabelText('Viewer Vars').map((item) => item.textContent)
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.predict).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '취소' }))
-    await act(async () => prediction.resolve({ data: { result: 'late' }, error: '' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument())
-    expect(screen.getAllByLabelText('Viewer Vars').map((item) => item.textContent)).toEqual(previous)
-    expect(mocks.run).not.toHaveBeenCalled()
-    expect(mocks.cancel).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('late')).not.toBeInTheDocument()
-  })
-
-  it('switches the next preview while the previous Calculation is pending, without starting another Solver', async () => {
-    const completion = deferred<{ measurementId: number }>()
-    let notify!: () => void
-    mocks.predict.mockImplementation(async (_model, _document, vars) => ({
-      data: { result: `prediction:${vars.x}` },
-      error: '',
-    }))
-    mocks.run.mockImplementationOnce((input, _progress, onRecorded) => {
-      rows.push({ ...rows[0], id: 100, vars: input.vars })
-      notify = () => onRecorded(100)
-      return completion.promise
-    })
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '2' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1))
-    await act(async () => notify())
-    await waitFor(() => expect(mocks.predict).toHaveBeenCalledTimes(2))
-    const nextVars = mocks.predict.mock.calls[1][2]
-    await waitFor(() =>
-      expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer Vars').textContent).toBe(
-        JSON.stringify(nextVars),
-      ),
-    )
-    expect(within(screen.getByLabelText('실제 결과 Viewer')).getByLabelText('Viewer Vars').textContent).toBe(
-      JSON.stringify(mocks.run.mock.calls[0][0].vars),
-    )
-    expect(mocks.run).toHaveBeenCalledTimes(1)
-    await act(async () => completion.resolve({ measurementId: 100 }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2))
-    expect(mocks.run.mock.calls[1][0].vars).toEqual(nextVars)
-  })
-
-  it('continues after a Solver failure and keeps CAD-only candidates runnable', async () => {
-    mocks.predict.mockResolvedValue({ data: undefined, error: '학습 실패 · CAD만 표시합니다.' })
-    mocks.run.mockRejectedValueOnce(new Error('Solver failed'))
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '2' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument())
-    expect(screen.getByRole('alert')).toHaveTextContent('Solver failed')
-    expect(
-      within(screen.getByLabelText('미리보기 Viewer')).getByText('학습 실패 · CAD만 표시합니다.'),
-    ).toBeInTheDocument()
-    expect(within(screen.getByLabelText('미리보기 Viewer')).getByLabelText('Viewer selected result')).toHaveTextContent(
-      '',
-    )
-  })
-
-  it('keeps an already recorded candidate after cancellation during Calculation', async () => {
-    const completion = deferred<{ measurementId: number }>()
-    let notify!: () => void
-    mocks.run.mockImplementationOnce((input, _progress, onRecorded) => {
-      rows.push({ ...rows[0], id: 100, vars: input.vars })
-      notify = () => onRecorded(100)
-      return completion.promise
-    })
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1))
-    await act(async () => notify())
-    await waitFor(() => expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:100'))
-    fireEvent.click(screen.getByRole('button', { name: '취소' }))
-    await act(async () => completion.resolve({ measurementId: 100 }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument())
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
-    expect(
-      within(screen.getByLabelText('실제 결과 Viewer')).getByText('실제 결과 · Measurement #100'),
-    ).toBeInTheDocument()
-    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:100')
-  })
-
-  it.each(['session', 'source'])('discards a background candidate after the Experiment %s changes', async (change) => {
-    const prediction = deferred<{ data: { result: string }; error: string }>()
-    mocks.predict.mockReturnValue(prediction.promise)
-    const rendered = render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).toBeEnabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.predict).toHaveBeenCalled())
-    rendered.rerender(
-      view(
-        true,
-        change === 'session'
-          ? { ...workbench, workspaceSession: 2 }
-          : {
-              ...workbench,
-              experiment: { ...workbench.experiment!, sourceBundle: { files: { 'experiment.tsx': 'changed' } } },
-            },
-      ),
-    )
-    await act(async () => prediction.resolve({ data: { result: 'stale' }, error: '' }))
-    expect(mocks.run).not.toHaveBeenCalled()
-    expect(mocks.cancel).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('stale')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '취소' })).not.toBeInTheDocument()
-  })
   it('restores a late initial Recorded selection under StrictMode', async () => {
     const unloaded = { ...workbench, selection: { ...workbench.selection, measurement: null } }
     const rendered = render(<StrictMode>{view(true, unloaded)}</StrictMode>)
@@ -837,39 +405,6 @@ describe('Measurement workspace integration', () => {
     )
     expect(mocks.run).not.toHaveBeenCalled()
     expect(mocks.save).not.toHaveBeenCalled()
-  })
-  it('generates candidates without execution then submits each reviewed candidate exactly once', async () => {
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).not.toBeDisabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 방식'), { target: { value: 'empty-lhs' } })
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '2' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    expect(mocks.run).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).not.toBeDisabled())
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2))
-    const submitted = mocks.run.mock.calls.map(([input]) => input)
-    expect(new Set(submitted.map((input) => input.candidateId)).size).toBe(2)
-    expect(
-      submitted.every((input) => input.candidateId.startsWith('candidate:') && input.vars.x >= 0 && input.vars.x <= 1),
-    ).toBe(true)
-    expect(submitted[0].vars.x).not.toBe(submitted[1].vars.x)
-  })
-  it('retains the Recorded result when Calculation postprocessing fails', async () => {
-    mocks.run.mockImplementation(async (_input, onProgress) => {
-      onProgress({ measurementId: 1, state: 'succeeded', error: null })
-      throw new Error('Calculation failed')
-    })
-    render(view())
-    await waitFor(() => expect(screen.getByRole('button', { name: '샘플 생성' })).not.toBeDisabled())
-    fireEvent.change(screen.getByLabelText('샘플 생성 개수 N'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '실행' })).not.toBeDisabled())
-    fireEvent.click(screen.getByRole('button', { name: '실행' }))
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Calculation failed'))
-    expect(screen.getByLabelText('점 선택')).toHaveValue('measurement:1')
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
-    expect(mocks.run).toHaveBeenCalledTimes(1)
   })
 })
 

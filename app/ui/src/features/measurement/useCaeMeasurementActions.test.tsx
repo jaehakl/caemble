@@ -12,6 +12,7 @@ import { useCaeMeasurementActions } from './useCaeMeasurementActions'
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
+  upload: vi.fn(),
   read: vi.fn(),
   wait: vi.fn(),
   cancel: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock('@/api/submitArtifact', () => ({
   submitArtifact: async (options: { artifact: unknown; onRegistered: (id: string) => Promise<void> }) => {
     const result = await mocks.create(options.artifact)
     await options.onRegistered(result.id)
+    await mocks.upload()
     return result
   },
 }))
@@ -171,6 +173,7 @@ beforeEach(() => {
   )
   mocks.events = []
   mocks.batches = []
+  mocks.upload.mockResolvedValue(undefined)
   mocks.create.mockResolvedValue(batch())
   mocks.read.mockResolvedValue(batch())
   mocks.cancel.mockResolvedValue({ ...batch(), state: 'cancelled' })
@@ -312,12 +315,18 @@ describe('server-owned CAE measurement actions', () => {
     mocks.create.mockResolvedValue({ ...batch(), state: 'running', finished_at: null, succeeded: 0, jobs: [] })
     const rendered = renderActions()
     let completion!: Promise<unknown>
+    const submitted = vi.fn()
     act(() => {
       completion = rendered.result.current
-        .runCandidatesAsync({ count: 3, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() }, vi.fn())
+        .runCandidatesAsync(
+          { count: 3, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() },
+          vi.fn(),
+          submitted,
+        )
         .catch((cause: unknown) => cause)
     })
     await waitFor(() => expect(mocks.wait).toHaveBeenCalledOnce())
+    expect(submitted).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 'batch-1', state: 'running' }))
     if (action === 'cancel') act(() => rendered.result.current.cancel())
     else rendered.rerender({ sourceHash: 'changed-source' })
     await act(async () => {
@@ -327,6 +336,25 @@ describe('server-owned CAE measurement actions', () => {
     else expect(mocks.cancel).not.toHaveBeenCalled()
     expect(mocks.calculate).not.toHaveBeenCalled()
   })
+  it('cleans up a staged batch when uploading fails without reporting a commit', async () => {
+    mocks.upload.mockRejectedValueOnce(new Error('upload failed'))
+    const rendered = renderActions()
+    const submitted = vi.fn()
+    await act(async () => {
+      await expect(
+        rendered.result.current.runCandidatesAsync(
+          { count: 2, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() },
+          vi.fn(),
+          submitted,
+        ),
+      ).rejects.toThrow('upload failed')
+    })
+    expect(submitted).not.toHaveBeenCalled()
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith('batch-1')
+    expect(mocks.wait).not.toHaveBeenCalled()
+    expect(rendered.result.current.busy).toBe(false)
+  })
+
   it('waits for shared events without polling and postprocesses each completion only once', async () => {
     const initial = {
       ...batch(),

@@ -190,6 +190,7 @@ export function useCaeMeasurementActions({
       onBatchProgress?: (progress: CandidateBatchProgress) => void,
       onBatchState?: (batch: CaeBatch) => void,
       onRecorded?: (measurementId: number) => void,
+      onSubmitted?: (batch: CaeBatch) => void,
     ) => {
       if (active.current || operation === 'save' || operation === 'delete')
         throw new Error('다른 Measurement 작업이 진행 중입니다.')
@@ -199,6 +200,7 @@ export function useCaeMeasurementActions({
         jobId: null as string | null,
         jobAttempt: null as number | null,
         cancelRequested: false,
+        committed: false,
         completed: new Set<number>(),
       }
       const attemptId = ++sequence.current
@@ -290,9 +292,11 @@ export function useCaeMeasurementActions({
           }
         }
         run.batchId = registered.id
+        run.committed = true
         if (run.cancelRequested) await caeBatches.cancel(registered.id, run.jobId ? [run.jobId] : undefined)
         signal.throwIfAborted()
         let observed = update(registered)
+        onSubmitted?.(registered)
         let detail = registered
         while (true) {
           signal.throwIfAborted()
@@ -420,6 +424,20 @@ export function useCaeMeasurementActions({
           observed = await waitForChange(registered.id, observed, signal)
         }
       })().finally(() => {
+        // A source change may detach the observer while an upload is still staged.
+        // Only pre-commit uploads are cancelled here; committed server jobs keep running.
+        if (onSubmitted && run.batchId && !run.committed && !run.cancelRequested) {
+          void caeBatches
+            .cancel(run.batchId)
+            .then(update)
+            .catch((cause: unknown) => {
+              latest.current.onActivity?.({
+                source: 'cae',
+                level: 'error',
+                message: `Batch 업로드 정리 실패: ${String(cause)}`,
+              })
+            })
+        }
         if (active.current !== run) return
         active.current = null
         setOperation(null)
@@ -493,6 +511,7 @@ export function useCaeMeasurementActions({
     async (
       candidates: BrowserBatchCandidates,
       onProgress: (progress: CandidateBatchProgress) => void,
+      onSubmitted?: (batch: CaeBatch) => void,
     ): Promise<CandidateBatchProgress> => {
       let summary: CandidateBatchProgress | null = null
       await submit(
@@ -508,6 +527,9 @@ export function useCaeMeasurementActions({
           summary = progress
           onProgress(progress)
         },
+        undefined,
+        undefined,
+        onSubmitted,
       )
       if (!summary) throw new Error('CAE Batch 결과를 찾을 수 없습니다.')
       return summary

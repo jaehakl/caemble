@@ -79,6 +79,7 @@ it('uses the sole New action to open Templates and removes the old Examples and 
       setAnalysisTab: vi.fn(),
       setDialog,
       workbench: workbenchStub(),
+      batchGenerationControl: <button>일괄생성</button>,
     }),
   )
 
@@ -98,6 +99,11 @@ it('uses the sole New action to open Templates and removes the old Examples and 
       <WorkbenchRibbon activeSectionId="experiment" panels={result.current.ribbonPanels} />
     </TooltipProvider>,
   )
+  expect(
+    within(screen.getByRole('region', { name: '샘플' }))
+      .getAllByRole('button')
+      .map((button) => button.textContent),
+  ).toEqual(['재생성', '일괄생성'])
   const information = screen.getByRole('region', { name: '정보' })
   expect(
     within(information)

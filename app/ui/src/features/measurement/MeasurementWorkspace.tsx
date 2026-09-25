@@ -26,7 +26,6 @@ import { varsFingerprint } from '@/lib/cad/model/vars'
 import { materialVarsHash } from '@/lib/material/resolution'
 import { createCadSourceDocument } from '@/lib/cad/source'
 import type { MeasurementSession } from './useMeasurementSession'
-import { MeasurementSamplingControls } from './MeasurementSamplingControls'
 import { MeasurementSplit } from './MeasurementSplit'
 import { MeasurementVarsEditor } from './MeasurementVarsEditor'
 import { MeasurementPcaChart } from './MeasurementPcaChart'
@@ -56,7 +55,6 @@ export function MeasurementWorkspace({
   const selection = selectionStore ?? localSelection
   const {
     vars,
-    candidates,
     currentId,
     selected,
     valid,
@@ -78,9 +76,6 @@ export function MeasurementWorkspace({
     canDeleteMeasurements,
     forward,
     points,
-    setCandidates,
-    setCurrentId,
-    setSelected,
     setValid,
     setPreviewFrame,
     changeVars,
@@ -206,7 +201,6 @@ export function MeasurementWorkspace({
     controlsSide,
     previewFrame,
   ])
-  const topology = candidates.map((candidate) => candidate.id).join('|')
   const pointsRef = useRef(points)
   pointsRef.current = points
   const varsRef = useRef(vars)
@@ -245,7 +239,7 @@ export function MeasurementWorkspace({
     worker.current.postMessage({ id: ++pcaSequence.current, schema, points: input })
     // Editing projects into the existing snapshot; only membership/data refreshes rebuild it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schemaKey, measurements, topology, pcaRevision])
+  }, [schemaKey, measurements, pcaRevision])
 
   const selectPoint = (id: string, additive: boolean) => {
     const point = id === 'draft' ? projection?.points.find((point) => point.id === id) : null
@@ -259,16 +253,11 @@ export function MeasurementWorkspace({
   const chartPoints =
     projection?.points.map((point) => {
       const row = measurements.find((row) => point.id === `measurement:${row.id}`)
-      const candidate = candidates.find((row) => row.id === point.id)
       const progress = execution[point.id]
       return {
         id: point.id,
         xy: point.xy,
-        label: row
-          ? `Measurement #${row.id}`
-          : point.id === 'draft'
-            ? '편집 후보'
-            : `후보 ${candidates.findIndex((row) => row.id === point.id) + 1}`,
+        label: row ? `Measurement #${row.id}` : '현재 Vars',
         state: row?.recorded_at
           ? 'recorded'
           : progress
@@ -279,7 +268,7 @@ export function MeasurementWorkspace({
                 : 'running'
             : row
               ? 'prepared'
-              : (candidate?.state ?? 'candidate'),
+              : 'candidate',
       }
     }) ?? []
   let currentProjection: number[] | undefined
@@ -307,7 +296,6 @@ export function MeasurementWorkspace({
             label: 'Measurement',
             content: (
               <>
-                <MeasurementSamplingControls session={session} />
                 <WorkbenchRibbonGroup label="시뮬레이션 실행">
                   {operation && operation !== '저장 중' && operation !== '삭제 중' ? (
                     <WorkbenchRibbonButton size="large" icon={<Square />} label="취소" onClick={cancel} />
@@ -316,20 +304,16 @@ export function MeasurementWorkspace({
                       size="large"
                       icon={<Play />}
                       label="실행"
-                      disabled={!persistable || !ready || !valid || busy}
-                      onClick={() => void run(false)}
+                      disabled={
+                        !persistable ||
+                        !ready ||
+                        !valid ||
+                        busy ||
+                        Boolean(measurements.find((row) => `measurement:${row.id}` === currentId)?.recorded_at)
+                      }
+                      onClick={() => void run()}
                     />
                   )}
-                  <div className="grid h-[72px] grid-rows-3 items-center">
-                    <WorkbenchRibbonButton
-                      icon={<Play />}
-                      label="전체 실행"
-                      disabled={
-                        !persistable || !ready || !valid || busy || (!candidates.length && currentId !== 'draft')
-                      }
-                      onClick={() => void run(true)}
-                    />
-                  </div>
                 </WorkbenchRibbonGroup>
                 <WorkbenchRibbonGroup label="예측 모델">
                   <WorkbenchRibbonButton
@@ -378,26 +362,13 @@ export function MeasurementWorkspace({
                 <section className="flex h-full min-h-0 flex-col">
                   <header className="flex shrink-0 flex-wrap items-center gap-2 border-b p-2 text-xs">
                     <strong>Vars PCA</strong>
-                    <span>
-                      {measurements.length} Measurements · {candidates.length} 후보
-                    </span>
+                    <span>{measurements.length} Measurements</span>
                     <button
                       className={controlClass}
                       disabled={!schema || pcaBusy || !valid}
                       onClick={() => setPcaRevision((value) => value + 1)}
                     >
                       PCA 갱신
-                    </button>
-                    <button
-                      className={controlClass}
-                      disabled={busy || !valid || ![...selected].some((id) => id.startsWith('candidate:'))}
-                      onClick={() => {
-                        setCandidates((rows) => rows.filter((row) => !selected.has(row.id)))
-                        if (selected.has(currentId)) setCurrentId('draft')
-                        setSelected(new Set())
-                      }}
-                    >
-                      선택 후보 삭제
                     </button>
                     <button
                       className={controlClass}
@@ -432,16 +403,10 @@ export function MeasurementWorkspace({
                       disabled={!valid || busy}
                       onChange={(event) => void selectPoint(event.target.value, false)}
                     >
-                      <option value="draft">편집 후보</option>
+                      <option value="draft">현재 Vars</option>
                       {measurements.map((row) => (
                         <option key={row.id} value={`measurement:${row.id}`}>
                           #{row.id} · {row.recorded_at ? 'Recorded' : 'Prepared'}
-                        </option>
-                      ))}
-                      {candidates.map((row, index) => (
-                        <option key={row.id} value={row.id}>
-                          후보 {index + 1} · {row.state}
-                          {row.error ? ` · ${row.error}` : ''}
                         </option>
                       ))}
                     </select>
@@ -483,16 +448,7 @@ export function MeasurementWorkspace({
                       first={
                         <section aria-label="미리보기 Viewer" className="flex h-full min-h-0 flex-col">
                           <header className="shrink-0 border-b p-2 text-xs">
-                            <strong>
-                              미리보기 ·{' '}
-                              {previewFrame
-                                ? previewFrame.candidateId.startsWith('measurement:')
-                                  ? `Measurement #${previewFrame.candidateId.slice(12)}`
-                                  : previewFrame.candidateId === 'draft'
-                                    ? '편집 후보'
-                                    : `후보 ${previewFrame.candidateId.slice(10, 18)}`
-                                : '현재 Vars'}
-                            </strong>
+                            <strong>미리보기 · {previewFrame ? '실행 당시 Vars' : '현재 Vars'}</strong>
                             <span className="ml-2 text-muted-foreground">
                               {previewFrame
                                 ? previewFrame.error || (previewFrame.data ? 'Forward 예측 · 실행 전' : 'CAD')

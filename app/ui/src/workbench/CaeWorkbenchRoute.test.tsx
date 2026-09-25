@@ -22,12 +22,10 @@ const mocks = vi.hoisted(() => ({
   loadMeasurement: vi.fn(),
   reportError: vi.fn(),
   sessionBusy: false,
-  runBatch: vi.fn(),
 }))
 
 vi.mock('@/features/measurement/useMeasurementSession', () => ({
-  useMeasurementSession: ({ onGenerated }: { onGenerated: () => void }) => ({
-    candidates: [],
+  useMeasurementSession: () => ({
     query: {},
     busy: mocks.sessionBusy,
     running: false,
@@ -36,10 +34,6 @@ vi.mock('@/features/measurement/useMeasurementSession', () => ({
     ready: true,
     persistable: true,
     currentId: 'draft',
-    generate: onGenerated,
-    run: mocks.runBatch,
-    count: '10',
-    algorithm: 'random',
     invalidateSelection: vi.fn(),
   }),
 }))
@@ -57,7 +51,13 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
     experimentId: 7,
     experiment: {},
-    experimentDocument: { measurement: {}, resultSessionKey: 'session', materialWarnings: [], draftTaskNames: [] },
+    experimentDocument: {
+      varsSchema: {},
+      measurement: {},
+      resultSessionKey: 'session',
+      materialWarnings: [],
+      draftTaskNames: [],
+    },
     experimentIsDemo: mocks.isDemo,
     experimentManageable: mocks.manageable,
     selectionRestoring: mocks.restoring,
@@ -94,17 +94,17 @@ vi.mock('@/features/calculation', () => ({ calculationAccessPolicy: () => ({}) }
 vi.mock('@/features/cae-workbench/useCaePageChrome', () => ({
   useCaePageChrome: ({
     preflightControls,
-    samplingControls,
+    batchGenerationControl,
   }: {
     preflightControls: ReactNode
-    samplingControls: ReactNode
+    batchGenerationControl: ReactNode
   }) => ({
     ribbonPanels: [
       {
         sectionId: 'experiment',
         content: (
           <>
-            {samplingControls}
+            {batchGenerationControl}
             {preflightControls}
           </>
         ),
@@ -303,7 +303,7 @@ beforeEach(() => {
 })
 
 describe('Workbench section navigation', () => {
-  it('opens the candidate sidebar on generation and prevents overlapping single and batch runs', () => {
+  it('offers only batch generation and disables it during another run', () => {
     const client = new QueryClient()
     const route = () => (
       <QueryClientProvider client={client}>
@@ -313,20 +313,18 @@ describe('Workbench section navigation', () => {
       </QueryClientProvider>
     )
     const { rerender } = render(route())
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '실행' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Vars 접기' }))
-    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
-    expect(screen.getByRole('tab', { name: 'Measurements' })).toHaveAttribute('data-state', 'active')
-    expect(screen.getByRole('button', { name: 'Vars 접기' })).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '전체 실행' }))
-    expect(mocks.runBatch).toHaveBeenCalledWith(true)
+    expect(screen.queryByRole('button', { name: '샘플 생성' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '전체 실행' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '일괄생성' }))
+    expect(screen.getByRole('dialog', { name: '일괄생성' })).toBeVisible()
+    expect(screen.getByLabelText('알고리즘')).toHaveValue('empty-lhs')
+    expect(screen.getByLabelText('생성 개수')).toHaveValue(10)
+    fireEvent.click(screen.getByRole('button', { name: '취소' }))
     mocks.sessionBusy = true
     rerender(route())
+    expect(screen.getByRole('button', { name: '일괄생성' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '실행' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '재생성 및 실행' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '샘플 생성' })).toBeDisabled()
   })
   it('connects editor selection directly to the same store used by the Viewer', () => {
     render(

@@ -65,7 +65,7 @@ export function useCaePageChrome({
   workbench,
   predictionState,
   preflightControls,
-  samplingControls,
+  batchGenerationControl,
   requestExperimentSave,
   requestExperimentSaveAs,
   fileBusy = false,
@@ -90,7 +90,7 @@ export function useCaePageChrome({
   workbench: CaeWorkbenchState
   predictionState: PredictionRibbonState
   preflightControls?: ReactNode
-  samplingControls?: ReactNode
+  batchGenerationControl?: ReactNode
   requestExperimentSave?: () => void
   requestExperimentSaveAs?: () => void
   fileBusy?: boolean
@@ -587,8 +587,8 @@ export function useCaePageChrome({
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="샘플">
             <WorkbenchRibbonAction action={actions.generateCandidate} size="large" />
+            {batchGenerationControl}
           </WorkbenchRibbonGroup>
-          {samplingControls}
           {preflightControls ? (
             <WorkbenchRibbonGroup label="시뮬레이션">{preflightControls}</WorkbenchRibbonGroup>
           ) : null}

@@ -127,7 +127,7 @@ export function MeasurementPcaChart({
       </svg>
       {!projection?.axes.length ? (
         <p className="px-3 text-xs text-muted-foreground">
-          PCA 방향을 계산할 분산이 없습니다. Random 또는 빈 구간 LHS로 후보를 생성하세요.
+          PCA 방향을 계산할 분산이 없습니다. 구성 탭의 일괄생성으로 Measurement를 추가하세요.
         </p>
       ) : null}
       {overlap.length ? (
@@ -156,7 +156,7 @@ export function MeasurementPcaChart({
       ) : null}
       <div className="flex shrink-0 flex-wrap gap-2 px-3 py-1 text-[10px] text-muted-foreground">
         {Object.entries({
-          candidate: '후보',
+          candidate: '현재 Vars',
           prepared: 'Prepared',
           running: '실행 중',
           recorded: 'Recorded',

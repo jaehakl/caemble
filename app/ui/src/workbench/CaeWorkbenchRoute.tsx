@@ -1,16 +1,11 @@
 import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { varsFingerprint } from '@/lib/cad/model/vars'
 import { useMeasurementSession } from '@/features/measurement/useMeasurementSession'
-import {
-  MeasurementSamplingControls,
-  MeasurementBatchControls,
-} from '@/features/measurement/MeasurementSamplingControls'
-import { MeasurementCandidateList } from '@/features/measurement/MeasurementCandidateList'
-import { MeasurementCandidatePreparation } from '@/features/measurement/MeasurementCandidatePreparation'
+import { BatchGenerationDialog } from '@/features/measurement/BatchGenerationDialog'
 import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
 import { useExperimentWarnings } from '@/features/cae-workbench/useExperimentWarnings'
 import { usePreflight } from '@/features/measurement/usePreflight'
-import { Rows3, Play, RefreshCw, Square, X } from 'lucide-react'
+import { Rows3, Play, RefreshCw, Sparkles, Square, X } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { useAuth } from '@/features/auth/use-auth'
@@ -131,11 +126,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       const loaded = await workbench.selection.loadMeasurement(row, workbench.experimentId)
       if (loaded) preflight.clear()
     },
-    onGenerated: () => {
-      setSidebarTab('measurements')
-      setVarsLayout((layout) => ({ ...layout, collapsed: false }))
-    },
   })
+  const batchContext = JSON.stringify([
+    auth.queryScope,
+    workbench.workspaceSession,
+    workbench.experimentId,
+    workbench.experiment?.sourceBundle,
+  ])
+  const [batchDialogContext, setBatchDialogContext] = useState<string | null>(null)
+  useEffect(() => {
+    if (batchDialogContext !== null && batchDialogContext !== batchContext) setBatchDialogContext(null)
+  }, [batchContext, batchDialogContext])
+  const canGenerateBatch =
+    workbench.experimentId !== null &&
+    measurementSession.valid &&
+    measurementSession.persistable &&
+    measurementSession.ready &&
+    !measurementSession.busy &&
+    Boolean(workbench.experimentDocument.varsSchema)
   const viewerCaptureRef = useRef<HTMLDivElement | null>(null)
   const saveWorkflow = useExperimentSaveWorkflow(workbench, preflight, viewerCaptureRef, page.setDialog)
   const setLayout = page.setLayout
@@ -255,11 +263,14 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       void saveWorkflow.saveAs()
     },
     fileBusy: saveWorkflow.busy || preflight.busy || measurementSession.busy,
-    samplingControls: (
-      <>
-        <MeasurementSamplingControls session={measurementSession} />
-        <MeasurementBatchControls session={measurementSession} />
-      </>
+    batchGenerationControl: (
+      <WorkbenchRibbonButton
+        size="large"
+        icon={<Sparkles />}
+        label="일괄생성"
+        disabled={!canGenerateBatch}
+        onClick={() => setBatchDialogContext(batchContext)}
+      />
     ),
     preflightControls: (
       <div className="flex h-[72px] items-center gap-1 text-xs">
@@ -502,12 +513,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   return (
     <main className="flex h-full min-h-[560px] min-w-0 flex-col overflow-hidden bg-background text-foreground">
-      {measurementSession.preparation ? (
-        <MeasurementCandidatePreparation
-          key={measurementSession.preparation.input.candidateId}
-          request={measurementSession.preparation}
-          experiment={workbench.experiment}
-          onActivity={runtimeConsole.append}
+      {batchDialogContext === batchContext ? (
+        <BatchGenerationDialog
+          workbench={workbench}
+          eligible={canGenerateBatch}
+          onClose={() => setBatchDialogContext(null)}
         />
       ) : null}
       <WorkbenchConsoleLayout
@@ -564,25 +574,20 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                   />
                 }
                 measurements={(active) => (
-                  <div className="flex h-full min-h-0 flex-col">
-                    <MeasurementCandidateList session={measurementSession} />
-                    <div className="min-h-0 flex-1">
-                      <MeasurementTable
-                        active={active}
-                        experimentId={workbench.experimentId}
-                        dataReadable={experimentDataReadable}
-                        selectedId={workbench.selection.measurement?.id ?? null}
-                        loading={workbench.selectionRestoring}
-                        onSelect={(id) =>
-                          page.runSafely(async () => {
-                            measurementSession.invalidateSelection()
-                            const row = await workbench.selection.loadMeasurement(id, workbench.experimentId)
-                            if (row && preflight.result) preflight.clear()
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
+                  <MeasurementTable
+                    active={active}
+                    experimentId={workbench.experimentId}
+                    dataReadable={experimentDataReadable}
+                    selectedId={workbench.selection.measurement?.id ?? null}
+                    loading={workbench.selectionRestoring}
+                    onSelect={(id) =>
+                      page.runSafely(async () => {
+                        measurementSession.invalidateSelection()
+                        const row = await workbench.selection.loadMeasurement(id, workbench.experimentId)
+                        if (row && preflight.result) preflight.clear()
+                      })
+                    }
+                  />
                 )}
                 varsLayout={varsLayout}
                 onVarsLayoutChange={setVarsLayout}
