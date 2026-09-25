@@ -21,8 +21,28 @@ const mocks = vi.hoisted(() => ({
   clearPreview: vi.fn(),
   loadMeasurement: vi.fn(),
   reportError: vi.fn(),
+  sessionBusy: false,
+  runBatch: vi.fn(),
 }))
 
+vi.mock('@/features/measurement/useMeasurementSession', () => ({
+  useMeasurementSession: ({ onGenerated }: { onGenerated: () => void }) => ({
+    candidates: [],
+    query: {},
+    busy: mocks.sessionBusy,
+    running: false,
+    valid: true,
+    schema: {},
+    ready: true,
+    persistable: true,
+    currentId: 'draft',
+    generate: onGenerated,
+    run: mocks.runBatch,
+    count: '10',
+    algorithm: 'random',
+    invalidateSelection: vi.fn(),
+  }),
+}))
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({ user: null, isAuthenticated: false, isPending: false, queryScope: 'guest' }),
 }))
@@ -36,7 +56,8 @@ vi.mock('@/features/measurement/MeasurementTable', () => ({
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
     experimentId: 7,
-    experimentDocument: { resultSessionKey: 'session', materialWarnings: [], draftTaskNames: [] },
+    experiment: {},
+    experimentDocument: { measurement: {}, resultSessionKey: 'session', materialWarnings: [], draftTaskNames: [] },
     experimentIsDemo: mocks.isDemo,
     experimentManageable: mocks.manageable,
     selectionRestoring: mocks.restoring,
@@ -71,8 +92,24 @@ vi.mock('./useCaePageSession', async () => {
 })
 vi.mock('@/features/calculation', () => ({ calculationAccessPolicy: () => ({}) }))
 vi.mock('@/features/cae-workbench/useCaePageChrome', () => ({
-  useCaePageChrome: ({ preflightControls }: { preflightControls: ReactNode }) => ({
-    ribbonPanels: [{ sectionId: 'experiment', content: preflightControls }],
+  useCaePageChrome: ({
+    preflightControls,
+    samplingControls,
+  }: {
+    preflightControls: ReactNode
+    samplingControls: ReactNode
+  }) => ({
+    ribbonPanels: [
+      {
+        sectionId: 'experiment',
+        content: (
+          <>
+            {samplingControls}
+            {preflightControls}
+          </>
+        ),
+      },
+    ],
   }),
 }))
 vi.mock('@/features/cae-workbench/viewer/useSelectionSourceNavigation', () => ({
@@ -261,10 +298,36 @@ beforeEach(() => {
   mocks.manageable = false
   mocks.restoring = false
   mocks.preview = false
+  mocks.sessionBusy = false
   mocks.loadMeasurement.mockReset()
 })
 
 describe('Workbench section navigation', () => {
+  it('opens the candidate sidebar on generation and prevents overlapping single and batch runs', () => {
+    const client = new QueryClient()
+    const route = () => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(route())
+    expect(screen.getByRole('button', { name: '전체 실행' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '실행' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Vars 접기' }))
+    fireEvent.click(screen.getByRole('button', { name: '샘플 생성' }))
+    expect(screen.getByRole('tab', { name: 'Measurements' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByRole('button', { name: 'Vars 접기' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '전체 실행' }))
+    expect(mocks.runBatch).toHaveBeenCalledWith(true)
+    mocks.sessionBusy = true
+    rerender(route())
+    expect(screen.getByRole('button', { name: '실행' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '재생성 및 실행' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '전체 실행' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '샘플 생성' })).toBeDisabled()
+  })
   it('connects editor selection directly to the same store used by the Viewer', () => {
     render(
       <QueryClientProvider client={new QueryClient()}>

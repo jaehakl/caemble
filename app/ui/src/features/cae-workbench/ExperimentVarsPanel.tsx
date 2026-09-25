@@ -3,7 +3,17 @@ import { VarsEditor } from '@/components/vars-editor'
 import { flattenVarsTensor } from '@/lib/cad/model'
 import type { CaeWorkbenchState } from './state/useCaeWorkbenchState'
 
-export function ExperimentVarsPanel({ workbench, previewing }: { workbench: CaeWorkbenchState; previewing: boolean }) {
+export function ExperimentVarsPanel({
+  workbench,
+  previewing,
+  busy = false,
+  onValueChange,
+}: {
+  workbench: CaeWorkbenchState
+  previewing: boolean
+  busy?: boolean
+  onValueChange?: (vars: Parameters<CaeWorkbenchState['setCandidateVariables']>[0]) => void
+}) {
   const { experimentDocument: document, candidateVars, selectionRestoring, experimentSourceValidated } = workbench
   const [validatedSource, setValidatedSource] = useState<{
     source: CaeWorkbenchState['experiment']
@@ -34,15 +44,17 @@ export function ExperimentVarsPanel({ workbench, previewing }: { workbench: CaeW
       return false
     }
   }, [schema, value])
-  const message = previewing
-    ? '미리보기 중에는 vars를 편집할 수 없습니다.'
-    : selectionRestoring
-      ? 'Measurement를 불러오는 중입니다.'
-      : !sourceValidated
-        ? 'Experiment 소스 검증이 필요합니다.'
-        : !ready || document.resultSessionKey !== workbench.workspaceSession
-          ? 'vars를 준비하는 중입니다.'
-          : null
+  const message = busy
+    ? '실행 중에는 vars를 편집할 수 없습니다.'
+    : previewing
+      ? '미리보기 중에는 vars를 편집할 수 없습니다.'
+      : selectionRestoring
+        ? 'Measurement를 불러오는 중입니다.'
+        : !sourceValidated
+          ? 'Experiment 소스 검증이 필요합니다.'
+          : !ready || document.resultSessionKey !== workbench.workspaceSession
+            ? 'vars를 준비하는 중입니다.'
+            : null
   return (
     <div className="space-y-3 p-3">
       <p className="text-[11px] text-muted-foreground">
@@ -59,7 +71,7 @@ export function ExperimentVarsPanel({ workbench, previewing }: { workbench: CaeW
           value={value}
           disabled={message !== null}
           resetKey={session}
-          onValueChange={(next) => workbench.setCandidateVariables(next, 'user-vars')}
+          onValueChange={onValueChange ?? ((next) => workbench.setCandidateVariables(next, 'user-vars'))}
         />
       ) : null}
     </div>

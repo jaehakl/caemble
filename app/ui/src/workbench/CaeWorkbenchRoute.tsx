@@ -1,5 +1,12 @@
 import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { varsFingerprint } from '@/lib/cad/model/vars'
+import { useMeasurementSession } from '@/features/measurement/useMeasurementSession'
+import {
+  MeasurementSamplingControls,
+  MeasurementBatchControls,
+} from '@/features/measurement/MeasurementSamplingControls'
+import { MeasurementCandidateList } from '@/features/measurement/MeasurementCandidateList'
+import { MeasurementCandidatePreparation } from '@/features/measurement/MeasurementCandidatePreparation'
 import { MeasurementWorkspace } from '@/features/measurement/MeasurementWorkspace'
 import { useExperimentWarnings } from '@/features/cae-workbench/useExperimentWarnings'
 import { usePreflight } from '@/features/measurement/usePreflight'
@@ -73,6 +80,7 @@ function AuthenticatedCaePage() {
 }
 
 function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
+  const [sidebarTab, setSidebarTab] = useState('vars')
   const [varsLayout, setVarsLayout] = useState({ width: 280, collapsed: false })
   const location = useLocation()
   const navigate = useNavigate()
@@ -106,6 +114,27 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     authPending: auth.isPending,
     queryScope: auth.queryScope,
     hasUnsavedCalculationWork: calculationDirty,
+  })
+  const measurementSession = useMeasurementSession({
+    workbench,
+    authenticated: auth.isAuthenticated,
+    dataReadable: experimentDataReadable,
+    active: page.activeSection === 'measurement',
+    externalBusy: preflight.busy,
+    onActivity: runtimeConsole.append,
+    onCandidateSelected: (vars) => {
+      workbench.selection.clearMeasurement()
+      workbench.setCandidateVariables(vars, 'user-vars')
+      preflight.clear()
+    },
+    onMeasurementSelected: async (row) => {
+      const loaded = await workbench.selection.loadMeasurement(row, workbench.experimentId)
+      if (loaded) preflight.clear()
+    },
+    onGenerated: () => {
+      setSidebarTab('measurements')
+      setVarsLayout((layout) => ({ ...layout, collapsed: false }))
+    },
   })
   const viewerCaptureRef = useRef<HTMLDivElement | null>(null)
   const saveWorkflow = useExperimentSaveWorkflow(workbench, preflight, viewerCaptureRef, page.setDialog)
@@ -225,7 +254,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     requestExperimentSaveAs: () => {
       void saveWorkflow.saveAs()
     },
-    fileBusy: saveWorkflow.busy || preflight.busy,
+    fileBusy: saveWorkflow.busy || preflight.busy || measurementSession.busy,
+    samplingControls: (
+      <>
+        <MeasurementSamplingControls session={measurementSession} />
+        <MeasurementBatchControls session={measurementSession} />
+      </>
+    ),
     preflightControls: (
       <div className="flex h-[72px] items-center gap-1 text-xs">
         <WorkbenchRibbonButton
@@ -233,7 +268,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           icon={preflight.busy ? <Square /> : <Play />}
           label={preflight.busy ? '취소' : '실행'}
           disabled={
-            !preflight.busy && (!workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy)
+            !preflight.busy &&
+            (!workbench.experimentDocument.measurement ||
+              workbench.experimentDocument.runIsBusy ||
+              measurementSession.busy)
           }
           onClick={() => {
             if (preflight.busy) void preflight.cancel()
@@ -245,7 +283,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           size="large"
           icon={<RefreshCw />}
           label="재생성 및 실행"
-          disabled={preflight.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy}
+          disabled={
+            preflight.busy || measurementSession.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy
+          }
           onClick={() => {
             if (!auth.isAuthenticated) requestAccount()
             else void preflight.run(true)
@@ -315,6 +355,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           onRequestLogin={requestAccount}
           onSelectMeasurement={(measurementId) =>
             page.runSafely(async () => {
+              measurementSession.invalidateSelection()
               const row = await workbench.selection.loadMeasurement(measurementId, workbench.experimentId)
               if (row && preflight.result) preflight.clear()
             })
@@ -461,6 +502,14 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   return (
     <main className="flex h-full min-h-[560px] min-w-0 flex-col overflow-hidden bg-background text-foreground">
+      {measurementSession.preparation ? (
+        <MeasurementCandidatePreparation
+          key={measurementSession.preparation.input.candidateId}
+          request={measurementSession.preparation}
+          experiment={workbench.experiment}
+          onActivity={runtimeConsole.append}
+        />
+      ) : null}
       <WorkbenchConsoleLayout
         console={bottomDock}
         heightRatio={page.layout.bottomHeightRatio}
@@ -477,7 +526,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 selectionStore={measurementSelection}
                 key={`${workbench.workspaceSession}:${JSON.stringify(workbench.experiment?.sourceBundle)}`}
                 workbench={workbench}
-                authenticated={auth.isAuthenticated}
+                session={measurementSession}
                 dataReadable={experimentDataReadable}
                 active={page.activeSection === 'measurement'}
                 menubar={menubar}
@@ -492,24 +541,48 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             {page.activeSection === 'experiment' ? (
               <ExperimentWorkspace
                 menubar={menubar}
-                ribbon={ribbon}
+                ribbon={
+                  <>
+                    {ribbon}
+                    {measurementSession.error || measurementSession.query.isError ? (
+                      <p role="alert" className="border-b px-3 py-1 text-xs text-destructive">
+                        {measurementSession.error || 'Measurement를 불러오지 못했습니다.'}
+                      </p>
+                    ) : null}
+                  </>
+                }
                 viewer={viewerPane}
                 editor={rightPane}
-                vars={<ExperimentVarsPanel workbench={workbench} previewing={Boolean(preview)} />}
-                measurements={(active) => (
-                  <MeasurementTable
-                    active={active}
-                    experimentId={workbench.experimentId}
-                    dataReadable={experimentDataReadable}
-                    selectedId={workbench.selection.measurement?.id ?? null}
-                    loading={workbench.selectionRestoring}
-                    onSelect={(id) =>
-                      page.runSafely(async () => {
-                        const row = await workbench.selection.loadMeasurement(id, workbench.experimentId)
-                        if (row && preflight.result) preflight.clear()
-                      })
-                    }
+                sidebarTab={sidebarTab}
+                onSidebarTabChange={setSidebarTab}
+                vars={
+                  <ExperimentVarsPanel
+                    workbench={workbench}
+                    previewing={Boolean(preview)}
+                    busy={measurementSession.busy}
+                    onValueChange={measurementSession.changeVars}
                   />
+                }
+                measurements={(active) => (
+                  <div className="flex h-full min-h-0 flex-col">
+                    <MeasurementCandidateList session={measurementSession} />
+                    <div className="min-h-0 flex-1">
+                      <MeasurementTable
+                        active={active}
+                        experimentId={workbench.experimentId}
+                        dataReadable={experimentDataReadable}
+                        selectedId={workbench.selection.measurement?.id ?? null}
+                        loading={workbench.selectionRestoring}
+                        onSelect={(id) =>
+                          page.runSafely(async () => {
+                            measurementSession.invalidateSelection()
+                            const row = await workbench.selection.loadMeasurement(id, workbench.experimentId)
+                            if (row && preflight.result) preflight.clear()
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
                 )}
                 varsLayout={varsLayout}
                 onVarsLayoutChange={setVarsLayout}
@@ -535,7 +608,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 onDirtyChange={setCalculationDirty}
                 onRequestLogin={requestAccount}
                 onSaveStateChange={setCalculationSaveState}
-                onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
+                onSelectMeasurement={(row) =>
+                  page.runSafely(() => {
+                    measurementSession.invalidateSelection()
+                    return workbench.selection.loadMeasurement(row)
+                  })
+                }
                 onClearMeasurement={workbench.selection.clearMeasurement}
                 onUsageChanged={workbench.refreshExperimentUsage}
                 publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}

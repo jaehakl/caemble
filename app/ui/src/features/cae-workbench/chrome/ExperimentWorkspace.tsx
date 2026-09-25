@@ -11,6 +11,8 @@ export function ExperimentWorkspace({
   editor,
   vars,
   measurements,
+  sidebarTab,
+  onSidebarTabChange,
   varsLayout,
   onVarsLayoutChange,
 }: {
@@ -20,12 +22,16 @@ export function ExperimentWorkspace({
   editor: ReactNode
   vars?: ReactNode
   measurements?: (active: boolean) => ReactNode
+  sidebarTab?: string
+  onSidebarTabChange?: (tab: string) => void
   varsLayout?: { width: number; collapsed: boolean }
   onVarsLayoutChange?: (layout: { width: number; collapsed: boolean }) => void
 }) {
   const container = useRef<HTMLDivElement>(null)
   const [availableWidth, setAvailableWidth] = useState(1200)
-  const [tab, setTab] = useState('vars')
+  const [localTab, setLocalTab] = useState('vars')
+  const tab = sidebarTab ?? localTab
+  const setTab = onSidebarTabChange ?? setLocalTab
   const [localLayout, setLocalLayout] = useState({ width: 280, collapsed: false })
   const layout = varsLayout ?? localLayout
   const updateLayout = onVarsLayoutChange ?? setLocalLayout

@@ -3,7 +3,7 @@ import { SharedViewerDisplayControls, ViewerResultMenuHost } from '@/features/vi
 import { initialViewerDisplay } from '@/features/viewer/viewer/viewerDisplay'
 import { ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
 import { ViewerControls } from '@/features/viewer/viewer/comparisonSettings'
-import { Plus, Play, Square, Sparkles, BrainCircuit } from 'lucide-react'
+import { Play, Square, BrainCircuit } from 'lucide-react'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 import { ComparisonToolbar } from '@/features/viewer/viewer/ComparisonToolbar'
 import {
@@ -12,11 +12,7 @@ import {
   WorkbenchRibbonGroup,
 } from '@/features/cae-workbench/chrome/WorkbenchRibbon'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getListRequest } from '@/api'
-import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { SavedMeasurement } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import {
   createViewerSettings,
@@ -24,52 +20,25 @@ import {
   type ViewerComparison,
 } from '@/features/viewer/viewer/comparisonSettings'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
-import { useCadWorkspace, type CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
+import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
-import type { RecordedData, RecordedDataRule, Vars } from '@/lib/cad/model'
-import { varsFingerprint, varsSchemaFingerprint } from '@/lib/cad/model/vars'
+import { varsFingerprint } from '@/lib/cad/model/vars'
 import { materialVarsHash } from '@/lib/material/resolution'
 import { createCadSourceDocument } from '@/lib/cad/source'
-import { measurementsQueryOptions } from './queryOptions'
-import { useCaeDataSelection } from './useCaeDataSelection'
-import { useMeasurementForward } from './useMeasurementForward'
-import type { ReviewedMeasurementInput, ReviewedMeasurementProgress } from './useCaeMeasurementActions'
-import {
-  MeasurementCandidatePreparation,
-  type MeasurementCandidatePreparationRequest,
-} from './MeasurementCandidatePreparation'
+import type { MeasurementSession } from './useMeasurementSession'
+import { MeasurementSamplingControls } from './MeasurementSamplingControls'
 import { MeasurementSplit } from './MeasurementSplit'
 import { MeasurementVarsEditor } from './MeasurementVarsEditor'
 import { MeasurementPcaChart } from './MeasurementPcaChart'
-import {
-  projectSpace,
-  sampleMeasurementVars,
-  spaceValues,
-  varsAtProjection,
-  type MeasurementProjection,
-  type VarsPoint,
-} from './measurementSpace'
+import { projectSpace, spaceVars, spaceValues, varsAtProjection, type MeasurementProjection } from './measurementSpace'
 
-type Candidate = VarsPoint & {
-  state: 'candidate' | 'running' | 'failed' | 'cancelled'
-  error?: string
-  measurementId?: number
-}
-type PreviewFrame = {
-  candidateId: string
-  document: CadDocumentController
-  vars: Readonly<Vars>
-  data?: RecordedData
-  rules?: readonly RecordedDataRule[]
-  error: string
-}
 const controlClass =
   'h-9 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45'
 
 export function MeasurementWorkspace({
   selectionStore,
   workbench,
-  authenticated,
+  session,
   dataReadable,
   active,
   menubar,
@@ -77,7 +46,7 @@ export function MeasurementWorkspace({
 }: {
   workbench: CaeWorkbenchState
   selectionStore?: ViewerSelectionStore
-  authenticated: boolean
+  session: MeasurementSession
   dataReadable: boolean
   active: boolean
   menubar: ReactNode
@@ -85,25 +54,42 @@ export function MeasurementWorkspace({
 }) {
   const localSelection = useViewerSelectionStore(workbench.workspaceSession)
   const selection = selectionStore ?? localSelection
-  const queryScope = usePrivateQueryScope()
-  const [vars, setVars] = useState<Readonly<Vars> | null>(
-    workbench.candidateVars ?? workbench.selection.variables ?? workbench.experimentDocument.variables,
-  )
-  const [evaluatedVars, setEvaluatedVars] = useState(vars)
-  const [candidates, setCandidates] = useState<Candidate[]>([])
-  const [currentId, setCurrentId] = useState('draft')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const {
+    vars,
+    candidates,
+    currentId,
+    selected,
+    valid,
+    error,
+    operation,
+    previewFrame,
+    recordedDocuments,
+    execution,
+    actual,
+    document,
+    schema,
+    schemaKey,
+    query,
+    measurements,
+    currentKey,
+    ready,
+    busy,
+    persistable,
+    canDeleteMeasurements,
+    forward,
+    points,
+    setCandidates,
+    setCurrentId,
+    setSelected,
+    setValid,
+    setPreviewFrame,
+    changeVars,
+    selectPoint: selectSessionPoint,
+    deleteSelectedMeasurements,
+    run,
+    cancel,
+  } = session
   const [selectedVar, setSelectedVar] = useState<string | null>(null)
-  const [valid, setValid] = useState(true)
-  const [count, setCount] = useState('10')
-  const [algorithm, setAlgorithm] = useState<'random' | 'empty-lhs'>('random')
-  const [error, setError] = useState('')
-  const [operation, setOperation] = useState<string | null>(null)
-  const [previewFrame, setPreviewFrame] = useState<PreviewFrame | null>(null)
-  const [preparation, setPreparation] = useState<MeasurementCandidatePreparationRequest | null>(null)
-  const [recordedDocuments, setRecordedDocuments] = useState<Record<number, CadDocumentController>>({})
-  const batchController = useRef<AbortController | null>(null)
-  const [execution, setExecution] = useState<Record<string, ReviewedMeasurementProgress>>({})
   const [selectedResult, setSelectedResult] = useState(() => {
     const defaults = workbench.experimentRecord?.viewer_defaults
     return defaults?.version === 2 ? defaults.selectedOutput : ''
@@ -136,15 +122,6 @@ export function MeasurementWorkspace({
   const [pcaBusy, setPcaBusy] = useState(false)
   const worker = useRef<Worker | null>(null)
   const pcaSequence = useRef(0)
-  const selectionSequence = useRef(0)
-  const initialSelectionApplied = useRef(false)
-  const mounted = useRef(true)
-  const latest = useRef(workbench)
-  latest.current = workbench
-  const actual = useCaeDataSelection(workbench.experimentId, 'visible')
-  const actualRef = useRef(actual)
-  actualRef.current = actual
-  const { loadMeasurement: loadActualMeasurement } = actual
   const recordedSource = useMemo(
     () =>
       workbench.experimentRecord?.source_bundle
@@ -152,16 +129,6 @@ export function MeasurementWorkspace({
         : workbench.experiment,
     [workbench.experimentRecord?.source_bundle, workbench.experiment],
   )
-  const { experimentDocument: editableDocument } = useCadWorkspace(
-    previewFrame ? null : workbench.experiment,
-    undefined,
-    {
-      candidateVars: evaluatedVars ?? undefined,
-      resetKey: workbench.workspaceSession,
-      onActivity,
-    },
-  )
-  const document = previewFrame?.document ?? editableDocument
   const { experimentDocument: actualDocument } = useCadWorkspace(
     actual.measurement && !recordedDocuments[actual.measurement.id] ? recordedSource : null,
     undefined,
@@ -173,47 +140,6 @@ export function MeasurementWorkspace({
       onActivity,
     },
   )
-  const schema = document.varsSchema ?? workbench.experimentDocument.varsSchema
-  const schemaKey = schema ? varsSchemaFingerprint(schema) : ''
-  const sourceHash = workbench.experimentRecord?.source_hash ?? ''
-  const contextKey = `${queryScope}:${workbench.experimentId}:${sourceHash}:${schemaKey}`
-  const query = useQuery({
-    ...measurementsQueryOptions(queryScope, workbench.experimentId, {
-      ...getListRequest('visible'),
-      filter: { experiment_id: [workbench.experimentId, workbench.experimentId] },
-      limit: null,
-      sort: ['id', 'asc'],
-    }),
-    enabled: dataReadable && workbench.experimentId !== null,
-    refetchOnWindowFocus: active,
-  })
-  const measurements = useMemo(() => (query.data?.items ?? []) as SavedMeasurement[], [query.data?.items])
-  const currentKey = varsFingerprint(vars)
-  const ready =
-    (document.status === 'Ready' || document.status === 'Rendering') &&
-    document.successfulRevision === document.revision &&
-    varsFingerprint(document.variables) === currentKey &&
-    document.materialSnapshot !== null
-  const busy = operation !== null || workbench.measurementActions.busy || workbench.calculationDataActions.busy
-  const persistable =
-    authenticated && workbench.experimentClean && workbench.experimentManageable && !document.draftTaskNames.length
-  const selectedMeasurements = measurements.filter(
-    (row) =>
-      selected.has(`measurement:${row.id}`) ||
-      candidates.some((candidate) => selected.has(candidate.id) && candidate.measurementId === row.id),
-  )
-  const canDeleteMeasurements =
-    authenticated && workbench.experimentManageable && selectedMeasurements.length > 0 && !busy
-  const forward = useMeasurementForward({
-    experimentId: workbench.experimentId,
-    contextKey,
-    document,
-    measurements,
-    vars,
-    ready,
-    active: active && !operation && !previewFrame,
-    onActivity,
-  })
   const previewDocument = previewFrame?.document ?? document
   const previewData = previewFrame ? previewFrame.data : forward.data
   const displayedActualDocument = (actual.measurement && recordedDocuments[actual.measurement.id]) || actualDocument
@@ -281,10 +207,6 @@ export function MeasurementWorkspace({
     previewFrame,
   ])
   const topology = candidates.map((candidate) => candidate.id).join('|')
-  const points = useMemo<VarsPoint[]>(
-    () => [...measurements.map((row) => ({ id: `measurement:${row.id}`, vars: row.vars as Vars })), ...candidates],
-    [measurements, candidates],
-  )
   const pointsRef = useRef(points)
   pointsRef.current = points
   const varsRef = useRef(vars)
@@ -292,48 +214,6 @@ export function MeasurementWorkspace({
   const currentIdRef = useRef(currentId)
   currentIdRef.current = currentId
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setEvaluatedVars(vars), 180)
-    return () => clearTimeout(timer)
-  }, [vars])
-  useEffect(() => {
-    if (!vars && document.variables) {
-      setVars(document.variables)
-      setEvaluatedVars(document.variables)
-    }
-  }, [vars, document.variables])
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      batchController.current?.abort()
-    }
-  }, [])
-  useEffect(() => {
-    setPreviewFrame(null)
-    setRecordedDocuments({})
-    setPreparation(null)
-    setOperation(null)
-    return () => {
-      batchController.current?.abort()
-      batchController.current = null
-    }
-  }, [contextKey, workbench.workspaceSession])
-  useEffect(() => {
-    const initial = workbench.selection.measurement
-    if (initialSelectionApplied.current || !initial?.recorded_at) return
-    initialSelectionApplied.current = true
-    if (selectionSequence.current !== 0) return
-    setVars(initial.vars as Vars)
-    setCurrentId(`measurement:${initial.id}`)
-    setSelected(new Set([`measurement:${initial.id}`]))
-    void loadActualMeasurement(initial).catch((cause: unknown) => {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
-    })
-    return () => {
-      if (!mounted.current) initialSelectionApplied.current = false
-    }
-  }, [loadActualMeasurement, workbench.selection.measurement])
   useEffect(() => {
     const instance = new Worker(new URL('./measurementSpace.worker.ts', import.meta.url), { type: 'module' })
     worker.current = instance
@@ -367,383 +247,13 @@ export function MeasurementWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey, measurements, topology, pcaRevision])
 
-  const changeVars = useCallback(
-    (next: Vars) => {
-      setPreviewFrame(null)
-      selectionSequence.current += 1
-      setVars(next)
-      setError('')
-      setExecution((states) => {
-        const nextStates = { ...states }
-        delete nextStates[currentId]
-        return nextStates
-      })
-      if (currentId.startsWith('candidate:'))
-        setCandidates((rows) =>
-          rows.map((row) =>
-            row.id === currentId
-              ? { ...row, vars: next, state: 'candidate', error: undefined, measurementId: undefined }
-              : row,
-          ),
-        )
-      else {
-        setCurrentId('draft')
-        setSelected(new Set())
-      }
-    },
-    [currentId],
-  )
-  const selectPoint = useCallback(
-    async (id: string, additive: boolean) => {
-      if (!valid || busy) return
-      setPreviewFrame(null)
-      const sequence = ++selectionSequence.current
-      setSelected((ids) => {
-        const next = additive ? new Set(ids) : new Set<string>()
-        if (additive && next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
-      })
-      setError('')
-      if (id === 'draft') {
-        const point = projection?.points.find((point) => point.id === id)
-        if (point && projection) {
-          const { spaceVars } = await import('./measurementSpace')
-          if (sequence === selectionSequence.current) {
-            setVars(spaceVars(projection.layouts, point.values))
-            setCurrentId(id)
-          }
-        }
-        return
-      }
-      const candidate = candidates.find((row) => row.id === id)
-      if (candidate) {
-        setVars(candidate.vars)
-        setCurrentId(id)
-        return
-      }
-      const row = measurements.find((row) => `measurement:${row.id}` === id)
-      if (!row) return
-      setVars(row.vars as Vars)
-      setCurrentId(id)
-      if (row.recorded_at) {
-        try {
-          await actual.loadMeasurement(row)
-        } catch (cause) {
-          if (sequence === selectionSequence.current) setError(cause instanceof Error ? cause.message : String(cause))
-        }
-      }
-    },
-    [actual, busy, candidates, measurements, projection, valid],
-  )
-
-  const generate = () => {
-    if (!schema || !valid || busy) return
-    setPreviewFrame(null)
-    selectionSequence.current += 1
-    try {
-      const existing = points.map((point) => point.vars)
-      if (vars && currentId === 'draft') existing.push(vars)
-      const generated = sampleMeasurementVars(schema, existing, Number(count), algorithm).map((value): Candidate => ({
-        id: `candidate:${crypto.randomUUID()}`,
-        vars: value,
-        state: 'candidate',
-      }))
-      setCandidates((rows) => [...rows, ...generated])
-      setVars(generated[0].vars)
-      setCurrentId(generated[0].id)
-      setSelected(new Set(generated.map((point) => point.id)))
-      setError('')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
-  const addCandidate = () => {
-    if (!vars || !valid || busy) return
-    selectionSequence.current += 1
-    if (points.some((point) => varsFingerprint(point.vars) === currentKey)) {
-      setError('동일한 Vars의 점이 이미 있습니다.')
-      return
-    }
-    const candidate: Candidate = { id: `candidate:${crypto.randomUUID()}`, vars, state: 'candidate' }
-    setCandidates((rows) => [...rows, candidate])
-    setCurrentId(candidate.id)
-    setSelected(new Set([candidate.id]))
-  }
-  const deleteSelectedMeasurements = async () => {
-    if (!canDeleteMeasurements) return
-    const recordedCount = selectedMeasurements.filter((row) => row.recorded_at).length
-    if (
-      !window.confirm(
-        `선택한 Measurement ${selectedMeasurements.length.toLocaleString()}개를 영구 삭제할까요?\n${selectedMeasurements.map((row) => `#${row.id}`).join(', ')}\nRecorded Measurement ${recordedCount.toLocaleString()}개에 연결된 RecordedData도 함께 삭제됩니다.\n연결된 임시 후보도 함께 제거됩니다.${workbench.experimentIsDemo ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
-      )
+  const selectPoint = (id: string, additive: boolean) => {
+    const point = id === 'draft' ? projection?.points.find((point) => point.id === id) : null
+    return selectSessionPoint(
+      id,
+      additive,
+      point && projection ? spaceVars(projection.layouts, point.values) : undefined,
     )
-      return
-    const session = workbench.workspaceSession
-    const experimentId = workbench.experimentId
-    const deletedIds = new Set(selectedMeasurements.map((row) => row.id))
-    const removedPoints = new Set([
-      ...selectedMeasurements.map((row) => `measurement:${row.id}`),
-      ...candidates.filter((row) => row.measurementId && deletedIds.has(row.measurementId)).map((row) => row.id),
-    ])
-    setOperation('삭제 중')
-    setError('')
-    try {
-      const deleted = await workbench.measurementActions.deleteMeasurements(selectedMeasurements)
-      if (
-        !mounted.current ||
-        latest.current.workspaceSession !== session ||
-        latest.current.experimentId !== experimentId
-      )
-        return
-      if (!deleted) return
-      selectionSequence.current += 1
-      setCandidates((rows) => rows.filter((row) => !removedPoints.has(row.id)))
-      setExecution((states) =>
-        Object.fromEntries(
-          Object.entries(states).filter(
-            ([id, progress]) => !removedPoints.has(id) && !deletedIds.has(progress.measurementId ?? -1),
-          ),
-        ),
-      )
-      setSelected((ids) => new Set([...ids].filter((id) => !removedPoints.has(id))))
-      setCurrentId((id) => (removedPoints.has(id) ? 'draft' : id))
-      setPreviewFrame((frame) => (frame && removedPoints.has(frame.candidateId) ? null : frame))
-      setRecordedDocuments((documents) =>
-        Object.fromEntries(Object.entries(documents).filter(([id]) => !deletedIds.has(Number(id)))),
-      )
-      if (
-        deletedIds.has(actualRef.current.measurement?.id ?? -1) ||
-        (actualRef.current.loading && removedPoints.has(currentId))
-      )
-        actualRef.current.clearMeasurement()
-      await query.refetch()
-    } catch (cause) {
-      if (
-        mounted.current &&
-        latest.current.workspaceSession === session &&
-        latest.current.experimentId === experimentId
-      )
-        setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (
-        mounted.current &&
-        latest.current.workspaceSession === session &&
-        latest.current.experimentId === experimentId
-      )
-        setOperation(null)
-    }
-  }
-  const run = async (all: boolean) => {
-    if (!persistable || !ready || !valid || busy || !vars) return
-    const ids = all
-      ? candidates.filter((row) => row.state !== 'running').map((row) => row.id)
-      : selected.size
-        ? [...selected]
-        : [currentId]
-    if (all && currentId === 'draft') ids.push('draft')
-    const queue = ids.flatMap((id) => {
-      const candidate = candidates.find((row) => row.id === id)
-      const row = measurements.find((row) => `measurement:${row.id}` === id || row.id === candidate?.measurementId)
-      if (row?.recorded_at || (!row && !candidate && id !== 'draft')) return []
-      return [
-        {
-          candidateId: id,
-          vars: structuredClone(row ? (row.vars as Vars) : (candidate?.vars ?? vars)),
-          measurementId: row?.id ?? candidate?.measurementId,
-          materialSnapshot:
-            row?.material_snapshot ?? (id === currentId ? (document.materialSnapshot ?? undefined) : undefined),
-        },
-      ]
-    })
-    if (!queue.length) {
-      setError('실행할 후보 또는 Prepared Measurement를 선택하세요.')
-      return
-    }
-    const controller = new AbortController()
-    selectionSequence.current += 1
-    batchController.current = controller
-    const { signal } = controller
-    // Freeze the current view before starting any background work.
-    setPreviewFrame(
-      (frame) =>
-        frame ?? {
-          candidateId: currentId,
-          document: {
-            ...document,
-            handleRenderStart: () => {},
-            handleRenderEnd: () => {},
-            handleRenderError: () => {},
-          },
-          vars,
-          data: forward.data,
-          rules: forward.model?.rules,
-          error: forward.error,
-        },
-    )
-    setOperation(`실행 0/${queue.length}`)
-    setError('')
-    const evaluate = (input: ReviewedMeasurementInput) =>
-      new Promise<CadDocumentController>((resolve, reject) => {
-        signal.throwIfAborted()
-        const finish = (candidate?: CadDocumentController, cause?: unknown) => {
-          signal.removeEventListener('abort', abort)
-          if (mounted.current) setPreparation((current) => (current === request ? null : current))
-          if (candidate) resolve(candidate)
-          else reject(cause)
-        }
-        const abort = () => finish(undefined, signal.reason)
-        const request: MeasurementCandidatePreparationRequest = {
-          input,
-          resolve: (candidate) => {
-            if (varsFingerprint(candidate.variables) !== varsFingerprint(input.vars)) {
-              finish(undefined, new Error('준비된 CAD의 Vars가 실행 후보와 다릅니다.'))
-            } else finish(candidate)
-          },
-          reject: (cause) => finish(undefined, cause),
-        }
-        signal.addEventListener('abort', abort, { once: true })
-        setPreparation(request)
-      })
-    type Prepared = { frame: PreviewFrame; cause?: never } | { frame?: never; cause: unknown }
-    const displayPreview = (frame: PreviewFrame) => {
-      if (signal.aborted) return
-      setPreviewFrame(frame)
-      setVars(frame.vars)
-      setEvaluatedVars(frame.vars)
-      setCurrentId(frame.candidateId)
-    }
-    const prepare = (item: ReviewedMeasurementInput, model: ReturnType<typeof forward.prepare>): Promise<Prepared> =>
-      Promise.all([evaluate(item), model])
-        .then(async ([candidate, trained]) => {
-          const prediction = await forward.predict(trained, candidate, item.vars, signal)
-          signal.throwIfAborted()
-          return { frame: { candidateId: item.candidateId, vars: item.vars, document: candidate, ...prediction } }
-        })
-        .catch((cause: unknown) => ({ cause }))
-    let model = forward.prepare(document, signal)
-    let pendingPreview = prepare(queue[0], model)
-    try {
-      for (let index = 0; index < queue.length; index++) {
-        signal.throwIfAborted()
-        const item = queue[index]
-        let recordedId: number | null = null
-        let recordedWork: Promise<unknown> | null = null
-        let frame: PreviewFrame | undefined
-        const onRecorded = (measurementId: number) => {
-          if (signal.aborted || recordedWork || !frame) return
-          recordedId = measurementId
-          setCandidates((rows) => rows.filter((row) => row.id !== item.candidateId))
-          setSelected((ids) => {
-            const next = new Set(ids)
-            next.delete(item.candidateId)
-            next.add(`measurement:${measurementId}`)
-            return next
-          })
-          setCurrentId((current) => (current === item.candidateId ? `measurement:${measurementId}` : current))
-          setPreviewFrame((current) =>
-            current?.candidateId === item.candidateId
-              ? { ...current, candidateId: `measurement:${measurementId}` }
-              : current,
-          )
-          const candidateDocument = frame.document
-          setRecordedDocuments((documents) => {
-            const displayedId = actualRef.current.measurement?.id
-            return {
-              ...(displayedId && documents[displayedId] ? { [displayedId]: documents[displayedId] } : {}),
-              [measurementId]: candidateDocument,
-            }
-          })
-          const loaded = actual
-            .loadMeasurement(measurementId, workbench.experimentId, { signal })
-            .catch((cause: unknown) => {
-              if (!signal.aborted)
-                setError(`실제 결과 표시 실패: ${cause instanceof Error ? cause.message : String(cause)}`)
-            })
-          model = forward.prepare(candidateDocument, signal)
-          if (queue[index + 1])
-            pendingPreview = prepare(queue[index + 1], model).then((prepared) => {
-              if (prepared.frame) displayPreview(prepared.frame)
-              return prepared
-            })
-          // Attach a rejection handler immediately: this work overlaps CalculationData.
-          recordedWork = Promise.all([loaded, model]).catch((cause: unknown) => {
-            if (!signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
-          })
-        }
-        setOperation(`준비 ${index + 1}/${queue.length} · CAD / Forward`)
-        try {
-          const prepared = await pendingPreview
-          signal.throwIfAborted()
-          if (!prepared.frame) throw prepared.cause
-          frame = prepared.frame
-          displayPreview(frame)
-          setOperation(`실행 ${index + 1}/${queue.length}`)
-          setCandidates((rows) =>
-            rows.map((row) => (row.id === item.candidateId ? { ...row, state: 'running', error: undefined } : row)),
-          )
-          const completion = await latest.current.measurementActions.runReviewed(
-            { ...item, materialSnapshot: frame.document.materialSnapshot ?? item.materialSnapshot },
-            (progress) => {
-              if (signal.aborted) return
-              if (progress.state === 'succeeded') recordedId = progress.measurementId
-              setExecution((states) => ({ ...states, [item.candidateId]: progress }))
-              if (progress.measurementId)
-                setCandidates((rows) =>
-                  rows.map((row) =>
-                    row.id === item.candidateId ? { ...row, measurementId: progress.measurementId! } : row,
-                  ),
-                )
-            },
-            onRecorded,
-          )
-          onRecorded(completion.measurementId)
-        } catch (cause) {
-          if (signal.aborted) throw cause
-          const message = cause instanceof Error ? cause.message : String(cause)
-          setError(`${item.candidateId}: ${message}`)
-          if (recordedId) onRecorded(recordedId)
-          else {
-            setExecution((states) => ({
-              ...states,
-              [item.candidateId]: {
-                measurementId: states[item.candidateId]?.measurementId ?? item.measurementId ?? null,
-                state: 'failed',
-                error: message,
-              },
-            }))
-            setCandidates((rows) =>
-              rows.map((row) => (row.id === item.candidateId ? { ...row, state: 'failed', error: message } : row)),
-            )
-          }
-        }
-        await recordedWork
-        signal.throwIfAborted()
-        if (!recordedId && queue[index + 1]) pendingPreview = prepare(queue[index + 1], model)
-      }
-    } catch (cause) {
-      if (!signal.aborted && mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (batchController.current === controller) {
-        batchController.current = null
-        if (mounted.current) {
-          setCandidates((rows) => rows.map((row) => (row.state === 'running' ? { ...row, state: 'cancelled' } : row)))
-          if (signal.aborted)
-            setExecution((states) =>
-              Object.fromEntries(
-                Object.entries(states).map(([id, progress]) => [
-                  id,
-                  ['succeeded', 'failed', 'cancelled'].includes(progress.state)
-                    ? progress
-                    : { ...progress, state: 'cancelled' },
-                ]),
-              ),
-            )
-          setOperation(null)
-          void query.refetch()
-        }
-      }
-    }
   }
 
   const chartPoints =
@@ -788,14 +298,6 @@ export function MeasurementWorkspace({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {preparation ? (
-        <MeasurementCandidatePreparation
-          key={preparation.input.candidateId}
-          request={preparation}
-          experiment={workbench.experiment}
-          onActivity={onActivity}
-        />
-      ) : null}
       {menubar}
       <WorkbenchRibbon
         activeSectionId="measurement"
@@ -805,54 +307,10 @@ export function MeasurementWorkspace({
             label: 'Measurement',
             content: (
               <>
-                <WorkbenchRibbonGroup label="샘플 생성">
-                  <div className="flex h-[72px] flex-col justify-center gap-1">
-                    <select
-                      aria-label="샘플 생성 방식"
-                      className="h-6 rounded-sm border border-border bg-background px-2 text-xs"
-                      value={algorithm}
-                      onChange={(event) => setAlgorithm(event.target.value as typeof algorithm)}
-                    >
-                      <option value="random">Random</option>
-                      <option value="empty-lhs">빈 구간 LHS</option>
-                    </select>
-                    <input
-                      aria-label="샘플 생성 개수 N"
-                      className="h-6 w-20 rounded-sm border border-border bg-background px-2 text-xs"
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={count}
-                      onChange={(event) => setCount(event.target.value)}
-                    />
-                  </div>
-                  <WorkbenchRibbonButton
-                    size="large"
-                    icon={<Sparkles />}
-                    label="샘플 생성"
-                    disabled={!schema || busy || !valid || query.isFetching}
-                    onClick={generate}
-                  />
-                  <div className="grid h-[72px] grid-rows-3 items-center">
-                    <WorkbenchRibbonButton
-                      icon={<Plus />}
-                      label="샘플 추가"
-                      disabled={!vars || busy || !valid}
-                      onClick={addCandidate}
-                    />
-                  </div>
-                </WorkbenchRibbonGroup>
+                <MeasurementSamplingControls session={session} />
                 <WorkbenchRibbonGroup label="시뮬레이션 실행">
                   {operation && operation !== '저장 중' && operation !== '삭제 중' ? (
-                    <WorkbenchRibbonButton
-                      size="large"
-                      icon={<Square />}
-                      label="취소"
-                      onClick={() => {
-                        batchController.current?.abort()
-                        latest.current.measurementActions.cancel()
-                      }}
-                    />
+                    <WorkbenchRibbonButton size="large" icon={<Square />} label="취소" onClick={cancel} />
                   ) : (
                     <WorkbenchRibbonButton
                       size="large"
