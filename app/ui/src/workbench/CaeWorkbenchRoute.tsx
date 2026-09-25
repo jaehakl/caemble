@@ -383,6 +383,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
+ onActivity={runtimeConsole.append}
           onGeometryRequiredChange={isPrediction ? workbench.setPredictionGeometryRequired : undefined}
           initialDefaults={workbench.experimentRecord?.viewer_defaults}
           presentation={

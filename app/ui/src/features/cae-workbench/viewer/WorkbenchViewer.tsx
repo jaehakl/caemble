@@ -1,3 +1,5 @@
+import { ViewerDiagnostic, ViewerDiagnostics } from '@/features/viewer/viewer/ViewerDiagnostics'
+import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { createViewerSelection, type ViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { ViewerPlaybackAvailable } from '@/features/viewer/viewer/viewerPlaybackState'
 import { useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
@@ -57,6 +59,7 @@ const emptyData = {}
 const emptyRules: readonly RecordedDataRule[] = []
 
 export type WorkbenchViewerProps = {
+  onActivity?: RuntimeActivityCallback
   selectionStore?: ViewerSelectionStore
   onGeometryRequiredChange?: (required: boolean) => void
   pendingExperimentDocument?: CadDocumentController
@@ -114,6 +117,7 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
     previous.current = props
   const pending = props.resultPlaceholder ? previous.current : null
   return (
+    <ViewerDiagnostics key={sessionKey} onActivity={props.onActivity}>
     <GeometryDisplayManaged.Provider value>
       <ViewerPersistenceContext.Provider value={persistent}>
         <ViewerComparisonContext.Provider value={props.comparison ?? null}>
@@ -131,6 +135,7 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
         </ViewerComparisonContext.Provider>
       </ViewerPersistenceContext.Provider>
     </GeometryDisplayManaged.Provider>
+    </ViewerDiagnostics>
   )
 }
 
@@ -172,7 +177,6 @@ function ViewerContent(props: WorkbenchViewerProps) {
     output || Object.values(visualizations).some(Boolean)
       ? (props.pendingExperimentDocument ?? props.experimentDocument)
       : props.experimentDocument
-  const [taskVisible] = useViewerSetting('taskVisible', true, 'workspace')
   const selectionMade = useRef(
     persistent.settings.values.get('@workspace:outputInitialized') === true ||
       (Boolean(initialDefaults) && (initialDefaults?.version === 2 || initial.current.output === '')),
@@ -263,8 +267,7 @@ function ViewerContent(props: WorkbenchViewerProps) {
   }, [
     props.selectedResult,
     props.autoSelectResult,
-    loading,
-    resultPlaceholder,
+      resultPlaceholder,
     validContracts,
     data,
     frameReason,
@@ -365,9 +368,6 @@ function ViewerContent(props: WorkbenchViewerProps) {
     [accepted, layers],
   )
   const availableSources = document.predictionCandidate?.geometrySources
-  const hasGeometry = availableSources
-    ? availableSources.includes('experiment') || (taskVisible && availableSources.includes('task'))
-    : Boolean(document.scene) || (taskVisible && Object.keys(document.taskScenes ?? {}).length > 0)
   useEffect(() => {
     onGeometryRequiredChange?.(true)
     return () => onGeometryRequiredChange?.(false)
@@ -393,7 +393,6 @@ function ViewerContent(props: WorkbenchViewerProps) {
         motions={motions}
         particles={particles}
         calculationSource={props.calculationSource}
-        loading={loading}
         provenance={provenance}
       />
     </ViewerResultScope>
@@ -407,11 +406,6 @@ function ViewerContent(props: WorkbenchViewerProps) {
             .map((name) => result(name, name === output ? 'space' : undefined))}
         </ViewerSceneOnly.Provider>
       </div>
-      {!hasGeometry ? (
-        <p role="status" className="p-2 text-xs">
-          Geometry가 준비되지 않았습니다.
-        </p>
-      ) : null}
       <div className="min-h-0 flex-1">
         <CadViewer
           experiment={
@@ -490,47 +484,19 @@ function ViewerContent(props: WorkbenchViewerProps) {
             </ViewerControls>
           ) : null}
           <div className="flex h-full min-h-0 flex-col">
-            {loading ? (
-              <p role="status" className="p-2 text-xs">
-                저장 결과 불러오는 중
-                {props.downloadProgress
-                  ? ` · ${props.downloadProgress.completed}/${props.downloadProgress.total}`
-                  : '…'}
-              </p>
-            ) : null}
-            {resultPlaceholder ? (
-              <p role="status" className="p-2 text-xs">
-                {selected.length ? '이전 예측 결과 표시 중 · ' : ''}
-                {resultPlaceholder}
-              </p>
-            ) : null}
-            {document.geometryError ? (
-              <p role="alert" className="p-2 text-xs">
-                Geometry 준비 실패 · {document.geometryError}
-              </p>
-            ) : null}
+            <ViewerDiagnostic message={document.geometryError} result="Geometry" />
             <div ref={capture} className="min-h-0 flex-1 overflow-hidden">
               <ResizableSplit
                 vertical
                 label="3D와 Output 높이 조절"
                 first={scene}
-                second={
-                  output ? (
-                    result(output, 'chart')
-                  ) : (
-                    <p role="status" className="p-3 text-sm">
-                      표시할 차트가 없습니다. Output을 선택하세요.
-                    </p>
-                  )
-                }
+                second={output ? result(output, 'chart') : null}
               />
             </div>
             {Object.entries(errors)
               .filter(([name]) => !selected.includes(name))
               .map(([name, error]) => (
-                <p role="alert" key={name} className="p-2 text-xs text-red-700">
-                  {name}: {error}
-                </p>
+                <ViewerDiagnostic key={name} result={name} message={error} />
               ))}
           </div>
         </ViewerLayout>
@@ -550,13 +516,7 @@ function RetainedResultLayer(props: Parameters<typeof ResultLayer>[0]) {
   if (!unavailable) previous.current = props
   return (
     <ViewerPlaybackAvailable.Provider value={!unavailable}>
-      {unavailable ? (
-        <p role={props.errors[props.name] ? 'alert' : 'status'} className="p-2 text-xs">
-          {props.name}:{' '}
-          {props.errors[props.name] ??
-            (props.loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.')}
-        </p>
-      ) : null}
+      <ViewerDiagnostic result={props.name} message={props.errors[props.name]} />
       <div className={unavailable ? 'hidden' : sceneOnly ? 'contents' : 'h-full min-h-0'}>
         {unavailable ? previous.current ? <ResultLayer {...previous.current} /> : null : <ResultLayer {...props} />}
       </div>
@@ -577,7 +537,6 @@ function ResultLayer({
   motions,
   particles,
   calculationSource,
-  loading,
   provenance,
   role,
 }: {
@@ -593,7 +552,6 @@ function ResultLayer({
   motions: ReturnType<typeof parseRecordedMeshTransforms>
   particles: ReturnType<typeof parseRecordedParticleSets>
   calculationSource?: string
-  loading?: boolean
   provenance: Record<string, unknown>
   role?: 'space' | 'chart'
 }) {
@@ -632,18 +590,9 @@ function ResultLayer({
   const parseError = [...mesh.errors, ...motions.errors, ...particles.errors, ...lines.errors].find(
     (error) => error.label === name,
   )?.message
-  if (blocked)
-    return (
-      <p role="status" className="p-2 text-xs">
-        {name}: {blocked}
-      </p>
-    )
+  if (blocked) return <ViewerDiagnostic result={name} level="warning" message={blocked} />
   if (errors[name] || parseError)
-    return (
-      <p role="alert" className="p-2 text-xs text-red-700">
-        {name}: {errors[name] ?? parseError}
-      </p>
-    )
+    return <ViewerDiagnostic result={name} message={errors[name] ?? parseError} />
   if (
     !contract ||
     (!field &&
@@ -652,11 +601,7 @@ function ResultLayer({
       !selectedLines.length &&
       !Object.keys(data).some((key) => key === name || key.startsWith(`${name}.`)))
   )
-    return (
-      <p role="status" className="p-2 text-xs">
-        {name}: {loading ? '데이터 갱신 중… 설정을 유지합니다.' : '선택한 데이터가 없습니다. 설정은 유지됩니다.'}
-      </p>
-    )
+    return null
   if (role === 'chart' && contract.visualization.kind !== 'box-grid')
     return (
       <ResultTensorView

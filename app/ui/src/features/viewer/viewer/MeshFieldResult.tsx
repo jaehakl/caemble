@@ -1,3 +1,4 @@
+import { ViewerDiagnostic } from './ViewerDiagnostics'
 import { ViewerResultSettings } from './ViewerDisplayControls'
 import { ViewerLayout, ViewerToolButton, ViewerToolHosts } from './ViewerTools'
 import { ViewerSceneOnly } from './ViewerSceneLayers'
@@ -450,9 +451,7 @@ export function MeshFieldResult({
           </p>
         ) : null}
         {rendered.error || error ? (
-          <p role="alert" className="rounded bg-rose-50 p-3 text-xs text-rose-700">
-            {rendered.error ?? error}
-          </p>
+          <ViewerDiagnostic message={rendered.error ?? error} />
         ) : null}
         {rendered.data ? (
           <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>

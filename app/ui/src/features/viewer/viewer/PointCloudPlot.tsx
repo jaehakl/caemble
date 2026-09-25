@@ -1,3 +1,4 @@
+import { ViewerDiagnostic } from './ViewerDiagnostics'
 import { useMemo, useState } from 'react'
 import JscadViewer from './JscadViewer'
 import { createPointCloudData } from './pointCloudData'
@@ -28,7 +29,7 @@ export function PointCloudPlot({
           {Number(plot.range[1].toPrecision(6))}
         </span>
       </div>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? <ViewerDiagnostic message={error} /> : null}
       <div className="min-h-0 flex-1">
         <JscadViewer
           layers={emptyLayers}

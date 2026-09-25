@@ -1,3 +1,4 @@
+import { ViewerDiagnostic } from './ViewerDiagnostics'
 import { ViewerLayout, ViewerToolHosts } from './ViewerTools'
 import { ViewerResultSettings } from './ViewerDisplayControls'
 import { ViewerSceneOnly } from './ViewerSceneLayers'
@@ -172,14 +173,10 @@ export function ParticleSetResult({
           </div>
         ) : null}
         {!available ? (
-          <p role="status" className="p-2 text-xs">
-            선택한 시각이 현재 결과에 없습니다. 재생 시각을 조정하세요.
-          </p>
+          <ViewerDiagnostic level="warning" message="선택한 시각이 현재 결과에 없습니다. 재생 시각을 조정하세요." />
         ) : null}
         {attribute !== 'material' && !quantity ? (
-          <p role="status" className="p-2 text-xs">
-            선택한 물리량이 현재 결과에 없습니다.
-          </p>
+          <ViewerDiagnostic level="warning" message="선택한 물리량이 현재 결과에 없습니다." />
         ) : null}
         {rendered ? (
           <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>

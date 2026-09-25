@@ -273,7 +273,6 @@ const emptyPolylines: readonly PolylineBundle[] = []
 
 function JscadViewer({
   availableSources,
-  emptyMessage = 'Waiting for model...',
   layers,
   lengthUnit,
   showScaleBar = true,
@@ -348,7 +347,6 @@ function JscadViewer({
       })),
     [rayPathGeometries],
   )
-  const rayPathCount = polylines.reduce((sum, bundle) => sum + bundle.pathCount, 0)
   const meshVisualsRef = useRef<Record<string, unknown>>({
     drawCmd: 'drawRecordedMesh',
     show: true,
@@ -1225,14 +1223,7 @@ function JscadViewer({
             </div>
           ) : null}
 
-          {parts.length === 0 && rayPathCount === 0 && !meshRenderData && !heatmaps.length ? (
-            <div
-              data-viewer-empty="true"
-              className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500"
-            >
-              {emptyMessage}
-            </div>
-          ) : null}
+
         </div>
       </div>
     </ViewerLayout>

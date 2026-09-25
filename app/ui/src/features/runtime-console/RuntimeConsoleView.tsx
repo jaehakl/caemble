@@ -10,6 +10,7 @@ const sourceLabels: Record<RuntimeActivitySource, string> = {
   cae: 'CAE',
   calculation: 'Calculation',
   prediction: 'Prediction',
+  viewer: 'Viewer',
 }
 
 export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {

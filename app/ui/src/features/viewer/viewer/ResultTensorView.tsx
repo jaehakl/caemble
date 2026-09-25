@@ -1,3 +1,4 @@
+import { ViewerDiagnostic } from './ViewerDiagnostics'
 import { ViewerLayout, ViewerToolHosts } from './ViewerTools'
 import { ViewerResultSettings } from './ViewerDisplayControls'
 import { ViewerSceneOnly } from './ViewerSceneLayers'
@@ -225,13 +226,8 @@ export function ResultTensorView({
         className={sceneOnly ? 'contents' : 'h-full overflow-auto p-3'}
         data-result-visualization={contract.visualization.kind}
       >
-        {!sceneOnly && contract.visualization.kind === 'bundle' ? (
-          <p className="mb-3 text-xs text-slate-500">
-            구성 데이터의 상세 보기입니다. 구조 변형 재생에는 mesh와 전체 절점의 시간 이력이 연결된 결과가 필요합니다.
-          </p>
-        ) : null}
         {result.error ? (
-          <p role="alert">{result.error}</p>
+          <ViewerDiagnostic message={result.error === '기록된 데이터가 없습니다.' || result.error === '빈 결과입니다.' ? null : result.error} />
         ) : !sceneOnly && result.rule && result.tensor ? (
           <RecordedDataResults
             quantityKinds={new Map()}

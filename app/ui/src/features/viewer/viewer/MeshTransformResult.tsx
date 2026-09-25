@@ -1,3 +1,4 @@
+import { ViewerDiagnostic } from './ViewerDiagnostics'
 import { ViewerLayout } from './ViewerTools'
 import { useCallback, useContext, useEffect, useMemo, type ReactNode } from 'react'
 import { ViewerSceneOnly } from './ViewerSceneLayers'
@@ -65,9 +66,7 @@ export function MeshTransformResult({
           onTime={setTime}
         />
         {rendered.error ? (
-          <p role="alert" className="p-3 text-xs text-red-700">
-            {rendered.error}
-          </p>
+          <ViewerDiagnostic level="warning" message={rendered.error} />
         ) : null}
         {rendered.data ? (
           <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>{renderViewer(rendered.data)}</div>

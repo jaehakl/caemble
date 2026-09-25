@@ -1,3 +1,4 @@
+import { ViewerDiagnosticResult } from './ViewerDiagnostics'
 import { createContext, useCallback, useContext, useLayoutEffect, useSyncExternalStore, type ReactNode } from 'react'
 import type { MeshRenderData } from './meshFields'
 import type { HeatmapRenderData } from './structuredField'
@@ -51,7 +52,7 @@ export function ViewerResultScope({
       <ViewerComparisonContext.Provider
         value={comparison ? { ...comparison, item: scope, controlsOwner: Boolean(controlsOwner) } : null}
       >
-        {children}
+        <ViewerDiagnosticResult.Provider value={name}>{children}</ViewerDiagnosticResult.Provider>
       </ViewerComparisonContext.Provider>
     </ViewerPersistenceContext.Provider>
   )

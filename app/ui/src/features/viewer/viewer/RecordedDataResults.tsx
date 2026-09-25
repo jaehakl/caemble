@@ -1,3 +1,5 @@
+import { ViewerDiagnostic, ViewerDiagnosticsContext } from './ViewerDiagnostics'
+import { useContext } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { recordedDataRuntimeQueryOptions } from '@/features/catalog/queryOptions'
@@ -562,14 +564,14 @@ function RecordedResultCard({
       </div>
 
       {error ? (
-        <div className="mt-3 rounded bg-rose-50 p-3 text-xs text-rose-700" role="alert">
+        <ViewerDiagnostic message={error} level="error"><div className="mt-3 rounded bg-rose-50 p-3 text-xs text-rose-700" role="alert">
           {error}
-        </div>
+        </div></ViewerDiagnostic>
       ) : null}
       {display.conversionErrors.length > 0 ? (
-        <div className="mt-3 rounded bg-rose-50 p-3 text-xs text-rose-700" role="alert">
+        <ViewerDiagnostic message={`Display unit conversion failed. ${display.conversionErrors.join(' ')}`}> <div className="mt-3 rounded bg-rose-50 p-3 text-xs text-rose-700" role="alert">
           Display unit conversion failed. {display.conversionErrors.join(' ')}
-        </div>
+        </div></ViewerDiagnostic>
       ) : null}
       <div className="mt-4">
         {display.tensor ? (
@@ -658,6 +660,7 @@ function RecordedDataResultsContent({
   recordedData,
   rules,
 }: RecordedDataResultsProps & { quantityKinds: RecordedQuantityKinds }) {
+  const viewer = useContext(ViewerDiagnosticsContext)
   const resolved = useMemo(
     () => resolveCadViewerRecordedData(rules, recordedData, quantityKinds),
     [quantityKinds, recordedData, rules],
@@ -666,22 +669,22 @@ function RecordedDataResultsContent({
   return (
     <section aria-label="Recorded Data Results" className="h-full overflow-auto bg-slate-50 p-4 sm:p-5">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-4">
+        {!viewer ? (        <div className="mb-4">
           <h2 className="text-base font-semibold text-slate-900">Results</h2>
           <p className="mt-1 text-sm text-slate-500">
             Read-only tensor snapshots matched to Experiment recordedData labels.
           </p>
-        </div>
+        </div>) : null}
 
         {resolved.error ? (
-          <div className="mb-4 rounded bg-rose-50 p-3 text-sm text-rose-700" role="alert">
+          <ViewerDiagnostic message={resolved.error} level="error"><div className="mb-4 rounded bg-rose-50 p-3 text-sm text-rose-700" role="alert">
             {resolved.error}
-          </div>
+          </div></ViewerDiagnostic>
         ) : null}
         {resolved.unknownLabels.length > 0 ? (
-          <div className="mb-4 rounded bg-amber-50 p-3 text-sm text-amber-800" role="alert">
+          <ViewerDiagnostic level="warning" message={`Unknown recordedData labels: ${resolved.unknownLabels.join(', ')}`}> <div className="mb-4 rounded bg-amber-50 p-3 text-sm text-amber-800" role="alert">
             Unknown recordedData labels: {resolved.unknownLabels.join(', ')}
-          </div>
+          </div></ViewerDiagnostic>
         ) : null}
 
         <div className="space-y-4">
