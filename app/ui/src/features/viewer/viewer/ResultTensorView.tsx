@@ -45,7 +45,7 @@ export function ResultTensorView({
   )
   const result = useMemo(() => {
     try {
-      if (!rule || !isDataTensor(value)) return { error: '기록된 데이터가 없습니다.' }
+      if (!rule || !isDataTensor(value)) return { error: null }
       const accessor = createDataTensorAccessor(rule.result, value)
       const rank = accessor.shape.length
       const displayAxes =
@@ -63,10 +63,11 @@ export function ResultTensorView({
         return {
           accessor,
           selected: displayAxes,
+          warning: true,
           error: '저장된 축·인덱스 설정을 현재 데이터 shape에 적용할 수 없습니다. 공통 툴바에서 수정하세요.',
         }
       const shape = selected.map((axis) => accessor.shape[axis])
-      if (accessor.shape.some((length) => length === 0)) return { error: '빈 결과입니다.' }
+      if (accessor.shape.some((length) => length === 0)) return { error: null }
       const count = shape.reduce((a, b) => a * b, 1)
       const sliced = Array.from({ length: count }, (_, flat) => {
         const position = accessor.shape.map((length, axis) =>
@@ -227,7 +228,7 @@ export function ResultTensorView({
         data-result-visualization={contract.visualization.kind}
       >
         {result.error ? (
-          <ViewerDiagnostic message={result.error === '기록된 데이터가 없습니다.' || result.error === '빈 결과입니다.' ? null : result.error} />
+          <ViewerDiagnostic level={result.warning ? 'warning' : 'error'} message={result.error} />
         ) : !sceneOnly && result.rule && result.tensor ? (
           <RecordedDataResults
             quantityKinds={new Map()}

@@ -21,6 +21,7 @@ import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workben
 import { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSaveWorkflow'
 import { ExperimentWorkspace } from '@/features/cae-workbench/chrome/ExperimentWorkspace'
 import { ExperimentVarsPanel } from '@/features/cae-workbench/ExperimentVarsPanel'
+import { MeasurementTable } from '@/features/measurement/MeasurementTable'
 import { calculationAccessPolicy, type CalculationSaveState } from '@/features/calculation'
 import type {
   PredictionViewerState,
@@ -383,7 +384,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1">
         <WorkbenchViewer
- onActivity={runtimeConsole.append}
+          onActivity={runtimeConsole.append}
           onGeometryRequiredChange={isPrediction ? workbench.setPredictionGeometryRequired : undefined}
           initialDefaults={workbench.experimentRecord?.viewer_defaults}
           presentation={
@@ -495,6 +496,21 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 viewer={viewerPane}
                 editor={rightPane}
                 vars={<ExperimentVarsPanel workbench={workbench} previewing={Boolean(preview)} />}
+                measurements={(active) => (
+                  <MeasurementTable
+                    active={active}
+                    experimentId={workbench.experimentId}
+                    dataReadable={experimentDataReadable}
+                    selectedId={workbench.selection.measurement?.id ?? null}
+                    loading={workbench.selectionRestoring}
+                    onSelect={(id) =>
+                      page.runSafely(async () => {
+                        const row = await workbench.selection.loadMeasurement(id, workbench.experimentId)
+                        if (row && preflight.result) preflight.clear()
+                      })
+                    }
+                  />
+                )}
                 varsLayout={varsLayout}
                 onVarsLayoutChange={setVarsLayout}
               />

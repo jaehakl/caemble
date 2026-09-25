@@ -65,9 +65,7 @@ export function MeshTransformResult({
           time={time}
           onTime={setTime}
         />
-        {rendered.error ? (
-          <ViewerDiagnostic level="warning" message={rendered.error} />
-        ) : null}
+        {rendered.error ? <ViewerDiagnostic level="warning" message={rendered.error} /> : null}
         {rendered.data ? (
           <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>{renderViewer(rendered.data)}</div>
         ) : null}

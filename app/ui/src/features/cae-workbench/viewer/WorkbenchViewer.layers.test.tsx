@@ -218,7 +218,7 @@ it('isolates missing or incompatible visualization data without dropping valid s
       }}
     />,
   )
-  expect(screen.getByText(/실행 이력이 달라/)).toBeInTheDocument()
+  expect(screen.queryByText(/실행 이력이 달라/)).not.toBeInTheDocument()
   expect(screen.getByTestId('scene')).toHaveAttribute('data-rays', '0')
   expect(Number(screen.getByTestId('scene').dataset.mesh)).toBeGreaterThan(0)
 })
@@ -307,12 +307,12 @@ it('keeps Output settings in its menu and exposes playback and copy in the commo
   view.rerender(<WorkbenchViewer {...props} resultVarsHash="different" initialDefaults={defaults} />)
   expect(screen.getByTestId('scene')).toHaveAttribute('data-geometry', 'true')
   expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '0')
-  expect(screen.getAllByText(/Geometry와 결과의 Vars가 다릅니다/).length).toBeGreaterThan(0)
+  expect(screen.queryByText(/Geometry와 결과의 Vars가 다릅니다/)).not.toBeInTheDocument()
   expect(screen.getByTestId('chart')).toHaveAttribute('data-kind', 'line')
   fireEvent.keyDown(screen.getByRole('button', { name: 'Output · signal' }), { key: 'ArrowDown' })
   fireEvent.click(screen.getByRole('menuitemradio', { name: '선택 안 함' }))
   expect(screen.getByRole('separator', { name: '3D와 Output 높이 조절' })).toBeInTheDocument()
-  expect(screen.getByText('표시할 차트가 없습니다. Output을 선택하세요.')).toBeInTheDocument()
+  expect(screen.queryByText('표시할 차트가 없습니다. Output을 선택하세요.')).not.toBeInTheDocument()
   expect(screen.queryByRole('toolbar', { name: 'Output 설정 툴바' })).not.toBeInTheDocument()
   expect(within(common).queryByRole('button', { name: '변환 코드 복사' })).not.toBeInTheDocument()
 })
@@ -377,6 +377,6 @@ it('falls back to a spatial Heatmap for a plane and excludes data without spatia
     />,
   )
   await waitFor(() => expect(screen.getByTestId('scene')).toHaveAttribute('data-fields', '0'))
-  expect(screen.getByText(/XYZ 좌표 또는 평면 배치 정보가 없어/)).toBeInTheDocument()
+  expect(screen.queryByText(/XYZ 좌표 또는 평면 배치 정보가 없어/)).not.toBeInTheDocument()
   expect(screen.getByTestId('chart')).toBeInTheDocument()
 })

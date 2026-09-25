@@ -271,7 +271,8 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
     onSelectionSourcePathsChange: vi.fn(),
     selectionSourceStatus: {},
   }
-  const { rerender } = render(<WorkbenchViewer {...props} />)
+  const onActivity = vi.fn()
+  const { rerender } = render(<WorkbenchViewer {...props} onActivity={onActivity} />)
   expect(screen.getByRole('button', { name: 'Output · field' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeEnabled()
   expect(screen.queryByText(/source가 달라|Vars가 달라/)).toBeNull()
@@ -283,9 +284,12 @@ it('allows a Preflight Box Grid without coordinateSpace and distinguishes actual
     [{ experimentDocument: { ...document, scene: null } }, /Geometry가 준비되지/],
     [{ experimentDocument: { ...document, evaluatedSnapshot: null } }, /Geometry가 준비되지/],
   ] as const) {
-    rerender(<WorkbenchViewer {...props} {...override} />)
+    rerender(<WorkbenchViewer {...props} {...override} onActivity={onActivity} />)
     expect(screen.getByRole('button', { name: 'Geometry · 90%' })).toBeEnabled()
-    expect(screen.getAllByText(reason)[0]).toBeInTheDocument()
+    expect(screen.queryByText(reason)).not.toBeInTheDocument()
+    expect(onActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'viewer', level: 'warning', message: expect.stringMatching(reason) }),
+    )
   }
   rerender(
     <WorkbenchViewer

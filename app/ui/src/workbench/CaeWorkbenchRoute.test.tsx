@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
 import type { AnalysisWorkspaceProps } from '@/features/analysis/AnalysisPage'
 import type { ViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
@@ -25,6 +25,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({ user: null, isAuthenticated: false, isPending: false, queryScope: 'guest' }),
+}))
+vi.mock('@/features/measurement/MeasurementTable', () => ({
+  MeasurementTable: ({ active, onSelect }: { active: boolean; onSelect: (id: number) => void }) => (
+    <button hidden={!active} onClick={() => onSelect(42)}>
+      Table Measurement #42
+    </button>
+  ),
 }))
 vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
   useCaeWorkbenchState: () => ({
@@ -237,7 +244,17 @@ vi.mock('@/features/cae-workbench/CaeWorkbenchDialogs', () => ({ CaeWorkbenchDia
 vi.mock('@/features/cae-workbench/AdminWorkspace', () => ({ AdminWorkspace: () => null }))
 vi.mock('@/features/cae-workbench/WorkbenchDetails', () => ({ ExperimentDetail: () => null }))
 
+afterEach(() => vi.unstubAllGlobals())
+
 beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
   mocks.measurement = null
   mocks.viewerMounts = 0
   mocks.isDemo = false
@@ -318,6 +335,31 @@ describe('Workbench section navigation', () => {
 })
 
 describe('Workbench Viewer result updates', () => {
+  it.each(['success', 'failed', 'superseded'])(
+    'applies sidebar selections and clears preview only on %s',
+    async (outcome) => {
+      mocks.preview = true
+      const error = new Error('Measurement loading failed')
+      if (outcome === 'failed') mocks.loadMeasurement.mockRejectedValue(error)
+      else mocks.loadMeasurement.mockResolvedValue(outcome === 'success' ? { id: 42 } : null)
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter>
+            <CaeWorkbenchRoute />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+      fireEvent.mouseDown(screen.getByRole('tab', { name: 'Measurements' }), { button: 0, ctrlKey: false })
+      fireEvent.click(screen.getByRole('button', { name: 'Table Measurement #42' }))
+      await waitFor(() => expect(mocks.loadMeasurement).toHaveBeenCalledWith(42, 7))
+      if (outcome === 'success') await waitFor(() => expect(mocks.clearPreview).toHaveBeenCalledTimes(1))
+      else {
+        if (outcome === 'failed') await waitFor(() => expect(mocks.reportError).toHaveBeenCalledWith(error))
+        expect(mocks.clearPreview).not.toHaveBeenCalled()
+      }
+      expect(screen.getByRole('tab', { name: 'Measurements' })).toHaveAttribute('data-state', 'active')
+    },
+  )
   it.each([41, 42])(
     'loads Analysis Measurement #%s and replaces a temporary preview only after success',
     async (id) => {

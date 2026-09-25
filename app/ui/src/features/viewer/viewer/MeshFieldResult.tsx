@@ -451,7 +451,7 @@ export function MeshFieldResult({
           </p>
         ) : null}
         {rendered.error || error ? (
-          <ViewerDiagnostic message={rendered.error ?? error} />
+          <ViewerDiagnostic level={invalidSetting ? 'warning' : 'error'} message={rendered.error ?? error} />
         ) : null}
         {rendered.data ? (
           <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1 overflow-hidden'}>

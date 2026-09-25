@@ -5,6 +5,44 @@ import { ExperimentWorkspace } from './ExperimentWorkspace'
 
 afterEach(() => vi.unstubAllGlobals())
 
+it('switches sidebar tabs and collapses without resetting Vars or Viewer state', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  let mounts = 0
+  function Viewer() {
+    const [instance] = useState(() => ++mounts)
+    return <span>Viewer {instance}</span>
+  }
+  render(
+    <ExperimentWorkspace
+      menubar={null}
+      ribbon={null}
+      viewer={<Viewer />}
+      editor={null}
+      vars={<input aria-label="Variable" defaultValue="1" />}
+      measurements={(active) => <span>Measurements {active ? 'active' : 'inactive'}</span>}
+    />,
+  )
+  const input = screen.getByRole('textbox', { name: 'Variable' })
+  fireEvent.change(input, { target: { value: '5' } })
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Measurements' }), { button: 0, ctrlKey: false })
+  expect(screen.getByText('Measurements active')).toBeVisible()
+  expect(input).not.toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Vars 접기' }))
+  expect(screen.getByText('Measurements inactive')).not.toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Vars 펼치기' }))
+  expect(screen.getByText('Measurements active')).toBeVisible()
+  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Vars' }), { button: 0, ctrlKey: false })
+  expect(input).toBeVisible()
+  expect(input).toHaveValue('5')
+  expect(mounts).toBe(1)
+})
+
 it('resizes and collapses Vars without remounting Viewer or Editor, including narrow containers', () => {
   let resized: () => void = () => undefined
   vi.stubGlobal(

@@ -1222,8 +1222,6 @@ function JscadViewer({
               </div>
             </div>
           ) : null}
-
-
         </div>
       </div>
     </ViewerLayout>

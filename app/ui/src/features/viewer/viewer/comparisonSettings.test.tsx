@@ -269,7 +269,7 @@ it.each([
   },
 )
 
-it('shows loading for initial and changed views but keeps frame calculations visually quiet', async () => {
+it('keeps calculations visually quiet while preserving copy availability', async () => {
   const writeText = vi.fn(async (_text: string) => {})
   vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
   const pending: (() => void)[] = []
@@ -298,11 +298,11 @@ it('shows loading for initial and changed views but keeps frame calculations vis
       pending.splice(0).forEach((finish) => finish())
     })
   }
-  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  expect(screen.queryByText('계산 중…')).not.toBeInTheDocument()
   await complete()
   openComponent()
   fireEvent.change(screen.getByLabelText('채널'), { target: { value: 'oscillation' } })
-  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  expect(screen.queryByText('계산 중…')).not.toBeInTheDocument()
   await complete()
   expect(copy).toBeEnabled()
   fireEvent.change(screen.getByLabelText('Animation 프레임'), { target: { value: '0.125' } })
@@ -310,16 +310,16 @@ it('shows loading for initial and changed views but keeps frame calculations vis
   expect(copy).toBeEnabled()
   fireEvent.click(copy)
   expect(writeText.mock.calls[0][0]).toContain('"timeSeconds":0.125')
-  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'true'))
+  expect(screen.queryByText('계산 중…')).not.toBeInTheDocument()
   expect(screen.getByLabelText('Animation 시간')).toHaveTextContent('1.25000e-1 s')
   await complete()
   openComponent()
   fireEvent.change(screen.getByLabelText('성분'), { target: { value: '0' } })
   expect(copy).toBeDisabled()
-  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  expect(screen.queryByText('계산 중…')).not.toBeInTheDocument()
   await complete()
   view.rerender(<Pair settings={settings} times={1} frequencies={frequencies} scale={2} />)
-  screen.getAllByText('계산 중…').forEach((node) => expect(node).toHaveAttribute('aria-hidden', 'false'))
+  expect(screen.queryByText('계산 중…')).not.toBeInTheDocument()
   await complete()
 })
 
@@ -460,7 +460,7 @@ it('keeps an out-of-range frame unchanged and resumes the same settings when com
   changeRole('y', 'space')
   fireEvent.change(screen.getByLabelText('time index'), { target: { value: '2' } })
   view.rerender(<Pair settings={settings} times={1} />)
-  await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2))
+  expect(screen.queryAllByRole('alert')).toHaveLength(0)
   expect(settings.values.get('signal:box.reduce')).toMatchObject({ time: { method: 'index', index: 2 } })
   expect(screen.queryAllByTestId('plot')).toHaveLength(0)
   view.rerender(<Pair settings={settings} />)
@@ -542,10 +542,10 @@ it('keeps toolbar settings while a Forward result is absent, fails, and recovers
   fireEvent.click(screen.getByLabelText('값 범위 고정'))
   fireEvent.change(screen.getByLabelText('범위 최댓값'), { target: { value: '123' } })
   view.rerender(<WorkbenchViewer {...props} recordedData={undefined} loading />)
-  expect(screen.getAllByText(/데이터 갱신 중… 설정을 유지합니다/)[0]).toBeInTheDocument()
+  expect(screen.queryByText(/데이터 갱신 중… 설정을 유지합니다/)).not.toBeInTheDocument()
   expect(screen.getByLabelText('범위 최댓값')).toHaveValue(123)
   view.rerender(<WorkbenchViewer {...props} resultErrors={{ signal: 'Prediction failed' }} />)
-  expect(screen.getAllByText(/Prediction failed/)[0]).toBeInTheDocument()
+  expect(screen.queryByText(/Prediction failed/)).not.toBeInTheDocument()
   openComponent()
   expect(screen.getByLabelText('성분')).toHaveValue('1')
   view.rerender(<WorkbenchViewer {...props} recordedData={fixture('signal', 5).data} />)
@@ -662,7 +662,7 @@ it('swaps chart axes and lets a line omit its secondary axis without changing ki
   expect(settings.values.get('signal@output-chart:box.kind')).toBe('heatmap')
 })
 
-it('keeps all five chart axis controls in the picker and shows reductions and index coordinates above the chart', async () => {
+it('keeps all five chart axis controls in the picker without repeating reductions above the chart', async () => {
   const settings = createComparisonSettings()
   render(<Pair role="chart" settings={settings} />)
   await waitFor(() => expect(settings.values.get('busy:actual:signal@output-chart')).toBe(false))
@@ -677,11 +677,11 @@ it('keeps all five chart axis controls in the picker and shows reductions and in
   fireEvent.change(screen.getByLabelText('frequency 적분 방법'), { target: { value: 'index' } })
   fireEvent.change(screen.getByLabelText('frequency index'), { target: { value: '1' } })
   expect(screen.queryByRole('button', { name: 'f 재생' })).not.toBeInTheDocument()
-  expect(screen.getAllByLabelText('차트 축 설정')[0]).toHaveTextContent('f · 개별 index 1 · 1 Hz')
-  expect(screen.getAllByLabelText('차트 축 설정')[0]).toHaveTextContent('y · mean')
+  expect(screen.queryByLabelText('차트 축 설정')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('차트 축 설정')).not.toBeInTheDocument()
   fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
   expect(screen.queryByLabelText('frequency 적분 방법')).not.toBeInTheDocument()
-  expect(screen.getAllByLabelText('차트 축 설정')[0]).toHaveTextContent('f · 개별 index 1 · 1 Hz')
+  expect(screen.queryByLabelText('차트 축 설정')).not.toBeInTheDocument()
 })
 
 it('uses longest axes including singleton dimensions and restores saved Histogram as Heatmap', async () => {

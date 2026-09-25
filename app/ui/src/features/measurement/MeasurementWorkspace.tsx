@@ -1066,7 +1066,7 @@ export function MeasurementWorkspace({
                           </header>
                           <div className="min-h-0 flex-1">
                             <WorkbenchViewer
- onActivity={onActivity}
+                              onActivity={onActivity}
                               {...viewerBase}
                               comparison={comparison.preview}
                               experimentDocument={previewDocument}
@@ -1101,7 +1101,7 @@ export function MeasurementWorkspace({
                           <div className="min-h-0 flex-1">
                             {actual.measurement || actual.loading ? (
                               <WorkbenchViewer
- onActivity={onActivity}
+                                onActivity={onActivity}
                                 {...viewerBase}
                                 presentation={
                                   workbench.viewerPresentation

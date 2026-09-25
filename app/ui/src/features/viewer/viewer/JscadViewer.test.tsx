@@ -106,7 +106,7 @@ it('renders ray paths and Geometry without the ray statistics or Materials overl
   expect(view.container.querySelector('[data-material-swatch]')).toBeNull()
 
   view.rerender(<JscadViewer {...props} layers={[]} />)
-  expect(view.container.querySelector('[data-viewer-empty]')).toBeInTheDocument()
+  expect(view.container.querySelector('[data-viewer-empty]')).not.toBeInTheDocument()
   expect(props.onRenderError).not.toHaveBeenCalled()
 })
 

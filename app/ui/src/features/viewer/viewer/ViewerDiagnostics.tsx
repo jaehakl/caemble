@@ -6,7 +6,13 @@ export const ViewerDiagnosticResult = createContext<string | undefined>(undefine
 export const ViewerDiagnosticsContext = createContext<((diagnostic: Diagnostic) => () => void) | null>(null)
 
 /** One reporting boundary for both the scene and chart of a Viewer. */
-export function ViewerDiagnostics({ onActivity, children }: { onActivity?: RuntimeActivityCallback; children: ReactNode }) {
+export function ViewerDiagnostics({
+  onActivity,
+  children,
+}: {
+  onActivity?: RuntimeActivityCallback
+  children: ReactNode
+}) {
   const callback = useRef(onActivity)
   callback.current = onActivity
   const active = useRef(new Map<string, number>())
@@ -34,7 +40,12 @@ export function ViewerDiagnostics({ onActivity, children }: { onActivity?: Runti
   return <ViewerDiagnosticsContext.Provider value={report}>{children}</ViewerDiagnosticsContext.Provider>
 }
 
-export function ViewerDiagnostic({ message, level = 'error', result, children }: {
+export function ViewerDiagnostic({
+  message,
+  level = 'error',
+  result,
+  children,
+}: {
   message?: string | null
   level?: Diagnostic['level']
   result?: string

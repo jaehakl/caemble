@@ -118,23 +118,23 @@ export function WorkbenchViewer(props: WorkbenchViewerProps) {
   const pending = props.resultPlaceholder ? previous.current : null
   return (
     <ViewerDiagnostics key={sessionKey} onActivity={props.onActivity}>
-    <GeometryDisplayManaged.Provider value>
-      <ViewerPersistenceContext.Provider value={persistent}>
-        <ViewerComparisonContext.Provider value={props.comparison ?? null}>
-          <ViewerContent
-            key={sessionKey}
-            {...props}
-            pendingExperimentDocument={pending?.experimentDocument}
-            recordedData={pending?.recordedData ?? props.recordedData}
-            recordedRules={pending?.recordedRules ?? props.recordedRules}
-            resultContracts={pending?.resultContracts ?? props.resultContracts}
-            visualizations={pending?.visualizations ?? props.visualizations}
-            resultSourceHash={pending?.resultSourceHash ?? props.resultSourceHash}
-            resultVarsHash={pending?.resultVarsHash ?? props.resultVarsHash}
-          />
-        </ViewerComparisonContext.Provider>
-      </ViewerPersistenceContext.Provider>
-    </GeometryDisplayManaged.Provider>
+      <GeometryDisplayManaged.Provider value>
+        <ViewerPersistenceContext.Provider value={persistent}>
+          <ViewerComparisonContext.Provider value={props.comparison ?? null}>
+            <ViewerContent
+              key={sessionKey}
+              {...props}
+              pendingExperimentDocument={pending?.experimentDocument}
+              recordedData={pending?.recordedData ?? props.recordedData}
+              recordedRules={pending?.recordedRules ?? props.recordedRules}
+              resultContracts={pending?.resultContracts ?? props.resultContracts}
+              visualizations={pending?.visualizations ?? props.visualizations}
+              resultSourceHash={pending?.resultSourceHash ?? props.resultSourceHash}
+              resultVarsHash={pending?.resultVarsHash ?? props.resultVarsHash}
+            />
+          </ViewerComparisonContext.Provider>
+        </ViewerPersistenceContext.Provider>
+      </GeometryDisplayManaged.Provider>
     </ViewerDiagnostics>
   )
 }
@@ -267,7 +267,8 @@ function ViewerContent(props: WorkbenchViewerProps) {
   }, [
     props.selectedResult,
     props.autoSelectResult,
-      resultPlaceholder,
+    loading,
+    resultPlaceholder,
     validContracts,
     data,
     frameReason,
@@ -591,8 +592,7 @@ function ResultLayer({
     (error) => error.label === name,
   )?.message
   if (blocked) return <ViewerDiagnostic result={name} level="warning" message={blocked} />
-  if (errors[name] || parseError)
-    return <ViewerDiagnostic result={name} message={errors[name] ?? parseError} />
+  if (errors[name] || parseError) return <ViewerDiagnostic result={name} message={errors[name] ?? parseError} />
   if (
     !contract ||
     (!field &&

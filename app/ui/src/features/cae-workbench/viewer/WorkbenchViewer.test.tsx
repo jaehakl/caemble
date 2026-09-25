@@ -220,7 +220,7 @@ it('preserves external selection and manual choices made during loading', () => 
   expect(currentResult()).toBe('small')
 })
 
-it('shows stored mesh results centrally, permits Geometry review, and displays download progress', () => {
+it('shows stored mesh results centrally, permits Geometry review, without download status text', () => {
   render(
     <WorkbenchViewer
       resultContracts={{
@@ -243,13 +243,13 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
       downloadProgress={{ completed: 4, total: 40 }}
     />,
   )
-  expect(screen.getByText(/표시할 차트가 없습니다/)).toBeTruthy()
+  expect(screen.queryByText(/표시할 차트가 없습니다/)).not.toBeInTheDocument()
   selectResult('displacement')
   expect(screen.getByText('Geometry preview')).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
-  expect(screen.getByText(/4\/40/)).toBeTruthy()
+  expect(screen.queryByText(/4\/40/)).not.toBeInTheDocument()
   selectResult('')
-  expect(screen.getByText(/표시할 차트가 없습니다/)).toBeTruthy()
+  expect(screen.queryByText(/표시할 차트가 없습니다/)).not.toBeInTheDocument()
   expect(screen.queryByText('Stored volume field')).toBeNull()
 })
 
@@ -352,7 +352,7 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
   fireEvent.keyDown(screen.getByRole('button', { name: /^ray ·/ }), { key: 'ArrowDown' })
   expect(screen.getByRole('menuitemradio', { name: 'ray.paths' })).toBeInTheDocument()
   fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
-  expect(screen.getByText(/실행 이력이 달라/)).toBeInTheDocument()
+  expect(screen.queryByText(/실행 이력이 달라/)).not.toBeInTheDocument()
   rerender(
     <WorkbenchViewer
       {...props}
@@ -362,9 +362,11 @@ it('keeps automatic visuals selectable and prevents overlays from a different in
   expect(screen.queryByText(/실행 이력이 달라/)).not.toBeInTheDocument()
 })
 
-it('shows the selected result error instead of an empty Box Grid renderer', () => {
+it('reports a selected result error once to the app Console without occupying either pane', () => {
+  const onActivity = vi.fn()
   render(
     <WorkbenchViewer
+      onActivity={onActivity}
       resultContracts={{
         field: {
           task: 'wave',
@@ -388,11 +390,19 @@ it('shows the selected result error instead of an empty Box Grid renderer', () =
     />,
   )
   selectResult('field')
-  expect(screen.getAllByText('field: 응답에 선언된 결과 데이터가 없습니다.')).toHaveLength(2)
+  expect(screen.queryByText('field: 응답에 선언된 결과 데이터가 없습니다.')).not.toBeInTheDocument()
+  expect(onActivity).toHaveBeenCalledTimes(1)
+  expect(onActivity).toHaveBeenCalledWith(
+    expect.objectContaining({
+      source: 'viewer',
+      level: 'error',
+      message: 'field: 응답에 선언된 결과 데이터가 없습니다.',
+    }),
+  )
   expect(screen.queryByText('기록된 장 데이터가 없습니다.')).toBeNull()
 })
 
-it('randomly selects an overlay result once, retains selection and explicit Geometry, and reports a removed result', () => {
+it('randomly selects an overlay result once, retains selection and explicit Geometry, and silently retains a removed result', () => {
   const contract = {
     task: 'solid',
     output: 'field',
@@ -423,7 +433,8 @@ it('randomly selects an overlay result once, retains selection and explicit Geom
   expect(random).toHaveBeenCalledTimes(calls)
   expect(currentResult()).toBe('second')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} resultContracts={{ first: contract }} />)
-  expect(screen.getAllByText('second: 선택한 데이터가 없습니다. 설정은 유지됩니다.')[0]).toBeInTheDocument()
+  expect(screen.queryByText(/선택한 데이터가 없습니다/)).not.toBeInTheDocument()
+  expect(currentResult()).toBe('second')
   selectResult('')
   rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
   expect(currentResult()).toBe('')
@@ -447,7 +458,7 @@ it('retains the previous result during prediction, preserves BoxGrid controls an
   selectResult('')
   rerender(<WorkbenchViewer {...props} />)
   expect(currentResult()).toBe('')
-  expect(screen.getByText(/표시할 차트가 없습니다/)).toBeInTheDocument()
+  expect(screen.queryByText(/표시할 차트가 없습니다/)).not.toBeInTheDocument()
   rerender(<WorkbenchViewer {...gridSelectionProps({ saved: [3, 3, 1] })} />)
   expect(currentResult()).toBe('saved')
   rerender(<WorkbenchViewer {...props} />)
@@ -549,4 +560,26 @@ it('requires Geometry before prediction and migrates saved overlay off to 90%', 
   rerender(<WorkbenchViewer {...props} />)
   expect(required).toHaveBeenLastCalledWith(true)
   expect(currentResult()).toBe('field')
+})
+
+it('keeps unavailable Output and visualization selections silent during loading and empty data', () => {
+  const onActivity = vi.fn()
+  const props = {
+    ...gridSelectionProps({ detectorPower: [2, 2, 1] }),
+    resultSourceHash: 'fixture',
+    resultVarsHash: materialVarsHash({}),
+    experimentDocument: {
+      scene: {},
+      evaluatedSnapshot: { sourceHash: 'fixture', variables: {} },
+    } as WorkbenchViewerProps['experimentDocument'],
+  }
+  const view = render(<WorkbenchViewer {...props} onActivity={onActivity} />)
+  view.rerender(<WorkbenchViewer {...props} onActivity={onActivity} recordedData={{}} loading />)
+  expect(currentResult()).toBe('detectorPower')
+  expect(screen.queryByText(/선택한 데이터가 없습니다|설정은 유지|불러오는 중|갱신 중/)).not.toBeInTheDocument()
+  view.rerender(<WorkbenchViewer {...props} onActivity={onActivity} recordedData={{}} />)
+  expect(currentResult()).toBe('detectorPower')
+  expect(onActivity).not.toHaveBeenCalled()
+  view.rerender(<WorkbenchViewer {...props} onActivity={onActivity} />)
+  expect(currentResult()).toBe('detectorPower')
 })

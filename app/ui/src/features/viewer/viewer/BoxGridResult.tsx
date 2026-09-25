@@ -41,7 +41,6 @@ import { ScalarPlot } from './ScalarPlot'
 import type { HeatmapRenderData } from './structuredField'
 
 const noLayers = Object.freeze([])
-const axisLabels = { x: 'x', y: 'y', z: 'z', time: 't', frequency: 'f' }
 export function BoxGridResult({
   name,
   rules,
@@ -96,10 +95,7 @@ export function BoxGridResult({
       return { error: String(error instanceof Error ? error.message : error) }
     }
   }, [name, rules, data])
-  if (!parsed.leaf)
-    return (
-      <ViewerDiagnostic message={parsed.error} />
-    )
+  if (!parsed.leaf) return <ViewerDiagnostic message={parsed.error} />
   return (
     <ViewerLayout>
       {!parentLayout ? <StandaloneOutputMenu name={name} /> : null}
@@ -805,7 +801,10 @@ function BoxGridControls({
         </>
       ) : null}
       {invalidSetting || error || renderError || range[0] > range[1] ? (
-        <ViewerDiagnostic level={invalidSetting || range[0] > range[1] ? "warning" : "error"} message={invalidSetting || error || renderError || '범위 최솟값은 최댓값 이하여야 합니다.'} />
+        <ViewerDiagnostic
+          level={invalidSetting || range[0] > range[1] ? 'warning' : 'error'}
+          message={invalidSetting || error || renderError || '범위 최솟값은 최댓값 이하여야 합니다.'}
+        />
       ) : null}
       <div className={sceneOnly ? 'contents' : 'min-h-0 flex-1'} aria-busy={busy}>
         {result && !invalidSetting && range[0] <= range[1] ? (

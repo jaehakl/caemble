@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ResizableWorkbenchSplit } from './ResizableWorkbenchSplit'
 
 export function ExperimentWorkspace({
@@ -9,6 +10,7 @@ export function ExperimentWorkspace({
   viewer,
   editor,
   vars,
+  measurements,
   varsLayout,
   onVarsLayoutChange,
 }: {
@@ -17,11 +19,13 @@ export function ExperimentWorkspace({
   viewer: ReactNode
   editor: ReactNode
   vars?: ReactNode
+  measurements?: (active: boolean) => ReactNode
   varsLayout?: { width: number; collapsed: boolean }
   onVarsLayoutChange?: (layout: { width: number; collapsed: boolean }) => void
 }) {
   const container = useRef<HTMLDivElement>(null)
   const [availableWidth, setAvailableWidth] = useState(1200)
+  const [tab, setTab] = useState('vars')
   const [localLayout, setLocalLayout] = useState({ width: 280, collapsed: false })
   const layout = varsLayout ?? localLayout
   const updateLayout = onVarsLayoutChange ?? setLocalLayout
@@ -51,22 +55,44 @@ export function ExperimentWorkspace({
               className="flex min-h-0 shrink-0 flex-col overflow-hidden border-r"
               style={{ width: layout.collapsed ? 36 : width }}
             >
-              <div className="flex h-9 shrink-0 items-center justify-between border-b px-1">
-                {!layout.collapsed ? <span className="px-2 text-xs font-semibold">Vars</span> : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  aria-label={layout.collapsed ? 'Vars 펼치기' : 'Vars 접기'}
-                  onClick={() => updateLayout({ ...layout, collapsed: !layout.collapsed })}
-                >
-                  {layout.collapsed ? <ChevronRight /> : <ChevronLeft />}
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto" hidden={layout.collapsed}>
-                {vars}
-              </div>
+              <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+                <div className="flex h-9 shrink-0 items-center justify-between border-b px-1">
+                  {!layout.collapsed ? (
+                    measurements ? (
+                      <TabsList aria-label="Experiment 데이터" className="h-8 min-w-0 bg-transparent p-0">
+                        <TabsTrigger value="vars" className="px-2 text-xs">
+                          Vars
+                        </TabsTrigger>
+                        <TabsTrigger value="measurements" className="px-2 text-xs">
+                          Measurements
+                        </TabsTrigger>
+                      </TabsList>
+                    ) : (
+                      <span className="px-2 text-xs font-semibold">Vars</span>
+                    )
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    aria-label={layout.collapsed ? 'Vars 펼치기' : 'Vars 접기'}
+                    onClick={() => updateLayout({ ...layout, collapsed: !layout.collapsed })}
+                  >
+                    {layout.collapsed ? <ChevronRight /> : <ChevronLeft />}
+                  </Button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto" hidden={layout.collapsed}>
+                  <TabsContent value="vars" forceMount hidden={tab !== 'vars'} className="m-0">
+                    {vars}
+                  </TabsContent>
+                  {measurements ? (
+                    <TabsContent value="measurements" forceMount hidden={tab !== 'measurements'} className="m-0 h-full">
+                      {measurements(tab === 'measurements' && !layout.collapsed)}
+                    </TabsContent>
+                  ) : null}
+                </div>
+              </Tabs>
             </aside>
             <div
               role="separator"

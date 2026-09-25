@@ -194,6 +194,40 @@ describe('useCaeDataSelection', () => {
     expect(result.current.loading).toBe(false)
   })
 
+  it('replaces Recorded results and variables with a Prepared Measurement without retaining old data', async () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    mocks.readResults
+      .mockResolvedValueOnce({
+        recorded_data: {
+          temperature: {
+            experiment_record_id: 1,
+            quantity_kind: null,
+            tensor_order: 0,
+            dtype: 'float64',
+            data_schema: null,
+            data: 300,
+          },
+        },
+        result_contracts: {},
+      })
+      .mockResolvedValueOnce({ recorded_data: {}, result_contracts: {} })
+    const { result } = renderHook(() => useCaeDataSelection(10, 'visible'), { wrapper })
+    await act(async () => {
+      await result.current.loadMeasurement({ ...measurement(1), recorded_at: '2026-09-26', vars: { width: 1 } })
+    })
+    expect(result.current.flatRecordedData).toEqual({ temperature: 300 })
+    await act(async () => {
+      await result.current.loadMeasurement({ ...measurement(2), vars: { width: 2 } })
+    })
+    expect(result.current.measurement?.id).toBe(2)
+    expect(result.current.variables).toEqual({ width: 2 })
+    expect(result.current.recordedData).toEqual({})
+    expect(result.current.flatRecordedData).toEqual({})
+    expect(result.current.recordedRows).toEqual([])
+  })
+
   it('does not let a completion refresh supersede the user selection still being fetched', async () => {
     mocks.readResults.mockResolvedValue({ recorded_data: {}, result_contracts: {} })
     const wrapper = ({ children }: PropsWithChildren) => (
