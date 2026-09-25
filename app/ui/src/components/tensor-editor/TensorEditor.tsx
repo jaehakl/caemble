@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -7,6 +8,8 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type WheelEvent,
+  type Ref,
+  type RefObject,
 } from 'react'
 import { Brush, ChevronLeft, ChevronRight, Eraser, Redo2, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -30,6 +33,8 @@ import {
 type Selection = Readonly<{ sliceIndex: number; rectangle: TensorRectangle }>
 type HoveredCell = Readonly<{ sliceIndex: number; row: number; column: number }>
 type HeatmapMode = 'brush' | 'eraser' | 'region-wheel' | 'region-value'
+
+export type TensorEditorHandle = { flushPendingChanges: () => void }
 
 export type TensorEditorComparisonStatus = 'ready' | 'updating' | 'unavailable' | 'incompatible'
 
@@ -56,6 +61,9 @@ export type TensorEditorAxis = Readonly<{
 }>
 
 export type TensorEditorProps = Readonly<{
+  compact?: boolean
+  ref?: Ref<TensorEditorHandle>
+  initialHeatmapMode?: HeatmapMode
   axes?: readonly TensorEditorAxis[]
   comparison?: TensorEditorComparison
   constraintMaximum?: number
@@ -151,6 +159,8 @@ function ComparisonLegend({
 }
 
 function BarsEditor({
+  compact,
+  pendingCommitRef,
   axes,
   comparison,
   constraintMaximum,
@@ -164,6 +174,8 @@ function BarsEditor({
   onCommit,
   onPreview,
 }: {
+  compact: boolean
+  pendingCommitRef: RefObject<(() => void) | null>
   axes: readonly TensorEditorAxis[]
   comparison?: Readonly<{
     primaryColor: string
@@ -314,6 +326,15 @@ function BarsEditor({
     inputNumber >= constraintMinimum &&
     inputNumber <= constraintMaximum
 
+  useLayoutEffect(() => {
+    pendingCommitRef.current = () => {
+      if (inputTimerRef.current !== null && inputValid) applyInput()
+    }
+    return () => {
+      pendingCommitRef.current = null
+    }
+  })
+
   return (
     <div className="space-y-3">
       {comparison ? (
@@ -321,7 +342,7 @@ function BarsEditor({
       ) : null}
       <canvas
         aria-label={values.length === 1 ? `${label} scalar bar` : `${label} one-dimensional bars`}
-        className="h-[min(44vh,360px)] w-full touch-none rounded border bg-white"
+        className={`${compact ? 'aspect-[4/3]' : 'h-[min(44vh,360px)]'} w-full touch-none rounded border bg-white`}
         ref={canvasRef}
         tabIndex={0}
         onPointerDown={(event) => {
@@ -561,6 +582,9 @@ function HeatmapCanvas({
 }
 
 function HeatmapsEditor({
+  compact,
+  initialHeatmapMode,
+  pendingCommitRef,
   axes,
   comparison,
   constraintMaximum,
@@ -577,6 +601,9 @@ function HeatmapsEditor({
   onCommit,
   onPreview,
 }: {
+  compact: boolean
+  initialHeatmapMode: HeatmapMode
+  pendingCommitRef: RefObject<(() => void) | null>
   axes: readonly TensorEditorAxis[]
   comparison?: Readonly<{
     primaryColor: string
@@ -600,13 +627,13 @@ function HeatmapsEditor({
   const rows = shape[shape.length - 2] ?? 1
   const columns = shape[shape.length - 1] ?? 1
   const sliceCount = tensorSliceCount(shape)
-  const pageSize = shape.length > 2 ? 8 : 1
+  const pageSize = shape.length > 2 ? (compact ? 2 : 8) : 1
   const pageCount = Math.max(1, Math.ceil(sliceCount / pageSize))
   const [page, setPage] = useState(0)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null)
   const [input, setInput] = useState('')
-  const [mode, setMode] = useState<HeatmapMode>('brush')
+  const [mode, setMode] = useState<HeatmapMode>(initialHeatmapMode)
   const [radiusInput, setRadiusInput] = useState(String(Math.min(2, Math.max(rows, columns))))
   const [strengthInput, setStrengthInput] = useState(String(defaultStrength))
   const defaultStrengthRef = useRef(defaultStrength)
@@ -711,6 +738,20 @@ function HeatmapsEditor({
     onPreview(next)
   }
 
+  useLayoutEffect(() => {
+    pendingCommitRef.current = () => {
+      if (wheelTimerRef.current === null) return
+      window.clearTimeout(wheelTimerRef.current)
+      wheelTimerRef.current = null
+      const before = wheelStartRef.current
+      wheelStartRef.current = null
+      if (before) recordCommit(before, latestValuesRef.current)
+    }
+    return () => {
+      pendingCommitRef.current = null
+    }
+  })
+
   useEffect(
     () => () => {
       if (wheelTimerRef.current !== null) window.clearTimeout(wheelTimerRef.current)
@@ -723,6 +764,9 @@ function HeatmapsEditor({
       {comparison ? <ComparisonLegend activeIndex={hoverIndex} comparison={comparison} primaryValues={values} /> : null}
       <div className="flex flex-wrap items-end gap-1 rounded border bg-muted/20 p-1.5" data-tensor-toolbar="true">
         <Button
+          aria-label="Brush"
+          title="Brush"
+          className={compact ? 'size-7 p-0' : undefined}
           aria-pressed={mode === 'brush'}
           disabled={disabled}
           size="sm"
@@ -730,9 +774,12 @@ function HeatmapsEditor({
           variant={mode === 'brush' ? 'default' : 'outline'}
           onClick={() => setMode('brush')}
         >
-          <Brush /> Brush
+          <Brush /> {compact ? null : 'Brush'}
         </Button>
         <Button
+          aria-label="Eraser"
+          title="Eraser"
+          className={compact ? 'size-7 p-0' : undefined}
           aria-pressed={mode === 'eraser'}
           disabled={disabled || !resetValues}
           size="sm"
@@ -740,9 +787,11 @@ function HeatmapsEditor({
           variant={mode === 'eraser' ? 'default' : 'outline'}
           onClick={() => setMode('eraser')}
         >
-          <Eraser /> Eraser
+          <Eraser /> {compact ? null : 'Eraser'}
         </Button>
         <Button
+          aria-label="Region + Wheel"
+          title="Region + Wheel"
           aria-pressed={mode === 'region-wheel'}
           disabled={disabled}
           size="sm"
@@ -750,9 +799,11 @@ function HeatmapsEditor({
           variant={mode === 'region-wheel' ? 'default' : 'outline'}
           onClick={() => setMode('region-wheel')}
         >
-          Region + Wheel
+          {compact ? 'Wheel' : 'Region + Wheel'}
         </Button>
         <Button
+          aria-label="Region + Value"
+          title="Region + Value"
           aria-pressed={mode === 'region-value'}
           disabled={disabled}
           size="sm"
@@ -760,9 +811,15 @@ function HeatmapsEditor({
           variant={mode === 'region-value' ? 'default' : 'outline'}
           onClick={() => setMode('region-value')}
         >
-          Region + Value
+          {compact ? 'Value' : 'Region + Value'}
         </Button>
-        <label className="grid gap-0.5 px-1 text-[10px] text-muted-foreground">
+        <label
+          className={
+            compact && mode !== 'brush' && mode !== 'eraser'
+              ? 'hidden'
+              : 'grid gap-0.5 px-1 text-[10px] text-muted-foreground'
+          }
+        >
           Radius
           <Input
             className="h-7 w-16"
@@ -775,7 +832,9 @@ function HeatmapsEditor({
             onChange={(event) => setRadiusInput(event.target.value)}
           />
         </label>
-        <label className="grid gap-0.5 px-1 text-[10px] text-muted-foreground">
+        <label
+          className={compact && mode !== 'brush' ? 'hidden' : 'grid gap-0.5 px-1 text-[10px] text-muted-foreground'}
+        >
           Strength
           <Input
             className="h-7 w-24"
@@ -789,16 +848,20 @@ function HeatmapsEditor({
         </label>
         <Button
           aria-label="Tensor 전체 Reset"
+          title="Tensor 전체 Reset"
+          className={compact ? 'size-7 p-0' : undefined}
           disabled={disabled || !resetValues}
           size="sm"
           type="button"
           variant="outline"
           onClick={() => recordCommit(latestValuesRef.current, resetValues!)}
         >
-          <RotateCcw /> Reset
+          <RotateCcw /> {compact ? null : 'Reset'}
         </Button>
         <Button
           aria-label="Tensor 편집 Undo"
+          title="Tensor 편집 Undo"
+          className={compact ? 'size-7' : undefined}
           disabled={disabled || undoRef.current.length === 0}
           size="icon"
           type="button"
@@ -817,6 +880,8 @@ function HeatmapsEditor({
         </Button>
         <Button
           aria-label="Tensor 편집 Redo"
+          title="Tensor 편집 Redo"
+          className={compact ? 'size-7' : undefined}
           disabled={disabled || redoRef.current.length === 0}
           size="icon"
           type="button"
@@ -835,7 +900,7 @@ function HeatmapsEditor({
         </Button>
       </div>
       {shape.length > 2 ? (
-        <div className="flex items-center justify-between gap-2 text-xs">
+        <div className={`flex ${compact ? 'flex-wrap' : ''} items-center justify-between gap-2 text-xs`}>
           <span className="text-muted-foreground">Last two axes · {sliceCount.toLocaleString()} slices</span>
           <div className="flex items-center gap-2">
             <Button
@@ -869,7 +934,9 @@ function HeatmapsEditor({
           comparison && shape.length === 2
             ? 'grid grid-flow-col gap-2 overflow-x-auto pb-1'
             : shape.length > 2
-              ? 'grid max-h-[55vh] grid-cols-1 gap-3 overflow-auto pr-1 md:grid-cols-2'
+              ? compact
+                ? 'grid grid-cols-1 gap-3'
+                : 'grid max-h-[55vh] grid-cols-1 gap-3 overflow-auto pr-1 md:grid-cols-2'
               : ''
         }
         data-comparison-layout={comparison && shape.length === 2 ? 'parallel-heatmaps' : undefined}
@@ -1046,6 +1113,9 @@ function HeatmapsEditor({
 }
 
 export function TensorEditor({
+  compact = false,
+  ref,
+  initialHeatmapMode = 'brush',
   axes = [],
   comparison,
   disabled = false,
@@ -1061,6 +1131,8 @@ export function TensorEditor({
   value,
   onValueChange,
 }: TensorEditorProps) {
+  const pendingCommitRef = useRef<(() => void) | null>(null)
+  useImperativeHandle(ref, () => ({ flushPendingChanges: () => pendingCommitRef.current?.() }), [])
   const controlledValues = useMemo(() => flattenVarsTensor(value, shape, label), [label, shape, value])
   const resetValues = useMemo(() => {
     if (constraintMinimum <= 0 && constraintMaximum >= 0) return controlledValues.map(() => 0)
@@ -1074,6 +1146,7 @@ export function TensorEditor({
   const [values, setValues] = useState(controlledValues)
   const [externalValueRevision, setExternalValueRevision] = useState(0)
   const previousControlledValuesRef = useRef(controlledValues)
+  const previousSelectionResetKeyRef = useRef(selectionResetKey)
   const ownCommitRef = useRef<readonly number[] | null>(null)
   const flatComparison = useMemo(
     () =>
@@ -1107,11 +1180,15 @@ export function TensorEditor({
   onValueChangeRef.current = onValueChange
 
   useLayoutEffect(() => {
-    setValues(controlledValues)
     const previous = previousControlledValuesRef.current
     const changed =
       previous.length !== controlledValues.length ||
       previous.some((member, index) => member !== controlledValues[index])
+    if (changed || previousSelectionResetKeyRef.current !== selectionResetKey) {
+      // Equal controlled values can arrive with freshly evaluated schema arrays.
+      // Preserve an in-progress edit when another variable caused that rerender.
+      setValues(controlledValues)
+    }
     if (changed) {
       const own = ownCommitRef.current
       if (
@@ -1124,7 +1201,8 @@ export function TensorEditor({
     }
     ownCommitRef.current = null
     previousControlledValuesRef.current = controlledValues
-  }, [controlledValues])
+    previousSelectionResetKeyRef.current = selectionResetKey
+  }, [controlledValues, selectionResetKey])
   useLayoutEffect(() => {
     setDisplayDomain(requestedDisplayDomainRef.current)
   }, [displayDomainResetKey])
@@ -1144,6 +1222,8 @@ export function TensorEditor({
   const editor =
     shape.length <= 1 ? (
       <BarsEditor
+        compact={compact}
+        pendingCommitRef={pendingCommitRef}
         axes={axes}
         comparison={flatComparison}
         constraintMaximum={constraintMaximum}
@@ -1159,6 +1239,9 @@ export function TensorEditor({
       />
     ) : (
       <HeatmapsEditor
+        compact={compact}
+        initialHeatmapMode={initialHeatmapMode}
+        pendingCommitRef={pendingCommitRef}
         axes={axes}
         comparison={flatComparison}
         constraintMaximum={constraintMaximum}

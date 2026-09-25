@@ -20,6 +20,7 @@ import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSaveWorkflow'
 import { ExperimentWorkspace } from '@/features/cae-workbench/chrome/ExperimentWorkspace'
+import { ExperimentVarsPanel } from '@/features/cae-workbench/ExperimentVarsPanel'
 import { calculationAccessPolicy, type CalculationSaveState } from '@/features/calculation'
 import type {
   PredictionViewerState,
@@ -71,6 +72,7 @@ function AuthenticatedCaePage() {
 }
 
 function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
+  const [varsLayout, setVarsLayout] = useState({ width: 280, collapsed: false })
   const location = useLocation()
   const navigate = useNavigate()
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
@@ -486,7 +488,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             hidden={page.activeSection === 'measurement'}
           >
             {page.activeSection === 'experiment' ? (
-              <ExperimentWorkspace menubar={menubar} ribbon={ribbon} viewer={viewerPane} editor={rightPane} />
+              <ExperimentWorkspace
+                menubar={menubar}
+                ribbon={ribbon}
+                viewer={viewerPane}
+                editor={rightPane}
+                vars={<ExperimentVarsPanel workbench={workbench} previewing={Boolean(preview)} />}
+                varsLayout={varsLayout}
+                onVarsLayoutChange={setVarsLayout}
+              />
             ) : page.activeSection === 'calculation' ? (
               <CalculationWorkbenchContainer
                 onSourceChange={setViewerCalculationSource}

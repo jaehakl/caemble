@@ -8,6 +8,7 @@ import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft 
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 
 const mocks = vi.hoisted(() => ({
+  editableVars: false,
   clearBaseMeasurement: vi.fn(),
   loadBaseMeasurement: vi.fn(),
   workspaceOptions: vi.fn(),
@@ -40,6 +41,11 @@ vi.mock('@/features/measurement/useCaeDataSelection', async () => {
         setMeasurement(null)
         setRecordedData({})
       }, [])
+      const loadMeasurement = useCallback(async (...args: unknown[]) => {
+        const row = await mocks.loadBaseMeasurement(...args)
+        if (mocks.editableVars) setMeasurement(row)
+        return row
+      }, [])
       return {
         measurement,
         recordedRows: measurement ? [{ id: 51 }] : [],
@@ -52,7 +58,7 @@ vi.mock('@/features/measurement/useCaeDataSelection', async () => {
         loading: false,
         clearAll: clearMeasurement,
         clearMeasurement,
-        loadMeasurement: mocks.loadBaseMeasurement,
+        loadMeasurement,
       }
     },
   }
@@ -75,8 +81,8 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
         successfulCandidateGeneration: 0,
         successfulRevision: -1,
         validatedRevision: -1,
-        variables: null,
-        varsSchema: null,
+        variables: mocks.editableVars ? { width: 2 } : null,
+        varsSchema: mocks.editableVars ? { width: { shape: [], min: 0, max: 10 } } : null,
       },
       simulation: {},
     }
@@ -137,9 +143,36 @@ function savedExperiment(id: number): SavedExperiment {
 }
 
 beforeEach(() => {
+  mocks.editableVars = false
   mocks.clearBaseMeasurement.mockClear()
   mocks.loadBaseMeasurement.mockReset().mockResolvedValue(mocks.measurement)
   mocks.workspaceOptions.mockClear()
+})
+
+it('turns a viewed Measurement into an editable Candidate and sends the new vars to CAD evaluation', async () => {
+  mocks.editableVars = true
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const wrapper = ({ children }: PropsWithChildren) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+  const { result } = renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper })
+  act(() => result.current.applyExperiment(savedExperiment(7)))
+  await act(async () => {
+    await result.current.selection.loadMeasurement(mocks.measurement)
+  })
+  expect(result.current.selection.measurement?.id).toBe(41)
+  mocks.clearBaseMeasurement.mockClear()
+  act(() => {
+    expect(result.current.setCandidateVariables({ width: 8 }, 'user-vars')).toBe(true)
+  })
+  expect(result.current.selection.measurement).toBeNull()
+  expect(mocks.clearBaseMeasurement).toHaveBeenCalledTimes(1)
+  expect(result.current.candidateVars).toEqual({ width: 8 })
+  expect(mocks.workspaceOptions.mock.lastCall?.[0]).toMatchObject({
+    candidateVars: { width: 8 },
+    candidateProvenance: 'editable',
+  })
+  client.clear()
 })
 
 describe('useCaeWorkbenchState draft restoration', () => {

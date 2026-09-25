@@ -1,5 +1,6 @@
 export {
   TensorEditor,
+  type TensorEditorHandle,
   type TensorEditorAxis,
   type TensorEditorComparison,
   type TensorEditorComparisonSeries,
