@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
-import type { UserData } from '@/api'
+import { dbTables, type UserData } from '@/api'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 
@@ -308,13 +308,57 @@ describe('useCaeWorkbenchState draft restoration', () => {
 })
 
 describe('Experiment automatic Measurement selection', () => {
-  function setup() {
+  function setup(authenticated = true) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     )
-    return { client, ...renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper }) }
+    return {
+      client,
+      ...renderHook(() => useCaeWorkbenchState(authenticated ? firstUser : null, authenticated), { wrapper }),
+    }
   }
+
+  it.each([true, false])('selects the exact pin over a newer result (authenticated: %s)', async (authenticated) => {
+    const { result } = setup(authenticated)
+    const newer = { ...mocks.measurement, id: 42, recorded_at: '2026-09-26T00:00:00Z' }
+    const rows = [newer, mocks.measurement]
+    const list = vi.spyOn(dbTables.Measurement, 'listRows').mockImplementation(async (request) => {
+      if (!request) throw new Error('Expected a Measurement list request')
+      // The list API combines selected_ids with the other filters using OR.
+      const items = rows.filter(
+        (row) =>
+          request.selected_ids?.includes(row.id) ||
+          ((!request.filter?.id ||
+            (row.id >= Number(request.filter.id[0]) && row.id <= Number(request.filter.id[1]))) &&
+            row.experiment_id === request.filter?.experiment_id?.[0] &&
+            Boolean(row.recorded_at)),
+      )
+      return { items: items.slice(0, request.limit ?? items.length), total: items.length } as never
+    })
+    mocks.loadBaseMeasurement.mockImplementation(async (id: number) => rows.find((row) => row.id === id))
+
+    await act(async () => {
+      await result.current.loadExperiment({ ...savedExperiment(7), isDemo: true, initial_measurement_id: 41 })
+    })
+
+    expect(list).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        scope: 'visible',
+        selected_ids: [],
+        filter: { id: [41, 41], experiment_id: [7, 7] },
+        null_filter: { recorded_at: 'is_not_null' },
+        limit: 1,
+      }),
+      expect.objectContaining({ resolveObjects: false }),
+    )
+    await waitFor(() => expect(result.current.selectionContext.measurementId).toBe(41))
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(
+      41,
+      7,
+      expect.objectContaining({ onDetail: expect.any(Function) }),
+    )
+  })
 
   it('loads a pinned recorded Measurement without querying the latest result', async () => {
     const { client, result } = setup()

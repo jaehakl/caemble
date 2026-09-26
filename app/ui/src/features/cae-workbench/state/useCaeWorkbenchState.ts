@@ -455,8 +455,8 @@ export function useCaeWorkbenchState(
         if (row.initial_measurement_id) {
           const pinned = await queryClient.fetchQuery(
             measurementsQueryOptions(queryScope, row.id, {
-              ...getListRequest('visible', [row.initial_measurement_id]),
-              filter: { experiment_id: [row.id, row.id] },
+              ...getListRequest('visible'),
+              filter: { id: [row.initial_measurement_id, row.initial_measurement_id], experiment_id: [row.id, row.id] },
               null_filter: { recorded_at: 'is_not_null' },
               limit: 1,
             }),
