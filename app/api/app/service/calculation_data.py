@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import (
     Calculation,
     CalculationData,
+    CalculationSource,
     CalculationExperimentRecord,
     Experiment,
     ExperimentRecord,
@@ -30,6 +31,7 @@ from utils.crud.common import is_admin_user
 from service.experiment_access import require_experiment_read, require_experiment_write
 from service.calculation import calculation_output_contract
 from service.box_grid import validate_box_grid_schema
+from service.calculation_contract import validate_stored_tensor
 
 
 CALCULATION_DATA_CRUD_SPEC = CrudSpec(
@@ -294,7 +296,11 @@ async def save_calculation_data(
     data: CalculationDataOutput,
     *,
     user: UserData,
+    source_revision: int | None = None,
 ) -> dict[str, int | bool]:
+    source_id = await db.scalar(select(Calculation.source_id).where(Calculation.id == calculation_id))
+    if source_id is not None:
+        await db.scalar(select(CalculationSource).where(CalculationSource.id == source_id).with_for_update().execution_options(populate_existing=True))
     calculation = await db.scalar(
         select(Calculation)
         .where(Calculation.id == calculation_id)
@@ -311,12 +317,20 @@ async def save_calculation_data(
         current_hash != source_hash
         or calculation.source_hash != source_hash
         or calculation.contract_status != "ready"
+        or calculation.validated_source_revision != calculation.source.revision
+        or (calculation.source.contract_hash is not None and source_revision != calculation.source.revision)
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Calculation source changed while CalculationData was running.",
         )
 
+    if calculation.source.output_contract is not None:
+        try:
+            await validate_stored_tensor(db, calculation.source.output_contract, data.model_dump(mode="json"),
+                                         experiment_id=calculation.experiment_id)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
     expected_layout = calculation.output_layout
     actual_layout = {
         "dtype": data.dtype,

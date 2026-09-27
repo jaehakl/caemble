@@ -110,3 +110,30 @@ Forward Prediction은 Box Grid 전체를 예측한 후 Calculation을 실행합�
 - [Experiment 작성하기](experiment.md): 입력과 기록을 정의하고 로컬 해석 결과를 만듭니다.
 - [결과 기록 구조](../manual/program/program-domain-recording.md): Box Grid, 축과 표시 자료의 차이를 확인합니다.
 - [Calculation 화면 사용법](../manual/workbench/workbench-calculation.md): 미리보기와 정의·결과 저장을 화면에서 진행합니다.
+
+
+## 코드 선언 계약과 공유 정의
+
+신규 정의와 코드 수정에는 파일 선두에 다음 JSON 주석을 하나 선언합니다. 이 블록은 실행하지 않고 UI·CLI·서버에서 읽습니다.
+
+```javascript
+/* @caemble-contract {
+  "version": 1,
+  "inputs": {
+    "signal": { "dtype": "float64", "shape": [null, null, null, null, null, null, null] }
+  },
+  "output": { "dtype": "float64", "shape": [], "min": 0 }
+} */
+/** @param {CalculationInput} input */
+export default function calculate(input) {
+  return { dtype: 'float64', data: Math.abs(input.signal.data[0]) }
+}
+```
+
+입력 이름은 코드의 고정 Record 참조와 정확히 일치해야 합니다. 입력 rank는 7, 출력 rank는 0~3입니다. `shape: []`는 scalar, 정수 차원은 고정 크기, `null` 차원은 가변 크기입니다. `dtype`와 `shape`는 필수입니다. 입력은 float32/float64, 출력은 기존 Calculation dtype을 지원합니다. 선언의 shape는 제약이며 함수 반환값에 shape를 추가하는 문법은 아닙니다.
+
+선택 조건은 `axes: [{ name?, unit? }, ...]`, 입력의 `unit`, `quantityKind`, `tensorOrder`, 데이터 원소의 `min`·`max`입니다. axes를 선언하면 rank와 길이가 같아야 합니다. 생략한 선택 조건은 제한하지 않습니다. 축 ticks와 Measurement·Record ID는 공유 계약에 넣지 않습니다. 가변 차원도 각 Experiment의 실제 preflight layout과 결과 검증을 대신하지 않습니다.
+
+이름·설명은 코드 외부의 공유 정의에 저장합니다. 소유자와 관리자만 수정할 수 있습니다. 이름·설명 변경은 결과를 유지하며, 계약이 같은 코드 변경은 연결된 모든 Experiment의 결과를 무효화합니다. 계약 변경은 현재 Experiment만 새 정의에 연결합니다. 저장에는 `base_source_revision`, 결과 저장에는 `source_revision`을 함께 보내며 CLI pull/push/run이 이를 처리합니다.
+
+기존 미선언 정의는 그대로 사용할 수 있습니다. 이름·설명은 수정할 수 있지만, 코드 수정에는 선언이 필요합니다. 라이브러리는 같은 코드를 한 번만 표시하며 현재 Experiment에서 다시 preflight한 후 저장합니다.

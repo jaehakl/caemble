@@ -112,4 +112,5 @@ export class CalculationExecutionError extends Error {
 export type CompiledCalculationSource = Readonly<{
   code: string
   sourceHash: string
+  declaredContract?: import('./declaredContract').DeclaredCalculationContract | null
 }>

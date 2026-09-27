@@ -29,7 +29,10 @@ describe('Calculation Query invalidation', () => {
       await invalidate(client, 'user:first', 7)
 
       for (const key of targetKeys) expect(client.getQueryState(key)?.isInvalidated).toBe(true)
-      for (const key of untouchedKeys) expect(client.getQueryState(key)?.isInvalidated).toBe(false)
+      for (const key of untouchedKeys) {
+        const affected = invalidate === invalidateCalculationMutation && key.includes('user:first')
+        expect(client.getQueryState(key)?.isInvalidated).toBe(affected)
+      }
     },
   )
 })

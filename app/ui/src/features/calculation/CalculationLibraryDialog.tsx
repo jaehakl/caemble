@@ -18,7 +18,7 @@ import {
   calculationDtypes,
   calculationInputDtypes,
 } from '@/lib/calculation'
-import { calculationLibraryInputs, libraryInputShape } from './calculationLibraryPreview'
+import { calculationLibraryInputs } from './calculationLibraryPreview'
 
 const sourceLabels = { catalog: 'Catalog', mine: '내 항목', demo: '공개 Demo' }
 const initialQuery: CalculationLibraryQuery = {
@@ -34,66 +34,36 @@ const initialQuery: CalculationLibraryQuery = {
 }
 
 function ContractPreview({ detail }: { detail: CalculationLibraryDetail }) {
-  const inputs = calculationLibraryInputs(detail)
+  if (!detail.input_contract || !detail.output_contract) {
+    const inputs = calculationLibraryInputs(detail)
+    return (
+      <section className="space-y-2">
+        <h3 className="font-semibold">입출력 계약 미선언</h3>
+        <p>기존 코드입니다. 코드 수정 시 @caemble-contract 선언이 필요합니다.</p>
+        <p>정적으로 확인된 입력: {inputs.items.map((item) => item.name).join(', ') || '없음'}</p>
+        <p>dtype·shape·제약조건: 미확인</p>
+      </section>
+    )
+  }
   return (
-    <>
-      <h3 className="font-semibold">Input</h3>
-      <p className="text-muted-foreground">shape의 ?는 동적·미확인 차원입니다.</p>
-      {inputs.error ? <p className="text-destructive">입력 참조 분석 실패: {inputs.error}</p> : null}
-      {!inputs.items.length ? (
-        <p className="text-muted-foreground">{inputs.error ? '동적·미확인' : '참조하는 Record 없음'}</p>
-      ) : null}
-      {inputs.items.map(({ name, contract }) => (
-        <section key={name} className="space-y-1 rounded border p-3">
-          <div className="font-mono font-medium break-all">{name}</div>
-          <p className="text-muted-foreground">
-            {contract ? '저장 계약' : '정적으로 확인된 Record 참조 · 계약 미확인'}
-          </p>
-          <p>shape: {libraryInputShape(contract?.data_schema)}</p>
-          {contract ? (
-            <>
-              <p>
-                dtype: {contract.dtype} · QuantityKind: {contract.quantity_kind ?? '미확인'} · tensorOrder:{' '}
-                {contract.tensor_order}
-              </p>
-              <p>단위: {typeof contract.data_schema?.unit === 'string' ? contract.data_schema.unit : '미확인'}</p>
-              <details>
-                <summary className="cursor-pointer">축·스키마 제약조건</summary>
-                <pre className="mt-2 max-h-60 overflow-auto break-all whitespace-pre-wrap">
-                  {JSON.stringify(contract.data_schema, null, 2)}
-                </pre>
-              </details>
-            </>
-          ) : null}
+    <section className="space-y-3">
+      <h3 className="font-semibold">코드에 선언된 입출력 계약</h3>
+      <p className="text-muted-foreground">
+        shape의 null은 가변 크기입니다. 현재 Experiment에서 실제 입력과 출력을 다시 검증합니다.
+      </p>
+      {Object.entries(detail.input_contract).map(([name, contract]) => (
+        <section key={name} className="rounded border p-3">
+          <h4 className="font-mono">Input · {name}</h4>
+          <pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify(contract, null, 2)}</pre>
         </section>
       ))}
-      <h3 className="font-semibold">Output</h3>
-      {detail.output_layout ? (
-        <section className="space-y-1 rounded border p-3">
-          <p>저장 계약 · 원본 preflight Measurement #{detail.preflight_measurement_id ?? '미확인'} 기준</p>
-          <p>
-            dtype: {detail.output_layout.dtype} · shape: [{detail.output_layout.shape.join(', ')}]
-          </p>
-          {detail.output_layout.axes.map((axis, index) => (
-            <p key={index}>
-              {axis.name}: {axis.ticks.length}개 · 단위 {axis.unit ?? '미확인'}
-            </p>
-          ))}
-          <details>
-            <summary className="cursor-pointer">축 상세</summary>
-            <pre className="max-h-60 overflow-auto break-all whitespace-pre-wrap">
-              {JSON.stringify(detail.output_layout.axes, null, 2)}
-            </pre>
-          </details>
-        </section>
-      ) : (
-        <p className="text-muted-foreground">동적·미확인 · 현재 Measurement에서 preflight 후 확인할 수 있습니다.</p>
-      )}
-      <p className="text-muted-foreground">
-        원본 계약은 현재 Experiment와의 호환성을 보장하지 않습니다. 코드 내부의 추가 조건은 실행 전 확정하지 않습니다.
-      </p>
+      {!Object.keys(detail.input_contract).length ? <p>참조하는 Record 없음</p> : null}
+      <section className="rounded border p-3">
+        <h4>Output</h4>
+        <pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify(detail.output_contract, null, 2)}</pre>
+      </section>
       <details>
-        <summary className="cursor-pointer">공통 실행 제약조건</summary>
+        <summary>공통 실행 제약조건</summary>
         <p>
           Input: {calculationInputDtypes.join(', ')} · 최대 {CALCULATION_INPUT_MAX_BYTES / 1024 / 1024} MiB
         </p>
@@ -102,7 +72,7 @@ function ContractPreview({ detail }: { detail: CalculationLibraryDetail }) {
         </p>
         <p>실행 제한: {CALCULATION_TIMEOUT_MS / 1000}초</p>
       </details>
-    </>
+    </section>
   )
 }
 
@@ -338,7 +308,7 @@ export function CalculationLibraryDialog({
         </div>
         <footer className="flex items-center justify-end gap-2">
           <p className="mr-auto text-xs text-muted-foreground">
-            불러온 코드는 새 초안입니다. 저장 시 현재 Experiment에 추가됩니다.
+            저장 시 공유 정의에 연결합니다. 현재 Experiment의 입력으로 다시 검증해야 합니다.
           </p>
           <Button variant="outline" onClick={onClose}>
             닫기

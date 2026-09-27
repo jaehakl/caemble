@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test_calculation_database import (
-    API_DIR, _create_database, _database_url, _drop_database, _ready_calculation, _seed_owners, _upgrade,
+    API_DIR, _create_database, _database_url, _drop_database, _ready_calculation, declared_source, _seed_owners, _upgrade,
 )
 from db import CalculationData, Measurement, make_async_db_url
 from gpstation.models import AccessKeyCreate
@@ -50,7 +50,7 @@ class CalculationCliTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_pull_run_and_paged_export_use_the_server_contract(self):
         engine = create_async_engine(make_async_db_url(_database_url(self.database)))
         sessions = async_sessionmaker(engine, expire_on_commit=False)
-        source = 'export default function calculation(input) { return { dtype: "float64", data: 4 }; }'
+        source = declared_source('export default function calculation(input) { return { dtype: "float64", data: 4 }; }')
         async with sessions() as db:
             role = await db.scalar(select(Role.id).where(Role.name == "user"))
             db.add(UserRole(user_id=self.owner, role_id=role))

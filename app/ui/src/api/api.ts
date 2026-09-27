@@ -374,6 +374,7 @@ export function createDbTables(client: CaembleClient) {
           calculation_id: number
           measurement_id: number
           source_hash: string
+          source_revision?: number
           data: CalculationDataOutput
         }>,
         context?: RequestContext,

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
+import { calculationLibraryApi } from '@/api/calculationLibrary'
 import { dbTables, getListRequest, type CalculationOutputLayout, type ExperimentRecordedDataRecord } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -249,7 +250,7 @@ export function CalculationWorkbench({
       ? 'ExperimentRecord 계약을 불러오는 중입니다.'
       : dependencyState.error
         ? dependencyState.error.message
-        : requiresPreflight && preview.status !== 'success'
+        : requiresPreflight && preview.status !== 'success' && selectedRow?.source_code !== draft.sourceCode
           ? '현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.'
           : undefined)
   useEffect(() => {
@@ -430,6 +431,32 @@ export function CalculationWorkbench({
       const sequence = ++mutationSequenceRef.current
       setSaving(true)
       try {
+        if (
+          selectedRow &&
+          draft.sourceCode === selectedRow.source_code &&
+          (name !== selectedRow.name || description !== (selectedRow.description ?? ''))
+        ) {
+          if (!draft.baseSourceRevision) throw new Error('공유 정의 revision을 확인할 수 없습니다. 다시 불러오세요.')
+          const result = await calculationLibraryApi.updateMetadata(selectedRow.id, {
+            name,
+            description: description || null,
+            base_source_revision: draft.baseSourceRevision,
+          })
+          if (sequence === mutationSequenceRef.current)
+            dispatchEditing({
+              type: 'saveCommitted',
+              draft: {
+                ...draft,
+                name,
+                description,
+                baseRevision: result.revision,
+                baseSourceRevision: result.source_revision,
+              },
+            })
+          await invalidateCalculationMutation(queryClient, queryScope, experimentId)
+          toast.success('공유 정의의 이름·설명을 변경했습니다.')
+          return true
+        }
         if (dependencyState.error) throw dependencyState.error
         const sourceHash = await calculationSourceHash(draft.sourceCode)
         let outputLayout: CalculationOutputLayout | null = selectedRow?.output_layout ?? null
@@ -470,6 +497,7 @@ export function CalculationWorkbench({
           {
             ...(draft.id === null ? {} : { id: draft.id }),
             ...(draft.id === null ? {} : { base_revision: draft.baseRevision }),
+            base_source_revision: draft.baseSourceRevision,
             description: description || null,
             experiment_id: experimentId,
             name,
@@ -485,7 +513,14 @@ export function CalculationWorkbench({
           await invalidateCalculationMutation(queryClient, queryScope, experimentId)
           return false
         }
-        const next = { ...draft, description, id: result.id, baseRevision: result.revision, name }
+        const next = {
+          ...draft,
+          description,
+          id: result.id,
+          baseRevision: result.revision,
+          baseSourceRevision: result.source_revision,
+          name,
+        }
         if (changeCalculationSelection(result.id)) {
           dispatchEditing({ type: 'saveCommitted', draft: next })
           selectedCalculationRef.current = result.id
@@ -776,6 +811,12 @@ export function CalculationWorkbench({
         columnRatios={columnRatios}
         editor={
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
+            {draft.id !== null ? (
+              <p className="border-b px-3 py-2 text-xs text-muted-foreground">
+                공유 정의: 이름·설명·계산 로직 변경은 모든 연결에 반영됩니다. 계약 선언 변경은 현재 연결만 새 정의로
+                분리합니다.
+              </p>
+            ) : null}
             {demoSandbox ? (
               <div className="shrink-0 border-b bg-sky-50 px-3 py-1.5 text-xs text-sky-950">
                 Demo 원본과 저장 데이터는 읽기 전용입니다. 이 source 변경은 로컬 Preview에만 적용됩니다.

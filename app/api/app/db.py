@@ -375,25 +375,24 @@ class CalculationExperimentRecord(Base):
 
 
 class CalculationSource(Base):
-    """Immutable exact UTF-8 source, shared independently of Experiment access."""
+    """Owned shared definition; every write uses definition revision checks."""
     __tablename__ = "calculation_sources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_code: Mapped[str] = mapped_column(Text, nullable=False)
     source_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1", default=1)
+    input_contract: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    output_contract: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    contract_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class Calculation(TimestampMixin, Base):
     __tablename__ = "calculations"
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
-    __table_args__ = (
-        UniqueConstraint(
-            "experiment_id",
-            "name",
-            name="uq_calculations_experiment_id_name",
-        ),
-    )
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     experiment_id: Mapped[int] = mapped_column(
         Integer,
@@ -401,12 +400,77 @@ class Calculation(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validated_source_revision: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     source_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("calculation_sources.id", ondelete="RESTRICT"), nullable=False, index=True,
     )
     source: Mapped["CalculationSource"] = relationship(lazy="selectin")
+
+    @hybrid_property
+    def name(self) -> str:
+        return self.source.name
+
+    @name.inplace.expression
+    @classmethod
+    def _name_expression(cls):
+        return select(CalculationSource.name).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("name")
+
+    @hybrid_property
+    def description(self) -> str | None:
+        return self.source.description
+
+    @description.inplace.expression
+    @classmethod
+    def _description_expression(cls):
+        return select(CalculationSource.description).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("description")
+
+    @hybrid_property
+    def source_revision(self) -> int:
+        return self.source.revision
+
+    @source_revision.inplace.expression
+    @classmethod
+    def _source_revision_expression(cls):
+        return select(CalculationSource.revision).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("source_revision")
+
+    @hybrid_property
+    def source_owner_id(self) -> str | None:
+        return self.source.owner_id
+
+    @source_owner_id.inplace.expression
+    @classmethod
+    def _source_owner_id_expression(cls):
+        return select(CalculationSource.owner_id).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("source_owner_id")
+
+    @hybrid_property
+    def input_contract(self) -> Any:
+        return self.source.input_contract
+
+    @input_contract.inplace.expression
+    @classmethod
+    def _input_contract_expression(cls):
+        return select(CalculationSource.input_contract).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("input_contract")
+
+    @hybrid_property
+    def output_contract(self) -> Any:
+        return self.source.output_contract
+
+    @output_contract.inplace.expression
+    @classmethod
+    def _output_contract_expression(cls):
+        return select(CalculationSource.output_contract).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("output_contract")
 
     @hybrid_property
     def source_code(self) -> str:
@@ -457,6 +521,14 @@ class Calculation(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class CalculationLegacyMetadata(Base):
+    """Revision-17 rollback data, never used for application reads."""
+    __tablename__ = "calculation_legacy_metadata"
+    calculation_id: Mapped[int] = mapped_column(ForeignKey("calculations.id", ondelete="CASCADE"), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class CalculationData(TimestampMixin, Base):

@@ -5,6 +5,7 @@ import type { File } from '@babel/types'
 import { CALCULATION_INDEX_GUARD_GLOBAL, CALCULATION_INDEX_POLICY_MESSAGE } from './runtimeGlobals'
 import { createCalculationSourceDiagnostic } from './sourcePolicy'
 import { CalculationExecutionError, type CompiledCalculationSource } from './types'
+import { extractCalculationContract } from './declaredContract'
 
 const generate = (generateModule as unknown as { default?: typeof generateModule }).default ?? generateModule
 const traverse = (traverseModule as unknown as { default?: typeof traverseModule }).default ?? traverseModule
@@ -34,6 +35,7 @@ function guardComputedIndexes(source: string, ast: File) {
 }
 
 export function transformCalculationSource(source: string, hash: string, ast: File): CompiledCalculationSource {
+  const declaredContract = extractCalculationContract(source)
   const computedIndexGuard = guardComputedIndexes(source, ast)
   const importedLocals: t.Identifier[] = []
   const importedValues: t.Expression[] = []
@@ -92,5 +94,6 @@ export function transformCalculationSource(source: string, hash: string, ast: Fi
   return Object.freeze({
     code: `${code}\n//# sourceURL=caemble-calculation://${hash}/calculation.js`,
     sourceHash: hash,
+    declaredContract,
   })
 }

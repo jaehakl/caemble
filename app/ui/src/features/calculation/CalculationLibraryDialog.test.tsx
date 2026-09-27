@@ -11,6 +11,8 @@ vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'test-o
 
 const first: CalculationLibraryDetail = {
   source_id: 1,
+  input_contract: { field: { dtype: 'float64', shape: [null, null, null, null, null, null, null], unit: 'K' } },
+  output_contract: { dtype: 'float64', shape: [] },
   reference: { kind: 'saved', calculation_id: 1, coordinate: null, name: null },
   name: 'First calculation',
   description: '설명',
@@ -65,8 +67,8 @@ it('only loads details on selection and imports on explicit action', async () =>
   expect(calculationLibraryApi.detail).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: '불러오기' })).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: /First calculation/ }))
-  expect(await screen.findByText(/원본 preflight Measurement #10 기준/)).toBeInTheDocument()
-  expect(screen.getByText('shape: [4]')).toBeInTheDocument()
+  expect(await screen.findByText('코드에 선언된 입출력 계약')).toBeInTheDocument()
+  expect(screen.queryByText(/원본 preflight Measurement/)).not.toBeInTheDocument()
   expect(onLoad).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '불러오기' }))
   expect(onLoad).toHaveBeenCalledWith(first)

@@ -31,6 +31,7 @@ sys.path.insert(0, str(APP_DIR))
 from db import (  # noqa: E402
     Calculation,
     CalculationData,
+    CalculationSource,
     Experiment,
     ExperimentDemo,
     ExperimentRecord,
@@ -177,6 +178,7 @@ async def _replace_calculation_with_legacy_tables(database: str) -> None:
         await connection.execute("ALTER TABLE launchers DROP COLUMN IF EXISTS storage_versions")
         await connection.execute("DROP TABLE IF EXISTS calculation_data")
         await connection.execute("DROP TABLE IF EXISTS calculation_experiment_records")
+        await connection.execute("DROP TABLE IF EXISTS calculation_legacy_metadata")
         await connection.execute("DROP TABLE calculations")
         await connection.execute("DROP TABLE calculation_sources")
         for table in ("designer_models", "predictor_models"):
@@ -302,6 +304,11 @@ async def _seed_conflicting_legacy_recorded_data(database: str) -> tuple[int, in
         await connection.close()
 
 
+def declared_source(code: str, shape=None, inputs=None) -> str:
+    declaration = {"version": 1, "inputs": inputs or {}, "output": {"dtype": "float64", "shape": shape or []}}
+    return "/* @caemble-contract " + json.dumps(declaration, separators=(",", ":")) + " */\n" + code
+
+
 def _ready_calculation(
     experiment_id: int,
     name: str,
@@ -310,6 +317,7 @@ def _ready_calculation(
     *,
     calculation_id: int | None = None,
     base_revision: int = 1,
+    base_source_revision: int = 1,
     description: str | None = None,
     output_layout: dict[str, object] | None = None,
     record_ids: list[int] | None = None,
@@ -317,6 +325,7 @@ def _ready_calculation(
     return CalculationBase(
         id=calculation_id,
         base_revision=base_revision if calculation_id is not None else None,
+        base_source_revision=base_source_revision if calculation_id is not None else None,
         experiment_id=experiment_id,
         name=name,
         description=description,
@@ -437,7 +446,7 @@ async def _verify_crud_contract(database: str) -> None:
                         experiment_id=experiment_id,
                         name="Magnitude",
                         description="Example",
-                        source_code="export default () => ({ shape: [], data: 1, axes: [] })",
+                        source_code=declared_source("export default () => ({ shape: [], data: 1, axes: [] })"),
                         preflight_measurement_id=owner_preflight_id,
                     )
                 ],
@@ -475,7 +484,7 @@ async def _verify_crud_contract(database: str) -> None:
                             calculation_id=calculation_id,
                             experiment_id=experiment_id,
                             name="Not mine",
-                            source_code="export default () => ({ shape: [], data: 0, axes: [] })",
+                            source_code=declared_source("export default () => ({ shape: [], data: 0, axes: [] })"),
                             preflight_measurement_id=owner_preflight_id,
                         )
                     ],
@@ -503,7 +512,7 @@ async def _verify_crud_contract(database: str) -> None:
                             calculation_id=calculation_id,
                             experiment_id=other_experiment_id,
                             name="Magnitude",
-                            source_code="export default () => ({ shape: [], data: 1, axes: [] })",
+                            source_code=declared_source("export default () => ({ shape: [], data: 1, axes: [] })"),
                             preflight_measurement_id=other_preflight_id,
                         )
                     ],
@@ -515,23 +524,11 @@ async def _verify_crud_contract(database: str) -> None:
                 raise AssertionError("Calculation moved to another Experiment")
 
         async with sessions() as session:
-            try:
-                await upsert_calculations(
-                    session,
-                    [
-                        _ready_calculation(
-                            experiment_id=experiment_id,
-                            name="Magnitude",
-                            source_code="export default () => ({ shape: [], data: 2, axes: [] })",
-                            preflight_measurement_id=owner_preflight_id,
-                        )
-                    ],
-                    user=owner,
-                )
-            except HTTPException as error:
-                assert error.status_code == 409
-            else:
-                raise AssertionError("Duplicate Calculation name was accepted")
+            duplicate = await upsert_calculations(session, [_ready_calculation(experiment_id, "Magnitude",
+                declared_source("export default function calculate(input) { return {dtype:'float64',data:2}; }"),
+                owner_preflight_id)], user=owner)
+            assert duplicate[0]["id"] != calculation_id
+            await delete_calculations(session, [duplicate[0]["id"]], user=owner)
 
         async with sessions() as session:
             counts = (await _derived_counts(session, [experiment_id]))[experiment_id]
@@ -602,7 +599,7 @@ async def _verify_crud_contract(database: str) -> None:
                     _ready_calculation(
                         experiment_id=experiment_id,
                         name="Cascade",
-                        source_code="export default () => ({ shape: [], data: 1, axes: [] })",
+                        source_code=declared_source("export default () => ({ shape: [], data: 1, axes: [] })", inputs={"signal": {"dtype": "float64", "shape": [None]*7}}),
                         preflight_measurement_id=owner_preflight_id,
                         record_ids=[experiment_record_id],
                     )
@@ -635,8 +632,12 @@ async def _verify_calculation_data_contract(database: str) -> None:
     admin = UserData(id="00000000-0000-0000-0000-000000000001", roles=[RoleEnum.admin])
     source = "export default () => ({ dtype: 'float64', data: 1 })"
     source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    changed_source = "export default () => ({ dtype: 'float64', data: 2 })"
+    changed_source = declared_source("export default () => ({ dtype: 'float64', data: 2 })")
     scalar = {"dtype": "float64", "shape": [], "data": 1.5, "axes": []}
+    # Preserve regression coverage for migrated, undeclared definitions with per-binding layouts.
+    async with sessions() as session:
+        session.add(CalculationSource(name="Scalar", owner_id=owner_id, source_code=source, source_hash=source_hash))
+        await session.commit()
     try:
         async with sessions() as session:
             created = await upsert_calculations(
@@ -966,6 +967,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                         first_measurement_id,
                         calculation_id=first_calculation_id,
                         base_revision=2,
+                        base_source_revision=2,
                     )
                 ],
                 user=owner,
@@ -1193,7 +1195,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             engine = create_async_engine(make_async_db_url(_database_url(database)))
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             owner = UserData(id=owner_id, roles=[RoleEnum.user])
-            source = "export default function calculate(record) { return { dtype: 'float64', data: [[[1, 2]]] }; }"
+            source = declared_source("export default function calculate(record) { return { dtype: 'float64', data: [[[1, 2]]] }; }", [1, 1, 2])
             source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
             layout = {"dtype": "float64", "shape": [1, 1, 2], "axes": [
                 {"name": "x", "ticks": [0.5], "unit": "m"},
@@ -1206,7 +1208,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
                         _ready_calculation(experiment_id, "Volume", source, measurement_id, output_layout=layout)
                     ], user=owner)
                     saved = await save_calculation_data(session, created[0]["id"], measurement_id, source_hash,
-                        CalculationDataOutput.model_validate({**layout, "data": [1, 2]}), user=owner)
+                        CalculationDataOutput.model_validate({**layout, "data": [1, 2]}), user=owner, source_revision=1)
                 async with sessions() as session:
                     response = await list_calculation_data(session,
                         CalculationDataListRequest(experiment_id=experiment_id, selected_ids=[saved["id"]], limit=None), user=owner)
@@ -1233,7 +1235,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             engine = create_async_engine(make_async_db_url(_database_url(database)))
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             owner = UserData(id=owner_id, roles=[RoleEnum.user])
-            source = "export default record => record.signal"
+            source = declared_source("export default record => record.signal", [None])
             source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
             layout = {
                 "dtype": "float64", "shape": [2],
@@ -1251,7 +1253,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
                         saved = await save_calculation_data(
                             session, calculation_id, measurement_id, source_hash,
                             CalculationDataOutput.model_validate({**output_layout, "data": [10, 20]}),
-                            user=owner,
+                            user=owner, source_revision=1,
                         )
                         saved_ids.append(saved["id"])
                     await upsert_calculations(session, [
@@ -1287,7 +1289,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
                             await save_calculation_data(
                                 session, calculation_id, first_id, source_hash,
                                 CalculationDataOutput.model_validate({**mismatch, "data": [10, 20]}),
-                                user=owner,
+                                user=owner, source_revision=1,
                             )
                         self.assertEqual(failure.exception.status_code, 422)
                         with self.assertRaises(HTTPException) as failure:

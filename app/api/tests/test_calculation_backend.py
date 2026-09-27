@@ -63,7 +63,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             ))
             items = [
                 api_models.CalculationListItem(
-                    id=calculation_id, source_id=1, experiment_id=experiment_id,
+                    id=calculation_id, source_id=1, source_revision=1, source_owner_id=None, input_contract=None, output_contract=None, validated_source_revision=None, experiment_id=experiment_id,
                     name=str(calculation_id), source_code="source",
                 )
                 for calculation_id, experiment_id in [(10, 7), (11, 7), (12, 7), (13, 9)]
@@ -117,8 +117,7 @@ class CalculationBackendContractTests(unittest.TestCase):
                 "created_at",
                 "updated_at",
                 "experiment_id",
-                "name",
-                "description",
+                "validated_source_revision",
                 "source_id",
                 "output_layout",
                 "preflight_measurement_id",
@@ -133,7 +132,7 @@ class CalculationBackendContractTests(unittest.TestCase):
         foreign_key = next(iter(table.c.experiment_id.foreign_keys))
         self.assertEqual("experiments.id", foreign_key.target_fullname)
         self.assertEqual("CASCADE", foreign_key.ondelete)
-        self.assertTrue(
+        self.assertFalse(
             any(
                 constraint.name == "uq_calculations_experiment_id_name"
                 for constraint in table.constraints
@@ -214,7 +213,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             body_properties("/calculation_data/missing"),
         )
         self.assertEqual(
-            {"calculation_id", "measurement_id", "source_hash", "data"},
+            {"calculation_id", "measurement_id", "source_hash", "source_revision", "data"},
             body_properties("/calculation_data/save"),
         )
         self.assertEqual(

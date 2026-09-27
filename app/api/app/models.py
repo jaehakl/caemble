@@ -276,6 +276,7 @@ class CalculationOutputLayout(BaseModel):
 
 
 class CalculationBase(TimestampFields):
+    base_source_revision: int | None = Field(default=None, ge=1)
     revision: int = Field(default=1, ge=1)
     base_revision: int | None = Field(default=None, ge=1)
     experiment_id: int
@@ -289,7 +290,18 @@ class CalculationBase(TimestampFields):
     experiment_record_ids: List[StrictInt] = Field(default_factory=list)
 
 
+class CalculationMetadataUpdate(BaseModel):
+    name: str = Field(min_length=1)
+    description: str | None = None
+    base_source_revision: int = Field(ge=1)
+
+
 class CalculationListItem(CalculationBase):
+    source_revision: int
+    source_owner_id: str | None
+    input_contract: dict[str, Any] | None
+    output_contract: dict[str, Any] | None
+    validated_source_revision: int | None
     source_id: int = Field(ge=1)
     calculation_data_count: int = Field(default=0, ge=0)
     recorded_measurement_count: int = Field(default=0, ge=0)

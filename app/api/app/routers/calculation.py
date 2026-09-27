@@ -2,11 +2,12 @@ from fastapi import APIRouter, Body, Depends, Response
 from caemble_catalog import Catalog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import CalculationBase, CalculationListRequest, UserData
+from models import CalculationBase, CalculationListRequest, CalculationMetadataUpdate, UserData
 from service.calculation import (
     delete_calculations as delete_calculation_rows,
     list_calculations as list_calculation_rows,
     upsert_calculations as upsert_calculation_rows,
+    update_calculation_metadata,
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
@@ -54,6 +55,12 @@ async def upsert_calculations(
     user: UserData = Depends(require_roles(["admin", "user"])),
 ):
     return await upsert_calculation_rows(db, items, user=user)
+
+
+@router.patch("/{calculation_id}/metadata")
+async def update_metadata(calculation_id: int, item: CalculationMetadataUpdate,
+                          db: AsyncSession = Depends(get_db), user: UserData = Depends(require_roles(["admin", "user"]))):
+    return await update_calculation_metadata(db, calculation_id, item, user=user)
 
 
 @router.delete("/", status_code=200)

@@ -2,13 +2,15 @@ import { z } from 'zod'
 import { browserClient, type RequestContext } from './http'
 
 const referenceSchema = z.object({
-  kind: z.enum(['catalog', 'saved']),
+  kind: z.enum(['catalog', 'saved', 'source']),
   coordinate: z.string().nullable(),
   name: z.string().nullable(),
+  source_id: z.number().int().positive().nullable().optional(),
   calculation_id: z.number().int().positive().nullable(),
 })
 const solverSchema = z.object({ name: z.string(), version: z.string() })
 const itemSchema = z.object({
+  source_hash: z.string().optional(),
   reference: referenceSchema,
   name: z.string(),
   description: z.string().nullable(),
@@ -29,6 +31,9 @@ const pageSchema = z.object({
   }),
 })
 const detailSchema = itemSchema.extend({
+  source_revision: z.number().int().positive().nullable().optional(),
+  input_contract: z.record(z.string(), z.unknown()).nullable().optional(),
+  output_contract: z.record(z.string(), z.unknown()).nullable().optional(),
   source_id: z.number().int().positive().nullable(),
   source_code: z.string(),
   inputs_verified: z.boolean(),
@@ -65,6 +70,10 @@ export type CalculationLibraryQuery = Readonly<{
   limit: number
 }>
 export const calculationLibraryApi = {
+  updateMetadata: (id: number, body: { name: string; description: string | null; base_source_revision: number }) =>
+    browserClient.request('patch', `/calculation/${id}/metadata`, body, {
+      validate: (value) => z.object({ id: z.number(), revision: z.number(), source_revision: z.number() }).parse(value),
+    }),
   list: (query: CalculationLibraryQuery, context: RequestContext) =>
     browserClient.request('post', '/calculation/library/list', query, {
       ...context,

@@ -115,7 +115,7 @@ declare module 'mathjs' {
 
 export const CALCULATION_MATHJS_DECLARATION = CALCULATION_MONACO_DECLARATION
 
-export const CALCULATION_SOURCE_SKELETON = `import { range } from 'mathjs'
+const calculationSourceBody = `import { range } from 'mathjs'
 
 export default function calculate(record) {
   const source = record['signal']
@@ -142,9 +142,9 @@ export default function calculate(record) {
 `
 
 export function calculationSourceSkeleton(recordName?: string) {
-  if (!recordName) return CALCULATION_SOURCE_SKELETON
-  return CALCULATION_SOURCE_SKELETON.replace(
-    "record['signal']",
-    `record[${JSON.stringify(recordName)}]`,
-  )
+  const name = recordName ?? 'signal'
+  const contract = { version: 1, inputs: { [name]: { dtype: 'float64', shape: [null, null, null, null, null, null, null] } }, output: { dtype: 'float64', shape: [null, null] } }
+  return `/* @caemble-contract ${JSON.stringify(contract)} */\n` + calculationSourceBody.replace("record['signal']", `record[${JSON.stringify(name)}]`)
 }
+
+export const CALCULATION_SOURCE_SKELETON = calculationSourceSkeleton()

@@ -152,6 +152,7 @@ export function useCalculationDataActions({
                 calculation_id: calculation.id,
                 measurement_id: target.measurement_id,
                 source_hash: await sourceHash,
+                source_revision: calculation.source_revision,
                 data: output,
               },
               { signal: controller.signal },

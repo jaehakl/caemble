@@ -22,6 +22,11 @@ export type CalculationOutputLayout = Omit<CalculationDataOutput, 'data'>
 type CalculationWriteRecord = Readonly<{
   revision?: number
   base_revision?: number | null
+  base_source_revision?: number | null
+  source_revision?: number
+  source_owner_id?: string | null
+  input_contract?: Record<string, unknown> | null
+  output_contract?: Record<string, unknown> | null
   created_at?: string | null
   updated_at?: string | null
   experiment_id: number
@@ -45,7 +50,7 @@ export type PersistedCalculationRecord = CalculationWriteRecord &
     recorded_measurement_count: number
     measurement_count: number
   }>
-export type CalculationUpsertResponse = Readonly<{ id: number; revision: number }>
+export type CalculationUpsertResponse = Readonly<{ id: number; revision: number; source_revision?: number }>
 /** Compatibility alias. Prefer PersistedCalculationRecord for reads and CalculationUpsertInput for writes. */
 export type CalculationRecord = CalculationUpsertInput
 

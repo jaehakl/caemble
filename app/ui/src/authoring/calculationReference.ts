@@ -27,7 +27,7 @@ export const calculationAuthoringReference = {
     axes: 'Axes are optional. When supplied, every axis and tick must match the inferred shape and units use UCUM.',
     validation: 'Complex final values, NaN, Infinity, ragged arrays, rank above 3, and explicit shape are rejected.',
     persistence:
-      'Saving a new or source-changed Calculation requires a successful preflight; its source hash, ExperimentRecord dependencies, and exact dtype/shape/axes output layout become the stored contract.',
+      'New definitions and source edits require one leading /* @caemble-contract {"version":1,"inputs":{},"output":{"dtype":"float64","shape":[]}} */ JSON declaration and successful preflight. Input shapes have seven dimensions; output rank is 0..3; null dimensions are dynamic. Optional axes name/unit, input unit/quantityKind/tensorOrder, and min/max bounds are enforced. Names, descriptions and same-contract logic edits update the owned shared definition; contract edits fork only the current binding. Exact preflight layouts and Record IDs remain binding-specific. Shared writes require base_source_revision; result writes require source_revision.',
     indexing:
       'Dynamic bracket indexes are allowed only when they resolve to non-negative safe integers. Dynamic string properties are rejected.',
     console:

@@ -25,12 +25,12 @@ from service.calculation_source import get_or_create_calculation_source
 from service.calculation_data import save_calculation_data
 from service.experiment import _source_locked, save_experiment
 from service.measurement_service import get_recorded_data
-from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
+from test_calculation_database import declared_source, _create_database, _database_url, _drop_database, _seed_owners, _upgrade
 
 
 DEFINITIONS = [
-    {"name": "평균", "description": "예제", "source_code": "export default record => record.signal"},
-    {"name": "Second", "source_code": "export default record => record.signal"},
+    {"name": "평균", "description": "예제", "source_code": declared_source("export default function calculate(record) { return {dtype: 'float64', data: record.signal.data[0]}; }", inputs={"signal": {"dtype":"float64", "shape":[None]*7}})},
+    {"name": "Second", "source_code": declared_source("export default function calculate(record) { return {dtype: 'float64', data: record.signal.data[0]}; }", inputs={"signal": {"dtype":"float64", "shape":[None]*7}})},
 ]
 RECORD = {"name": "signal", "quantity_kind": "Dimensionless", "tensor_order": 0, "dtype": "float64", "data_schema": box_schema()}
 CREATE = dict(mode="create", namespace="calc-owner", repository="copies", key="original", name="Original",
@@ -91,13 +91,13 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     await db.commit()
                     layout = {"dtype": "float64", "shape": [], "axes": []}
                     await upsert_calculations(db, [CalculationBase(
-                        id=rows[0].id, experiment_id=original["id"], base_revision=1,
+                        id=rows[0].id, experiment_id=original["id"], base_revision=1, base_source_revision=1,
                         **DEFINITIONS[0], source_hash=rows[0].source_hash,
                         output_layout=layout, preflight_measurement_id=measurement.id,
                         contract_status="ready", experiment_record_ids=[record.id],
                     )], user=owner)
                     await save_calculation_data(db, rows[0].id, measurement.id, rows[0].source_hash,
-                                               CalculationDataOutput(**layout, data=3), user=owner)
+                                               CalculationDataOutput(**layout, data=3), user=owner, source_revision=1)
 
                     copied = await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "save-as"}, copyCalculationsFromExperimentId=original["id"]), user=owner)
                     copy_rows = list((await db.scalars(select(Calculation).where(Calculation.experiment_id == copied["id"]).order_by(Calculation.id))).all())
@@ -158,8 +158,8 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     with self.assertRaises(HTTPException) as failure:
                         await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "private-copy"}, copyCalculationsFromExperimentId=private_id), user=owner)
                     self.assertEqual(failure.exception.status_code, 404)
-                    shared_source = await get_or_create_calculation_source(db, "export default () => 1")
-                    db.add(Calculation(experiment_id=private_id, name="Public calculation", source=shared_source, contract_status="needs_preflight"))
+                    shared_source = await get_or_create_calculation_source(db, declared_source("export default () => 1"), name="Public calculation", owner_id=other_id)
+                    db.add(Calculation(experiment_id=private_id, source=shared_source, contract_status="needs_preflight"))
                     db.add(ExperimentDemo(experiment_id=private_id, display_order=0))
                     await db.commit()
                     public_copy = await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "demo-copy"}, copyCalculationsFromExperimentId=private_id), user=owner)

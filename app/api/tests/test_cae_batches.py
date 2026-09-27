@@ -186,14 +186,13 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(persisted, tensor)
                 self.assertEqual(persisted["storage"]["data"], record_ticket["reference"])
                 self.assertLess(len(json.dumps(persisted)), 4096)
-                from db import Calculation, CalculationData
+                from db import Calculation, CalculationData, CalculationSource
                 from models import CalculationBase, CalculationDataOutput
                 from service.calculation import upsert_calculations
-                from service.calculation_source import get_or_create_calculation_source
                 from service.calculation_data import save_calculation_data, analyze_calculation_data
                 source_hash = hashlib.sha256(b"0").hexdigest()
-                source = await get_or_create_calculation_source(db, "0")
-                calculation = Calculation(experiment_id=self.experiment_id, name="s3-test", source=source,
+                source = CalculationSource(source_code="0", source_hash=source_hash, name="s3-test", owner_id=self.owner_id)
+                calculation = Calculation(experiment_id=self.experiment_id, source=source, validated_source_revision=1,
                     contract_status="ready", output_layout={"dtype": "float64",
                         "shape": [20000], "axes": [{"name": "x", "ticks": list(range(20000)), "unit": None}]})
                 db.add(calculation)
@@ -215,7 +214,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 layout_id = layout_ticket["reference"]["id"]
                 bucket_objects[f"caemble/objects/{layout_id}/00000000"] = calculated
                 await finish_upload(db, await owned_object(db, layout_id, self.owner_id))
-                await upsert_calculations(db, [CalculationBase(id=calculation.id, base_revision=1,
+                await upsert_calculations(db, [CalculationBase(id=calculation.id, base_revision=1, base_source_revision=1,
                     experiment_id=self.experiment_id, name="s3-test", source_code="0", source_hash=source_hash, contract_status="ready",
                     experiment_record_ids=[], preflight_measurement_id=measurement_id, output_layout={
                         "dtype": "float64", "shape": [20000], "axes": [{"name": "x", "ticks": layout_ticket["reference"]}]})], user=self.owner)
@@ -360,8 +359,8 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_calculation_revision_rejects_stale_concurrent_updates(self):
         from db import Calculation
         from service.calculation import upsert_calculations
-        from test_calculation_database import _ready_calculation
-        source = "export default () => ({ dtype: 'float64', data: 1 })"
+        from test_calculation_database import _ready_calculation, declared_source
+        source = declared_source("export default () => ({ dtype: 'float64', data: 1 })")
         async with self.sessions() as db:
             measurement = Measurement(user_id=self.owner_id, experiment_id=self.experiment_id,
                 vars={}, material_snapshot={}, recorded_at=utcnow())

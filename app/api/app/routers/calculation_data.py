@@ -74,6 +74,7 @@ async def save_calculation_data(
     measurement_id: Annotated[int, Body()],
     source_hash: Annotated[str, Body(pattern=r"^[0-9a-f]{64}$")],
     data: Annotated[CalculationDataOutput, Body()],
+    source_revision: Annotated[int | None, Body(ge=1)] = None,
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(require_roles(["admin", "user"])),
 ):
@@ -84,6 +85,7 @@ async def save_calculation_data(
         source_hash,
         data,
         user=user,
+        source_revision=source_revision,
     )
 
 

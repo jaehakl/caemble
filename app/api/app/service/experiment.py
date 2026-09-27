@@ -519,13 +519,12 @@ async def _save_experiment(
             )).all())
         sources = {}
         if copy_source_id is None:
-            for code in sorted({definition.source_code for definition in definitions}):
-                sources[code] = await get_or_create_calculation_source(db, code)
+            for definition in sorted(definitions, key=lambda value: value.source_code):
+                sources[definition.source_code] = await get_or_create_calculation_source(db, definition.source_code,
+                    name=definition.name, description=definition.description, owner_id=user.id)
         for definition in definitions:
             db.add(Calculation(
                 experiment_id=experiment.id,
-                name=definition.name,
-                description=definition.description,
                 source_id=definition.source_id if copy_source_id is not None else sources[definition.source_code].id,
                 revision=1,
                 contract_status="needs_preflight",

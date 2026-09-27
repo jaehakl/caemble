@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import hashlib
 import sys
 import unittest
 from pathlib import Path
@@ -32,7 +34,7 @@ class CalculationLibraryTests(unittest.TestCase):
         for statement in [
             "CREATE TABLE experiments (id INTEGER, user_id TEXT, name TEXT, namespace TEXT, repository_slug TEXT, experiment_key TEXT, version_major INTEGER, version_minor INTEGER, version_patch INTEGER, result_contracts JSON)",
             "CREATE TABLE calculations (id INTEGER, experiment_id INTEGER, name TEXT, description TEXT, source_id INTEGER, output_layout JSON, contract_status TEXT, preflight_measurement_id INTEGER)",
-            "CREATE TABLE calculation_sources (id INTEGER, source_code TEXT, source_hash TEXT)",
+            "CREATE TABLE calculation_sources (id INTEGER, source_code TEXT, source_hash TEXT, name TEXT, description TEXT, revision INTEGER, input_contract JSON, output_contract JSON)",
             "CREATE TABLE experiment_demos (experiment_id INTEGER)",
             "CREATE TABLE experiment_records (id INTEGER, experiment_id INTEGER, name TEXT, dtype TEXT, tensor_order INTEGER, quantity_kind TEXT, data_schema JSON)",
             "CREATE TABLE calculation_experiment_records (calculation_id INTEGER, experiment_record_id INTEGER)",
@@ -42,10 +44,10 @@ class CalculationLibraryTests(unittest.TestCase):
             self.connection.execute(text("INSERT INTO experiments VALUES (:id, :owner, :name, 'tests', 'library', :name, 1, 0, 0, :contracts)"),
                                     {"id": identifier, "owner": owner.replace("-", ""), "name": name,
                                      "contracts": '{"field": {"solver": {"name": "' + name + '", "version": "1.0.0"}}}'})
-            self.connection.execute(text("INSERT INTO calculation_sources VALUES (:id, :source, 'hash')"),
-                                    {"id": identifier, "source": "export default function calculate(records) { return {dtype: 'float64', data: records.field.data[0]}; }"})
+            self.connection.execute(text("INSERT INTO calculation_sources VALUES (:id, :source, :name, :name, 'description', 1, :input, NULL)"),
+                                    {"id": identifier, "name": name, "input": json.dumps({"field": {"dtype": "float64", "shape": [None]*7, "quantityKind": kind}}), "source": "export default function calculate(records) { return {dtype: 'float64', data: records.field.data[0]}; }"})
             self.connection.execute(text("INSERT INTO calculations VALUES (:id, :id, :name, 'description', :id, :layout, 'ready', 12)"),
-                                    {"id": identifier, "name": name, "source": "export default function calculate(records) { return {dtype: 'float64', data: records.field.data[0]}; }",
+                                    {"id": identifier, "name": name, "input": json.dumps({"field": {"dtype": "float64", "shape": [None]*7, "quantityKind": kind}}), "source": "export default function calculate(records) { return {dtype: 'float64', data: records.field.data[0]}; }",
                                      "layout": '{"dtype":"float64","shape":[],"axes":[]}'})
             self.connection.execute(text("INSERT INTO experiment_records VALUES (:id, :id, 'field', 'float64', 0, :kind, :schema)"),
                                     {"id": identifier, "kind": kind, "schema": '{"axes": [{"name": "x", "length": 4}], "unit": "K"}'})
@@ -96,9 +98,9 @@ class CalculationLibraryTests(unittest.TestCase):
         public_ref = LibraryReference(kind="saved", calculation_id=3)
         detail = asyncio.run(library_detail(self.session, self.catalog, public_ref, None))
         self.assertEqual(detail.sources, ["demo"])
-        self.assertEqual(detail.output_layout.shape, [])
-        self.assertEqual(detail.inputs[0].data_schema["axes"][0]["length"], 4)
-        self.assertTrue(detail.inputs_verified)
+        self.assertIsNone(detail.output_layout)
+        self.assertEqual(detail.input_contract["field"]["quantityKind"], "PublicQuantity")
+        self.assertFalse(detail.inputs_verified)
         # Removing public visibility must revoke a previously selected detail.
         self.connection.execute(text("DELETE FROM experiment_demos"))
         with self.assertRaises(HTTPException):
@@ -110,7 +112,7 @@ class CalculationLibraryTests(unittest.TestCase):
         self.assertIsNone(detail.output_layout)
         self.assertIsNone(detail.preflight_measurement_id)
         self.assertFalse(detail.inputs_verified)
-        self.assertEqual(detail.inputs[0].name, "field")
+        self.assertEqual(detail.inputs, [])
 
     def test_catalog_sources_and_concepts_use_canonical_database(self):
         page = self.list(source="catalog", limit=100)
@@ -125,3 +127,24 @@ class CalculationLibraryTests(unittest.TestCase):
         concept = page.facets.concepts[0]
         self.assertTrue(all(concept in row.concepts for row in self.list(source="catalog", concept=concept).items))
         self.session.execute.assert_not_awaited()
+
+    def test_shared_definitions_are_grouped_before_pagination_and_recheck_visibility(self):
+        self.connection.execute(text("UPDATE calculations SET source_id=1 WHERE id=3"))
+        page = self.list(self.user, query="tests/library", limit=1)
+        self.assertEqual(page.total, 1)
+        self.assertEqual(set(page.items[0].sources), {"mine", "demo"})
+        self.assertEqual(page.items[0].reference.source_id, 1)
+        self.assertEqual(self.list(self.user, query="tests/library", offset=1).items, [])
+        with self.assertRaises(HTTPException) as error:
+            asyncio.run(library_detail(self.session, self.catalog, LibraryReference(kind="source", source_id=2), self.user))
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_catalog_and_saved_exact_code_share_one_item(self):
+        item = self.list(source="catalog", limit=100).items[0]
+        code = self.catalog.calculation_source(item.reference.coordinate, item.reference.name)
+        self.connection.execute(text("UPDATE calculation_sources SET source_code=:code, source_hash=:hash WHERE id=1"),
+                                {"code": code, "hash": hashlib.sha256(code.encode("utf-8")).hexdigest()})
+        rows = [row for row in self.list(self.user, limit=100).items if row.source_hash == item.source_hash]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].name, "Owned")
+        self.assertEqual(set(rows[0].sources), {"catalog", "mine"})

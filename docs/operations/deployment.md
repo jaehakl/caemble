@@ -177,3 +177,16 @@ CAE manifest는 `websocket`을 선언하며 worker가 서버로 결과를 직접
 진행되는지 확인한다. 재접속 시 진행·메시지·완료 알림·선택 Measurement 결과를 확인하고,
 worker 중단과 실패 재시도, AI WebRTC 실행을 각각 확인한다. 배포 스크립트 자체는 이
 브라우저·실제 DB·실제 worker 검증을 대신하지 않는다.
+
+
+## Calculation 소유 정의·선언 계약 전환 (revision 000000000017)
+
+writer와 실행 작업을 중단하고 DB 백업을 확보한 뒤 새 release에서 `poetry run alembic upgrade head`를 실행합니다. API·UI·CLI와 계약 선언이 추가된 Catalog SQLite를 같은 release로 배포합니다. revision 16의 불변 UPDATE trigger는 revision 17에서 제거되며, 애플리케이션이 소유권 및 정의 revision을 검사합니다.
+
+같은 정의의 가장 작은 Calculation ID에서 이름·설명과 Experiment 소유자를 선택합니다. 참조 없는 정의는 소유자 없이 관리자 관리 대상으로 남깁니다. 기존 이름·설명은 `calculation_legacy_metadata`에 rollback용으로 보존합니다. 기존 코드에 계약을 추측해 추가하지 않으며, preflight 및 결과도 유지합니다. 기존 API와 새 스키마를 혼용하지 않습니다.
+
+공유 로직 변경은 모든 연결의 결과를 무효화합니다. 운영 점검에서는 두 Experiment의 정의 ID·revision, 이름 변경의 결과 보존, 계약 변경의 현재 연결 분리를 확인합니다. 이전 revision 실행 결과가 409로 거부되는지도 확인합니다.
+
+되돌릴 때 writer를 중단하고 새 release에서 `poetry run alembic downgrade 000000000016`을 실행한 뒤 이전 release를 복원합니다. 전환 전 이름·설명은 backup에서, 전환 후 생성된 연결은 공유 정의에서 복원합니다. 새 연결들의 이름이 이전 Experiment별 UNIQUE 제약과 충돌하면 전체 downgrade가 중단됩니다. 충돌 연결을 명시적으로 정리한 후 다시 수행하며 자동으로 연결·결과를 삭제하지 않습니다. 현재 공유 코드와 결과 무효화 이력은 이전 코드로 되돌리지 않으므로 코드 자체의 복원이 필요하면 배포 전 DB 백업을 사용합니다.
+
+임시 PostgreSQL 검증: `RUN_CALCULATION_DB_TESTS=1`로 `tests/test_calculation_sources.py`, `tests/test_calculation_database.py`, `tests/test_experiment_calculation_copy.py`를 실행합니다. 운영 DB 적용과 Solver 실행은 별도 작업입니다.

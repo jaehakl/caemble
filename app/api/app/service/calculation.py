@@ -2,24 +2,26 @@ import hashlib
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import (
     Calculation,
     CalculationData,
+    CalculationSource,
     CalculationExperimentRecord,
     Experiment,
     ExperimentRecord,
     Measurement,
     RecordedData,
 )
-from models import CalculationBase, CalculationListItem, CalculationListRequest, CalculationOutputLayout, UserData
+from models import CalculationBase, CalculationListItem, CalculationListRequest, CalculationOutputLayout, CalculationMetadataUpdate, UserData
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 from service.box_grid import validate_box_grid_schema
 from service.calculation_source import get_or_create_calculation_source
+from calculation_contract import extract_contract, contract_hash, assert_tensor_contract
 
 
 CALCULATION_CRUD_SPEC = CrudSpec(
@@ -27,8 +29,8 @@ CALCULATION_CRUD_SPEC = CrudSpec(
     schema=CalculationListItem,
     scope_path=("experiment",),
     relation_aliases={"experiment_record_ids": "experiment_records"},
-    text_expressions={"source_code": Calculation.source_code, "source_hash": Calculation.source_hash},
-    search_text_expressions=(Calculation.source_code,),
+    text_expressions={"name": Calculation.name, "description": Calculation.description, "source_code": Calculation.source_code, "source_hash": Calculation.source_hash},
+    search_text_expressions=(Calculation.name, Calculation.source_code),
 )
 
 
@@ -127,7 +129,15 @@ async def list_calculations(
     return response
 
 
-async def upsert_calculations(
+async def upsert_calculations(db: AsyncSession, items: list[CalculationBase], *, user: UserData) -> list[dict[str, int]]:
+    try:
+        return await _upsert_calculations(db, items, user=user)
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(409, "Calculation definition changed or its source already exists. Reload before saving.") from error
+
+
+async def _upsert_calculations(
     db: AsyncSession,
     items: list[CalculationBase],
     *,
@@ -248,7 +258,6 @@ async def upsert_calculations(
             select(Calculation)
             .where(Calculation.id.in_(supplied_ids))
             .order_by(Calculation.id)
-            .with_for_update()
         )
     ).all()
     existing_by_id = {row.id: row for row in existing_rows}
@@ -259,18 +268,20 @@ async def upsert_calculations(
             detail=f"Items not found: {missing_ids}.",
         )
 
-    # Stable ordering avoids acquiring shared unique-index locks in opposite
-    # orders when concurrent requests save multiple definitions.
-    sources = {}
-    for code in sorted({item.source_code for item in normalized_items}):
-        sources[code] = await get_or_create_calculation_source(db, code)
+    source_ids = sorted({row.source_id for row in existing_rows})
+    if source_ids:
+        await db.scalars(select(CalculationSource).where(CalculationSource.id.in_(source_ids))
+                         .order_by(CalculationSource.id).with_for_update().execution_options(populate_existing=True))
+        await db.scalars(select(Calculation).where(Calculation.id.in_(supplied_ids))
+                         .order_by(Calculation.id).with_for_update().execution_options(populate_existing=True))
+    changed_sources = set()
     pending: list[Calculation] = []
+    saved_by_item: dict[int, Calculation] = {}
     dependencies: list[tuple[Calculation, CalculationBase]] = []
-    for item in normalized_items:
+    for item in sorted(normalized_items, key=lambda value: value.source_code):
         row = existing_by_id.get(item.id)
         if row is None:
             row = Calculation(experiment_id=item.experiment_id, revision=1)
-            db.add(row)
         else:
             existing_experiment = experiments_by_id.get(row.experiment_id)
             if existing_experiment is None:
@@ -291,6 +302,8 @@ async def upsert_calculations(
                     "message": "Calculation changed. Pull its latest revision before saving.",
                     "revision": row.revision,
                 })
+            if item.base_source_revision != row.source.revision:
+                raise HTTPException(409, "Calculation definition changed; reload its latest revision.")
             row.revision += 1
             source_changed = row.source_code != item.source_code
             if source_changed:
@@ -316,13 +329,72 @@ async def upsert_calculations(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Existing CalculationData does not match the new preflight output layout.",
                     )
-        row.name = item.name
-        row.description = item.description
-        row.source = sources[item.source_code]
+        try:
+            contract = extract_contract(item.source_code)
+            digest = contract_hash(contract)
+            if contract is not None:
+                required = {records_by_id[identifier].name for identifier in item.experiment_record_ids}
+                if required != set(contract["inputs"]):
+                    raise ValueError("Declared input names must match preflight Record dependencies.")
+                assert_tensor_contract(contract["output"], _layout_payload(item.output_layout))
+                recorded = (await db.scalars(select(RecordedData).where(
+                    RecordedData.measurement_id == item.preflight_measurement_id,
+                    RecordedData.experiment_record_id.in_(item.experiment_record_ids)))).all()
+                for data in recorded:
+                    record = records_by_id[data.experiment_record_id]
+                    tensor = {**(record.data_schema or {}), **data.data, "dtype": record.dtype,
+                              "quantityKind": record.quantity_kind, "tensorOrder": record.tensor_order}
+                    from service.calculation_contract import validate_stored_tensor
+                    await validate_stored_tensor(db, contract["inputs"][record.name], tensor,
+                                                 experiment_id=item.experiment_id)
+            if row.source_id is not None and row.source_code != item.source_code and contract is None:
+                raise ValueError("Source edits require an explicit Calculation contract.")
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        if row.source_id is None:
+            row.source = await get_or_create_calculation_source(db, item.source_code, name=item.name,
+                                                                description=item.description, owner_id=user.id)
+        else:
+            source = row.source
+            changed = (source.source_code, source.name, source.description) != (item.source_code, item.name, item.description)
+            if changed:
+                if not is_admin_user(user) and source.owner_id != user.id:
+                    raise HTTPException(403, "Only the definition owner or an administrator may edit shared Calculations.")
+                if item.base_source_revision != source.revision:
+                    raise HTTPException(409, "Calculation definition changed; reload its latest revision.")
+                if source.id in changed_sources:
+                    raise HTTPException(409, "Edit a shared definition only once per request.")
+                changed_sources.add(source.id)
+                if digest != source.contract_hash:
+                    row.source = await get_or_create_calculation_source(db, item.source_code, name=item.name,
+                                                                        description=item.description, owner_id=user.id)
+                else:
+                    code_changed = source.source_code != item.source_code
+                    collision = await db.scalar(select(CalculationSource.id).where(
+                        CalculationSource.source_hash == item.source_hash, CalculationSource.id != source.id))
+                    if collision is not None:
+                        raise HTTPException(409, "This code already belongs to another definition. Load that definition explicitly.")
+                    source.name, source.description = item.name, item.description
+                    source.source_code, source.source_hash = item.source_code, item.source_hash
+                    previous_revision = source.revision
+                    source.revision += 1
+                    if code_changed:
+                        bindings = select(Calculation.id).where(Calculation.source_id == source.id)
+                        await db.execute(delete(CalculationData).where(CalculationData.calculation_id.in_(bindings)))
+                        await db.execute(delete(CalculationExperimentRecord).where(CalculationExperimentRecord.calculation_id.in_(bindings)))
+                        await db.execute(update(Calculation).where(Calculation.source_id == source.id).values(
+                            contract_status="needs_preflight", output_layout=None, preflight_measurement_id=None,
+                            validated_source_revision=None, revision=Calculation.revision + 1))
+                    else:
+                        await db.execute(update(Calculation).where(Calculation.source_id == source.id,
+                            Calculation.validated_source_revision == previous_revision).values(validated_source_revision=source.revision))
+        row.validated_source_revision = row.source.revision
         row.output_layout = _layout_payload(item.output_layout)
         row.preflight_measurement_id = item.preflight_measurement_id
         row.contract_status = "ready"
+        db.add(row)
         pending.append(row)
+        saved_by_item[id(item)] = row
         dependencies.append((row, item))
 
     try:
@@ -356,7 +428,34 @@ async def upsert_calculations(
             else "Database constraint violation."
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from error
-    return [{"id": row.id, "revision": row.revision} for row in pending]
+    return [{"id": saved_by_item[id(item)].id, "revision": saved_by_item[id(item)].revision, "source_revision": saved_by_item[id(item)].source.revision} for item in normalized_items]
+
+
+async def update_calculation_metadata(db: AsyncSession, calculation_id: int, item: CalculationMetadataUpdate, *, user: UserData):
+    from service.experiment_access import require_experiment_write
+    source_id = await db.scalar(select(Calculation.source_id).where(Calculation.id == calculation_id))
+    if source_id is None:
+        raise HTTPException(404, "Calculation not found.")
+    source = await db.scalar(select(CalculationSource).where(CalculationSource.id == source_id).with_for_update().execution_options(populate_existing=True))
+    row = await db.scalar(select(Calculation).where(Calculation.id == calculation_id).with_for_update())
+    if row is None or row.source_id != source_id:
+        raise HTTPException(409, "Calculation changed; reload it.")
+    await require_experiment_write(db, row.experiment_id, user)
+    if not is_admin_user(user) and source.owner_id != user.id:
+        raise HTTPException(403, "Only the definition owner or an administrator may edit shared Calculations.")
+    if source.revision != item.base_source_revision:
+        raise HTTPException(409, "Calculation definition changed; reload its latest revision.")
+    name = item.name.strip()
+    if not name:
+        raise HTTPException(422, "Calculation name is required.")
+    if (source.name, source.description) != (name, item.description):
+        previous = source.revision
+        source.name, source.description = name, item.description
+        source.revision += 1
+        await db.execute(update(Calculation).where(Calculation.source_id == source_id,
+            Calculation.validated_source_revision == previous).values(validated_source_revision=source.revision))
+    await db.commit()
+    return {"id": row.id, "revision": row.revision, "source_revision": source.revision}
 
 
 async def delete_calculations(

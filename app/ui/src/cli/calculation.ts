@@ -94,7 +94,12 @@ export async function calculationCommand(group: string, command: string, context
       )
       const result = await execute(context, calculation.source_code, prepared.input)
       completed.push(
-        await tables.CalculationData.save({ ...item, source_hash: result.sourceHash, data: result.output }),
+        await tables.CalculationData.save({
+          ...item,
+          source_hash: result.sourceHash,
+          source_revision: calculation.source_revision,
+          data: result.output,
+        }),
       )
       process.stderr.write(`CalculationData ${completed.length}/${missing.total}\n`)
     }
@@ -105,7 +110,7 @@ export async function calculationCommand(group: string, command: string, context
     await mkdir(directory, { recursive: true })
     if ((await readdir(directory)).length) throw new CliError('Calculation destination must be empty.')
     const source =
-      '/** Draft: replace the constant with statically named Record input access. */\nexport default function calculation(input) {\n  return { dtype: "float64", data: 0 };\n}\n'
+      '/* @caemble-contract {"version":1,"inputs":{},"output":{"dtype":"float64","shape":[]}} */\n/** Draft: replace the constant with statically named Record input access. */\nexport default function calculation(input) {\n  return { dtype: "float64", data: 0 };\n}\n'
     await writeFile(path.join(directory, 'calculation.js'), source, 'utf8')
     await writeFile(
       path.join(directory, 'caemble.json'),
@@ -259,6 +264,7 @@ export async function calculationCommand(group: string, command: string, context
       ...(metadata.id ? { id: metadata.id, base_revision: metadata.revision } : {}),
       experiment_id: experimentId,
       name: String(options.name ?? metadata.name ?? path.basename(path.dirname(sourcePath))),
+      base_source_revision: metadata.source_revision,
       description: metadata.description ?? null,
       source_code: source,
       source_hash: result.sourceHash,

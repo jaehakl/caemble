@@ -6,6 +6,7 @@ export type SavedCalculation = CalculationRecord & Readonly<{ id: number; revisi
 export type CalculationDraft = Readonly<{
   id: number | null
   baseRevision: number | null
+  baseSourceRevision?: number | null
   name: string
   description: string
   sourceCode: string
@@ -26,6 +27,7 @@ export function calculationDraftFromRecord(row: SavedCalculation): CalculationDr
   return {
     id: row.id,
     baseRevision: row.revision,
+    baseSourceRevision: row.source_revision ?? null,
     description: row.description ?? '',
     name: row.name,
     sourceCode: row.source_code,

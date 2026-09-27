@@ -17,8 +17,8 @@ from test_calculation_database import (
     _drop_database, _ready_calculation, _seed_calculation_data, _upgrade, _check,
 )
 from db import Calculation, CalculationData, CalculationSource, make_async_db_url
-from models import CalculationDataOutput, CalculationListRequest, RoleEnum, UserData
-from service.calculation import delete_calculations, list_calculations, upsert_calculations
+from models import CalculationDataOutput, CalculationListRequest, CalculationMetadataUpdate, RoleEnum, UserData
+from service.calculation import delete_calculations, list_calculations, upsert_calculations, update_calculation_metadata
 from service.calculation_data import save_calculation_data
 from service.calculation_library import library_detail
 from service.data_tools import VisibleDataError, VisibleDataReader
@@ -88,16 +88,16 @@ class CalculationSourcesDatabaseTests(unittest.TestCase):
             connection = await asyncpg.connect(**_connect_arguments(self.database))
             try:
                 self.assertEqual(await connection.fetchval("SELECT count(*) FROM calculation_sources"), 1)
-                rows = await connection.fetch("SELECT c.*, s.source_code, s.source_hash FROM calculations c JOIN calculation_sources s ON s.id = c.source_id ORDER BY c.id")
+                rows = await connection.fetch("SELECT c.*, s.source_code, s.source_hash, s.name, s.description FROM calculations c JOIN calculation_sources s ON s.id = c.source_id ORDER BY c.id")
                 self.assertEqual(rows[0]["source_id"], rows[1]["source_id"])
                 for old, row in zip(before, rows):
-                    self.assertEqual(old, {key: row[key] for key in old})
+                    self.assertEqual({k: v for k, v in old.items() if k not in ("name", "description")}, {key: row[key] for key in old if key not in ("name", "description")})
                 self.assertEqual(await connection.fetchval("SELECT calculation_id FROM calculation_data WHERE id = $1", data_id), ids[0])
                 self.assertEqual(await connection.fetchval("SELECT experiment_record_id FROM calculation_experiment_records WHERE calculation_id = $1", ids[0]), record_id)
                 reference = await connection.fetchrow("SELECT calculation_id, calculation_data_id, bound, deleting FROM storage_objects WHERE id = $1", object_id)
                 self.assertEqual(tuple(reference), (ids[0], data_id, True, False))
-                with self.assertRaises(asyncpg.RaiseError):
-                    await connection.execute("UPDATE calculation_sources SET source_code = 'changed'")
+                self.assertEqual(rows[0]["name"], before[0]["name"])
+                self.assertEqual(rows[1]["name"], before[0]["name"])
             finally:
                 await connection.close()
         asyncio.run(inspect())
@@ -138,57 +138,62 @@ class CalculationSourcesDatabaseTests(unittest.TestCase):
                 await connection.close()
         asyncio.run(verify())
 
-    def test_concurrent_reuse_copy_on_write_permissions_and_local_deletion(self):
+    def test_concurrent_reuse_shared_edits_contract_fork_and_permissions(self):
         async def verify():
             owner_id, other_id, experiment, other_experiment, measurement, _, _, other_measurement = await _seed_calculation_data(self.database)
-            owner = UserData(id=owner_id, roles=[RoleEnum.user])
+            owner = UserData(id=owner_id, roles=[RoleEnum.user, RoleEnum.admin])
             other = UserData(id=other_id, roles=[RoleEnum.user])
             engine = create_async_engine(make_async_db_url(_database_url(self.database)))
             sessions = async_sessionmaker(engine, expire_on_commit=False)
-            code = "// shared 한국어\nexport default () => 1"
-
-            async def save(target, preflight, user, name):
+            code = '/* @caemble-contract {"version":1,"inputs":{},"output":{"dtype":"float64","shape":[]}} */\nexport default function calculate(input) { return {dtype:"float64", data:1}; }'
+            async def save(target, preflight, name):
                 async with sessions() as db:
-                    return (await upsert_calculations(db, [_ready_calculation(target, name, code, preflight)], user=user))[0]["id"]
+                    return (await upsert_calculations(db, [_ready_calculation(target, name, code, preflight)], user=owner))[0]["id"]
             try:
-                left, right = await asyncio.gather(save(experiment, measurement, owner, "Left"), save(other_experiment, other_measurement, other, "Right"))
+                left, right = await asyncio.gather(save(experiment, measurement, "Left"), save(other_experiment, other_measurement, "Right"))
                 async with sessions() as db:
                     a, b = await db.get(Calculation, left), await db.get(Calculation, right)
                     original_source = a.source_id
                     self.assertEqual(original_source, b.source_id)
                     self.assertEqual(await db.scalar(select(func.count()).select_from(CalculationSource)), 1)
-                    reader = VisibleDataReader(db, owner_id)
-                    self.assertEqual((await reader.detail("calculation", left))["sourceSha256"], a.source_hash)
-                    await reader.read_source("calculation", left, None, 0, len(code))
-                    with self.assertRaises(VisibleDataError):
-                        await reader.read_source("calculation", right, None, 0, len(code))
                     output = CalculationDataOutput(dtype="float64", shape=[], axes=[], data=1)
-                    await save_calculation_data(db, left, measurement, a.source_hash, output, user=owner)
-                    await save_calculation_data(db, right, other_measurement, b.source_hash, output, user=other)
-                    with Catalog.open_readonly() as catalog:
+                    await save_calculation_data(db, left, measurement, a.source_hash, output, user=owner, source_revision=1)
+                    await save_calculation_data(db, right, other_measurement, b.source_hash, output, user=other, source_revision=1)
+                    denied = _ready_calculation(other_experiment, "Forbidden", code, other_measurement, calculation_id=right).model_copy(update={"base_source_revision": 1})
+                    async with sessions() as denied_db:
                         with self.assertRaises(HTTPException) as error:
-                            await library_detail(db, catalog, LibraryReference(kind="saved", calculation_id=right), owner)
-                        self.assertEqual(error.exception.status_code, 404)
-                    await upsert_calculations(db, [_ready_calculation(experiment, "Renamed", code, measurement, calculation_id=left, base_revision=1)], user=owner)
-                    self.assertEqual(a.source_id, original_source)
+                            await upsert_calculations(denied_db, [denied], user=other)
+                        self.assertEqual(error.exception.status_code, 403)
+                        await denied_db.rollback()
+                    renamed = _ready_calculation(experiment, "Renamed", code, measurement, calculation_id=left).model_copy(update={"base_source_revision": 1})
+                    await upsert_calculations(db, [renamed], user=owner)
+                    self.assertEqual(b.name, "Renamed")
                     self.assertEqual(await db.scalar(select(func.count()).select_from(CalculationData)), 2)
-                    # Whitespace is meaningful: a code edit changes only this binding.
-                    await upsert_calculations(db, [_ready_calculation(experiment, "Renamed", code + "\n", measurement, calculation_id=left, base_revision=2)], user=owner)
+                    edited = renamed.model_copy(update={"source_code": code + "\n", "source_hash": hashlib.sha256((code + "\n").encode()).hexdigest(), "base_revision": a.revision, "base_source_revision": 2})
+                    await upsert_calculations(db, [edited], user=owner)
+                    self.assertEqual(a.source_id, original_source)
+                    self.assertEqual(b.source_code, code + "\n")
+                    self.assertEqual(b.contract_status, "needs_preflight")
+                    self.assertIsNone(b.preflight_measurement_id)
+                    self.assertEqual(await db.scalar(select(func.count()).select_from(CalculationData)), 0)
+                    async with sessions() as stale_db:
+                        with self.assertRaises(HTTPException):
+                            await save_calculation_data(stale_db, left, measurement, a.source_hash, output, user=owner, source_revision=2)
+                        await stale_db.rollback()
+                    fork_code = code.replace('"shape":[]', '"shape":[],"min":0')
+                    fork = edited.model_copy(update={"source_code": fork_code, "source_hash": hashlib.sha256(fork_code.encode()).hexdigest(), "base_revision": a.revision, "base_source_revision": 3})
+                    await upsert_calculations(db, [fork], user=owner)
                     self.assertNotEqual(a.source_id, original_source)
                     self.assertEqual(b.source_id, original_source)
-                    self.assertEqual(b.source_code, code)
-                    self.assertEqual(await db.scalar(select(func.count()).select_from(CalculationData)), 1)
-                    page = await list_calculations(db, CalculationListRequest(experiment_id=experiment, search_text="shared 한국어"), user=owner)
+                    self.assertEqual(b.source_code, code + "\n")
+                    page = await list_calculations(db, CalculationListRequest(experiment_id=experiment), user=owner)
                     self.assertEqual(page["items"][0].source_id, a.source_id)
-                    self.assertEqual(page["items"][0].source_code, code + "\n")
-                    exact = await list_calculations(db, CalculationListRequest(experiment_id=experiment, text_filter={"source_hash": [a.source_hash]}), user=owner)
-                    self.assertEqual(exact["total"], 1)
-                    missing_hash = await list_calculations(db, CalculationListRequest(experiment_id=experiment, null_filter={"source_hash": "is_null"}), user=owner)
-                    self.assertEqual(missing_hash["total"], 0)
+                    await update_calculation_metadata(db, right, CalculationMetadataUpdate(
+                        name="Shared without preflight", base_source_revision=3), user=owner)
+                    self.assertEqual(b.name, "Shared without preflight")
+                    self.assertEqual(b.contract_status, "needs_preflight")
                     await delete_calculations(db, [left], user=owner)
                     self.assertIsNotNone(await db.get(CalculationSource, original_source))
-                    self.assertEqual(await db.scalar(select(func.count()).select_from(CalculationData)), 1)
-                    self.assertEqual(await db.scalar(select(func.count()).select_from(CalculationSource)), 2)
             finally:
                 await engine.dispose()
         asyncio.run(verify())

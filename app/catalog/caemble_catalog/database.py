@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import json
 import sqlite3
 import threading
@@ -690,11 +692,11 @@ class Catalog:
         ], total
 
     def calculation_summaries(self) -> list[dict[str, Any]]:
-        """Library metadata only: never read source bundles or Calculation code."""
+        """Library metadata and exact code fingerprints; no source bundles."""
         rows = self._all("""
             SELECT e.id AS experiment_id, e.key, e.namespace, e.repository_slug,
                    e.version_major, e.version_minor, e.version_patch,
-                   c.name, c.description
+                   c.name, c.description, c.source_code
             FROM experiment_calculations c JOIN experiments e ON e.id = c.experiment_id
             ORDER BY e.id, c.ordinal
         """)
@@ -707,7 +709,7 @@ class Catalog:
                     version=f"{row['version_major']}.{row['version_minor']}.{row['version_patch']}",
                     include_bundle=False,
                 )
-            items.append({"name": row["name"], "description": row["description"],
+            items.append({"source_hash": hashlib.sha256(row["source_code"].encode("utf-8")).hexdigest(), "name": row["name"], "description": row["description"],
                           "experiment": experiments[row["experiment_id"]]})
         return items
 

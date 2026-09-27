@@ -7,9 +7,10 @@ from models import CalculationOutputLayout, ExperimentRecordContract
 
 class LibraryReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["catalog", "saved"]
+    kind: Literal["catalog", "saved", "source"]
     coordinate: str | None = None
     name: str | None = None
+    source_id: int | None = Field(default=None, ge=1)
     calculation_id: int | None = Field(default=None, ge=1)
 
 
@@ -32,6 +33,7 @@ class LibrarySolver(BaseModel):
 
 
 class LibraryItem(BaseModel):
+    source_hash: str = ""
     reference: LibraryReference
     name: str
     description: str | None
@@ -56,6 +58,9 @@ class LibraryPage(BaseModel):
 
 
 class LibraryDetail(LibraryItem):
+    input_contract: dict | None = None
+    output_contract: dict | None = None
+    source_revision: int | None = None
     source_id: int | None = None
     source_code: str
     inputs: list[ExperimentRecordContract]

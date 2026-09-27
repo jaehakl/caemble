@@ -127,6 +127,11 @@ describe('API read boundaries', () => {
         {
           id: 1,
           source_id: 1,
+          source_revision: 1,
+          source_owner_id: null,
+          input_contract: null,
+          output_contract: null,
+          validated_source_revision: null,
           experiment_id: 2,
           name: 'Stress',
           source_code: 'return 0',

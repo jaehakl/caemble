@@ -105,6 +105,11 @@ export const persistedCalculationRecordSchema = z
   .object({
     id: databaseIdSchema,
     source_id: databaseIdSchema,
+    source_revision: databaseIdSchema,
+    source_owner_id: z.string().nullable(),
+    input_contract: z.record(z.string(), z.unknown()).nullable(),
+    output_contract: z.record(z.string(), z.unknown()).nullable(),
+    validated_source_revision: databaseIdSchema.nullable(),
     revision: z.number().int().positive(),
     experiment_id: databaseIdSchema,
     name: z.string(),
@@ -119,7 +124,17 @@ export const persistedCalculationRecordSchema = z
   .passthrough()
 
 export function parseCalculationUpsertResponse(value: unknown): CalculationUpsertResponse[] {
-  return z.array(z.object({ id: databaseIdSchema, revision: z.number().int().positive() }).passthrough()).parse(value)
+  return z
+    .array(
+      z
+        .object({
+          id: databaseIdSchema,
+          revision: z.number().int().positive(),
+          source_revision: z.number().int().positive().optional(),
+        })
+        .passthrough(),
+    )
+    .parse(value)
 }
 
 export const calculationDataRecordSchema = z
