@@ -5,6 +5,7 @@ import { CalculationWorkbench, type CalculationWorkbenchProps } from './Calculat
 import { calculationAccessPolicy } from './calculationAccessPolicy'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import * as measurementQueries from '@/features/measurement/queryOptions'
+import { dbTables } from '@/api'
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn(() => true),
@@ -40,6 +41,36 @@ const mocks = vi.hoisted(() => ({
   ],
 }))
 vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'public' }))
+vi.mock('./queryInvalidation', () => ({ invalidateCalculationMutation: vi.fn() }))
+vi.mock('./CalculationLibraryDialog', () => ({
+  CalculationLibraryDialog: ({
+    onLoad,
+    onClose,
+    loadDisabled,
+  }: {
+    onLoad: (item: unknown) => boolean
+    onClose: () => void
+    loadDisabled: boolean
+  }) => (
+    <div role="dialog" aria-label="Import fixture">
+      <button
+        disabled={loadDisabled}
+        onClick={() => {
+          if (
+            onLoad({
+              name: 'Imported',
+              description: 'Library description',
+              source_code: 'export default function calculate(record) { return 42 }',
+            })
+          )
+            onClose()
+        }}
+      >
+        Import fixture
+      </button>
+    </div>
+  ),
+}))
 vi.mock('@tanstack/react-query', async (original) => ({
   ...(await original<typeof import('@tanstack/react-query')>()),
   useQueryClient: () => ({}),
@@ -145,6 +176,51 @@ beforeEach(() => {
   mocks.select.mockReturnValue(true)
 })
 
+it('imports as an unsaved independent draft and saves with current preflight', async () => {
+  const dirty = vi.fn()
+  const upsert = vi.spyOn(dbTables.Calculation, 'upsertRow').mockResolvedValue([{ id: 20, revision: 1 }] as never)
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  render(<Harness overrides={{ onDirtyChange: dirty }} />)
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(mocks.rows[0].source_code),
+  )
+  const ribbon = screen.getByLabelText('Calculation ribbon')
+  expect(within(ribbon).getAllByRole('button')[0]).toHaveTextContent('불러오기')
+  expect(within(ribbon).getAllByRole('button')[0]).toHaveClass('h-[72px]')
+  fireEvent.change(screen.getByRole('textbox', { name: 'Calculation code' }), { target: { value: 'local edit' } })
+  fireEvent.click(screen.getByRole('button', { name: '불러오기' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Import fixture' }))
+  expect(confirm).toHaveBeenCalledOnce()
+  expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue('local edit')
+  expect(upsert).not.toHaveBeenCalled()
+  confirm.mockReturnValue(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Import fixture' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(
+    'export default function calculate(record) { return 42 }',
+  )
+  expect(dirty).toHaveBeenLastCalledWith(true)
+  expect(mocks.invalidate).toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '저장' }))
+  const dialog = screen.getByRole('dialog', { name: '새 Calculation 저장' })
+  expect(within(dialog).getByLabelText('이름')).toHaveValue('Imported')
+  expect(within(dialog).getByLabelText('설명')).toHaveValue('Library description')
+  fireEvent.click(within(dialog).getByRole('button', { name: '저장' }))
+  await waitFor(() => expect(upsert).toHaveBeenCalledOnce())
+  const payload = upsert.mock.calls[0][0][0]
+  expect(payload).toMatchObject({
+    experiment_id: 2,
+    preflight_measurement_id: 5,
+    output_layout: { shape: [] },
+    experiment_record_ids: [],
+  })
+  expect(payload).not.toHaveProperty('id')
+  expect(payload).not.toHaveProperty('base_revision')
+  expect(mocks.rows[0].source_code).toBe('export default function calculate(record) { return 1 }')
+  confirm.mockRestore()
+  upsert.mockRestore()
+})
+
 it('moves selection into popups and protects unsaved code when switching calculations', async () => {
   render(<Harness />)
   await waitFor(() =>
@@ -168,6 +244,14 @@ it('moves selection into popups and protects unsaved code when switching calcula
     'export default function calculate(record) { return 2 }',
   )
   confirm.mockRestore()
+})
+
+it('closes the library when the target Experiment changes', async () => {
+  const view = render(<Harness />)
+  fireEvent.click(screen.getByRole('button', { name: '불러오기' }))
+  expect(screen.getByRole('dialog', { name: 'Import fixture' })).toBeInTheDocument()
+  view.rerender(<Harness overrides={{ experimentId: 9 }} />)
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Import fixture' })).not.toBeInTheDocument())
 })
 
 it('opens save and starts a new draft from the ribbon', async () => {

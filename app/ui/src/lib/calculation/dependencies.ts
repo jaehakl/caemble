@@ -29,10 +29,12 @@ function fixedPropertyName(node: t.MemberExpression | t.OptionalMemberExpression
   return null
 }
 
-export function analyzeCalculationDependencies(source: string, availableNames: readonly string[]): readonly string[] {
+// Without availableNames this only discovers static references, e.g. in a
+// library template whose original ExperimentRecord contracts are unavailable.
+export function analyzeCalculationDependencies(source: string, availableNames?: readonly string[]): readonly string[] {
   const ast = analyzeCalculationSource(source)
   const dependencies = new Set<string>()
-  const available = new Set(availableNames)
+  const available = availableNames === undefined ? null : new Set(availableNames)
   let inputBinding: ReturnType<NodePath['scope']['getBinding']> | undefined
 
   traverse(ast, {
@@ -58,7 +60,7 @@ export function analyzeCalculationDependencies(source: string, availableNames: r
   }
 
   const addDependency = (name: string, node: t.Node) => {
-    if (!available.has(name)) {
+    if (available !== null && !available.has(name)) {
       dependencyError(source, `Calculation references an unknown ExperimentRecord: ${name}`, node)
     }
     dependencies.add(name)

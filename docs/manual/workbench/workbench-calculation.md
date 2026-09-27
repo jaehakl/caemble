@@ -7,11 +7,19 @@
 결과가 기록된 **Recorded Measurement**가 필요합니다. 아직 실행하지 않았다면 [빠른 시작](workbench-quickstart.md)을 먼저 따라 해 보세요. 예제에 Calculation이 포함되어 있다면 기존 계산식을 열어 입력과 반환값을 살펴보는 것이 좋습니다.
 
 1. **Measurement** 탭에서 Recorded Measurement를 선택한 뒤 **가공** 탭을 엽니다. 선택한 Measurement가 없으면 현재 Experiment의 최신 기록 완료 항목을 자동으로 선택합니다.
-2. **Calculations**에서 기존 계산식을 고르거나 **새 Calculation**으로 초안을 만듭니다.
+2. **Calculations**에서 현재 Experiment의 계산식을 고르거나 **새 Calculation**으로 초안을 만듭니다. 다른 계산식을 재사용하려면 리본 맨 왼쪽의 **불러오기**를 누릅니다.
 3. 코드를 확인하거나 수정하고 오른쪽 차트에서 결과를 살펴봅니다. 필요하면 **미리보기 갱신**을 누릅니다.
 4. 결과가 맞으면 **저장**으로 계산식을 저장합니다. 여러 Measurement의 계산 결과까지 남기려면 **후처리 데이터**에서 필요한 범위를 계산합니다.
 
 변수 조건 변경과 Solver 실행은 **Measurement** 탭에서 진행합니다. Calculation에서는 이미 기록된 데이터로 계산하므로 후처리 코드를 바꿀 때마다 Solver를 다시 실행할 필요는 없습니다.
+
+## 다른 Calculation 불러오기
+
+**불러오기** 창에서 Catalog 템플릿, 내 Calculation, 공개 Demo를 검색할 수 있습니다. 이름·설명·원본 Experiment로 검색하거나 출처, Solver와 버전, Concept, 입력 QuantityKind로 좁혀 보세요. Concept가 없는 항목은 **미분류**로 찾을 수 있습니다.
+
+목록을 선택하면 오른쪽에 코드와 입력·출력 계약이 나타납니다. 저장된 계약, 코드에서 정적으로 확인된 Record 참조, 동적·미확인 정보를 구분해서 표시합니다. 저장된 출력 shape는 원본 preflight Measurement 기준이며 현재 Experiment에서 같은 shape가 나온다는 보장은 아닙니다. 계약이 없는 Catalog 항목의 shape는 미확인으로 표시됩니다. 목록 탐색은 계산식이나 Solver를 실행하지 않습니다.
+
+항목을 확인한 뒤 창 아래의 **불러오기**를 누르면 이름·설명·코드가 새 초안으로 열립니다. 기존 수정사항이 있으면 폐기 여부를 확인합니다. 원본 Calculation은 바뀌지 않으며, 현재 Experiment의 Record와 Measurement로 다시 검증한 뒤 **저장**해야 이 Experiment의 독립 Calculation이 됩니다.
 
 ## 미리보기와 두 가지 저장 구분하기
 

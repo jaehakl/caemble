@@ -54,6 +54,7 @@ export function createInitialCalculationEditingState(recordName?: string): Calcu
 export const initialCalculationEditingState = Object.freeze(createInitialCalculationEditingState())
 
 export type CalculationEditingAction =
+  | Readonly<{ type: 'draftImported'; draft: CalculationDraft }>
   | Readonly<{ type: 'experimentChanged'; recordName?: string }>
   | Readonly<{ type: 'selectionChanged'; calculationId: number | null; recordName?: string }>
   | Readonly<{
@@ -84,6 +85,13 @@ export function calculationEditingReducer(
   action: CalculationEditingAction,
 ): CalculationEditingState {
   switch (action.type) {
+    case 'draftImported':
+      return {
+        serverSnapshot: null,
+        draft: action.draft,
+        baseline: emptyCalculationDraft(),
+        targetSession: state.targetSession + 1,
+      }
     case 'experimentChanged':
     case 'newStarted':
     case 'deleted':

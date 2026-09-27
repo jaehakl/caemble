@@ -689,6 +689,41 @@ class Catalog:
             for row in rows
         ], total
 
+    def calculation_summaries(self) -> list[dict[str, Any]]:
+        """Library metadata only: never read source bundles or Calculation code."""
+        rows = self._all("""
+            SELECT e.id AS experiment_id, e.key, e.namespace, e.repository_slug,
+                   e.version_major, e.version_minor, e.version_patch,
+                   c.name, c.description
+            FROM experiment_calculations c JOIN experiments e ON e.id = c.experiment_id
+            ORDER BY e.id, c.ordinal
+        """)
+        experiments = {}
+        items = []
+        for row in rows:
+            if row["experiment_id"] not in experiments:
+                experiments[row["experiment_id"]] = self.experiment(
+                    row["key"], namespace=row["namespace"], repository=row["repository_slug"],
+                    version=f"{row['version_major']}.{row['version_minor']}.{row['version_patch']}",
+                    include_bundle=False,
+                )
+            items.append({"name": row["name"], "description": row["description"],
+                          "experiment": experiments[row["experiment_id"]]})
+        return items
+
+    def calculation_source(self, coordinate: str, name: str) -> str:
+        experiment = self.experiment(coordinate, include_bundle=False)
+        row = self._one("""
+            SELECT c.source_code FROM experiment_calculations c
+            JOIN experiments e ON e.id = c.experiment_id
+            WHERE e.namespace = ? AND e.repository_slug = ? AND e.key = ?
+              AND e.version_major = ? AND e.version_minor = ? AND e.version_patch = ? AND c.name = ?
+        """, (experiment["namespace"], experiment["repository"], experiment["key"],
+              *parse_experiment_version(experiment["version"]), name))
+        if row is None:
+            raise CatalogNotFoundError(f"Calculation not found: {name}")
+        return row["source_code"]
+
     def search(self, query: str, *, limit: int = 30) -> list[dict[str, str]]:
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         like = f"%{escaped}%"

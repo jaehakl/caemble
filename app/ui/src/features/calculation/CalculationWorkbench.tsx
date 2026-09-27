@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileCode2, FilePlus2, LoaderCircle, RefreshCw, Save, Trash2 } from 'lucide-react'
+import { FileCode2, FilePlus2, FolderOpen, LoaderCircle, RefreshCw, Save, Trash2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -45,6 +45,7 @@ import { useCalculationPreview } from './useCalculationPreview'
 import { experimentRecordsQueryOptions } from '../experiment/queryOptions'
 import { measurementsQueryOptions } from '../measurement/queryOptions'
 import { invalidateCalculationMutation } from './queryInvalidation'
+import { CalculationLibraryDialog } from './CalculationLibraryDialog'
 
 export type CalculationSaveState = Readonly<{
   disabled: boolean
@@ -124,6 +125,7 @@ export function CalculationWorkbench({
   const [deleting, setDeleting] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const draftRef = useRef(draft)
   draftRef.current = draft
   const appliedExperimentRef = useRef(experimentId)
@@ -279,6 +281,7 @@ export function CalculationWorkbench({
   useEffect(() => {
     if (appliedExperimentRef.current === experimentId) return
     appliedExperimentRef.current = experimentId
+    setLibraryOpen(false)
     mutationSequenceRef.current += 1
     setSaving(false)
     setDeleting(false)
@@ -558,7 +561,10 @@ export function CalculationWorkbench({
   }, [openSaveDialog, saveCommand])
 
   useEffect(() => {
-    if (contextPending) setSaveDialogOpen(false)
+    if (contextPending) {
+      setSaveDialogOpen(false)
+      setLibraryOpen(false)
+    }
   }, [contextPending])
 
   useEffect(
@@ -628,6 +634,15 @@ export function CalculationWorkbench({
         {menubar}
         {ribbon(
           <>
+            <WorkbenchRibbonGroup label="불러오기">
+              <WorkbenchRibbonButton
+                icon={<FolderOpen />}
+                label="불러오기"
+                size="large"
+                disabled={contextPending}
+                onClick={() => setLibraryOpen(true)}
+              />
+            </WorkbenchRibbonGroup>
             <WorkbenchRibbonGroup label="Calculation 선택">
               <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
                 <DialogTrigger asChild>
@@ -803,6 +818,31 @@ export function CalculationWorkbench({
           </section>
         }
       />
+      {libraryOpen && !contextPending && appliedExperimentRef.current === experimentId ? (
+        <CalculationLibraryDialog
+          key={`${experimentId}:${queryScope}`}
+          authenticated={authenticated}
+          loadDisabled={sourceEditorDisabled}
+          onClose={() => setLibraryOpen(false)}
+          onLoad={(item) => {
+            if (sourceEditorDisabled) return false
+            const next: CalculationDraft = {
+              id: null,
+              baseRevision: null,
+              name: item.name,
+              description: item.description ?? '',
+              sourceCode: item.source_code,
+            }
+            if (!replaceDraft(next, null)) return false
+            // Selection effects must not replace the imported draft with the
+            // empty skeleton or the Experiment's default saved Calculation.
+            selectedCalculationRef.current = null
+            defaultCalculationExperimentRef.current = experimentId
+            dispatchEditing({ type: 'draftImported', draft: next })
+            return true
+          }}
+        />
+      ) : null}
       <CalculationSaveDialog
         defaults={{ description: draft.description, name: draft.name }}
         isNew={draft.id === null}
