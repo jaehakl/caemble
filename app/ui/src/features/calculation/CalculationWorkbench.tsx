@@ -813,8 +813,8 @@ export function CalculationWorkbench({
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
             {draft.id !== null ? (
               <p className="border-b px-3 py-2 text-xs text-muted-foreground">
-                공유 정의: 이름·설명·계산 로직 변경은 모든 연결에 반영됩니다. 계약 선언 변경은 현재 연결만 새 정의로
-                분리합니다.
+                공유 정의: 이름·설명·계산 로직 변경은 모든 연결에 반영됩니다. 코드 변경 후에는 각 Experiment에서 다시
+                검증해야 합니다.
               </p>
             ) : null}
             {demoSandbox ? (

@@ -110,7 +110,7 @@ export async function calculationCommand(group: string, command: string, context
     await mkdir(directory, { recursive: true })
     if ((await readdir(directory)).length) throw new CliError('Calculation destination must be empty.')
     const source =
-      '/* @caemble-contract {"version":1,"inputs":{},"output":{"dtype":"float64","shape":[]}} */\n/** Draft: replace the constant with statically named Record input access. */\nexport default function calculation(input) {\n  return { dtype: "float64", data: 0 };\n}\n'
+      '/** Draft: replace the constant with statically named Record input access. */\nexport default function calculation(input) {\n  return { dtype: "float64", data: 0 };\n}\n'
     await writeFile(path.join(directory, 'calculation.js'), source, 'utf8')
     await writeFile(
       path.join(directory, 'caemble.json'),

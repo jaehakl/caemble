@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { compileNodeCalculation, runNodeCalculation } from './calculation'
 
 describe('Node Calculation adapter', () => {
+  it.each([
+    '',
+    '/* @caemble-contract {"version":1,"inputs":{},"output":{"dtype":"float64","shape":[],"min":100}} */',
+    '/* @caemble-contract invalid JSON */',
+    '/* @caemble-contract {} */ /* @caemble-contract {} */',
+  ])('treats former contract declarations as ordinary comments: %s', async (comment) => {
+    const result = await runNodeCalculation(
+      `${comment}\nexport default function calculate(record) { return { dtype: 'float64', data: -1 } }`,
+      {},
+    )
+    expect(result.output).toEqual({ dtype: 'float64', shape: [], data: -1, axes: [] })
+  })
+
   it('retains a real source range for a TypeScript diagnostic', async () => {
     await expect(
       compileNodeCalculation(

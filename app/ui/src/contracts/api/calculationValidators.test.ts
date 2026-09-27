@@ -5,6 +5,10 @@ function calculationItem(outputLayout: unknown) {
   return {
     id: 1,
     revision: 1,
+    source_id: 1,
+    source_revision: 1,
+    source_owner_id: null,
+    validated_source_revision: 1,
     experiment_id: 2,
     name: 'Stress',
     source_code: 'return 0',

@@ -11,8 +11,6 @@ vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'test-o
 
 const first: CalculationLibraryDetail = {
   source_id: 1,
-  input_contract: { field: { dtype: 'float64', shape: [null, null, null, null, null, null, null], unit: 'K' } },
-  output_contract: { dtype: 'float64', shape: [] },
   reference: { kind: 'saved', calculation_id: 1, coordinate: null, name: null },
   name: 'First calculation',
   description: '설명',
@@ -21,7 +19,6 @@ const first: CalculationLibraryDetail = {
   sources: ['mine'],
   solvers: [{ name: 'heat', version: '1.0.0' }],
   concepts: [],
-  quantity_kinds: ['Temperature'],
   source_code:
     "export default function calculate(records) { return { dtype: 'float64', data: records.field.data[0] }; }",
   inputs: [
@@ -39,7 +36,8 @@ const first: CalculationLibraryDetail = {
   contract_status: 'ready',
 }
 const second = { ...first, reference: { ...first.reference, calculation_id: 2 }, name: 'Second calculation' }
-const facets = { solvers: first.solvers, concepts: [], quantity_kinds: ['Temperature'] }
+
+const facets = { solvers: first.solvers, concepts: [] }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -67,7 +65,7 @@ it('only loads details on selection and imports on explicit action', async () =>
   expect(calculationLibraryApi.detail).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: '불러오기' })).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: /First calculation/ }))
-  expect(await screen.findByText('코드에 선언된 입출력 계약')).toBeInTheDocument()
+  expect(await screen.findByText('참조하는 Record')).toBeInTheDocument()
   expect(screen.queryByText(/원본 preflight Measurement/)).not.toBeInTheDocument()
   expect(onLoad).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '불러오기' }))

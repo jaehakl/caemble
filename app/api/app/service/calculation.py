@@ -21,7 +21,6 @@ from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 from service.box_grid import validate_box_grid_schema
 from service.calculation_source import get_or_create_calculation_source
-from calculation_contract import extract_contract, contract_hash, assert_tensor_contract
 
 
 CALCULATION_CRUD_SPEC = CrudSpec(
@@ -329,28 +328,6 @@ async def _upsert_calculations(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Existing CalculationData does not match the new preflight output layout.",
                     )
-        try:
-            contract = extract_contract(item.source_code)
-            digest = contract_hash(contract)
-            if contract is not None:
-                required = {records_by_id[identifier].name for identifier in item.experiment_record_ids}
-                if required != set(contract["inputs"]):
-                    raise ValueError("Declared input names must match preflight Record dependencies.")
-                assert_tensor_contract(contract["output"], _layout_payload(item.output_layout))
-                recorded = (await db.scalars(select(RecordedData).where(
-                    RecordedData.measurement_id == item.preflight_measurement_id,
-                    RecordedData.experiment_record_id.in_(item.experiment_record_ids)))).all()
-                for data in recorded:
-                    record = records_by_id[data.experiment_record_id]
-                    tensor = {**(record.data_schema or {}), **data.data, "dtype": record.dtype,
-                              "quantityKind": record.quantity_kind, "tensorOrder": record.tensor_order}
-                    from service.calculation_contract import validate_stored_tensor
-                    await validate_stored_tensor(db, contract["inputs"][record.name], tensor,
-                                                 experiment_id=item.experiment_id)
-            if row.source_id is not None and row.source_code != item.source_code and contract is None:
-                raise ValueError("Source edits require an explicit Calculation contract.")
-        except ValueError as error:
-            raise HTTPException(422, str(error)) from error
         if row.source_id is None:
             row.source = await get_or_create_calculation_source(db, item.source_code, name=item.name,
                                                                 description=item.description, owner_id=user.id)
@@ -365,29 +342,25 @@ async def _upsert_calculations(
                 if source.id in changed_sources:
                     raise HTTPException(409, "Edit a shared definition only once per request.")
                 changed_sources.add(source.id)
-                if digest != source.contract_hash:
-                    row.source = await get_or_create_calculation_source(db, item.source_code, name=item.name,
-                                                                        description=item.description, owner_id=user.id)
+                code_changed = source.source_code != item.source_code
+                collision = await db.scalar(select(CalculationSource.id).where(
+                    CalculationSource.source_hash == item.source_hash, CalculationSource.id != source.id))
+                if collision is not None:
+                    raise HTTPException(409, "This code already belongs to another definition. Load that definition explicitly.")
+                source.name, source.description = item.name, item.description
+                source.source_code, source.source_hash = item.source_code, item.source_hash
+                previous_revision = source.revision
+                source.revision += 1
+                if code_changed:
+                    bindings = select(Calculation.id).where(Calculation.source_id == source.id)
+                    await db.execute(delete(CalculationData).where(CalculationData.calculation_id.in_(bindings)))
+                    await db.execute(delete(CalculationExperimentRecord).where(CalculationExperimentRecord.calculation_id.in_(bindings)))
+                    await db.execute(update(Calculation).where(Calculation.source_id == source.id).values(
+                        contract_status="needs_preflight", output_layout=None, preflight_measurement_id=None,
+                        validated_source_revision=None, revision=Calculation.revision + 1))
                 else:
-                    code_changed = source.source_code != item.source_code
-                    collision = await db.scalar(select(CalculationSource.id).where(
-                        CalculationSource.source_hash == item.source_hash, CalculationSource.id != source.id))
-                    if collision is not None:
-                        raise HTTPException(409, "This code already belongs to another definition. Load that definition explicitly.")
-                    source.name, source.description = item.name, item.description
-                    source.source_code, source.source_hash = item.source_code, item.source_hash
-                    previous_revision = source.revision
-                    source.revision += 1
-                    if code_changed:
-                        bindings = select(Calculation.id).where(Calculation.source_id == source.id)
-                        await db.execute(delete(CalculationData).where(CalculationData.calculation_id.in_(bindings)))
-                        await db.execute(delete(CalculationExperimentRecord).where(CalculationExperimentRecord.calculation_id.in_(bindings)))
-                        await db.execute(update(Calculation).where(Calculation.source_id == source.id).values(
-                            contract_status="needs_preflight", output_layout=None, preflight_measurement_id=None,
-                            validated_source_revision=None, revision=Calculation.revision + 1))
-                    else:
-                        await db.execute(update(Calculation).where(Calculation.source_id == source.id,
-                            Calculation.validated_source_revision == previous_revision).values(validated_source_revision=source.revision))
+                    await db.execute(update(Calculation).where(Calculation.source_id == source.id,
+                        Calculation.validated_source_revision == previous_revision).values(validated_source_revision=source.revision))
         row.validated_source_revision = row.source.revision
         row.output_layout = _layout_payload(item.output_layout)
         row.preflight_measurement_id = item.preflight_measurement_id

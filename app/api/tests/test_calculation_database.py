@@ -629,7 +629,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     owner = UserData(id=owner_id, roles=[RoleEnum.user])
     other = UserData(id=other_id, roles=[RoleEnum.user])
-    admin = UserData(id="00000000-0000-0000-0000-000000000001", roles=[RoleEnum.admin])
+    admin = UserData(id=other_id, roles=[RoleEnum.admin])
     source = "export default () => ({ dtype: 'float64', data: 1 })"
     source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
     changed_source = declared_source("export default () => ({ dtype: 'float64', data: 2 })")
@@ -701,6 +701,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 source_hash,
                 CalculationDataOutput.model_validate(scalar),
                 user=owner,
+                source_revision=1,
             )
             duplicate = await save_calculation_data(
                 session,
@@ -709,6 +710,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 source_hash,
                 CalculationDataOutput.model_validate({**scalar, "data": 99}),
                 user=owner,
+                source_revision=1,
             )
             assert saved["created"] is True
             assert duplicate["id"] == saved["id"]
@@ -724,6 +726,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 source_hash,
                 CalculationDataOutput.model_validate({**scalar, "data": 3}),
                 user=owner,
+                source_revision=1,
             )
             scalar_rows = await list_calculation_data_scalars(
                 session,
@@ -750,6 +753,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     }
                 ),
                 user=owner,
+                source_revision=1,
             )
             selected_rows = await list_calculation_data(
                 session,
@@ -859,6 +863,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     }
                 ),
                 user=owner,
+                source_revision=1,
             )
             await save_calculation_data(
                 session,
@@ -877,6 +882,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     }
                 ),
                 user=owner,
+                source_revision=1,
             )
             analysis = await analyze_calculation_data(
                 session,
@@ -922,6 +928,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     source_hash,
                     CalculationDataOutput.model_validate(scalar),
                     user=owner,
+                    source_revision=1,
                 )
             except HTTPException as error:
                 assert error.status_code == 404
@@ -995,7 +1002,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
             counts = {
                 item.id: item.calculation_data_count for item in measurement_response["items"]
             }
-            assert counts[first_measurement_id] == 3
+            assert counts[first_measurement_id] == 0
             assert counts[second_measurement_id] == 0
             try:
                 await save_calculation_data(
@@ -1005,6 +1012,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     source_hash,
                     CalculationDataOutput.model_validate(scalar),
                     user=owner,
+                    source_revision=1,
                 )
             except HTTPException as error:
                 assert error.status_code == 409
@@ -1012,13 +1020,24 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 raise AssertionError("CalculationData accepted a stale Calculation source")
 
         async with sessions() as session:
+            await save_calculation_data(
+                session, first_calculation_id, first_measurement_id,
+                hashlib.sha256(changed_source.encode("utf-8")).hexdigest(),
+                CalculationDataOutput.model_validate(scalar), user=owner, source_revision=3,
+            )
+            shared = await session.get(Calculation, other_calculation_id)
+            assert shared.contract_status == "needs_preflight"
+            assert shared.source_code == changed_source
+            await upsert_calculations(session, [_ready_calculation(
+                other_experiment_id, "Scalar renamed", changed_source, other_measurement_id,
+                calculation_id=other_calculation_id, base_revision=shared.revision,
+                base_source_revision=shared.source.revision,
+            )], user=admin)
             other_saved = await save_calculation_data(
-                session,
-                other_calculation_id,
-                other_measurement_id,
-                source_hash,
-                CalculationDataOutput.model_validate(scalar),
-                user=other,
+                session, other_calculation_id, other_measurement_id,
+                hashlib.sha256(changed_source.encode("utf-8")).hexdigest(),
+                CalculationDataOutput.model_validate(scalar), user=other,
+                source_revision=shared.source.revision,
             )
             admin_analysis = await analyze_calculation_data(
                 session,
@@ -1152,6 +1171,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     source_hash,
                     CalculationDataOutput.model_validate(scalar),
                     user=owner,
+                    source_revision=1,
                 )
             except HTTPException as error:
                 assert error.status_code == 404

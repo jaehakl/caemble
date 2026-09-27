@@ -299,8 +299,6 @@ class CalculationMetadataUpdate(BaseModel):
 class CalculationListItem(CalculationBase):
     source_revision: int
     source_owner_id: str | None
-    input_contract: dict[str, Any] | None
-    output_contract: dict[str, Any] | None
     validated_source_revision: int | None
     source_id: int = Field(ge=1)
     calculation_data_count: int = Field(default=0, ge=0)

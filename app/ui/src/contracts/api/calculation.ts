@@ -25,8 +25,6 @@ type CalculationWriteRecord = Readonly<{
   base_source_revision?: number | null
   source_revision?: number
   source_owner_id?: string | null
-  input_contract?: Record<string, unknown> | null
-  output_contract?: Record<string, unknown> | null
   created_at?: string | null
   updated_at?: string | null
   experiment_id: number

@@ -63,7 +63,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             ))
             items = [
                 api_models.CalculationListItem(
-                    id=calculation_id, source_id=1, source_revision=1, source_owner_id=None, input_contract=None, output_contract=None, validated_source_revision=None, experiment_id=experiment_id,
+                    id=calculation_id, source_id=1, source_revision=1, source_owner_id=None, validated_source_revision=None, experiment_id=experiment_id,
                     name=str(calculation_id), source_code="source",
                 )
                 for calculation_id, experiment_id in [(10, 7), (11, 7), (12, 7), (13, 9)]

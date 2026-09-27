@@ -22,7 +22,6 @@ class LibraryQuery(BaseModel):
     solver_version: str = ""
     concept: str = ""
     unclassified: bool = False
-    quantity_kind: str = ""
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=30, ge=1, le=100)
 
@@ -42,13 +41,11 @@ class LibraryItem(BaseModel):
     sources: list[Literal["catalog", "mine", "demo"]]
     solvers: list[LibrarySolver]
     concepts: list[str]
-    quantity_kinds: list[str]
 
 
 class LibraryFacets(BaseModel):
     solvers: list[LibrarySolver]
     concepts: list[str]
-    quantity_kinds: list[str]
 
 
 class LibraryPage(BaseModel):
@@ -58,8 +55,6 @@ class LibraryPage(BaseModel):
 
 
 class LibraryDetail(LibraryItem):
-    input_contract: dict | None = None
-    output_contract: dict | None = None
     source_revision: int | None = None
     source_id: int | None = None
     source_code: str

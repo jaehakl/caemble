@@ -385,9 +385,6 @@ class CalculationSource(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     owner_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1", default=1)
-    input_contract: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
-    output_contract: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
-    contract_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class Calculation(TimestampMixin, Base):
@@ -449,28 +446,6 @@ class Calculation(TimestampMixin, Base):
         return select(CalculationSource.owner_id).where(
             CalculationSource.id == cls.source_id,
         ).correlate_except(CalculationSource).scalar_subquery().label("source_owner_id")
-
-    @hybrid_property
-    def input_contract(self) -> Any:
-        return self.source.input_contract
-
-    @input_contract.inplace.expression
-    @classmethod
-    def _input_contract_expression(cls):
-        return select(CalculationSource.input_contract).where(
-            CalculationSource.id == cls.source_id,
-        ).correlate_except(CalculationSource).scalar_subquery().label("input_contract")
-
-    @hybrid_property
-    def output_contract(self) -> Any:
-        return self.source.output_contract
-
-    @output_contract.inplace.expression
-    @classmethod
-    def _output_contract_expression(cls):
-        return select(CalculationSource.output_contract).where(
-            CalculationSource.id == cls.source_id,
-        ).correlate_except(CalculationSource).scalar_subquery().label("output_contract")
 
     @hybrid_property
     def source_code(self) -> str:

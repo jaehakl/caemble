@@ -19,7 +19,6 @@ const itemSchema = z.object({
   sources: z.array(z.enum(['catalog', 'mine', 'demo'])),
   solvers: z.array(solverSchema),
   concepts: z.array(z.string()),
-  quantity_kinds: z.array(z.string()),
 })
 const pageSchema = z.object({
   items: z.array(itemSchema),
@@ -27,13 +26,10 @@ const pageSchema = z.object({
   facets: z.object({
     solvers: z.array(solverSchema),
     concepts: z.array(z.string()),
-    quantity_kinds: z.array(z.string()),
   }),
 })
 const detailSchema = itemSchema.extend({
   source_revision: z.number().int().positive().nullable().optional(),
-  input_contract: z.record(z.string(), z.unknown()).nullable().optional(),
-  output_contract: z.record(z.string(), z.unknown()).nullable().optional(),
   source_id: z.number().int().positive().nullable(),
   source_code: z.string(),
   inputs_verified: z.boolean(),
@@ -65,7 +61,6 @@ export type CalculationLibraryQuery = Readonly<{
   solver_version: string
   concept: string
   unclassified: boolean
-  quantity_kind: string
   offset: number
   limit: number
 }>

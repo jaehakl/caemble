@@ -27,10 +27,10 @@ from caemble_catalog import Catalog
 from settings import settings
 
 
-def downgrade(database):
+def downgrade(database, revision="000000000015"):
     settings.db_url = _database_url(database)
     try:
-        command.downgrade(Config(str(API_DIR / "alembic.ini")), "000000000015")
+        command.downgrade(Config(str(API_DIR / "alembic.ini")), revision)
     finally:
         settings.db_url = ORIGINAL_DB_URL
 
@@ -111,6 +111,84 @@ class CalculationSourcesDatabaseTests(unittest.TestCase):
                 await connection.close()
         asyncio.run(verify_downgrade())
 
+    def test_contract_column_removal_preserves_existing_rows(self):
+        downgrade(self.database, "000000000017")
+
+        async def snapshot(seed=False):
+            connection = await asyncpg.connect(**_connect_arguments(self.database))
+            try:
+                if seed:
+                    owner, _, experiment, _, measurement, *_ = await _seed_calculation_data(self.database)
+                    code = '/* @caemble-contract invalid JSON */\nexport default function calculate(record) { return 1 }'
+                    source = await connection.fetchval("""
+                        INSERT INTO calculation_sources (source_code, source_hash, name, owner_id, revision,
+                            input_contract, output_contract, contract_hash)
+                        VALUES ($1, $2, 'Preserved', $3, 5, '{}', '{"dtype":"float64","shape":[]}', 'old-contract') RETURNING id
+                    """, code, hashlib.sha256(code.encode("utf-8")).hexdigest(), owner)
+                    binding = await connection.fetchval("""
+                        INSERT INTO calculations (experiment_id, source_id, revision, validated_source_revision,
+                            contract_status, preflight_measurement_id, output_layout)
+                        VALUES ($1, $2, 7, 5, 'ready', $3, '{"dtype":"float64","shape":[],"axes":[]}') RETURNING id
+                    """, experiment, source, measurement)
+                    await connection.execute("""
+                        INSERT INTO calculation_data (calculation_id, measurement_id, data)
+                        VALUES ($1, $2, '{"dtype":"float64","shape":[],"axes":[],"data":1}')
+                    """, binding, measurement)
+                return {
+                    table: [dict(row) for row in await connection.fetch(query)]
+                    for table, query in {
+                        "sources": "SELECT id, source_code, source_hash, name, description, owner_id, revision FROM calculation_sources ORDER BY id",
+                        "bindings": "SELECT * FROM calculations ORDER BY id",
+                        "results": "SELECT * FROM calculation_data ORDER BY id",
+                    }.items()
+                }
+            finally:
+                await connection.close()
+
+        before = asyncio.run(snapshot(seed=True))
+        _upgrade(self.database, "head")
+        self.assertEqual(asyncio.run(snapshot()), before)
+        _check(self.database)
+        downgrade(self.database, "000000000017")
+        self.assertEqual(asyncio.run(snapshot()), before)
+
+        async def restored_columns():
+            connection = await asyncpg.connect(**_connect_arguments(self.database))
+            try:
+                row = await connection.fetchrow("SELECT input_contract, output_contract, contract_hash FROM calculation_sources")
+                self.assertEqual(tuple(row), (None, None, None))
+            finally:
+                await connection.close()
+        asyncio.run(restored_columns())
+        _upgrade(self.database, "head")
+
+    def test_new_sources_ignore_declaration_comments(self):
+        async def verify():
+            owner_id, _, experiment, _, measurement, *_ = await _seed_calculation_data(self.database)
+            owner = UserData(id=owner_id, roles=[RoleEnum.user])
+            engine = create_async_engine(make_async_db_url(_database_url(self.database)))
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                for comment in ["", "/* @caemble-contract invalid JSON */\n"]:
+                    code = comment + 'export default function calculate(record) { return {dtype:"float64",data:1} }'
+                    async with sessions() as db:
+                        saved = (await upsert_calculations(db, [_ready_calculation(experiment, "Plain", code, measurement)], user=owner))[0]
+                        row = await db.get(Calculation, saved["id"])
+                        self.assertEqual(row.source_code, code)
+                        self.assertEqual(row.contract_status, "ready")
+                        output = CalculationDataOutput(dtype="float64", shape=[], axes=[], data=1)
+                        for revision in [None, row.source.revision + 1]:
+                            async with sessions() as stale_db:
+                                with self.assertRaises(HTTPException) as error:
+                                    await save_calculation_data(stale_db, row.id, measurement, row.source_hash, output,
+                                                                user=owner, source_revision=revision)
+                                self.assertEqual(error.exception.status_code, 409)
+                        await save_calculation_data(db, row.id, measurement, row.source_hash, output,
+                                                    user=owner, source_revision=row.source.revision)
+            finally:
+                await engine.dispose()
+        asyncio.run(verify())
+
     def test_invalid_ready_hash_aborts_transaction(self):
         downgrade(self.database)
         _, _, experiment, _, measurement, *_ = asyncio.run(_seed_calculation_data(self.database))
@@ -138,7 +216,7 @@ class CalculationSourcesDatabaseTests(unittest.TestCase):
                 await connection.close()
         asyncio.run(verify())
 
-    def test_concurrent_reuse_shared_edits_contract_fork_and_permissions(self):
+    def test_concurrent_reuse_shared_edits_comments_and_permissions(self):
         async def verify():
             owner_id, other_id, experiment, other_experiment, measurement, _, _, other_measurement = await _seed_calculation_data(self.database)
             owner = UserData(id=owner_id, roles=[RoleEnum.user, RoleEnum.admin])
@@ -180,16 +258,18 @@ class CalculationSourcesDatabaseTests(unittest.TestCase):
                         with self.assertRaises(HTTPException):
                             await save_calculation_data(stale_db, left, measurement, a.source_hash, output, user=owner, source_revision=2)
                         await stale_db.rollback()
-                    fork_code = code.replace('"shape":[]', '"shape":[],"min":0')
-                    fork = edited.model_copy(update={"source_code": fork_code, "source_hash": hashlib.sha256(fork_code.encode()).hexdigest(), "base_revision": a.revision, "base_source_revision": 3})
-                    await upsert_calculations(db, [fork], user=owner)
-                    self.assertNotEqual(a.source_id, original_source)
+                    commented_code = code.replace('"shape":[]', '"shape":[],"min":0')
+                    edited_comment = edited.model_copy(update={"source_code": commented_code, "source_hash": hashlib.sha256(commented_code.encode()).hexdigest(), "base_revision": a.revision, "base_source_revision": 3})
+                    await upsert_calculations(db, [edited_comment], user=owner)
+                    self.assertEqual(a.source_id, original_source)
                     self.assertEqual(b.source_id, original_source)
-                    self.assertEqual(b.source_code, code + "\n")
+                    self.assertEqual(b.source_code, commented_code)
+                    self.assertEqual(a.contract_status, "ready")
+                    self.assertEqual(b.contract_status, "needs_preflight")
                     page = await list_calculations(db, CalculationListRequest(experiment_id=experiment), user=owner)
                     self.assertEqual(page["items"][0].source_id, a.source_id)
                     await update_calculation_metadata(db, right, CalculationMetadataUpdate(
-                        name="Shared without preflight", base_source_revision=3), user=owner)
+                        name="Shared without preflight", base_source_revision=4), user=owner)
                     self.assertEqual(b.name, "Shared without preflight")
                     self.assertEqual(b.contract_status, "needs_preflight")
                     await delete_calculations(db, [left], user=owner)

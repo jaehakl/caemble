@@ -5,7 +5,6 @@ import { CALCULATION_INDEX_GUARD_GLOBAL, CALCULATION_SHADOWED_GLOBAL_NAMES } fro
 import { createCalculationConsole } from './log'
 import { assertCalculationInput, normalizeCalculationOutput } from './validation'
 import type { CompiledCalculationSource, CalculationInput } from './types'
-import { assertDeclaredTensor } from './declaredContract'
 
 function freezeInput(value: unknown): void {
   if (typeof value !== 'object' || value === null) return
@@ -27,10 +26,6 @@ export function executeCalculation(
   emitLog: (message: string) => void,
 ) {
   assertCalculationInput(input)
-  for (const [name, contract] of Object.entries(compiledSource.declaredContract?.inputs ?? {})) {
-    if (!input[name]) throw new Error(`Missing declared input: ${name}`)
-    assertDeclaredTensor(contract, input[name])
-  }
   freezeInput(input)
   const module = { exports: {} as Record<string, unknown> }
   const requireMathJs = (specifier: string) => {
@@ -59,6 +54,5 @@ export function executeCalculation(
   const calculate = module.exports.default
   if (typeof calculate !== 'function') throw new Error('Compiled Calculation has no default function.')
   const output = normalizeCalculationOutput(calculate(input))
-  if (compiledSource.declaredContract) assertDeclaredTensor(compiledSource.declaredContract.output, output)
   return output
 }

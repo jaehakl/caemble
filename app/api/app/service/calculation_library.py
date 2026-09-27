@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from calculation_contract import extract_contract
 from calculation_library_models import LibraryDetail, LibraryItem, LibraryPage, LibraryQuery, LibraryReference
 from db import Calculation, Experiment, ExperimentDemo
 from models import UserData
@@ -22,7 +21,7 @@ def _catalog_item(row: dict[str, Any]) -> LibraryItem:
         name=row["name"], description=row["description"], experiment_name=experiment["title"],
         experiment_coordinate=experiment["coordinate"], sources=["catalog"],
         solvers=[{"name": solver["name"], "version": solver["version"]} for solver in experiment["relatedSolvers"]],
-        concepts=experiment["concepts"], quantity_kinds=[],
+        concepts=experiment["concepts"],
     )
 
 
@@ -40,13 +39,13 @@ def _saved_item(row: Any, user: UserData | None) -> LibraryItem:
                                f"@{row.version_major}.{row.version_minor}.{row.version_patch}"),
         sources=(["mine"] if user is not None and row.user_id == user.id else []) + (["demo"] if row.demo_id is not None else []),
         solvers=[{"name": name, "version": version} for name, version in sorted(solvers)],
-        concepts=[], quantity_kinds=sorted({value["quantityKind"] for value in (row.input_contract or {}).values() if value.get("quantityKind")}),
+        concepts=[],
     )
 
 
 def _saved_query():
     return select(
-        Calculation.input_contract, Calculation.source_id, Calculation.source_hash, Calculation.id, Calculation.name, Calculation.description, Calculation.experiment_id,
+        Calculation.source_id, Calculation.source_hash, Calculation.id, Calculation.name, Calculation.description, Calculation.experiment_id,
         Experiment.name.label("experiment_name"), Experiment.user_id, Experiment.namespace,
         Experiment.repository_slug, Experiment.experiment_key, Experiment.version_major,
         Experiment.version_minor, Experiment.version_patch, Experiment.result_contracts,
@@ -73,7 +72,6 @@ async def list_library(db: AsyncSession, catalog: Catalog, query: LibraryQuery, 
         "solvers": [{"name": name, "version": version} for name, version in sorted(
             {(solver.name, solver.version) for item in items for solver in item.solvers})],
         "concepts": sorted({concept for item in items for concept in item.concepts}),
-        "quantity_kinds": sorted({kind for item in items for kind in item.quantity_kinds}),
     }
     needle = query.query.strip().casefold()
     matched = []
@@ -84,8 +82,6 @@ async def list_library(db: AsyncSession, catalog: Catalog, query: LibraryQuery, 
         if query.concept and query.concept not in item.concepts:
             continue
         if query.unclassified and item.concepts:
-            continue
-        if query.quantity_kind and query.quantity_kind not in item.quantity_kinds:
             continue
         if (query.solver_name or query.solver_version) and not any(
             (not query.solver_name or solver.name == query.solver_name)
@@ -110,7 +106,6 @@ async def list_library(db: AsyncSession, catalog: Catalog, query: LibraryQuery, 
             existing.sources = sorted(set(existing.sources + item.sources))
             existing.solvers = list({(solver.name, solver.version): solver for solver in existing.solvers + item.solvers}.values())
             existing.concepts = sorted(set(existing.concepts + item.concepts))
-            existing.quantity_kinds = sorted(set(existing.quantity_kinds + item.quantity_kinds))
     matched = list(groups.values())
     matched.sort(key=lambda item: (item.name.casefold(), item.experiment_coordinate, item.reference.model_dump_json()))
     return LibraryPage(items=matched[query.offset:query.offset + query.limit], total=len(matched), facets=facets)
@@ -127,10 +122,7 @@ async def library_detail(db: AsyncSession, catalog: Catalog, reference: LibraryR
                        if row["experiment"]["coordinate"] == experiment["coordinate"] and row["name"] == reference.name)
         except (CatalogNotFoundError, CatalogAmbiguousError, StopIteration, ValueError) as error:
             raise HTTPException(404, "Calculation not found.") from error
-        declaration = extract_contract(source)
         return LibraryDetail(**_catalog_item(row).model_dump(),
-                             input_contract=declaration["inputs"] if declaration else None,
-                             output_contract=declaration["output"] if declaration else None,
                              source_code=source, inputs=[], inputs_verified=False,
                              output_layout=None, preflight_measurement_id=None, contract_status="unknown")
     if reference.kind == "source":
@@ -146,7 +138,7 @@ async def library_detail(db: AsyncSession, catalog: Catalog, reference: LibraryR
     if reference.calculation_id is None or reference.coordinate is not None or reference.name is not None:
         raise HTTPException(422, "Saved Calculation ID is required.")
     row = (await db.execute(_saved_query().add_columns(
-        Calculation.output_contract, Calculation.source_revision, Calculation.source_code, Calculation.output_layout, Calculation.contract_status,
+        Calculation.source_revision, Calculation.source_code, Calculation.output_layout, Calculation.contract_status,
         Calculation.preflight_measurement_id,
     ).where(Calculation.id == reference.calculation_id))).first()
     if row is None:
@@ -155,7 +147,6 @@ async def library_detail(db: AsyncSession, catalog: Catalog, reference: LibraryR
     return LibraryDetail(
         **_saved_item(row, user).model_dump(),
         source_id=row.source_id, source_revision=row.source_revision, source_code=row.source_code,
-        input_contract=row.input_contract, output_contract=row.output_contract,
         inputs=[], inputs_verified=False,
         output_layout=None, preflight_measurement_id=None, contract_status="unknown",
     )

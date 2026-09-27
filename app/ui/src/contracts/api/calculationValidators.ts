@@ -107,8 +107,6 @@ export const persistedCalculationRecordSchema = z
     source_id: databaseIdSchema,
     source_revision: databaseIdSchema,
     source_owner_id: z.string().nullable(),
-    input_contract: z.record(z.string(), z.unknown()).nullable(),
-    output_contract: z.record(z.string(), z.unknown()).nullable(),
     validated_source_revision: databaseIdSchema.nullable(),
     revision: z.number().int().positive(),
     experiment_id: databaseIdSchema,

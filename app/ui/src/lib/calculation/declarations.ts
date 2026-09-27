@@ -143,8 +143,7 @@ export default function calculate(record) {
 
 export function calculationSourceSkeleton(recordName?: string) {
   const name = recordName ?? 'signal'
-  const contract = { version: 1, inputs: { [name]: { dtype: 'float64', shape: [null, null, null, null, null, null, null] } }, output: { dtype: 'float64', shape: [null, null] } }
-  return `/* @caemble-contract ${JSON.stringify(contract)} */\n` + calculationSourceBody.replace("record['signal']", `record[${JSON.stringify(name)}]`)
+  return calculationSourceBody.replace("record['signal']", `record[${JSON.stringify(name)}]`)
 }
 
 export const CALCULATION_SOURCE_SKELETON = calculationSourceSkeleton()

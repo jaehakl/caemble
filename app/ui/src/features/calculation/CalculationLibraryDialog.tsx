@@ -28,40 +28,17 @@ const initialQuery: CalculationLibraryQuery = {
   solver_version: '',
   concept: '',
   unclassified: false,
-  quantity_kind: '',
   offset: 0,
   limit: 30,
 }
 
-function ContractPreview({ detail }: { detail: CalculationLibraryDetail }) {
-  if (!detail.input_contract || !detail.output_contract) {
-    const inputs = calculationLibraryInputs(detail)
-    return (
-      <section className="space-y-2">
-        <h3 className="font-semibold">입출력 계약 미선언</h3>
-        <p>기존 코드입니다. 코드 수정 시 @caemble-contract 선언이 필요합니다.</p>
-        <p>정적으로 확인된 입력: {inputs.items.map((item) => item.name).join(', ') || '없음'}</p>
-        <p>dtype·shape·제약조건: 미확인</p>
-      </section>
-    )
-  }
+function InputPreview({ detail }: { detail: CalculationLibraryDetail }) {
+  const inputs = calculationLibraryInputs(detail)
   return (
     <section className="space-y-3">
-      <h3 className="font-semibold">코드에 선언된 입출력 계약</h3>
-      <p className="text-muted-foreground">
-        shape의 null은 가변 크기입니다. 현재 Experiment에서 실제 입력과 출력을 다시 검증합니다.
-      </p>
-      {Object.entries(detail.input_contract).map(([name, contract]) => (
-        <section key={name} className="rounded border p-3">
-          <h4 className="font-mono">Input · {name}</h4>
-          <pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify(contract, null, 2)}</pre>
-        </section>
-      ))}
-      {!Object.keys(detail.input_contract).length ? <p>참조하는 Record 없음</p> : null}
-      <section className="rounded border p-3">
-        <h4>Output</h4>
-        <pre className="overflow-auto whitespace-pre-wrap">{JSON.stringify(detail.output_contract, null, 2)}</pre>
-      </section>
+      <h3 className="font-semibold">참조하는 Record</h3>
+      {inputs.error ? <p>{inputs.error}</p> : <p>{inputs.items.map((item) => item.name).join(', ') || '없음'}</p>}
+      <p>현재 Experiment의 Record와 Measurement로 실행하여 입력과 출력 구성을 확인합니다.</p>
       <details>
         <summary>공통 실행 제약조건</summary>
         <p>
@@ -142,7 +119,6 @@ export function CalculationLibraryDialog({
                     solver_version: '',
                     concept: '',
                     unclassified: false,
-                    quantity_kind: '',
                   })
                 }
               >
@@ -196,17 +172,6 @@ export function CalculationLibraryDialog({
                 <option value="__unclassified">미분류</option>
                 {facets?.concepts.map((concept) => (
                   <option key={concept}>{concept}</option>
-                ))}
-              </select>
-              <select
-                aria-label="입력 QuantityKind"
-                className={`${selectClass} col-span-2`}
-                value={query.quantity_kind}
-                onChange={(event) => changeFilters({ quantity_kind: event.target.value })}
-              >
-                <option value="">전체 입력 QuantityKind</option>
-                {facets?.quantity_kinds.map((kind) => (
-                  <option key={kind}>{kind}</option>
                 ))}
               </select>
             </div>
@@ -297,7 +262,7 @@ export function CalculationLibraryDialog({
                   {detail.data.solvers.map((solver) => `${solver.name}@${solver.version}`).join(', ') || '미확인'}
                 </p>
                 <p>Concept: {detail.data.concepts.join(', ') || '미분류'}</p>
-                <ContractPreview detail={detail.data} />
+                <InputPreview detail={detail.data} />
                 <details open>
                   <summary className="cursor-pointer font-semibold">코드 (읽기 전용)</summary>
                   <pre className="mt-2 overflow-auto rounded bg-muted p-3 text-xs">{detail.data.source_code}</pre>
