@@ -57,6 +57,7 @@ export type CalculationLibraryDetail = z.infer<typeof detailSchema>
 export type CalculationLibraryQuery = Readonly<{
   source: 'all' | 'catalog' | 'mine' | 'demo'
   query: string
+  solver_names: readonly string[]
   solver_name: string
   solver_version: string
   concept: string

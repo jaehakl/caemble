@@ -18,6 +18,7 @@ class LibraryQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source: Literal["all", "catalog", "mine", "demo"] = "all"
     query: str = Field(default="", max_length=500)
+    solver_names: list[str] = Field(default_factory=list)
     solver_name: str = ""
     solver_version: str = ""
     concept: str = ""

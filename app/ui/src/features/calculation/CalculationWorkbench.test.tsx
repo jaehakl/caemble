@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { CalculationWorkbench, type CalculationWorkbenchProps } from './CalculationWorkbench'
@@ -135,6 +135,7 @@ function Harness({
     contextPending: false,
     persistable: !readOnly,
     sourceEditable: !readOnly,
+    experimentSolverNames: [],
     experimentId: 2,
     measurementId: 5,
     measurementLoading: false,
@@ -233,12 +234,12 @@ it('moves selection into popups and protects unsaved code when switching calcula
   })
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
   fireEvent.click(screen.getByRole('button', { name: 'Calculations' }))
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Second/ }))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Second.*Calculation #4/ }))
   expect(confirm).toHaveBeenCalled()
   expect(screen.getByRole('dialog')).toBeInTheDocument()
   expect(mocks.select).not.toHaveBeenCalled()
   confirm.mockReturnValue(true)
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Second/ }))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Second.*Calculation #4/ }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(
     'export default function calculate(record) { return 2 }',
@@ -392,4 +393,81 @@ it('does not present stale counts as current while refreshing or after a failed 
   rerender(<Harness />)
   expect(screen.getByText('Calculation 목록을 불러오지 못했습니다.')).toBeInTheDocument()
   expect(screen.queryByText(/저장 8/)).not.toBeInTheDocument()
+})
+
+it('deletes an unselected row without changing the active draft and prevents duplicate requests', async () => {
+  let finish!: () => void
+  const remove = vi.spyOn(dbTables.Calculation, 'deleteRows').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(undefined as never)
+      }),
+  )
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  const usage = vi.fn().mockResolvedValue(undefined)
+  const dirty = vi.fn()
+  render(<Harness overrides={{ onUsageChanged: usage, onDirtyChange: dirty }} />)
+  const editor = screen.getByRole('textbox', { name: 'Calculation code' })
+  fireEvent.change(editor, { target: { value: 'local edit' } })
+  mocks.select.mockClear()
+  fireEvent.click(screen.getByRole('button', { name: 'Calculations' }))
+  const button = screen.getByRole('button', { name: 'Second 삭제' })
+  fireEvent.click(button)
+  fireEvent.click(button)
+  expect(remove).toHaveBeenCalledExactlyOnceWith([4])
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Second'))
+  expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('저장하지 않은 편집'))
+  expect(button).toBeDisabled()
+  expect(within(button).getByLabelText('삭제 중')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'First 삭제' })).toBeDisabled()
+  await act(async () => finish())
+  expect(usage).toHaveBeenCalledOnce()
+  expect(mocks.select).not.toHaveBeenCalled()
+  expect(editor).toHaveValue('local edit')
+  expect(dirty).toHaveBeenLastCalledWith(true)
+  expect(screen.getByRole('dialog', { name: 'Calculations' })).toBeInTheDocument()
+  expect(button).not.toBeDisabled()
+})
+
+it('clears the current draft after deleting its row and keeps the picker open', async () => {
+  const remove = vi.spyOn(dbTables.Calculation, 'deleteRows').mockResolvedValue(undefined as never)
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  render(<Harness overrides={{ onUsageChanged: vi.fn().mockResolvedValue(undefined) }} />)
+  const editor = screen.getByRole('textbox', { name: 'Calculation code' })
+  fireEvent.change(editor, { target: { value: 'local edit' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Calculations' }))
+  fireEvent.click(screen.getByRole('button', { name: 'First 삭제' }))
+  await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith([3]))
+  await waitFor(() => expect(editor).not.toHaveValue('local edit'))
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('저장하지 않은 편집'))
+  expect(screen.getByRole('dialog', { name: 'Calculations' })).toBeInTheDocument()
+})
+
+it('preserves editing when deletion is cancelled or fails', async () => {
+  const remove = vi.spyOn(dbTables.Calculation, 'deleteRows').mockRejectedValue(new Error('delete failed'))
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  const usage = vi.fn().mockResolvedValue(undefined)
+  render(<Harness overrides={{ onUsageChanged: usage }} />)
+  const editor = screen.getByRole('textbox', { name: 'Calculation code' })
+  fireEvent.change(editor, { target: { value: 'local edit' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Calculations' }))
+  const button = screen.getByRole('button', { name: 'First 삭제' })
+  fireEvent.click(button)
+  expect(remove).not.toHaveBeenCalled()
+  confirm.mockReturnValue(true)
+  fireEvent.click(button)
+  await waitFor(() => expect(button).not.toBeDisabled())
+  expect(remove).toHaveBeenCalledExactlyOnceWith([3])
+  expect(editor).toHaveValue('local edit')
+  expect(usage).not.toHaveBeenCalled()
+})
+
+it('disables row deletion without permission, during data operations, and during context changes', () => {
+  const { rerender } = render(<Harness readOnly />)
+  fireEvent.click(screen.getByRole('button', { name: 'Calculations' }))
+  expect(screen.getByRole('button', { name: 'First 삭제' })).toBeDisabled()
+  rerender(<Harness overrides={{ calculationDataBusy: true }} />)
+  expect(screen.getByRole('button', { name: 'First 삭제' })).toBeDisabled()
+  rerender(<Harness overrides={{ contextPending: true }} />)
+  expect(screen.getByRole('button', { name: 'First 삭제' })).toBeDisabled()
 })

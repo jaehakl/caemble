@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
+import { ChevronDown, LoaderCircle } from 'lucide-react'
 import {
   calculationLibraryApi,
   type CalculationLibraryDetail,
@@ -9,6 +9,14 @@ import {
 } from '@/api/calculationLibrary'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import {
@@ -24,6 +32,7 @@ const sourceLabels = { catalog: 'Catalog', mine: '내 항목', demo: '공개 Dem
 const initialQuery: CalculationLibraryQuery = {
   source: 'all',
   query: '',
+  solver_names: [],
   solver_name: '',
   solver_version: '',
   concept: '',
@@ -54,18 +63,22 @@ function InputPreview({ detail }: { detail: CalculationLibraryDetail }) {
 }
 
 export function CalculationLibraryDialog({
-  authenticated,
+  defaultSolverNames,
   loadDisabled,
   onClose,
   onLoad,
 }: {
-  authenticated: boolean
+  defaultSolverNames: readonly string[]
   loadDisabled: boolean
   onClose: () => void
   onLoad: (detail: CalculationLibraryDetail) => boolean
 }) {
   const scope = usePrivateQueryScope()
-  const [query, setQuery] = useState(initialQuery)
+  const [query, setQuery] = useState<CalculationLibraryQuery>(() => ({
+    ...initialQuery,
+    solver_names: [...new Set(defaultSolverNames)].sort(),
+  }))
+  const [initialSolverNames] = useState(() => [...new Set(defaultSolverNames)])
   const [selection, setSelection] = useState<CalculationLibraryReference | null>(null)
   const list = useQuery({
     queryKey: ['calculation-library', scope, 'list', query],
@@ -108,55 +121,43 @@ export function CalculationLibraryDialog({
               onChange={(event) => changeFilters({ query: event.target.value })}
             />
             <div className="grid grid-cols-2 gap-2">
-              <select
-                aria-label="출처"
-                className={selectClass}
-                value={query.source}
-                onChange={(event) =>
-                  changeFilters({
-                    source: event.target.value as CalculationLibraryQuery['source'],
-                    solver_name: '',
-                    solver_version: '',
-                    concept: '',
-                    unclassified: false,
-                  })
-                }
-              >
-                <option value="all">전체 출처</option>
-                <option value="catalog">Catalog</option>
-                <option value="mine" disabled={!authenticated}>
-                  내 항목
-                </option>
-                <option value="demo">공개 Demo</option>
-              </select>
-              <select
-                aria-label="Solver"
-                className={selectClass}
-                value={query.solver_name}
-                onChange={(event) => changeFilters({ solver_name: event.target.value, solver_version: '' })}
-              >
-                <option value="">전체 Solver</option>
-                {[...new Set(facets?.solvers.map((solver) => solver.name))].map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-              <select
-                aria-label="Solver 버전"
-                className={selectClass}
-                value={query.solver_version}
-                onChange={(event) => changeFilters({ solver_version: event.target.value })}
-              >
-                <option value="">전체 버전</option>
-                {[
-                  ...new Set(
-                    facets?.solvers
-                      .filter((solver) => !query.solver_name || solver.name === query.solver_name)
-                      .map((solver) => solver.version),
-                  ),
-                ].map((version) => (
-                  <option key={version}>{version}</option>
-                ))}
-              </select>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" aria-label="Solver" className="w-full justify-between">
+                    {query.solver_names.length ? `Solver ${query.solver_names.length}개 선택` : '전체 Solver'}
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="max-h-72 overflow-y-auto">
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      changeFilters({ solver_names: [] })
+                    }}
+                  >
+                    전체 Solver (선택 해제)
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {[...new Set([...initialSolverNames, ...(facets?.solvers.map((solver) => solver.name) ?? [])])]
+                    .sort()
+                    .map((name) => (
+                      <DropdownMenuCheckboxItem
+                        key={name}
+                        checked={query.solver_names.includes(name)}
+                        onSelect={(event) => event.preventDefault()}
+                        onCheckedChange={(checked) =>
+                          changeFilters({
+                            solver_names: checked
+                              ? [...new Set([...query.solver_names, name])].sort()
+                              : query.solver_names.filter((selected) => selected !== name),
+                          })
+                        }
+                      >
+                        {name}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <select
                 aria-label="Concept 분류"
                 className={selectClass}

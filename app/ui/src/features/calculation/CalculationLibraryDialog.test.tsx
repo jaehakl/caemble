@@ -47,16 +47,21 @@ beforeEach(() => {
   )
 })
 
-function setup(authenticated = true) {
+function setup(defaultSolverNames: readonly string[] = []) {
   const onLoad = vi.fn(() => true)
   const onClose = vi.fn()
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(
+  const rendered = render(
     <QueryClientProvider client={client}>
-      <CalculationLibraryDialog authenticated={authenticated} loadDisabled={false} onClose={onClose} onLoad={onLoad} />
+      <CalculationLibraryDialog
+        defaultSolverNames={defaultSolverNames}
+        loadDisabled={false}
+        onClose={onClose}
+        onLoad={onLoad}
+      />
     </QueryClientProvider>,
   )
-  return { onLoad, onClose }
+  return { onLoad, onClose, ...rendered }
 }
 
 it('only loads details on selection and imports on explicit action', async () => {
@@ -73,10 +78,11 @@ it('only loads details on selection and imports on explicit action', async () =>
   expect(onClose).toHaveBeenCalledOnce()
 })
 
-it('resets page and selection on filters and prevents anonymous mine queries', async () => {
-  setup(false)
+it('resets page and selection on filters and removes source and version controls', async () => {
+  setup()
   await screen.findByRole('button', { name: /First calculation/ })
-  expect(screen.getByRole('option', { name: '내 항목' })).toBeDisabled()
+  expect(screen.queryByLabelText('출처')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Solver 버전')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '다음' }))
   await waitFor(() =>
     expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
@@ -84,13 +90,15 @@ it('resets page and selection on filters and prevents anonymous mine queries', a
       expect.anything(),
     ),
   )
-  fireEvent.change(screen.getByLabelText('Solver'), { target: { value: 'heat' } })
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Solver' }), { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'heat' }))
   await waitFor(() =>
     expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
-      expect.objectContaining({ offset: 0, solver_name: 'heat', solver_version: '' }),
+      expect.objectContaining({ offset: 0, solver_names: ['heat'], source: 'all', solver_version: '' }),
       expect.anything(),
     ),
   )
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
   expect(screen.getByRole('button', { name: '불러오기' })).toBeDisabled()
 })
 
@@ -133,4 +141,78 @@ it('distinguishes scalar, multi-axis and unknown contracts without executing cod
   const unknown = calculationLibraryInputs({ ...first, inputs: [], inputs_verified: false })
   expect(unknown.items).toEqual([{ name: 'field', contract: null }])
   expect(calculationLibraryInputs({ ...first, source_code: 'broken(' }).error).not.toBeNull()
+})
+
+it('initializes unique defaults including missing facets and allows consecutive selections and clearing', async () => {
+  setup(['heat', 'missing', 'heat'])
+  await screen.findByRole('button', { name: /First calculation/ })
+  expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+    expect.objectContaining({ solver_names: ['heat', 'missing'] }),
+    expect.anything(),
+  )
+  expect(screen.getByRole('button', { name: 'Solver' })).toHaveTextContent('2개 선택')
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Solver' }), { key: 'ArrowDown' })
+  expect(await screen.findByRole('menuitemcheckbox', { name: 'missing' })).toHaveAttribute('aria-checked', 'true')
+  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'heat' }))
+  await waitFor(() =>
+    expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ solver_names: ['missing'] }),
+      expect.anything(),
+    ),
+  )
+  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'heat' }))
+  await waitFor(() =>
+    expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ solver_names: ['heat', 'missing'] }),
+      expect.anything(),
+    ),
+  )
+  fireEvent.click(screen.getByRole('menuitem', { name: '전체 Solver (선택 해제)' }))
+  await waitFor(() =>
+    expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ solver_names: [] }),
+      expect.anything(),
+    ),
+  )
+})
+
+it('keeps user filters on prop updates and resets defaults when reopened or the Experiment changes', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const view = (key: string, names: string[]) => (
+    <QueryClientProvider client={client}>
+      <CalculationLibraryDialog
+        key={key}
+        defaultSolverNames={names}
+        loadDisabled={false}
+        onClose={vi.fn()}
+        onLoad={() => true}
+      />
+    </QueryClientProvider>
+  )
+  const rendered = render(view('experiment-1', ['heat']))
+  await screen.findByRole('button', { name: /First calculation/ })
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Solver' }), { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '전체 Solver (선택 해제)' }))
+  rendered.rerender(view('experiment-1', ['missing']))
+  await waitFor(() =>
+    expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ solver_names: [] }),
+      expect.anything(),
+    ),
+  )
+  rendered.rerender(<></>)
+  rendered.rerender(view('experiment-1', ['heat']))
+  await waitFor(() =>
+    expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ solver_names: ['heat'] }),
+      expect.anything(),
+    ),
+  )
+  rendered.rerender(view('experiment-2', ['missing']))
+  await waitFor(() =>
+    expect(calculationLibraryApi.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ solver_names: ['missing'] }),
+      expect.anything(),
+    ),
+  )
 })

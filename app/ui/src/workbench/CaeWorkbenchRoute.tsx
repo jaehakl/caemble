@@ -85,6 +85,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     onActivity: runtimeConsole.append,
     predictionMode,
   })
+  const experimentSolverNames = [
+    ...new Set(
+      workbench.experimentDocument.evaluatedSnapshot
+        ? Object.values(workbench.experimentDocument.evaluatedSnapshot.simulationProgram.tasks).map(
+            (task) => task.kernel.name,
+          )
+        : Object.values(workbench.experimentRecord?.result_contracts ?? {}).map((result) => result.solver.name),
+    ),
+  ].sort()
   const preflight = usePreflight(
     workbench.experiment,
     workbench.experimentDocument,
@@ -593,6 +602,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               <CalculationWorkbenchContainer
                 authenticated={auth.isAuthenticated}
                 dataReadable={experimentDataReadable}
+                experimentSolverNames={experimentSolverNames}
                 calculationDataBusy={workbench.calculationDataActions.busy}
                 contextPending={workbench.selectionRestoring}
                 persistable={calculationAccess.persistable}

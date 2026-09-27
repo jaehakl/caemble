@@ -85,6 +85,21 @@ class CalculationLibraryTests(unittest.TestCase):
             self.list(source="mine")
         self.assertEqual(error.exception.status_code, 401)
 
+    def test_multiple_solver_names_filter_before_pagination_and_preserve_legacy_queries(self):
+        query = {"query": "tests/library", "solver_names": ["Owned", "Public", "Owned", "Hidden"]}
+        page = self.list(self.user, **query, limit=1)
+        next_page = self.list(self.user, **query, limit=1, offset=1)
+        self.assertEqual(page.total, 2)
+        self.assertEqual(next_page.total, 2)
+        self.assertEqual({page.items[0].name, next_page.items[0].name}, {"Owned", "Public"})
+        self.assertEqual([item.name for item in self.list(**query).items], ["Public"])
+        self.assertEqual(self.list(self.user, solver_names=["missing"]).total, 0)
+        self.assertEqual(self.list(self.user, solver_names=[]).total, self.list(self.user).total)
+        self.assertEqual(self.list(self.user, solver_names=["Public"], solver_name="Owned").items[0].name, "Public")
+        self.assertEqual(self.list(self.user, **query, solver_version="2.0.0").total, 0)
+        self.assertEqual(self.list(self.user, **query, solver_version="1.0.0").total, 2)
+        self.assertEqual(self.list(self.user, solver_names=[], solver_name="Owned").total, 1)
+
     def test_detail_rechecks_permission_and_preserves_ready_contract(self):
         ref = LibraryReference(kind="saved", calculation_id=2)
         with self.assertRaises(HTTPException) as error:

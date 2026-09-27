@@ -61,6 +61,7 @@ export type CalculationWorkbenchProps = Readonly<{
   contextPending: boolean
   persistable: boolean
   sourceEditable: boolean
+  experimentSolverNames: readonly string[]
   experimentId: number | null
   measurementId: number | null
   measurementLoading: boolean
@@ -92,6 +93,7 @@ export function CalculationWorkbench({
   contextPending,
   persistable,
   sourceEditable,
+  experimentSolverNames,
   experimentId,
   measurementId,
   measurementLoading,
@@ -123,7 +125,8 @@ export function CalculationWorkbench({
   const [editing, dispatchEditing] = useReducer(calculationEditingReducer, initialCalculationEditingState)
   const { dirty, draft } = selectCalculationEditing(editing)
   const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const deleting = deletingId !== null
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
@@ -285,7 +288,7 @@ export function CalculationWorkbench({
     setLibraryOpen(false)
     mutationSequenceRef.current += 1
     setSaving(false)
-    setDeleting(false)
+    setDeletingId(null)
     setSaveDialogOpen(false)
     dispatchEditing({ type: 'experimentChanged', recordName: experimentRecords[0]?.name })
   }, [experimentId, experimentRecords])
@@ -295,7 +298,7 @@ export function CalculationWorkbench({
     selectedCalculationRef.current = selectedCalculationId
     mutationSequenceRef.current += 1
     setSaving(false)
-    setDeleting(false)
+    setDeletingId(null)
     setSaveDialogOpen(false)
     dispatchEditing({
       type: 'selectionChanged',
@@ -607,9 +610,9 @@ export function CalculationWorkbench({
     [onSaveStateChange],
   )
 
-  const deleteCurrent = async () => {
-    if (saving || deleting) return
-    if (draft.id === null) {
+  const deleteCalculation = async (target: Pick<CalculationDraft, 'id' | 'name'> = draft) => {
+    if (saving || deleting || calculationDataBusy || contextPending) return
+    if (target.id === null) {
       if (!sourceEditable) return
       if (dirty && !window.confirm('저장하지 않은 새 Calculation draft를 버릴까요?')) return
       dispatchEditing({ type: 'newStarted', recordName: experimentRecords[0]?.name })
@@ -617,22 +620,23 @@ export function CalculationWorkbench({
       return
     }
     if (!persistable) return
+    const isCurrent = target.id === draft.id
     if (
       !window.confirm(
-        `이 Experiment에서 ${draft.name || `Calculation #${draft.id}`} 연결과 후처리 결과를 삭제할까요?${dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}${publicDemoMutable ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
+        `이 Experiment에서 ${target.name || `Calculation #${target.id}`} 연결과 후처리 결과를 삭제할까요?${isCurrent && dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}${publicDemoMutable ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
       )
     ) {
       return
     }
     const sequence = ++mutationSequenceRef.current
-    setDeleting(true)
+    setDeletingId(target.id)
     try {
-      await dbTables.Calculation.deleteRows([draft.id])
+      await dbTables.Calculation.deleteRows([target.id])
       if (sequence !== mutationSequenceRef.current) {
         await invalidateCalculationMutation(queryClient, queryScope, experimentId)
         return
       }
-      if (changeCalculationSelection(null)) {
+      if (isCurrent && changeCalculationSelection(null)) {
         dispatchEditing({ type: 'deleted', recordName: experimentRecords[0]?.name })
         setSaveDialogOpen(false)
         selectedCalculationRef.current = null
@@ -649,7 +653,7 @@ export function CalculationWorkbench({
         toast.error(cause instanceof Error ? cause.message : String(cause))
       }
     } finally {
-      if (sequence === mutationSequenceRef.current) setDeleting(false)
+      if (sequence === mutationSequenceRef.current) setDeletingId(null)
     }
   }
 
@@ -705,13 +709,14 @@ export function CalculationWorkbench({
                               saving ||
                               deleting ||
                               calculationDataBusy ||
+                              contextPending ||
                               (draft.id === null ? !sourceEditable || !dirty : !persistable)
                             }
                             size="icon"
                             title="Delete"
                             type="button"
                             variant="outline"
-                            onClick={() => void deleteCurrent()}
+                            onClick={() => void deleteCalculation()}
                           >
                             {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
                           </Button>
@@ -733,14 +738,14 @@ export function CalculationWorkbench({
                         ) : rows.length ? (
                           <ul className="divide-y">
                             {rows.map((row) => (
-                              <li key={row.id}>
+                              <li key={row.id} className="flex items-center gap-2 pr-2">
                                 <button
                                   aria-current={draft.id === row.id ? 'true' : undefined}
                                   className={cn(
-                                    'w-full px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                                    'min-w-0 flex-1 px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                                     draft.id === row.id && 'bg-accent',
                                   )}
-                                  disabled={saving || deleting || calculationDataBusy}
+                                  disabled={saving || deleting || calculationDataBusy || contextPending}
                                   type="button"
                                   onClick={() => {
                                     if (replaceDraft(calculationDraftFromRecord(row), row.id, row)) setPickerOpen(false)
@@ -758,6 +763,22 @@ export function CalculationWorkbench({
                                       : `저장 ${row.calculation_data_count} / 기록 완료 ${row.recorded_measurement_count} · 전체 ${row.measurement_count} Measurements`}
                                   </span>
                                 </button>
+                                <Button
+                                  aria-label={`${row.name} 삭제`}
+                                  title={`${row.name} 삭제`}
+                                  size="icon"
+                                  type="button"
+                                  variant="outline"
+                                  className="shrink-0"
+                                  disabled={!persistable || saving || deleting || calculationDataBusy || contextPending}
+                                  onClick={() => void deleteCalculation(row)}
+                                >
+                                  {deletingId === row.id ? (
+                                    <LoaderCircle aria-label="삭제 중" className="animate-spin" />
+                                  ) : (
+                                    <Trash2 />
+                                  )}
+                                </Button>
                               </li>
                             ))}
                           </ul>
@@ -862,7 +883,7 @@ export function CalculationWorkbench({
       {libraryOpen && !contextPending && appliedExperimentRef.current === experimentId ? (
         <CalculationLibraryDialog
           key={`${experimentId}:${queryScope}`}
-          authenticated={authenticated}
+          defaultSolverNames={experimentSolverNames}
           loadDisabled={sourceEditorDisabled}
           onClose={() => setLibraryOpen(false)}
           onLoad={(item) => {

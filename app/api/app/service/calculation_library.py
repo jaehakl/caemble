@@ -75,6 +75,7 @@ async def list_library(db: AsyncSession, catalog: Catalog, query: LibraryQuery, 
     }
     needle = query.query.strip().casefold()
     matched = []
+    solver_names = set(query.solver_names or ([query.solver_name] if query.solver_name else []))
     for item in items:
         searchable = " ".join([item.name, item.description or "", item.experiment_name, item.experiment_coordinate])
         if needle and needle not in searchable.casefold():
@@ -83,8 +84,8 @@ async def list_library(db: AsyncSession, catalog: Catalog, query: LibraryQuery, 
             continue
         if query.unclassified and item.concepts:
             continue
-        if (query.solver_name or query.solver_version) and not any(
-            (not query.solver_name or solver.name == query.solver_name)
+        if (solver_names or query.solver_version) and not any(
+            (not solver_names or solver.name in solver_names)
             and (not query.solver_version or solver.version == query.solver_version)
             for solver in item.solvers
         ):
