@@ -71,7 +71,7 @@ def _build_search_text_clause(
     searchable_columns: Sequence[Any],
     raw_text: Any,
 ) -> Any | None:
-    direct_columns = _get_required_text_columns(spec.model)
+    direct_columns = [*_get_required_text_columns(spec.model), *spec.search_text_expressions]
     if direct_columns:
         return _combine_clauses(
             or_,
@@ -147,7 +147,11 @@ def _build_where_clause(
         search_conditions.append(search_text_clause)
 
     for field_name, raw_texts in (request.text_filter or {}).items():
-        if field_name in spec.search_aliases:
+        if field_name in spec.text_expressions:
+            search_clause = _combine_clauses(
+                or_, (_build_text_clause(spec.text_expressions[field_name], value) for value in raw_texts or []),
+            )
+        elif field_name in spec.search_aliases:
             search_clause = _combine_clauses(
                 or_,
                 (
@@ -198,6 +202,8 @@ def _build_where_clause(
     for field_name, operation in (getattr(request, "null_filter", None) or {}).items():
         column = spec.model.__table__.columns.get(field_name)
         if column is None:
+            column = spec.text_expressions.get(field_name)
+        if column is None:
             continue
         filter_conditions.append(
             column.is_(None) if operation == "is_null" else column.is_not(None)
@@ -237,6 +243,8 @@ def _build_column_order_by(
     sorted_id = False
     for field_name, direction in sort_requests:
         column = spec.model.__table__.columns.get(field_name)
+        if column is None:
+            column = spec.text_expressions.get(field_name)
         if column is None:
             continue
         order_by_clauses.append(column.desc() if direction == "desc" else column.asc())

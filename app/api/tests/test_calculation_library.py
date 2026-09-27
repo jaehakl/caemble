@@ -31,7 +31,8 @@ class CalculationLibraryTests(unittest.TestCase):
         self.connection = self.engine.connect()
         for statement in [
             "CREATE TABLE experiments (id INTEGER, user_id TEXT, name TEXT, namespace TEXT, repository_slug TEXT, experiment_key TEXT, version_major INTEGER, version_minor INTEGER, version_patch INTEGER, result_contracts JSON)",
-            "CREATE TABLE calculations (id INTEGER, experiment_id INTEGER, name TEXT, description TEXT, source_code TEXT, output_layout JSON, contract_status TEXT, preflight_measurement_id INTEGER)",
+            "CREATE TABLE calculations (id INTEGER, experiment_id INTEGER, name TEXT, description TEXT, source_id INTEGER, output_layout JSON, contract_status TEXT, preflight_measurement_id INTEGER)",
+            "CREATE TABLE calculation_sources (id INTEGER, source_code TEXT, source_hash TEXT)",
             "CREATE TABLE experiment_demos (experiment_id INTEGER)",
             "CREATE TABLE experiment_records (id INTEGER, experiment_id INTEGER, name TEXT, dtype TEXT, tensor_order INTEGER, quantity_kind TEXT, data_schema JSON)",
             "CREATE TABLE calculation_experiment_records (calculation_id INTEGER, experiment_record_id INTEGER)",
@@ -41,7 +42,9 @@ class CalculationLibraryTests(unittest.TestCase):
             self.connection.execute(text("INSERT INTO experiments VALUES (:id, :owner, :name, 'tests', 'library', :name, 1, 0, 0, :contracts)"),
                                     {"id": identifier, "owner": owner.replace("-", ""), "name": name,
                                      "contracts": '{"field": {"solver": {"name": "' + name + '", "version": "1.0.0"}}}'})
-            self.connection.execute(text("INSERT INTO calculations VALUES (:id, :id, :name, 'description', :source, :layout, 'ready', 12)"),
+            self.connection.execute(text("INSERT INTO calculation_sources VALUES (:id, :source, 'hash')"),
+                                    {"id": identifier, "source": "export default function calculate(records) { return {dtype: 'float64', data: records.field.data[0]}; }"})
+            self.connection.execute(text("INSERT INTO calculations VALUES (:id, :id, :name, 'description', :id, :layout, 'ready', 12)"),
                                     {"id": identifier, "name": name, "source": "export default function calculate(records) { return {dtype: 'float64', data: records.field.data[0]}; }",
                                      "layout": '{"dtype":"float64","shape":[],"axes":[]}'})
             self.connection.execute(text("INSERT INTO experiment_records VALUES (:id, :id, 'field', 'float64', 0, :kind, :schema)"),

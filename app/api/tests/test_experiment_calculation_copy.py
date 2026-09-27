@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from db import Calculation, CalculationData, CalculationExperimentRecord, Experiment, ExperimentDemo, ExperimentRecord, Measurement, RecordedData, make_async_db_url
 from models import CalculationBase, CalculationDataOutput, RoleEnum, SaveExperimentRequest, UserData
 from service.calculation import upsert_calculations
+from service.calculation_source import get_or_create_calculation_source
 from service.calculation_data import save_calculation_data
 from service.experiment import _source_locked, save_experiment
 from service.measurement_service import get_recorded_data
@@ -74,6 +75,7 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     self.assertFalse(original["sourceLocked"])
                     rows = list((await db.scalars(select(Calculation).where(Calculation.experiment_id == original["id"]).order_by(Calculation.id))).all())
                     original_ids = [row.id for row in rows]
+                    self.assertEqual(len({row.source_id for row in rows}), 1)
                     for row in rows:
                         self.assertEqual(row.contract_status, "needs_preflight")
                         self.assertEqual(row.revision, 1)
@@ -101,6 +103,7 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     copy_rows = list((await db.scalars(select(Calculation).where(Calculation.experiment_id == copied["id"]).order_by(Calculation.id))).all())
                     self.assertEqual([row.name for row in copy_rows], [row.name for row in rows])
                     self.assertTrue(set(original_ids).isdisjoint(row.id for row in copy_rows))
+                    self.assertEqual([row.source_id for row in rows], [row.source_id for row in copy_rows])
                     for row in copy_rows:
                         self.assertEqual((row.revision, row.contract_status, row.output_layout, row.preflight_measurement_id), (1, "needs_preflight", None, None))
                     self.assertEqual(copied["derivedCounts"], {"measurements": 0, "recordedData": 0, "calculations": 2})
@@ -109,6 +112,8 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     # New versions copy the selected version, even when a newer version has different definitions.
                     version_request = {**CREATE, "mode": "new_version", "experimentId": original["id"], "baseBundleHash": original["bundleHash"], "bump": "patch"}
                     version = await save_experiment(db, SaveExperimentRequest(**version_request), user=owner)
+                    inherited = list((await db.scalars(select(Calculation).where(Calculation.experiment_id == version["id"]).order_by(Calculation.id))).all())
+                    self.assertEqual([row.source_id for row in rows], [row.source_id for row in inherited])
                     await db.execute(delete(Calculation).where(Calculation.experiment_id == version["id"]))
                     await db.commit()
                     next_version = await save_experiment(db, SaveExperimentRequest(**version_request), user=owner)
@@ -153,7 +158,8 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     with self.assertRaises(HTTPException) as failure:
                         await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "private-copy"}, copyCalculationsFromExperimentId=private_id), user=owner)
                     self.assertEqual(failure.exception.status_code, 404)
-                    db.add(Calculation(experiment_id=private_id, name="Public calculation", source_code="export default () => 1", contract_status="needs_preflight"))
+                    shared_source = await get_or_create_calculation_source(db, "export default () => 1")
+                    db.add(Calculation(experiment_id=private_id, name="Public calculation", source=shared_source, contract_status="needs_preflight"))
                     db.add(ExperimentDemo(experiment_id=private_id, display_order=0))
                     await db.commit()
                     public_copy = await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "demo-copy"}, copyCalculationsFromExperimentId=private_id), user=owner)

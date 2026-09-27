@@ -39,6 +39,7 @@ export type CalculationUpsertInput = CalculationWriteRecord & Readonly<{ id?: nu
 export type PersistedCalculationRecord = CalculationWriteRecord &
   Readonly<{
     id: number
+    source_id: number
     revision: number
     calculation_data_count: number
     recorded_measurement_count: number

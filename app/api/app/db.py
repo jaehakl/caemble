@@ -19,10 +19,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    select,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from settings import settings
@@ -372,6 +374,15 @@ class CalculationExperimentRecord(Base):
     )
 
 
+class CalculationSource(Base):
+    """Immutable exact UTF-8 source, shared independently of Experiment access."""
+    __tablename__ = "calculation_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+
+
 class Calculation(TimestampMixin, Base):
     __tablename__ = "calculations"
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
@@ -392,8 +403,33 @@ class Calculation(TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    source_code: Mapped[str] = mapped_column(Text, nullable=False)
-    source_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("calculation_sources.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+    source: Mapped["CalculationSource"] = relationship(lazy="selectin")
+
+    @hybrid_property
+    def source_code(self) -> str:
+        return self.source.source_code
+
+    @source_code.inplace.expression
+    @classmethod
+    def _source_code_expression(cls):
+        return select(CalculationSource.source_code).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("source_code")
+
+    @hybrid_property
+    def source_hash(self) -> str:
+        return self.source.source_hash
+
+    @source_hash.inplace.expression
+    @classmethod
+    def _source_hash_expression(cls):
+        return select(CalculationSource.source_hash).where(
+            CalculationSource.id == cls.source_id,
+        ).correlate_except(CalculationSource).scalar_subquery().label("source_hash")
+
     output_layout: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     preflight_measurement_id: Mapped[Optional[int]] = mapped_column(
         Integer,

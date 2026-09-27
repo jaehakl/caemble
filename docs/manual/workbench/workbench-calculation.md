@@ -21,6 +21,8 @@
 
 항목을 확인한 뒤 창 아래의 **불러오기**를 누르면 이름·설명·코드가 새 초안으로 열립니다. 기존 수정사항이 있으면 폐기 여부를 확인합니다. 원본 Calculation은 바뀌지 않으며, 현재 Experiment의 Record와 Measurement로 다시 검증한 뒤 **저장**해야 이 Experiment의 독립 Calculation이 됩니다.
 
+동일한 코드는 데이터베이스에 한 번만 저장하고 각 Experiment가 참조합니다. 불러온 계산식이나 이전 버전에서 승계한 계산식도 같은 코드 정의를 공유합니다. 이름·설명·입력 Record·검증 상태·출력 shape·후처리 결과는 Experiment별로 관리합니다. 한 Experiment에서 코드를 수정하면 그 Experiment만 변경된 정의를 참조하며, 다른 Experiment와 이전 버전은 그대로 유지됩니다. 삭제도 현재 Experiment의 연결과 결과에만 적용됩니다.
+
 ## 미리보기와 두 가지 저장 구분하기
 
 | 작업 | 남기는 것 | 사용하는 곳 |

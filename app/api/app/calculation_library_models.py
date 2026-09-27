@@ -56,6 +56,7 @@ class LibraryPage(BaseModel):
 
 
 class LibraryDetail(LibraryItem):
+    source_id: int | None = None
     source_code: str
     inputs: list[ExperimentRecordContract]
     # Ready dependencies are frozen; otherwise records are only candidates for

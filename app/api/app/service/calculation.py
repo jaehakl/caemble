@@ -19,6 +19,7 @@ from models import CalculationBase, CalculationListItem, CalculationListRequest,
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 from service.box_grid import validate_box_grid_schema
+from service.calculation_source import get_or_create_calculation_source
 
 
 CALCULATION_CRUD_SPEC = CrudSpec(
@@ -26,6 +27,8 @@ CALCULATION_CRUD_SPEC = CrudSpec(
     schema=CalculationListItem,
     scope_path=("experiment",),
     relation_aliases={"experiment_record_ids": "experiment_records"},
+    text_expressions={"source_code": Calculation.source_code, "source_hash": Calculation.source_hash},
+    search_text_expressions=(Calculation.source_code,),
 )
 
 
@@ -256,6 +259,11 @@ async def upsert_calculations(
             detail=f"Items not found: {missing_ids}.",
         )
 
+    # Stable ordering avoids acquiring shared unique-index locks in opposite
+    # orders when concurrent requests save multiple definitions.
+    sources = {}
+    for code in sorted({item.source_code for item in normalized_items}):
+        sources[code] = await get_or_create_calculation_source(db, code)
     pending: list[Calculation] = []
     dependencies: list[tuple[Calculation, CalculationBase]] = []
     for item in normalized_items:
@@ -310,8 +318,7 @@ async def upsert_calculations(
                     )
         row.name = item.name
         row.description = item.description
-        row.source_code = item.source_code
-        row.source_hash = item.source_hash
+        row.source = sources[item.source_code]
         row.output_layout = _layout_payload(item.output_layout)
         row.preflight_measurement_id = item.preflight_measurement_id
         row.contract_status = "ready"

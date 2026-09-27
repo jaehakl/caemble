@@ -27,6 +27,7 @@ from models import (
 from user_auth.db import User
 from service.experiment_access import require_experiment_read
 from service.box_grid import validate_box_grid_schema
+from service.calculation_source import get_or_create_calculation_source
 from cae.batches import require_no_active_batches
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user, normalize_int_ids
@@ -516,13 +517,16 @@ async def _save_experiment(
                 select(Calculation).where(Calculation.experiment_id == copy_source_id)
                 .order_by(Calculation.id).with_for_update()
             )).all())
+        sources = {}
+        if copy_source_id is None:
+            for code in sorted({definition.source_code for definition in definitions}):
+                sources[code] = await get_or_create_calculation_source(db, code)
         for definition in definitions:
             db.add(Calculation(
                 experiment_id=experiment.id,
                 name=definition.name,
                 description=definition.description,
-                source_code=definition.source_code,
-                source_hash=hashlib.sha256(definition.source_code.encode("utf-8")).hexdigest(),
+                source_id=definition.source_id if copy_source_id is not None else sources[definition.source_code].id,
                 revision=1,
                 contract_status="needs_preflight",
                 output_layout=None,

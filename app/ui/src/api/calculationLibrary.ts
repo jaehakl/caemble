@@ -29,6 +29,7 @@ const pageSchema = z.object({
   }),
 })
 const detailSchema = itemSchema.extend({
+  source_id: z.number().int().positive().nullable(),
   source_code: z.string(),
   inputs_verified: z.boolean(),
   inputs: z.array(

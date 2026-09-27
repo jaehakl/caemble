@@ -10,6 +10,7 @@ vi.mock('@/api/calculationLibrary', () => ({ calculationLibraryApi: { list: vi.f
 vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'test-owner' }))
 
 const first: CalculationLibraryDetail = {
+  source_id: 1,
   reference: { kind: 'saved', calculation_id: 1, coordinate: null, name: null },
   name: 'First calculation',
   description: '설명',

@@ -23,6 +23,36 @@ cookie 설정을 운영값으로 설정한다. 인증 cookie가 runner origin으
 PostgreSQL에는 pgvector가 있어야 한다. baseline migration이 extension과 application
 table, 기본 user/admin role을 만든다.
 
+## Calculation 공유 정의 전환 (revision 000000000016)
+
+이 migration은 `calculations`의 ID를 보존한 채 정확히 같은 UTF-8 코드를
+`calculation_sources`에 통합하고 `source_id` FK로 연결한다. 이름·설명·revision·preflight·
+입력 Record 연결·CalculationData·객체 저장소 참조는 Experiment별 연결에 남는다.
+코드의 공백·주석·줄바꿈은 정규화하지 않는다. 공유 정의는 DB trigger로 UPDATE를 막으며,
+참조 없는 정의도 이번 전환에서 자동 삭제하지 않는다.
+
+1. 기존 배포 절차에 따라 작업을 종료하고 API 및 다른 DB writer를 중단한다.
+   DB 백업과 이전 서버 release를 확보한다. 기존 API와 새 스키마를 혼용하지 않는다.
+2. 새 release의 `app/api`에서 `poetry run alembic upgrade head`를 실행한다.
+   migration은 `calculations`에 배타 잠금을 잡고 하나의 transaction으로 전환한다.
+3. `ready` 항목의 해시가 코드와 다르면 해당 ID를 표시하고 전체 전환을 rollback한다.
+   기존 release에서 해당 Calculation의 실제 코드를 확인하고 다시 preflight·저장한 뒤 재시도한다.
+   기존 해시만 덮어써 검증 상태를 유지하지 않는다.
+4. `poetry run alembic current`로 revision을 확인한 후 새 API와 UI·CLI를 배포한다.
+   목록 응답의 기존 `id`, `source_code`, `source_hash`와 추가된 `source_id`를 확인한다.
+   서로 다른 Experiment에서 같은 코드가 같은 `source_id`를 가지며 결과는 각자 유지되어야 한다.
+
+되돌릴 때도 writer를 중단한 상태에서 새 release의 `app/api`에서
+`poetry run alembic downgrade 000000000015`를 실행하고 이전 서버 release를 복원한다.
+다운그레이드는 공유 코드를 각 Calculation 행에 다시 채우므로 기존 ID와 결과를 유지한다.
+운영 DB 전환은 개발 검증과 별개다. 개발 검증은 다음 명령으로 생성·삭제되는 임시 PostgreSQL DB에서 수행한다.
+
+```powershell
+cd app/api
+$env:RUN_CALCULATION_DB_TESTS = '1'
+poetry run pytest tests/test_calculation_sources.py tests/test_experiment_calculation_copy.py tests/test_calculation_database.py -q
+```
+
 ## UI artifact
 
 Windows checkout에서 다음을 실행한다.

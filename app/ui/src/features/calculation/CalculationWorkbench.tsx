@@ -584,7 +584,7 @@ export function CalculationWorkbench({
     if (!persistable) return
     if (
       !window.confirm(
-        `${draft.name || `Calculation #${draft.id}`}을 영구 삭제할까요?${dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}${publicDemoMutable ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
+        `이 Experiment에서 ${draft.name || `Calculation #${draft.id}`} 연결과 후처리 결과를 삭제할까요?${dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}${publicDemoMutable ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
       )
     ) {
       return

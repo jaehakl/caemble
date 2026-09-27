@@ -122,7 +122,7 @@ async def library_detail(db: AsyncSession, catalog: Catalog, reference: LibraryR
     if reference.calculation_id is None or reference.coordinate is not None or reference.name is not None:
         raise HTTPException(422, "Saved Calculation ID is required.")
     row = (await db.execute(_saved_query().add_columns(
-        Calculation.source_code, Calculation.output_layout, Calculation.contract_status,
+        Calculation.source_id, Calculation.source_code, Calculation.output_layout, Calculation.contract_status,
         Calculation.preflight_measurement_id,
     ).where(Calculation.id == reference.calculation_id))).first()
     if row is None:
@@ -139,7 +139,7 @@ async def library_detail(db: AsyncSession, catalog: Catalog, reference: LibraryR
     records = (await db.execute(records_query.order_by(ExperimentRecord.name))).mappings().all()
     return LibraryDetail(
         **_saved_item(row, user, [record["quantity_kind"] for record in records if record["quantity_kind"]]).model_dump(),
-        source_code=row.source_code, inputs=list(records), inputs_verified=ready,
+        source_id=row.source_id, source_code=row.source_code, inputs=list(records), inputs_verified=ready,
         output_layout=row.output_layout if ready else None,
         preflight_measurement_id=row.preflight_measurement_id if ready else None, contract_status=row.contract_status,
     )

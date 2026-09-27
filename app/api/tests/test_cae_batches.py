@@ -189,10 +189,12 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 from db import Calculation, CalculationData
                 from models import CalculationBase, CalculationDataOutput
                 from service.calculation import upsert_calculations
+                from service.calculation_source import get_or_create_calculation_source
                 from service.calculation_data import save_calculation_data, analyze_calculation_data
                 source_hash = hashlib.sha256(b"0").hexdigest()
-                calculation = Calculation(experiment_id=self.experiment_id, name="s3-test", source_code="0",
-                    source_hash=source_hash, contract_status="ready", output_layout={"dtype": "float64",
+                source = await get_or_create_calculation_source(db, "0")
+                calculation = Calculation(experiment_id=self.experiment_id, name="s3-test", source=source,
+                    contract_status="ready", output_layout={"dtype": "float64",
                         "shape": [20000], "axes": [{"name": "x", "ticks": list(range(20000)), "unit": None}]})
                 db.add(calculation)
                 await db.flush()

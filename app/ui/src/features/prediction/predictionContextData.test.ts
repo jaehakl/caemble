@@ -145,6 +145,7 @@ describe('Prediction context data', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const calculation = {
       id: 7,
+      source_id: 1,
       experiment_id: 3,
       name: 'Stress',
       revision: 1,

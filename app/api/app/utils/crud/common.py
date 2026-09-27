@@ -20,6 +20,8 @@ class CrudSpec(Generic[ModelT, SchemaT]):
     scope_path: tuple[str, ...] = field(default_factory=tuple)
     relation_aliases: Mapping[str, str] = field(default_factory=dict)
     search_aliases: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    text_expressions: Mapping[str, Any] = field(default_factory=dict)
+    search_text_expressions: tuple[Any, ...] = field(default_factory=tuple)
 
 
 def normalize_int_ids(values: Optional[Iterable[Any]], *, sort: bool = False) -> List[int]:

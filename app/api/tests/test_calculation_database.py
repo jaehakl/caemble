@@ -178,6 +178,7 @@ async def _replace_calculation_with_legacy_tables(database: str) -> None:
         await connection.execute("DROP TABLE IF EXISTS calculation_data")
         await connection.execute("DROP TABLE IF EXISTS calculation_experiment_records")
         await connection.execute("DROP TABLE calculations")
+        await connection.execute("DROP TABLE calculation_sources")
         for table in ("designer_models", "predictor_models"):
             await connection.execute(
                 f"""

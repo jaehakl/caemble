@@ -104,6 +104,7 @@ export const calculationDataOutputSchema = z
 export const persistedCalculationRecordSchema = z
   .object({
     id: databaseIdSchema,
+    source_id: databaseIdSchema,
     revision: z.number().int().positive(),
     experiment_id: databaseIdSchema,
     name: z.string(),

@@ -290,6 +290,7 @@ class CalculationBase(TimestampFields):
 
 
 class CalculationListItem(CalculationBase):
+    source_id: int = Field(ge=1)
     calculation_data_count: int = Field(default=0, ge=0)
     recorded_measurement_count: int = Field(default=0, ge=0)
     measurement_count: int = Field(default=0, ge=0)

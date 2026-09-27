@@ -126,6 +126,7 @@ describe('API read boundaries', () => {
       items: [
         {
           id: 1,
+          source_id: 1,
           experiment_id: 2,
           name: 'Stress',
           source_code: 'return 0',
