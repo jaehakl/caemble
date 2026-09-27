@@ -35,22 +35,20 @@ export function ResizableCalculationLayout({
   editor,
   onColumnRatiosChange,
   output,
-  viewer,
   className,
 }: {
   columnRatios: readonly number[]
   editor: ReactNode
   onColumnRatiosChange: (ratios: readonly number[]) => void
   output: ReactNode
-  viewer: ReactNode
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 1280, height: 600 })
   const [drag, setDrag] = useState<DragState | null>(null)
-  const columns = normalizedRatios(columnRatios, [0.3, 0.4, 0.3])
+  const columns = normalizedRatios(columnRatios, [4 / 7, 3 / 7])
 
-  const availableWidth = Math.max(1, size.width - handleSizePx * 2)
+  const availableWidth = Math.max(1, size.width - handleSizePx)
 
   const columnPixels = columns.map((ratio) => ratio * availableWidth)
 
@@ -142,28 +140,19 @@ export function ResizableCalculationLayout({
       ref={containerRef}
       style={
         {
-          gridTemplateColumns: `${columnPixels[0]}px ${handleSizePx}px ${columnPixels[1]}px ${handleSizePx}px minmax(0, ${columnPixels[2]}px)`,
+          gridTemplateColumns: `${columnPixels[0]}px ${handleSizePx}px minmax(0, ${columnPixels[1]}px)`,
           minHeight: workbenchLayoutLimits.viewerMinHeightPx,
         } satisfies CSSProperties
       }
     >
-      <section aria-label="3D Viewer" className="min-h-0 min-w-0 overflow-hidden">
-        {viewer}
-      </section>
-      <ResizeHandle
-        label="Viewer와 편집기 너비 조절"
-        orientation="vertical"
-        onKeyDown={(event) => resizeWithKeyboard(event, 0)}
-        onPointerDown={(event) => startDragging(event, 0)}
-      />
       <section aria-label="Calculation Source Editor" className="min-h-0 min-w-0 overflow-hidden">
         {editor}
       </section>
       <ResizeHandle
         label="편집기와 출력 너비 조절"
         orientation="vertical"
-        onKeyDown={(event) => resizeWithKeyboard(event, 1)}
-        onPointerDown={(event) => startDragging(event, 1)}
+        onKeyDown={(event) => resizeWithKeyboard(event, 0)}
+        onPointerDown={(event) => startDragging(event, 0)}
       />
       <section aria-label="Calculation 출력" className="min-h-0 min-w-0 overflow-hidden">
         {output}

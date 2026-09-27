@@ -2,7 +2,7 @@ import hashlib
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +15,7 @@ from db import (
     Measurement,
     RecordedData,
 )
-from models import CalculationBase, CalculationListRequest, CalculationOutputLayout, UserData
+from models import CalculationBase, CalculationListItem, CalculationListRequest, CalculationOutputLayout, UserData
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 from service.box_grid import validate_box_grid_schema
@@ -23,7 +23,7 @@ from service.box_grid import validate_box_grid_schema
 
 CALCULATION_CRUD_SPEC = CrudSpec(
     model=Calculation,
-    schema=CalculationBase,
+    schema=CalculationListItem,
     scope_path=("experiment",),
     relation_aliases={"experiment_record_ids": "experiment_records"},
 )
@@ -68,27 +68,60 @@ async def list_calculations(
         ):
             experiment_id = bounds[0]
     if experiment_id is None:
-        if request.selected_ids and len(request.selected_ids) == 1:
-            # CLI pull uses one exact ID; the shared scope still enforces the
-            # owning Experiment's visibility rather than exposing a global list.
-            return await get_list_response(
-                db, request, CALCULATION_CRUD_SPEC,
-                Calculation.id == request.selected_ids[0], user=user,
+        if not request.selected_ids or len(request.selected_ids) != 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Calculation list requires one Experiment.",
             )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Calculation list requires one Experiment.",
+        # Exact CLI lookup still uses the shared Experiment visibility scope.
+        condition = Calculation.id == request.selected_ids[0]
+    else:
+        request.sort = ["updated_at", "desc"]
+        request.random = False
+        condition = Calculation.experiment_id == experiment_id
+    response = await get_list_response(db, request, CALCULATION_CRUD_SPEC, condition, user=user)
+    if not response["items"]:
+        return response
+    calculation_ids = [item.id for item in response["items"]]
+    experiment_ids = {item.experiment_id for item in response["items"]}
+    measurement_rows = (
+        await db.execute(
+            select(
+                Measurement.experiment_id,
+                func.count(Measurement.id).label("total"),
+                func.count(Measurement.recorded_at).label("recorded"),
+            )
+            .where(Measurement.experiment_id.in_(experiment_ids))
+            .group_by(Measurement.experiment_id)
         )
-
-    request.sort = ["updated_at", "desc"]
-    request.random = False
-    return await get_list_response(
-        db,
-        request,
-        CALCULATION_CRUD_SPEC,
-        Calculation.experiment_id == experiment_id,
-        user=user,
-    )
+    ).all()
+    total_counts = {row.experiment_id: row.total for row in measurement_rows}
+    recorded_counts = {row.experiment_id: row.recorded for row in measurement_rows}
+    saved_rows = (
+        await db.execute(
+            select(
+                CalculationData.calculation_id,
+                func.count(func.distinct(CalculationData.measurement_id)).label("saved"),
+            )
+            .join(Calculation, Calculation.id == CalculationData.calculation_id)
+            .join(Measurement, Measurement.id == CalculationData.measurement_id)
+            .where(
+                CalculationData.calculation_id.in_(calculation_ids),
+                Measurement.experiment_id == Calculation.experiment_id,
+            )
+            .group_by(CalculationData.calculation_id)
+        )
+    ).all()
+    saved_counts = {row.calculation_id: row.saved for row in saved_rows}
+    response["items"] = [
+        item.model_copy(update={
+            "calculation_data_count": saved_counts.get(item.id, 0),
+            "recorded_measurement_count": recorded_counts.get(item.experiment_id, 0),
+            "measurement_count": total_counts.get(item.experiment_id, 0),
+        })
+        for item in response["items"]
+    ]
+    return response
 
 
 async def upsert_calculations(

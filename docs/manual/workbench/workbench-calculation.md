@@ -6,11 +6,10 @@
 
 결과가 기록된 **Recorded Measurement**가 필요합니다. 아직 실행하지 않았다면 [빠른 시작](workbench-quickstart.md)을 먼저 따라 해 보세요. 예제에 Calculation이 포함되어 있다면 기존 계산식을 열어 입력과 반환값을 살펴보는 것이 좋습니다.
 
-1. **Calculation** 탭에서 **Measurement**를 열고 Recorded Measurement를 선택합니다.
+1. **Measurement** 탭에서 Recorded Measurement를 선택한 뒤 **가공** 탭을 엽니다. 선택한 Measurement가 없으면 현재 Experiment의 최신 기록 완료 항목을 자동으로 선택합니다.
 2. **Calculations**에서 기존 계산식을 고르거나 **새 Calculation**으로 초안을 만듭니다.
-3. **ExperimentRecord**에서 실제 데이터가 **Ready**인 항목을 확인합니다. 새 참조가 필요할 때만 편집기에서 넣을 위치를 고른 뒤 해당 행의 **Insert**를 누르세요.
-4. 코드를 확인하거나 수정하고 오른쪽 **Return** 차트에서 결과를 살펴봅니다. 필요하면 **미리보기 갱신**을 누릅니다.
-5. 결과가 맞으면 **저장**으로 계산식을 저장합니다. 여러 Measurement의 계산 결과까지 남기려면 **후처리 데이터**에서 필요한 범위를 계산합니다.
+3. 코드를 확인하거나 수정하고 오른쪽 차트에서 결과를 살펴봅니다. 필요하면 **미리보기 갱신**을 누릅니다.
+4. 결과가 맞으면 **저장**으로 계산식을 저장합니다. 여러 Measurement의 계산 결과까지 남기려면 **후처리 데이터**에서 필요한 범위를 계산합니다.
 
 변수 조건 변경과 Solver 실행은 **Measurement** 탭에서 진행합니다. Calculation에서는 이미 기록된 데이터로 계산하므로 후처리 코드를 바꿀 때마다 Solver를 다시 실행할 필요는 없습니다.
 
@@ -54,11 +53,11 @@ Measurement 목록의 점은 **회색: Solver 실행 전**, **노란색: Recorde
 
 ## 화면과 입력 데이터 살펴보기
 
-왼쪽부터 3D Viewer, 소스 편집기, Return 차트와 로그가 배치됩니다. 기본 열 비율은 30:40:30이며 오른쪽 차트와 로그는 65:35입니다. 경계선을 드래그하거나 키보드 방향키로 크기를 조절할 수 있으며 마지막 Workbench 작업에 저장됩니다.
+왼쪽에는 소스 편집기, 오른쪽에는 출력 차트와 로그가 배치됩니다. 기본 열 비율은 4:3이며 오른쪽 차트와 로그는 65:35입니다. 경계선을 드래그하거나 키보드 방향키로 크기를 조절할 수 있으며 마지막 Workbench 작업에 저장됩니다.
 
-**Measurement**와 **Calculations** 버튼으로 목록을 열고, 리본에서 현재 선택을 확인합니다. Calculation 삭제는 목록에서 진행하며, 저장하지 않은 코드가 있다면 다른 Calculation으로 바꾸기 전에 확인합니다.
+**Calculations** 버튼으로 목록을 엽니다. 각 계산식에는 **준비됨** 또는 **사전 검증 필요** 상태와 `저장 8 / 기록 완료 10 · 전체 12 Measurements`처럼 저장 현황이 표시됩니다. 저장 건수는 해당 CalculationData가 있는 Measurement 수, 기록 완료는 Solver 결과가 기록된 Measurement 수, 전체는 현재 Experiment의 모든 Measurement 수입니다. 조회 중이거나 실패하면 숫자 대신 해당 상태를 표시합니다.
 
-**ExperimentRecord**에는 Experiment에 선언된 모든 결과 이름이 표시됩니다. **Used**는 현재 코드가 참조하는 항목이며, **RecordedData Ready/Missing/Invalid**는 선택한 Measurement에 실제 값이 준비되었는지를 뜻합니다. 이름으로 검색할 수 있고 **Insert**는 `record["group.signal"]`처럼 고정된 이름의 참조를 편집기의 선택 위치에 넣은 뒤 목록을 닫습니다. 행 자체를 누르면 코드는 바뀌지 않습니다.
+Calculation 삭제는 목록에서 진행하며, 저장하지 않은 코드가 있다면 다른 Calculation으로 바꾸기 전에 확인합니다. 입력 데이터는 Experiment에 선언된 결과 이름으로 코드에서 참조합니다.
 
 오른쪽 아래 `console.log`는 읽기 전용 로그입니다. 코드나 선택이 바뀌면 이전 로그를 지우고 현재 실행의 내용을 호출 순서대로 표시합니다. 오류가 나기 전의 로그는 남고, 출력 한도에 도달하면 안내합니다. 공통 Console에도 실행 활동이 기록됩니다.
 

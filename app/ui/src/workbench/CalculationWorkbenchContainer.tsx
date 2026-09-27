@@ -2,7 +2,7 @@ import { CalculationWorkbench, type CalculationWorkbenchProps } from '@/features
 import { defaultWorkbenchLayoutState } from '@/features/cae-workbench/types'
 import { useWorkbenchShell } from './state/workbenchShellStore'
 
-const defaultColumnRatios = defaultWorkbenchLayoutState.calculationColumnRatios ?? [0.3, 0.4, 0.3]
+const defaultColumnRatios = defaultWorkbenchLayoutState.calculationColumnRatios ?? [4 / 7, 3 / 7]
 const defaultOutputChartRatio = defaultWorkbenchLayoutState.calculationOutputChartRatio ?? 0.65
 
 type LayoutProp = 'columnRatios' | 'onColumnRatiosChange' | 'onOutputChartRatioChange' | 'outputChartRatio'

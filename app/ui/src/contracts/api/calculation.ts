@@ -36,7 +36,14 @@ type CalculationWriteRecord = Readonly<{
 }>
 
 export type CalculationUpsertInput = CalculationWriteRecord & Readonly<{ id?: number }>
-export type PersistedCalculationRecord = CalculationWriteRecord & Readonly<{ id: number; revision: number }>
+export type PersistedCalculationRecord = CalculationWriteRecord &
+  Readonly<{
+    id: number
+    revision: number
+    calculation_data_count: number
+    recorded_measurement_count: number
+    measurement_count: number
+  }>
 export type CalculationUpsertResponse = Readonly<{ id: number; revision: number }>
 /** Compatibility alias. Prefer PersistedCalculationRecord for reads and CalculationUpsertInput for writes. */
 export type CalculationRecord = CalculationUpsertInput

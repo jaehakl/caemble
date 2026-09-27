@@ -83,9 +83,19 @@ const storedDraftBaseSchema = z
           activeExperimentFile: z.string().nullable(),
           leftWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.leftWidthRatio),
           rightWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.rightWidthRatio),
-          calculationColumnRatios: z
-            .tuple([ratioSchema, ratioSchema, ratioSchema])
-            .catch([...defaultWorkbenchLayoutState.calculationColumnRatios!] as [number, number, number]),
+          calculationColumnRatios: z.preprocess(
+            (value) => {
+              if (!Array.isArray(value) || value.length !== 3) return value
+              const [, editor, output] = value
+              if (![editor, output].every((ratio) => typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0))
+                return undefined
+              const total = editor + output
+              return [editor / total, output / total]
+            },
+            z
+              .tuple([ratioSchema, ratioSchema])
+              .catch([...defaultWorkbenchLayoutState.calculationColumnRatios!] as [number, number]),
+          ),
           calculationOutputChartRatio: ratioSchema.catch(defaultWorkbenchLayoutState.calculationOutputChartRatio!),
           bottomMode: z.preprocess(
             (value) => (value === 'agent' ? 'console' : value),

@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
-import { calculationDataQueryKeys } from '@/features/calculation/queryKeys'
+import { calculationDataQueryKeys, calculationQueryKeys } from '@/features/calculation/queryKeys'
 import { invalidateExperimentSummaries } from '@/features/experiment/queryInvalidation'
 import { measurementQueryKeys } from './queryKeys'
 
@@ -17,6 +17,10 @@ export function invalidateMeasurementMutation(
       ? calculationDataQueryKeys.all(scope)
       : calculationDataQueryKeys.forExperiment(scope, experimentId)
   return Promise.all([
+    queryClient.invalidateQueries({
+      queryKey:
+        experimentId === null ? calculationQueryKeys.all(scope) : calculationQueryKeys.lists(scope, experimentId),
+    }),
     queryClient.invalidateQueries({ queryKey: measurementListKey }),
     queryClient.invalidateQueries({ queryKey: calculationDataKey }),
     ...measurementIds.flatMap((measurementId) => [

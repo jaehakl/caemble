@@ -11,6 +11,9 @@ function calculationItem(outputLayout: unknown) {
     output_layout: outputLayout,
     contract_status: 'ready',
     experiment_record_ids: [],
+    calculation_data_count: 0,
+    recorded_measurement_count: 2,
+    measurement_count: 3,
   }
 }
 
@@ -102,4 +105,10 @@ describe('Calculation wire contracts', () => {
       }),
     ).toThrow()
   })
+})
+
+it.each([undefined, -1, 1.5])('rejects unknown or invalid Calculation counts: %s', (count) => {
+  expect(() =>
+    parseCalculationListResponse({ total: 1, items: [{ ...calculationItem(null), calculation_data_count: count }] }),
+  ).toThrow()
 })

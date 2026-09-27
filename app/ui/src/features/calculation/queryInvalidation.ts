@@ -37,6 +37,10 @@ export function invalidateCalculationDataMutation(
   const measurementListKey =
     experimentId === null ? measurementQueryKeys.all(scope) : measurementQueryKeys.lists(scope, experimentId)
   return Promise.all([
+    queryClient.invalidateQueries({
+      queryKey:
+        experimentId === null ? calculationQueryKeys.all(scope) : calculationQueryKeys.lists(scope, experimentId),
+    }),
     queryClient.invalidateQueries({ queryKey: calculationDataKey }),
     queryClient.invalidateQueries({ queryKey: measurementListKey }),
     invalidateExperimentSummaries(queryClient, scope, experimentId),

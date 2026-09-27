@@ -2,30 +2,34 @@ import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 import { experimentQueryKeys } from '@/features/experiment/queryKeys'
 import { measurementQueryKeys } from '@/features/measurement/queryKeys'
-import { invalidateCalculationMutation } from './queryInvalidation'
+import { invalidateCalculationMutation, invalidateCalculationDataMutation } from './queryInvalidation'
+import { invalidateMeasurementMutation } from '@/features/measurement/queryInvalidation'
 import { calculationDataQueryKeys, calculationQueryKeys } from './queryKeys'
 
 describe('Calculation Query invalidation', () => {
-  it('invalidates one Experiment dependency family without crossing scope', async () => {
-    const client = new QueryClient()
-    const targetKeys = [
-      experimentQueryKeys.available('user:first'),
-      calculationQueryKeys.lists('user:first', 7),
-      calculationDataQueryKeys.scalars('user:first', 7, 21, null),
-      measurementQueryKeys.lists('user:first', 7),
-    ]
-    const untouchedKeys = [
-      experimentQueryKeys.available('user:second'),
-      calculationQueryKeys.lists('user:first', 8),
-      calculationDataQueryKeys.scalars('user:first', 8, 21, null),
-      measurementQueryKeys.lists('user:first', 8),
-      calculationQueryKeys.lists('user:second', 7),
-    ]
-    for (const key of [...targetKeys, ...untouchedKeys]) client.setQueryData(key, [])
+  it.each([invalidateCalculationMutation, invalidateCalculationDataMutation, invalidateMeasurementMutation])(
+    'invalidates one Experiment dependency family without crossing scope (%s)',
+    async (invalidate) => {
+      const client = new QueryClient()
+      const targetKeys = [
+        experimentQueryKeys.available('user:first'),
+        calculationQueryKeys.lists('user:first', 7),
+        calculationDataQueryKeys.scalars('user:first', 7, 21, null),
+        measurementQueryKeys.lists('user:first', 7),
+      ]
+      const untouchedKeys = [
+        experimentQueryKeys.available('user:second'),
+        calculationQueryKeys.lists('user:first', 8),
+        calculationDataQueryKeys.scalars('user:first', 8, 21, null),
+        measurementQueryKeys.lists('user:first', 8),
+        calculationQueryKeys.lists('user:second', 7),
+      ]
+      for (const key of [...targetKeys, ...untouchedKeys]) client.setQueryData(key, [])
 
-    await invalidateCalculationMutation(client, 'user:first', 7)
+      await invalidate(client, 'user:first', 7)
 
-    for (const key of targetKeys) expect(client.getQueryState(key)?.isInvalidated).toBe(true)
-    for (const key of untouchedKeys) expect(client.getQueryState(key)?.isInvalidated).toBe(false)
-  })
+      for (const key of targetKeys) expect(client.getQueryState(key)?.isInvalidated).toBe(true)
+      for (const key of untouchedKeys) expect(client.getQueryState(key)?.isInvalidated).toBe(false)
+    },
+  )
 })

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { dbTables, getListRequest, type CalculationDataMissingRequest, type CalculationRecord } from '@/api'
+import { dbTables, getListRequest, type CalculationDataMissingRequest } from '@/api'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { calculationSourceHash, runCalculation } from '@/lib/calculation'
@@ -9,8 +9,6 @@ import { buildCalculationRecordedData } from './calculationRecordedData'
 import { recordedDataTreeSnapshot } from '../measurement/recordedData'
 import { invalidateCalculationDataMutation } from './queryInvalidation'
 import { executeCalculationDataBatch, type CalculationDataBatchSummary } from './calculationDataBatch'
-
-type SavedCalculation = CalculationRecord & { id: number; revision: number }
 
 export type CalculationDataRunSummary = CalculationDataBatchSummary
 
@@ -101,9 +99,7 @@ export function useCalculationDataActions({
           ),
         ])
         const calculations = new Map(
-          calculationList.items
-            .filter((row): row is SavedCalculation => typeof row.id === 'number')
-            .map((row) => [row.id, row]),
+          calculationList.items.filter((row) => typeof row.id === 'number').map((row) => [row.id, row]),
         )
         const sourceHashes = new Map<number, Promise<string>>()
         const recordNames = new Map(experimentRecordList.items.map((record) => [record.id, record.name]))

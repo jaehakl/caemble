@@ -152,6 +152,9 @@ describe('Prediction context data', () => {
       source_hash: null,
       output_layout: null,
       contract_status: 'needs_preflight',
+      calculation_data_count: 0,
+      recorded_measurement_count: 0,
+      measurement_count: 0,
       experiment_record_ids: [],
     } satisfies PersistedCalculationRecord
     let calculationMetadataSignal: AbortSignal | undefined

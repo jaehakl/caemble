@@ -98,7 +98,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     experimentIsDemo: workbench.experimentIsDemo,
     experimentManageable: workbench.experimentManageable,
   })
-  const [viewerCalculationSource, setViewerCalculationSource] = useState<string | undefined>()
   const [calculationDirty, setCalculationDirty] = useState(false)
   const [calculationSaveCommand, setCalculationSaveCommand] = useState(0)
   const [calculationSaveState, setCalculationSaveState] = useState<CalculationSaveState>({
@@ -453,14 +452,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               : undefined
           }
           resultPlaceholder={isPrediction && !predictionResult ? `BoxGrid 예측 · ${predictionState.status}` : undefined}
-          calculationSource={isPrediction ? undefined : viewerCalculationSource}
           captureRef={viewerCaptureRef}
           activeExperimentTaskName={page.activeExperimentFile}
           experiment={preview?.experiment ?? workbench.experiment}
           experimentDocument={preview?.document ?? workbench.experimentDocument}
           onFindSelectionSource={findSelectionSource}
           onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
-
           key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
           autoSelectResult={isPrediction || Boolean(preview || workbench.selection.measurement)}
           resultContracts={
@@ -594,10 +591,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               />
             ) : page.activeSection === 'calculation' ? (
               <CalculationWorkbenchContainer
-                onSourceChange={setViewerCalculationSource}
                 authenticated={auth.isAuthenticated}
                 dataReadable={experimentDataReadable}
-                busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
                 calculationDataBusy={workbench.calculationDataActions.busy}
                 contextPending={workbench.selectionRestoring}
                 persistable={calculationAccess.persistable}
@@ -609,7 +604,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 menubar={menubar}
                 onActivity={runtimeConsole.append}
                 onCalculationSelectionChange={workbench.selectCalculation}
-                onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
                 onDirtyChange={setCalculationDirty}
                 onRequestLogin={requestAccount}
                 onSaveStateChange={setCalculationSaveState}
@@ -619,7 +613,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                     return workbench.selection.loadMeasurement(row)
                   })
                 }
-                onClearMeasurement={workbench.selection.clearMeasurement}
                 onUsageChanged={workbench.refreshExperimentUsage}
                 publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}
                 recordedData={activeFlatRecordedData}
@@ -644,7 +637,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 )}
                 saveCommand={calculationSaveCommand}
                 selectedCalculationId={workbench.selectionContext.calculationId}
-                viewer={viewerPane}
               />
             ) : (
               <WorkbenchShellContainer

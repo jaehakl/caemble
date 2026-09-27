@@ -289,6 +289,12 @@ class CalculationBase(TimestampFields):
     experiment_record_ids: List[StrictInt] = Field(default_factory=list)
 
 
+class CalculationListItem(CalculationBase):
+    calculation_data_count: int = Field(default=0, ge=0)
+    recorded_measurement_count: int = Field(default=0, ge=0)
+    measurement_count: int = Field(default=0, ge=0)
+
+
 class CalculationDataOutput(BaseModel):
     dtype: CalculationDataDType
     shape: List[StrictInt]

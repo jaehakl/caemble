@@ -47,13 +47,28 @@ describe('Workbench draft storage', () => {
     )
     const restored = await loadWorkbenchDraft('public')
     expect(restored?.experiment).toEqual(draft.experiment)
-    expect(restored?.layout.calculationColumnRatios).toEqual([0.3, 0.4, 0.3])
+    expect(restored?.layout.calculationColumnRatios).toEqual([4 / 7, 3 / 7])
     expect(restored?.layout.calculationOutputChartRatio).toBe(0.7)
     await saveWorkbenchDraft('public', {
       ...restored!,
-      layout: { ...restored!.layout, calculationColumnRatios: [0.2, 0.5, 0.3] },
+      layout: { ...restored!.layout, calculationColumnRatios: [0.6, 0.4] },
     })
-    expect((await loadWorkbenchDraft('public'))?.layout.calculationColumnRatios).toEqual([0.2, 0.5, 0.3])
+    expect((await loadWorkbenchDraft('public'))?.layout.calculationColumnRatios).toEqual([0.6, 0.4])
+  })
+
+  it('drops the Viewer ratio from saved three-column layouts', async () => {
+    sessionStorage.setItem(
+      workbenchDraftStorageKey('public'),
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'public',
+        draft: { ...draft, layout: { ...draft.layout, calculationColumnRatios: [0.2, 0.5, 0.3] } },
+      }),
+    )
+    const restored = await loadWorkbenchDraft('public')
+    expect(restored?.layout.calculationColumnRatios?.[0]).toBeCloseTo(0.625)
+    expect(restored?.layout.calculationColumnRatios?.[1]).toBeCloseTo(0.375)
+    expect(restored?.experiment).toEqual(draft.experiment)
   })
 
   it('restores the editor when an old draft saved an expanded Viewer', async () => {

@@ -111,6 +111,9 @@ export const persistedCalculationRecordSchema = z
     output_layout: calculationOutputLayoutSchema.nullable().optional(),
     contract_status: z.enum(['ready', 'needs_preflight']),
     experiment_record_ids: z.array(databaseIdSchema),
+    calculation_data_count: z.number().int().nonnegative(),
+    recorded_measurement_count: z.number().int().nonnegative(),
+    measurement_count: z.number().int().nonnegative(),
   })
   .passthrough()
 

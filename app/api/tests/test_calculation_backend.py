@@ -8,7 +8,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import configure_mappers
 
@@ -41,6 +41,69 @@ class CalculationBackendContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         configure_mappers()
+
+    def test_calculation_list_counts_are_batched_and_experiment_scoped(self) -> None:
+        from service.calculation import list_calculations
+
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE measurements (id INTEGER, experiment_id INTEGER, recorded_at TEXT)"))
+            connection.execute(text("CREATE TABLE calculations (id INTEGER, experiment_id INTEGER)"))
+            connection.execute(text(
+                "CREATE TABLE calculation_data (id INTEGER, calculation_id INTEGER, measurement_id INTEGER)"
+            ))
+            connection.execute(text(
+                "INSERT INTO measurements VALUES (1, 7, 'done'), (2, 7, 'done'), (3, 7, NULL), (4, 8, 'done')"
+            ))
+            connection.execute(text("INSERT INTO calculations VALUES (10, 7), (11, 7), (12, 7), (13, 9), (20, 8)"))
+            # Duplicate Measurement rows count once; another Experiment never contributes.
+            connection.execute(text(
+                "INSERT INTO calculation_data VALUES "
+                "(1, 10, 1), (2, 10, 1), (3, 10, 4), (4, 11, 1), (5, 11, 2), (6, 20, 4)"
+            ))
+            items = [
+                api_models.CalculationListItem(
+                    id=calculation_id, experiment_id=experiment_id,
+                    name=str(calculation_id), source_code="source",
+                )
+                for calculation_id, experiment_id in [(10, 7), (11, 7), (12, 7), (13, 9)]
+            ]
+            session = AsyncMock()
+            session.execute.side_effect = connection.execute
+            user = UserData(id="owner", roles=[RoleEnum.user])
+            with patch("service.calculation.get_list_response", new_callable=AsyncMock) as listing:
+                listing.return_value = {"total": 4, "items": items}
+                result = asyncio.run(list_calculations(
+                    session, api_models.CalculationListRequest(experiment_id=7), user=user,
+                ))
+                self.assertIs(listing.call_args.kwargs["user"], user)
+                self.assertEqual(listing.call_args.args[2].scope_path, ("experiment",))
+                self.assertEqual(session.execute.await_count, 2)
+                self.assertEqual(
+                    [(row.calculation_data_count, row.recorded_measurement_count, row.measurement_count)
+                     for row in result["items"]],
+                    [(1, 2, 3), (2, 2, 3), (0, 2, 3), (0, 0, 0)],
+                )
+                # Hidden/empty lists do not run aggregate queries at all.
+                session.execute.reset_mock()
+                listing.return_value = {"total": 0, "items": []}
+                hidden = asyncio.run(list_calculations(
+                    session, api_models.CalculationListRequest(experiment_id=8), user=None,
+                ))
+                self.assertEqual(hidden["items"], [])
+                session.execute.assert_not_awaited()
+                # Exact-ID CLI lookup receives the same read-only counts.
+                listing.return_value = {"total": 1, "items": [items[0]]}
+                result = asyncio.run(list_calculations(
+                    session, api_models.CalculationListRequest(selected_ids=[10]), user=user,
+                ))
+                self.assertEqual(result["items"][0].calculation_data_count, 1)
+                connection.execute(text("DELETE FROM calculation_data WHERE calculation_id = 10"))
+                result = asyncio.run(list_calculations(
+                    session, api_models.CalculationListRequest(selected_ids=[10]), user=user,
+                ))
+                self.assertEqual(result["items"][0].calculation_data_count, 0)
+        engine.dispose()
 
     def test_calculation_metadata_replaces_legacy_model_tables(self) -> None:
         self.assertIn("calculations", db.Base.metadata.tables)
