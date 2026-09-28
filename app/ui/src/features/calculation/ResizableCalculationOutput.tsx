@@ -15,6 +15,7 @@ const chartMinimum = 160
 const logMinimum = 112
 
 export function ResizableCalculationOutput({
+  calculationName,
   logs,
   chartRatio,
   comparisonMessage,
@@ -23,6 +24,7 @@ export function ResizableCalculationOutput({
   preview,
   scalarValues,
 }: {
+  calculationName: string
   logs: readonly CalculationLogEntry[]
   chartRatio: number
   comparisonMessage?: string
@@ -103,13 +105,21 @@ export function ResizableCalculationOutput({
       ref={containerRef}
       style={{ gridTemplateRows: `${chartHeight}px ${handleHeight}px minmax(0, 1fr)` }}
     >
-      <div className="min-h-0 overflow-hidden">
-        <CalculationOutputChart
-          comparisonMessage={comparisonMessage}
-          measurementId={measurementId}
-          preview={preview}
-          scalarValues={scalarValues}
-        />
+      <div className="flex min-h-0 flex-col overflow-hidden">
+        <h2
+          className="shrink-0 truncate border-b px-3 py-2 text-sm font-medium"
+          title={calculationName.trim() || '새 Calculation'}
+        >
+          {calculationName.trim() || '새 Calculation'}
+        </h2>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <CalculationOutputChart
+            comparisonMessage={comparisonMessage}
+            measurementId={measurementId}
+            preview={preview}
+            scalarValues={scalarValues}
+          />
+        </div>
       </div>
       <div
         aria-label="Return 차트와 로그 높이 조절"

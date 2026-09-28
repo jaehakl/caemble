@@ -93,6 +93,10 @@ it('uses the sole New action to open Templates and removes the old Examples and 
   )
   expect(screen.queryByRole('button', { name: /Candidate|Run|Analysis|Sample/ })).not.toBeInTheDocument()
   expect(screen.getByRole('region', { name: '후처리 데이터' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '일괄 계산' })).toHaveClass('h-[72px]')
+  expect(
+    screen.queryByRole('button', { name: /Selected Calc|Selected Measurement|All Missing/ }),
+  ).not.toBeInTheDocument()
 
   render(
     <TooltipProvider>

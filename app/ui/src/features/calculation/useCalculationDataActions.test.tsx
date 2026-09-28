@@ -106,7 +106,7 @@ describe('useCalculationDataActions cancellation', () => {
     expect(mocks.calculationList).toHaveBeenCalledWith(expect.any(Object), { signal: missingSignal })
     expect(mocks.experimentRecordList).toHaveBeenCalledWith(expect.any(Object), { signal: missingSignal })
     expect(summary).toMatchObject({ cancelled: true, completed: 0, failed: 0, succeeded: 0 })
-    expect(result.current.progress).toMatchObject({ cancelled: true, running: false, stage: 'All Missing 취소됨' })
+    expect(result.current.progress).toMatchObject({ cancelled: true, running: false, stage: '일괄 계산 취소됨' })
   })
 
   it('aborts an in-flight CalculationData save', async () => {

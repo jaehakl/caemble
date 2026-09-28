@@ -3,7 +3,6 @@ import {
   Beaker,
   BookOpenText,
   ChartNoAxesCombined,
-  Database,
   Download,
   FlaskConical,
   Info,
@@ -54,7 +53,6 @@ export function useCaePageChrome({
   guardReplacement,
   requestAnalysisCommand,
   requestCalculationSave,
-  selectedCalculationId,
   requestAccount,
   requestPredictionCommand,
   requestRunSelected,
@@ -298,57 +296,9 @@ export function useCaePageChrome({
           ? workbench.measurementActions.cancel
           : workbench.calculationDataActions.cancel,
       },
-      calculateSelectedData: {
-        id: 'calculate-selected-data',
-        label: 'Selected Calc',
-        icon: <Database />,
-        disabled:
-          authenticated &&
-          (Boolean(demoReadOnlyReason) ||
-            !workbench.experimentId ||
-            selectedCalculationId === null ||
-            calculationDirty ||
-            caeBusy),
-        disabledReason: !authenticated
-          ? loginReason
-          : (demoReadOnlyReason ??
-            (!workbench.experimentId
-              ? '저장된 Experiment가 필요합니다.'
-              : selectedCalculationId === null
-                ? '저장된 Calculation을 선택하세요.'
-                : calculationDirty
-                  ? 'Calculation source를 저장한 뒤 실행하세요.'
-                  : busyReason)),
-        onSelect: () => {
-          if (!authenticated) return requestAccount()
-          if (selectedCalculationId !== null)
-            runSafely(() => workbench.calculationDataActions.calculateSelected(selectedCalculationId))
-        },
-      },
-      calculateMeasurementData: {
-        id: 'calculate-measurement-data',
-        label: 'Selected Measurement',
-        icon: <Beaker />,
-        disabled:
-          authenticated &&
-          (Boolean(demoReadOnlyReason) || !workbench.experimentId || !selected?.recorded_at || caeBusy),
-        disabledReason: !authenticated
-          ? loginReason
-          : (demoReadOnlyReason ??
-            (!workbench.experimentId
-              ? '저장된 Experiment가 필요합니다.'
-              : !selected?.recorded_at
-                ? 'Recorded Measurement를 선택하세요.'
-                : busyReason)),
-        onSelect: () => {
-          if (!authenticated) return requestAccount()
-          if (selected?.recorded_at)
-            runSafely(() => workbench.calculationDataActions.calculateMeasurement(selected.id, { announce: true }))
-        },
-      },
       calculateAllData: {
         id: 'calculate-all-data',
-        label: 'All Missing',
+        label: '일괄 계산',
         icon: <SaveAll />,
         disabled: authenticated && (Boolean(demoReadOnlyReason) || !workbench.experimentId || caeBusy),
         disabledReason: !authenticated
@@ -608,17 +558,8 @@ export function useCaePageChrome({
         <>
           <WorkbenchRibbonGroup label="후처리 데이터">
             <WorkbenchRibbonAction
-              action={
-                workbench.calculationDataActions.busy ? actions.cancelCalculationData : actions.calculateSelectedData
-              }
+              action={workbench.calculationDataActions.busy ? actions.cancelCalculationData : actions.calculateAllData}
               size="large"
-            />
-            <WorkbenchRibbonActions
-              actions={
-                workbench.calculationDataActions.busy
-                  ? []
-                  : [actions.calculateMeasurementData, actions.calculateAllData]
-              }
             />
             {workbench.calculationDataActions.progress?.running ? (
               <div className="flex h-[72px] max-w-36 flex-col justify-center text-[10px] text-muted-foreground">

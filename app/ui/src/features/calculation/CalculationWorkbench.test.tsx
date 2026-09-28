@@ -6,6 +6,7 @@ import { calculationAccessPolicy } from './calculationAccessPolicy'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import * as measurementQueries from '@/features/measurement/queryOptions'
 import { dbTables } from '@/api'
+import { calculationLibraryApi } from '@/api/calculationLibrary'
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn(() => true),
@@ -13,12 +14,14 @@ const mocks = vi.hoisted(() => ({
   measurementRows: [] as { id: number; experiment_id: number; recorded_at: string }[],
   invalidate: vi.fn(),
   refresh: vi.fn(),
+  previewFailed: false,
   fetching: false,
   failed: false,
   rows: [
     {
       id: 3,
       revision: 1,
+      source_revision: 1,
       experiment_id: 2,
       name: 'First',
       source_code: 'export default function calculate(record) { return 1 }',
@@ -91,7 +94,9 @@ vi.mock('@tanstack/react-query', async (original) => ({
 }))
 vi.mock('./useCalculationPreview', () => ({
   useCalculationPreview: () => ({
-    preview: { status: 'success', output: { dtype: 'float64', shape: [], axes: [], data: 1 } },
+    preview: mocks.previewFailed
+      ? { status: 'error', code: 'runtime', message: 'preview failed' }
+      : { status: 'success', output: { dtype: 'float64', shape: [], axes: [], data: 1 } },
     logs: [],
     invalidatePreview: mocks.invalidate,
     refreshPreview: mocks.refresh,
@@ -171,6 +176,7 @@ function Harness({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.previewFailed = false
   mocks.fetching = false
   mocks.failed = false
   mocks.measurementRows = []
@@ -202,8 +208,8 @@ it('imports as an unsaved independent draft and saves with current preflight', a
   )
   expect(dirty).toHaveBeenLastCalledWith(true)
   expect(mocks.invalidate).toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: '저장' }))
-  const dialog = screen.getByRole('dialog', { name: '새 Calculation 저장' })
+  fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+  const dialog = screen.getByRole('dialog', { name: 'Calculation 정보' })
   expect(within(dialog).getByLabelText('이름')).toHaveValue('Imported')
   expect(within(dialog).getByLabelText('설명')).toHaveValue('Library description')
   fireEvent.click(within(dialog).getByRole('button', { name: '저장' }))
@@ -262,8 +268,10 @@ it('opens save and starts a new draft from the ribbon', async () => {
       'export default function calculate(record) { return 1 }',
     ),
   )
-  fireEvent.click(screen.getByRole('button', { name: '미리보기 갱신' }))
-  expect(mocks.refresh).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('button', { name: '미리보기 갱신' })).not.toBeInTheDocument()
+  expect(screen.queryByText(/공유 정의:/)).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Calculation 정보' })).toHaveClass('h-[72px]')
+  expect(screen.getByRole('button', { name: '새 Calculation' })).toHaveClass('h-[72px]')
   fireEvent.click(screen.getByRole('button', { name: '새 Calculation' }))
   expect(screen.getByRole('textbox', { name: 'Calculation code' })).not.toHaveValue(
     'export default function calculate(record) { return 1 }',
@@ -271,8 +279,8 @@ it('opens save and starts a new draft from the ribbon', async () => {
   fireEvent.change(screen.getByRole('textbox', { name: 'Calculation code' }), {
     target: { value: 'export default function calculate(record) { return 9 }' },
   })
-  fireEvent.click(screen.getByRole('button', { name: '저장' }))
-  expect(screen.getByRole('dialog', { name: '새 Calculation 저장' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+  expect(screen.getByRole('dialog', { name: 'Calculation 정보' })).toBeInTheDocument()
 })
 
 it('keeps read-only selection available while disabling editing and deletion', async () => {
@@ -305,7 +313,7 @@ it.each([
     } else {
       expect(editor).toBeDisabled()
     }
-    const save = screen.getByRole('button', { name: /^저장/ })
+    const save = screen.getByRole('button', { name: /^Calculation 정보/ })
     if (persistable) expect(save).not.toHaveAttribute('aria-disabled', 'true')
     else expect(save).toHaveAttribute('aria-disabled', 'true')
   },
@@ -470,4 +478,47 @@ it('disables row deletion without permission, during data operations, and during
   expect(screen.getByRole('button', { name: 'First 삭제' })).toBeDisabled()
   rerender(<Harness overrides={{ contextPending: true }} />)
   expect(screen.getByRole('button', { name: 'First 삭제' })).toBeDisabled()
+})
+
+it('updates existing metadata without a successful preview and preserves form values on failure', async () => {
+  mocks.previewFailed = true
+  const update = vi
+    .spyOn(calculationLibraryApi, 'updateMetadata')
+    .mockRejectedValueOnce(new Error('conflict'))
+    .mockResolvedValue({ id: 3, revision: 2, source_revision: 2 })
+  const upsert = vi.spyOn(dbTables.Calculation, 'upsertRow')
+  render(<Harness />)
+  fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+  const dialog = screen.getByRole('dialog', { name: 'Calculation 정보' })
+  expect(within(dialog).getByLabelText('이름')).toHaveValue('First')
+  fireEvent.change(within(dialog).getByLabelText('이름'), { target: { value: 'Renamed' } })
+  fireEvent.change(within(dialog).getByLabelText('설명'), { target: { value: 'Updated description' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: '저장' }))
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: '저장' })).toBeEnabled())
+  expect(within(dialog).getByLabelText('이름')).toHaveValue('Renamed')
+  fireEvent.click(within(dialog).getByRole('button', { name: '저장' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(update).toHaveBeenLastCalledWith(3, {
+    name: 'Renamed',
+    description: 'Updated description',
+    base_source_revision: 1,
+  })
+  expect(upsert).not.toHaveBeenCalled()
+})
+
+it('does not write unchanged information and blocks saving changed code without preflight', async () => {
+  const update = vi.spyOn(calculationLibraryApi, 'updateMetadata')
+  const upsert = vi.spyOn(dbTables.Calculation, 'upsertRow')
+  mocks.previewFailed = true
+  render(<Harness />)
+  fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '저장' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(update).not.toHaveBeenCalled()
+  expect(upsert).not.toHaveBeenCalled()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Calculation code' }), {
+    target: { value: 'export default function calculate(record) { return 9 }' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: '저장' })).toBeDisabled()
 })

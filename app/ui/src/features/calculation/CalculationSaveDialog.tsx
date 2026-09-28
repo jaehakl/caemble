@@ -17,14 +17,14 @@ export type CalculationSaveValues = Readonly<{
 
 export function CalculationSaveDialog({
   defaults,
-  isNew,
+  disabledReason,
   onOpenChange,
   onSubmit,
   open,
   pending,
 }: {
   defaults: CalculationSaveValues
-  isNew: boolean
+  disabledReason?: string
   onOpenChange: (open: boolean) => void
   onSubmit: (values: CalculationSaveValues) => Promise<void>
   open: boolean
@@ -41,7 +41,7 @@ export function CalculationSaveDialog({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!name.trim() || pending) return
+    if (!name.trim() || pending || disabledReason) return
     void onSubmit({ description, name })
   }
 
@@ -54,7 +54,7 @@ export function CalculationSaveDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{isNew ? '새 Calculation 저장' : 'Calculation 저장'}</DialogTitle>
+          <DialogTitle>Calculation 정보</DialogTitle>
           <DialogDescription>
             이름, 설명과 현재 Source code를 저장합니다. Calculation Output은 저장되지 않습니다.
           </DialogDescription>
@@ -80,11 +80,12 @@ export function CalculationSaveDialog({
               onChange={(event) => setDescription(event.target.value)}
             />
           </label>
+          {disabledReason ? <p className="text-sm text-muted-foreground">{disabledReason}</p> : null}
           <DialogFooter>
             <Button disabled={pending} type="button" variant="outline" onClick={() => onOpenChange(false)}>
               취소
             </Button>
-            <Button disabled={pending || !name.trim()} type="submit">
+            <Button disabled={pending || !name.trim() || !!disabledReason} type="submit">
               {pending ? '저장 중…' : '저장'}
             </Button>
           </DialogFooter>

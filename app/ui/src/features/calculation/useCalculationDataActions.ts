@@ -210,7 +210,7 @@ export function useCalculationDataActions({
   )
 
   const cancel = useCallback(() => controllerRef.current?.abort(), [])
-  const calculateAll = useCallback(() => runMissing({}, { announce: true, label: 'All Missing' }), [runMissing])
+  const calculateAll = useCallback(() => runMissing({}, { announce: true, label: '일괄 계산' }), [runMissing])
   const calculateMeasurement = useCallback(
     (measurementId: number, options: Omit<RunOptions, 'label'> = {}) =>
       runMissing(

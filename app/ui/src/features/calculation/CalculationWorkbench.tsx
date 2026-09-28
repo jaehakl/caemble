@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileCode2, FilePlus2, FolderOpen, LoaderCircle, RefreshCw, Save, Trash2 } from 'lucide-react'
+import { FileCode2, FilePlus2, FolderOpen, LoaderCircle, Save, Trash2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -228,7 +228,7 @@ export function CalculationWorkbench({
     () => buildCalculationRecordedData(requiredRules, recordedData),
     [recordedData, requiredRules],
   )
-  const { invalidatePreview, preview, logs, refreshPreview } = useCalculationPreview({
+  const { invalidatePreview, preview, logs } = useCalculationPreview({
     calculationDataBusy,
     contextPending,
     dependencyError: dependencyState.error,
@@ -249,13 +249,15 @@ export function CalculationWorkbench({
     selectedRow.source_code !== draft.sourceCode
   const saveDisabledReason =
     baseSaveDisabledReason ??
-    (experimentRecordsQuery.isPending
-      ? 'ExperimentRecord 계약을 불러오는 중입니다.'
-      : dependencyState.error
-        ? dependencyState.error.message
-        : requiresPreflight && preview.status !== 'success' && selectedRow?.source_code !== draft.sourceCode
-          ? '현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.'
-          : undefined)
+    (selectedRow?.source_code === draft.sourceCode
+      ? undefined
+      : experimentRecordsQuery.isPending
+        ? 'ExperimentRecord 계약을 불러오는 중입니다.'
+        : dependencyState.error
+          ? dependencyState.error.message
+          : requiresPreflight && preview.status !== 'success' && selectedRow?.source_code !== draft.sourceCode
+            ? '현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.'
+            : undefined)
   useEffect(() => {
     const recordName = experimentRecords[0]?.name
     if (!recordName || draft.id !== null || draft.sourceCode !== calculationSourceSkeleton()) return
@@ -429,8 +431,15 @@ export function CalculationWorkbench({
         toast.error('Calculation 이름을 입력하세요.')
         return false
       }
-      if (saving || deleting) return false
+      if (baseSaveDisabledReason) return false
       const description = (values?.description ?? draft.description).trim()
+      if (
+        selectedRow &&
+        draft.sourceCode === selectedRow.source_code &&
+        name === selectedRow.name &&
+        description === (selectedRow.description ?? '')
+      )
+        return true
       const sequence = ++mutationSequenceRef.current
       setSaving(true)
       try {
@@ -547,7 +556,7 @@ export function CalculationWorkbench({
     },
     [
       authenticated,
-      deleting,
+      baseSaveDisabledReason,
       draft,
       dependencyState.error,
       dependencyState.names,
@@ -563,7 +572,6 @@ export function CalculationWorkbench({
       preview,
       requiresPreflight,
       selectedRow,
-      saving,
     ],
   )
 
@@ -572,12 +580,12 @@ export function CalculationWorkbench({
       onRequestLogin()
       return
     }
-    if (saveDisabledReason) {
-      toast.error(saveDisabledReason)
+    if (baseSaveDisabledReason) {
+      toast.error(baseSaveDisabledReason)
       return
     }
     setSaveDialogOpen(true)
-  }, [authenticated, onRequestLogin, saveDisabledReason])
+  }, [authenticated, onRequestLogin, baseSaveDisabledReason])
 
   const saveFromShortcut = useCallback(() => {
     if (!authenticated) {
@@ -795,6 +803,7 @@ export function CalculationWorkbench({
             </WorkbenchRibbonGroup>
             <WorkbenchRibbonGroup label="Calculation 작성">
               <WorkbenchRibbonActions
+                size="large"
                 actions={[
                   {
                     id: 'new-calculation',
@@ -808,19 +817,12 @@ export function CalculationWorkbench({
                   },
                   {
                     id: 'save-calculation',
-                    label: '저장',
+                    label: 'Calculation 정보',
                     icon: <Save />,
                     primary: true,
-                    disabled: !!saveDisabledReason,
-                    disabledReason: saveDisabledReason,
+                    disabled: !!baseSaveDisabledReason,
+                    disabledReason: baseSaveDisabledReason,
                     onSelect: openSaveDialog,
-                  },
-                  {
-                    id: 'refresh-preview',
-                    label: '미리보기 갱신',
-                    icon: <RefreshCw />,
-                    disabled: contextPending || measurementLoading || calculationDataBusy || measurementId === null,
-                    onSelect: refreshPreview,
                   },
                 ]}
               />
@@ -832,12 +834,6 @@ export function CalculationWorkbench({
         columnRatios={columnRatios}
         editor={
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
-            {draft.id !== null ? (
-              <p className="border-b px-3 py-2 text-xs text-muted-foreground">
-                공유 정의: 이름·설명·계산 로직 변경은 모든 연결에 반영됩니다. 코드 변경 후에는 각 Experiment에서 다시
-                검증해야 합니다.
-              </p>
-            ) : null}
             {demoSandbox ? (
               <div className="shrink-0 border-b bg-sky-50 px-3 py-1.5 text-xs text-sky-950">
                 Demo 원본과 저장 데이터는 읽기 전용입니다. 이 source 변경은 로컬 Preview에만 적용됩니다.
@@ -862,6 +858,7 @@ export function CalculationWorkbench({
           <section className="flex h-full min-h-0 flex-col">
             <div className="min-h-0 flex-1 overflow-hidden">
               <ResizableCalculationOutput
+                calculationName={draft.name}
                 chartRatio={outputChartRatio}
                 comparisonMessage={
                   scalarQuery.isFetching
@@ -907,7 +904,7 @@ export function CalculationWorkbench({
       ) : null}
       <CalculationSaveDialog
         defaults={{ description: draft.description, name: draft.name }}
-        isNew={draft.id === null}
+        disabledReason={saveDisabledReason}
         open={saveDialogOpen}
         pending={saving}
         onOpenChange={setSaveDialogOpen}
