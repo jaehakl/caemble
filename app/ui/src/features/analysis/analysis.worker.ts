@@ -4,10 +4,7 @@ import { dbTables, getListRequest } from '@/api'
 import {
   analyzeRelationships,
   buildAnalysisDataset,
-  createCsv,
-  getTablePage,
   getRelationshipPlot,
-  mineDataset,
 } from './analysis-engine'
 import type { AnalysisProgressStage, AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
 import { parseAnalysisWorkerRequest, parseAnalysisWorkerResponse } from './analysisProtocol'
@@ -86,31 +83,7 @@ async function handleRequest(request: AnalysisWorkerRequest) {
     })
     return
   }
-  if (request.type === 'mine') {
-    postProgress(request.requestId, '통계 계산')
-    postProgress(request.requestId, 'PCA·군집')
-    const result = mineDataset(currentDataset, {
-      featureKeys: request.featureKeys,
-      outlierFraction: request.outlierFraction,
-    })
-    postResponse({ type: 'mining', requestId: request.requestId, result })
-    return
-  }
-  if (request.type === 'table-page') {
-    postResponse({
-      type: 'table-page',
-      requestId: request.requestId,
-      page: getTablePage(currentDataset, request.columnKeys, request.offset, request.limit),
-    })
-    return
-  }
-  const blob = createCsv(currentDataset, request.columnKeys)
-  postResponse({
-    type: 'csv',
-    requestId: request.requestId,
-    blob,
-    filename: 'analysis-data.csv',
-  })
+
 }
 
 self.onmessage = (event: MessageEvent<unknown>) => {

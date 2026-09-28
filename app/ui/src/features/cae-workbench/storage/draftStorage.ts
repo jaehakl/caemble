@@ -3,13 +3,7 @@ import { z } from 'zod'
 import { savedExperimentRecordSchema } from '@/contracts/api/experimentValidators'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
 import type { WorkbenchDraft, WorkbenchSelectionContext } from '../types'
-import {
-  analysisTabIds,
-  bottomDockModes,
-  defaultWorkbenchLayoutState,
-  measurementRightTabIds,
-  workbenchSectionIds,
-} from '../types'
+import { bottomDockModes, defaultWorkbenchLayoutState, measurementRightTabIds, workbenchSectionIds } from '../types'
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
 export const WORKBENCH_DRAFT_SCHEMA_VERSION = 4 as const
@@ -73,8 +67,9 @@ const storedDraftBaseSchema = z
     layout: z.preprocess(
       (value) => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-        const layout = value as Record<string, unknown>
-        if (!['material', 'admin', 'lab', 'help', 'setting'].includes(String(layout.activeSection))) return value
+        const layout = { ...(value as Record<string, unknown>) }
+        delete layout.analysisTab
+        if (!['material', 'admin', 'lab', 'help', 'setting'].includes(String(layout.activeSection))) return layout
         return { ...layout, activeSection: 'experiment' }
       },
       z
@@ -107,7 +102,6 @@ const storedDraftBaseSchema = z
           rightTabs: z.object({
             measurement: z.enum(measurementRightTabIds).catch(defaultWorkbenchLayoutState.rightTabs.measurement),
           }),
-          analysisTab: z.enum(analysisTabIds).catch(defaultWorkbenchLayoutState.analysisTab),
         })
         .passthrough(),
     ),

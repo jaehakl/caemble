@@ -3,7 +3,6 @@ import {
   Beaker,
   BookOpenText,
   ChartNoAxesCombined,
-  Download,
   FlaskConical,
   Info,
   Pencil,
@@ -26,12 +25,12 @@ import {
 } from '@/features/cae-workbench/chrome'
 import type { CalculationSaveState } from '@/features/calculation'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { AnalysisTabId, WorkbenchSectionId } from '@/features/cae-workbench/types'
+import type { WorkbenchSectionId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 
-export type AnalysisRibbonCommand = 'reload' | 'export-dataset'
+export type AnalysisRibbonCommand = 'reload'
 export type PredictionRibbonCommand = 'settings' | 'details' | 'validate' | 'sample' | 'cancel'
 export type PredictionRibbonState = Readonly<{
   busy: boolean
@@ -44,7 +43,6 @@ export type PredictionRibbonState = Readonly<{
 }>
 
 export function useCaePageChrome({
-  analysisTab,
   authenticated,
   dataReadable,
   calculationDirty,
@@ -58,7 +56,6 @@ export function useCaePageChrome({
   requestRunSelected,
   runSafely,
   setActiveSection,
-  setAnalysisTab,
   setDialog,
   workbench,
   predictionState,
@@ -68,7 +65,6 @@ export function useCaePageChrome({
   requestExperimentSaveAs,
   fileBusy = false,
 }: {
-  analysisTab: AnalysisTabId
   authenticated: boolean
   dataReadable: boolean
   calculationDirty: boolean
@@ -83,7 +79,6 @@ export function useCaePageChrome({
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
   setActiveSection: (section: WorkbenchSectionId) => void
-  setAnalysisTab: (tab: AnalysisTabId) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   workbench: CaeWorkbenchState
   predictionState: PredictionRibbonState
@@ -418,14 +413,6 @@ export function useCaePageChrome({
         disabledReason: !dataReadable ? '먼저 공개 Demo 또는 내 Experiment를 여세요.' : undefined,
         onSelect: () => requestAnalysisCommand('reload'),
       },
-      analysisDataset: {
-        id: 'analysis-dataset',
-        label: 'Data CSV',
-        icon: <Download />,
-        disabled: !dataReadable,
-        disabledReason: !dataReadable ? '먼저 공개 Demo 또는 내 Experiment를 여세요.' : undefined,
-        onSelect: () => requestAnalysisCommand('export-dataset'),
-      },
       predictionSettings: {
         id: 'prediction-settings',
         label: 'Prediction Settings',
@@ -510,14 +497,6 @@ export function useCaePageChrome({
     predictionState,
     workbench,
   ])
-
-  const analysisActions = (['explore', 'mining', 'data'] as const).map((tab) => ({
-    id: `analysis-${tab}`,
-    label: tab[0].toUpperCase() + tab.slice(1),
-    icon: tab === 'mining' ? <Sparkles /> : <ChartNoAxesCombined />,
-    pressed: analysisTab === tab,
-    onSelect: () => setAnalysisTab(tab),
-  }))
 
   const ribbonPanels: readonly WorkbenchRibbonPanel[] = [
     {
@@ -624,10 +603,19 @@ export function useCaePageChrome({
       content: (
         <>
           <WorkbenchRibbonGroup label="View">
-            <WorkbenchRibbonActions size="large" actions={analysisActions} />
+            <WorkbenchRibbonAction
+              size="large"
+              action={{
+                id: 'analysis-explore',
+                label: 'Explore',
+                icon: <ChartNoAxesCombined />,
+                pressed: true,
+                onSelect: () => setActiveSection('analysis'),
+              }}
+            />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Data">
-            <WorkbenchRibbonActions actions={[actions.analysisReload, actions.analysisDataset]} />
+            <WorkbenchRibbonActions actions={[actions.analysisReload]} />
           </WorkbenchRibbonGroup>
         </>
       ),

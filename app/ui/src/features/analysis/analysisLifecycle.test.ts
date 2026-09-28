@@ -26,19 +26,14 @@ describe('analysisLifecycleReducer', () => {
     expect(plotted.plot).toBe('ready')
   })
 
-  it('tracks table and stale checks without turning them into a primary busy operation', () => {
+  it('tracks stale checks without turning them into a primary busy operation', () => {
     const loaded = analysisLifecycleReducer(
       analysisLifecycleReducer(initialAnalysisLifecycleState, { type: 'loadStarted' }),
       { type: 'loadSucceeded' },
     )
-    const tableLoading = analysisLifecycleReducer(loaded, { type: 'tableStarted' })
-    const tableReady = analysisLifecycleReducer(tableLoading, { type: 'tableSucceeded' })
-    const checking = analysisLifecycleReducer(tableReady, { type: 'staleCheckStarted' })
+    const checking = analysisLifecycleReducer(loaded, { type: 'staleCheckStarted' })
     const stale = analysisLifecycleReducer(checking, { type: 'staleResolved', stale: true })
 
-    expect(tableLoading.table).toBe('loading')
-    expect(selectAnalysisLifecycle(tableLoading).busy).toBeNull()
-    expect(tableReady.table).toBe('ready')
     expect(checking.staleCheck).toBe('checking')
     expect(stale).toMatchObject({ staleCheck: 'ready', stale: true })
   })
@@ -75,16 +70,8 @@ describe('analysisLifecycleReducer', () => {
     expect(selectAnalysisLifecycle(failed).busy).toBeNull()
   })
 
-  it('models mining, export, and worker generation changes without storing request objects', () => {
-    const mining = analysisLifecycleReducer(initialAnalysisLifecycleState, { type: 'miningStarted' })
-    const mined = analysisLifecycleReducer(mining, { type: 'miningSucceeded' })
-    const exporting = analysisLifecycleReducer(mined, { type: 'exportStarted' })
-    const exported = analysisLifecycleReducer(exporting, { type: 'exportSucceeded' })
-    const restarted = analysisLifecycleReducer(exported, { type: 'generationAdvanced' })
-
-    expect(selectAnalysisLifecycle(mining).busy).toBe('mine')
-    expect(selectAnalysisLifecycle(exporting).busy).toBe('export')
-    expect(exported.primary).toBe('ready')
+  it('advances worker generation without storing request objects', () => {
+    const restarted = analysisLifecycleReducer(initialAnalysisLifecycleState, { type: 'generationAdvanced' })
     expect(restarted.generation).toBe(1)
     expect(Object.keys(restarted)).not.toContain('worker')
     expect(Object.keys(restarted)).not.toContain('requestId')

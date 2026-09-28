@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import type { AnalysisTabId } from '@/features/cae-workbench/types'
 import type {
-  AnalysisMiningResult,
   AnalysisProfile,
   AnalysisRelationshipPlot,
   AnalysisRelationshipsResult,
-  AnalysisTablePage,
   AnalysisWorkerRequest,
   AnalysisWorkerResponse,
 } from './analysis-types'
@@ -16,34 +13,22 @@ import analysisWorkerAssetUrl from './analysis.worker.ts?worker&url'
 export function useAnalysisController({
   dataReadable,
   experimentId,
-  outlierPercent,
-  tab,
 }: {
   dataReadable: boolean
   experimentId: number | null
-  outlierPercent: number
-  tab: AnalysisTabId
 }) {
   const [profile, setProfile] = useState<AnalysisProfile | null>(null)
   const [relationships, setRelationships] = useState<AnalysisRelationshipsResult | null>(null)
   const [relationshipPlot, setRelationshipPlot] = useState<AnalysisRelationshipPlot | null>(null)
-  const [mining, setMining] = useState<AnalysisMiningResult | null>(null)
-  const [tablePage, setTablePage] = useState<AnalysisTablePage | null>(null)
-  const [tableOffset, setTableOffset] = useState(0)
   const [relationshipOffset, setRelationshipOffset] = useState(0)
   const [exploreInputKey, setExploreInputKey] = useState('')
   const [exploreTargetKey, setExploreTargetKey] = useState('')
-  const [miningFeatureKeys, setMiningFeatureKeys] = useState<readonly string[]>([])
-  const [dataColumnKeys, setDataColumnKeys] = useState<readonly string[]>([])
-  const [histogramKey, setHistogramKey] = useState('')
   const [lifecycle, dispatchLifecycle] = useReducer(analysisLifecycleReducer, initialAnalysisLifecycleState)
   const workerRef = useRef<Worker | null>(null)
   const requestSequence = useRef(0)
   const loadRequestId = useRef('')
-  const activeRequestId = useRef('')
   const relationshipsRequestId = useRef('')
   const plotRequestId = useRef('')
-  const tableRequestId = useRef('')
   const staleRequestId = useRef('')
   const exploreInputRef = useRef('')
   const exploreTargetRef = useRef('')
@@ -65,8 +50,6 @@ export function useAnalysisController({
     setProfile(null)
     setRelationships(null)
     setRelationshipPlot(null)
-    setMining(null)
-    setTablePage(null)
     dispatchLifecycle({ type: 'loadStarted' })
     const requestId = nextRequestId('load')
     loadRequestId.current = requestId
@@ -84,9 +67,7 @@ export function useAnalysisController({
         return
       }
       if (response.type === 'progress') {
-        if (
-          [loadRequestId.current, activeRequestId.current, relationshipsRequestId.current].includes(response.requestId)
-        ) {
+        if ([loadRequestId.current, relationshipsRequestId.current].includes(response.requestId)) {
           dispatchLifecycle({
             type: 'progress',
             stage: response.stage,
@@ -108,15 +89,11 @@ export function useAnalysisController({
         const targets = response.profile.columns.filter((column) => column.kind === 'target' && column.eligible)
         const initialInput = inputs[0]?.key ?? ''
         const initialTarget = targets[0]?.key ?? ''
-        const defaultFeatures = features.slice(0, 50).map((column) => column.key)
         setProfile(response.profile)
         setExploreInputKey(initialInput)
         setExploreTargetKey(initialTarget)
         exploreInputRef.current = initialInput
         exploreTargetRef.current = initialTarget
-        setMiningFeatureKeys(defaultFeatures)
-        setDataColumnKeys([initialInput, initialTarget].filter(Boolean))
-        setHistogramKey(initialTarget || initialInput)
         dispatchLifecycle({ type: 'loadSucceeded' })
         const relationshipsId = nextRequestId('relationships')
         relationshipsRequestId.current = relationshipsId
@@ -153,28 +130,8 @@ export function useAnalysisController({
         dispatchLifecycle({ type: 'plotSucceeded' })
         return
       }
-      if (response.type === 'mining' && response.requestId === activeRequestId.current) {
-        setMining(response.result)
-        dispatchLifecycle({ type: 'miningSucceeded' })
-        return
-      }
-      if (response.type === 'table-page' && response.requestId === tableRequestId.current) {
-        setTablePage(response.page)
-        dispatchLifecycle({ type: 'tableSucceeded' })
-        return
-      }
       if (response.type === 'stale' && response.requestId === staleRequestId.current) {
         dispatchLifecycle({ type: 'staleResolved', stale: response.stale })
-        return
-      }
-      if (response.type === 'csv' && response.requestId === activeRequestId.current) {
-        const url = URL.createObjectURL(response.blob)
-        const anchor = document.createElement('a')
-        anchor.href = url
-        anchor.download = response.filename
-        anchor.click()
-        URL.revokeObjectURL(url)
-        dispatchLifecycle({ type: 'exportSucceeded' })
         return
       }
       if (response.type === 'error') {
@@ -183,13 +140,7 @@ export function useAnalysisController({
           return
         }
         if (
-          [
-            loadRequestId.current,
-            activeRequestId.current,
-            relationshipsRequestId.current,
-            plotRequestId.current,
-            tableRequestId.current,
-          ].includes(response.requestId)
+          [loadRequestId.current, relationshipsRequestId.current, plotRequestId.current].includes(response.requestId)
         ) {
           dispatchLifecycle({ type: 'failed', message: response.message, clearProgress: true })
         }
@@ -204,27 +155,6 @@ export function useAnalysisController({
       if (workerRef.current === worker) workerRef.current = null
     }
   }, [dataReadable, experimentId, lifecycle.generation, nextRequestId])
-
-  useEffect(() => setMining(null), [outlierPercent, miningFeatureKeys])
-
-  useEffect(() => {
-    if (tab !== 'data' || !profile || !workerRef.current || dataColumnKeys.length === 0) {
-      if (dataColumnKeys.length === 0) setTablePage(null)
-      return
-    }
-    const requestId = nextRequestId('table')
-    tableRequestId.current = requestId
-    dispatchLifecycle({ type: 'tableStarted' })
-    workerRef.current.postMessage({
-      type: 'table-page',
-      requestId,
-      columnKeys: dataColumnKeys,
-      offset: tableOffset,
-      limit: 100,
-    } satisfies AnalysisWorkerRequest)
-  }, [dataColumnKeys, nextRequestId, profile, tab, tableOffset])
-
-  useEffect(() => setTableOffset(0), [dataColumnKeys])
 
   const lifecycleView = selectAnalysisLifecycle(lifecycle)
   const { busy } = lifecycleView
@@ -261,55 +191,18 @@ export function useAnalysisController({
     [nextRequestId],
   )
 
-  const runMining = useCallback(() => {
-    if (!workerRef.current || miningFeatureKeys.length < 2) return
-    const requestId = nextRequestId('mine')
-    activeRequestId.current = requestId
-    dispatchLifecycle({ type: 'miningStarted' })
-    workerRef.current.postMessage({
-      type: 'mine',
-      requestId,
-      featureKeys: miningFeatureKeys,
-      outlierFraction: outlierPercent / 100,
-    } satisfies AnalysisWorkerRequest)
-  }, [miningFeatureKeys, nextRequestId, outlierPercent])
-
-  const exportCsv = useCallback(() => {
-    if (!workerRef.current || dataColumnKeys.length === 0) return
-    const requestId = nextRequestId('export')
-    activeRequestId.current = requestId
-    dispatchLifecycle({ type: 'exportStarted' })
-    workerRef.current.postMessage({
-      type: 'export-csv',
-      requestId,
-      columnKeys: dataColumnKeys,
-    } satisfies AnalysisWorkerRequest)
-  }, [dataColumnKeys, nextRequestId])
-
   const restartWorker = useCallback(() => dispatchLifecycle({ type: 'generationAdvanced' }), [])
 
   return {
     ...lifecycleView,
-    dataColumnKeys,
     exploreInputKey,
     exploreTargetKey,
-    exportCsv,
-    histogramKey,
-    mining,
-    miningFeatureKeys,
     profile,
     relationshipOffset,
     relationshipPlot,
     relationships,
     requestRelationshipPlot,
     restartWorker,
-    runMining,
-    setDataColumnKeys,
-    setHistogramKey,
-    setMiningFeatureKeys,
     setRelationshipOffset,
-    setTableOffset,
-    tableOffset,
-    tablePage,
   }
 }

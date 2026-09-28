@@ -1,20 +1,14 @@
-import { kmeans } from 'ml-kmeans'
-import { Matrix } from 'ml-matrix'
-import { PCA } from 'ml-pca'
-import { mean, quantileSorted, sampleCorrelation, sampleStandardDeviation, silhouette } from 'simple-statistics'
+import { sampleCorrelation } from 'simple-statistics'
 import type { CalculationDataAnalysisItem, MeasurementRecord } from '@/api'
 import type {
   AnalysisColumnDescriptor,
-  AnalysisMiningResult,
   AnalysisProfile,
   AnalysisRelationshipPlot,
   AnalysisRelationshipsResult,
-  AnalysisTablePage,
 } from './analysis-types'
 
 type RowIdentity = Readonly<{
   measurementId: number
-  inputFingerprint: string
 }>
 
 type AnalysisColumn = Readonly<{
@@ -26,7 +20,6 @@ export type AnalysisDataset = {
   profile: AnalysisProfile
   rows: readonly RowIdentity[]
   columns: ReadonlyMap<string, AnalysisColumn>
-  lastMining: AnalysisMiningResult | null
 }
 
 type ColumnState = {
@@ -50,15 +43,6 @@ type NumericObservation = Readonly<{
   unit?: string
   root?: string
   signature?: string
-}>
-
-type FittedPreprocessor = Readonly<{
-  featureKeys: readonly string[]
-  medians: readonly number[]
-  means: readonly number[]
-  standardDeviations: readonly number[]
-  indicatorIndexes: readonly number[]
-  expandedFeatureIndexes: readonly number[]
 }>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -158,7 +142,6 @@ function extractMaterials(
 
 function describeColumn(state: ColumnState, values: Float64Array, rowCount: number): AnalysisColumnDescriptor {
   const finite = Array.from(values).filter(Number.isFinite)
-  const sorted = [...finite].sort((left, right) => left - right)
   const distinctCount = new Set(finite).size
   const missingRatio = rowCount === 0 ? 1 : 1 - finite.length / rowCount
   const reasons: string[] = []
@@ -167,26 +150,6 @@ function describeColumn(state: ColumnState, values: Float64Array, rowCount: numb
   if (distinctCount <= 1) reasons.push('값이 하나뿐인 상수 열입니다.')
   if (finite.length === 0) reasons.push('유효한 숫자 값이 없습니다.')
   const eligible = reasons.length === 0
-  const histogram =
-    finite.length === 0
-      ? []
-      : (() => {
-          const binCount = Math.min(12, Math.max(1, Math.ceil(Math.sqrt(finite.length))))
-          const minimum = sorted[0]
-          const maximum = sorted[sorted.length - 1]
-          if (minimum === maximum) return [{ min: minimum, max: maximum, count: finite.length }]
-          const width = (maximum - minimum) / binCount
-          const counts = Array(binCount).fill(0) as number[]
-          finite.forEach((value) => {
-            counts[Math.min(binCount - 1, Math.floor((value - minimum) / width))] += 1
-          })
-          return counts.map((count, index) => ({
-            min: minimum + width * index,
-            max: index === binCount - 1 ? maximum : minimum + width * (index + 1),
-            count,
-          }))
-        })()
-
   return {
     key: state.key,
     label: state.label,
@@ -200,20 +163,6 @@ function describeColumn(state: ColumnState, values: Float64Array, rowCount: numb
     ...(state.unit ? { unit: state.unit } : {}),
     ...(state.quantityKind ? { quantityKind: state.quantityKind } : {}),
     ...(state.statistic ? { statistic: state.statistic } : {}),
-    ...(histogram.length > 0 ? { histogram } : {}),
-    ...(finite.length > 0
-      ? {
-          min: sorted[0],
-          max: sorted[sorted.length - 1],
-          mean: mean(finite),
-          std: finite.length > 1 ? sampleStandardDeviation(finite) : 0,
-          p05: quantileSorted(sorted, 0.05),
-          p25: quantileSorted(sorted, 0.25),
-          p50: quantileSorted(sorted, 0.5),
-          p75: quantileSorted(sorted, 0.75),
-          p95: quantileSorted(sorted, 0.95),
-        }
-      : {}),
   }
 }
 
@@ -223,34 +172,6 @@ function sourceOrder(source: AnalysisColumnDescriptor['source']) {
     'measurement-material': 1,
     'calculation-data': 2,
   }[source]
-}
-
-function canonicalInput(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalInput)
-  if (!isRecord(value)) return value
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .map((key) => [key, canonicalInput(value[key])]),
-  )
-}
-
-function inputFingerprint(measurement: MeasurementRecord) {
-  const source = JSON.stringify(
-    canonicalInput({
-      experimentId: measurement.experiment_id,
-      vars: measurement.vars,
-      materialSnapshot: measurement.material_snapshot,
-    }),
-  )
-  let first = 0x811c9dc5
-  let second = 0x9e3779b9
-  for (let index = 0; index < source.length; index += 1) {
-    const code = source.charCodeAt(index)
-    first = Math.imul(first ^ code, 0x01000193)
-    second = Math.imul(second ^ code, 0x85ebca6b)
-  }
-  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
 }
 
 export function buildAnalysisDataset({
@@ -309,7 +230,7 @@ export function buildAnalysisDataset({
 
   usableMeasurements.forEach((measurement) => {
     const rowIndex = identities.length
-    identities.push({ measurementId: measurement.id, inputFingerprint: inputFingerprint(measurement) })
+    identities.push({ measurementId: measurement.id })
     states.forEach((state) => state.values.push(Number.NaN))
 
     const observations: NumericObservation[] = []
@@ -403,7 +324,6 @@ export function buildAnalysisDataset({
     },
     rows: identities,
     columns,
-    lastMining: null,
   }
 }
 
@@ -415,68 +335,6 @@ function requireColumns(dataset: AnalysisDataset, keys: readonly string[], kind?
     }
     return column
   })
-}
-
-function median(values: readonly number[]) {
-  const finite = values.filter(Number.isFinite).sort((left, right) => left - right)
-  if (finite.length === 0) return 0
-  return quantileSorted(finite, 0.5)
-}
-
-function fittedPreprocessor(
-  raw: readonly (readonly number[])[],
-  trainIndexes: readonly number[],
-  featureKeys: readonly string[],
-): FittedPreprocessor {
-  const medians = featureKeys.map((_, feature) => median(trainIndexes.map((row) => raw[row][feature])))
-  const indicatorIndexes = featureKeys
-    .map((_, feature) => feature)
-    .filter((feature) => trainIndexes.some((row) => !Number.isFinite(raw[row][feature])))
-  const imputed = trainIndexes.map((row) =>
-    featureKeys.map((_, feature) => (Number.isFinite(raw[row][feature]) ? raw[row][feature] : medians[feature])),
-  )
-  const expanded = imputed.map((row, rowIndex) => [
-    ...row,
-    ...indicatorIndexes.map((feature) => (Number.isFinite(raw[trainIndexes[rowIndex]][feature]) ? 0 : 1)),
-  ])
-  const means = expanded[0].map((_, column) => mean(expanded.map((row) => row[column])))
-  const standardDeviations = expanded[0].map((_, column) => {
-    const values = expanded.map((row) => row[column])
-    const value = values.length > 1 ? sampleStandardDeviation(values) : 0
-    return value > 0 && Number.isFinite(value) ? value : 1
-  })
-  return {
-    featureKeys,
-    medians,
-    means,
-    standardDeviations,
-    indicatorIndexes,
-    expandedFeatureIndexes: [...featureKeys.map((_, feature) => feature), ...indicatorIndexes],
-  }
-}
-
-function transformRows(
-  raw: readonly (readonly number[])[],
-  indexes: readonly number[],
-  preprocessor: FittedPreprocessor,
-) {
-  return indexes.map((rowIndex) => {
-    const original = raw[rowIndex]
-    const expanded = [
-      ...preprocessor.featureKeys.map((_, feature) =>
-        Number.isFinite(original[feature]) ? original[feature] : preprocessor.medians[feature],
-      ),
-      ...preprocessor.indicatorIndexes.map((feature) => (Number.isFinite(original[feature]) ? 0 : 1)),
-    ]
-    return expanded.map(
-      (value, column) => (value - preprocessor.means[column]) / preprocessor.standardDeviations[column],
-    )
-  })
-}
-
-function rawFeatureRows(dataset: AnalysisDataset, featureKeys: readonly string[]) {
-  const columns = requireColumns(dataset, featureKeys, 'feature')
-  return dataset.rows.map((_, rowIndex) => columns.map((column) => column.values[rowIndex]))
 }
 
 function pairedValues(left: Float64Array, right: Float64Array) {
@@ -585,151 +443,4 @@ export function getRelationshipPlot(
         : [],
     ),
   }
-}
-
-function standardizedMatrix(dataset: AnalysisDataset, featureKeys: readonly string[]) {
-  const raw = rawFeatureRows(dataset, featureKeys)
-  const indexes = dataset.rows.map((_, index) => index)
-  const preprocessor = fittedPreprocessor(raw, indexes, featureKeys)
-  const transformed = transformRows(raw, indexes, {
-    ...preprocessor,
-    indicatorIndexes: [],
-    expandedFeatureIndexes: featureKeys.map((_, index) => index),
-    means: preprocessor.means.slice(0, featureKeys.length),
-    standardDeviations: preprocessor.standardDeviations.slice(0, featureKeys.length),
-  })
-  return transformed
-}
-
-function evenlySpacedIndexes(length: number, maximum: number) {
-  if (length <= maximum) return Array.from({ length }, (_, index) => index)
-  return Array.from({ length: maximum }, (_, index) => Math.floor((index * (length - 1)) / (maximum - 1)))
-}
-
-export function mineDataset(
-  dataset: AnalysisDataset,
-  {
-    featureKeys,
-    outlierFraction,
-  }: {
-    featureKeys: readonly string[]
-    outlierFraction: number
-  },
-): AnalysisMiningResult {
-  if (dataset.rows.length < 3) throw new Error('Mining에는 Measurement가 3개 이상 필요합니다.')
-  if (featureKeys.length < 2) throw new Error('Mining에는 feature가 2개 이상 필요합니다.')
-  requireColumns(dataset, featureKeys, 'feature')
-  const boundedOutlierFraction = Math.min(0.1, Math.max(0.01, outlierFraction))
-  const matrix = standardizedMatrix(dataset, featureKeys)
-  const pca = new PCA(matrix, { center: false, scale: false })
-  const projected = pca.predict(matrix, { nComponents: 2 }).to2DArray()
-  const explainedVariance = pca.getExplainedVariance()
-  const loadingsMatrix = pca.getLoadings()
-  const loadings = featureKeys.map((key, index) => ({
-    key,
-    pc1: loadingsMatrix.get(index, 0),
-    pc2: loadingsMatrix.columns > 1 ? loadingsMatrix.get(index, 1) : 0,
-  }))
-
-  const selectionIndexes = evenlySpacedIndexes(matrix.length, 1_000)
-  const selectionMatrix = selectionIndexes.map((index) => matrix[index])
-  const maximumK = Math.max(2, Math.min(8, Math.floor(Math.sqrt(matrix.length)), matrix.length - 1))
-  let bestK = 2
-  let bestSilhouette = Number.NEGATIVE_INFINITY
-  for (let clusterCount = 2; clusterCount <= maximumK; clusterCount += 1) {
-    const candidate = kmeans(selectionMatrix, clusterCount, { initialization: 'kmeans++', seed: 42 })
-    const values = silhouette(selectionMatrix, candidate.clusters)
-    const score = values.length > 0 ? mean(values) : Number.NEGATIVE_INFINITY
-    if (score > bestSilhouette) {
-      bestSilhouette = score
-      bestK = clusterCount
-    }
-  }
-  const clusters = kmeans(matrix, bestK, { initialization: 'kmeans++', seed: 42 }).clusters
-
-  const cumulative = pca.getCumulativeVariance()
-  let retained = cumulative.findIndex((value) => value >= 0.9) + 1
-  if (retained <= 0) retained = Math.min(matrix[0].length, 2)
-  retained = Math.max(1, Math.min(retained, matrix[0].length))
-  const eigenvectors = pca.getEigenvectors().subMatrix(0, matrix[0].length - 1, 0, retained - 1)
-  const sourceMatrix = new Matrix(matrix)
-  const reconstructed = sourceMatrix.mmul(eigenvectors).mmul(eigenvectors.transpose())
-  const errors = matrix.map((row, rowIndex) =>
-    row.reduce((sum, value, column) => sum + (value - reconstructed.get(rowIndex, column)) ** 2, 0),
-  )
-  const outlierCount = Math.max(1, Math.ceil(errors.length * boundedOutlierFraction))
-  const outlierIndexes = new Set(
-    errors
-      .map((value, index) => ({ index, value }))
-      .sort((left, right) => right.value - left.value || left.index - right.index)
-      .slice(0, outlierCount)
-      .map((entry) => entry.index),
-  )
-
-  const result: AnalysisMiningResult = {
-    fingerprint: dataset.profile.fingerprint,
-    featureKeys,
-    explainedVariance: explainedVariance.slice(0, 2),
-    loadings,
-    points: dataset.rows.map((row, index) => ({
-      ...row,
-      pc1: projected[index]?.[0] ?? 0,
-      pc2: projected[index]?.[1] ?? 0,
-      cluster: clusters[index],
-      anomalyScore: errors[index],
-      outlier: outlierIndexes.has(index),
-    })),
-    clusterCount: bestK,
-    silhouette: bestSilhouette,
-    outlierFraction: boundedOutlierFraction,
-  }
-  dataset.lastMining = result
-  return result
-}
-
-export function getTablePage(
-  dataset: AnalysisDataset,
-  columnKeys: readonly string[],
-  offset: number,
-  limit: number,
-): AnalysisTablePage {
-  const columns = requireColumns(dataset, columnKeys)
-  const boundedOffset = Math.max(0, Math.min(dataset.rows.length, Math.floor(offset)))
-  const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)))
-  return {
-    fingerprint: dataset.profile.fingerprint,
-    offset: boundedOffset,
-    total: dataset.rows.length,
-    columns: columnKeys,
-    rows: dataset.rows.slice(boundedOffset, boundedOffset + boundedLimit).map((row, pageIndex) => {
-      const rowIndex = boundedOffset + pageIndex
-      return {
-        ...row,
-        values: columns.map((column) => (Number.isFinite(column.values[rowIndex]) ? column.values[rowIndex] : null)),
-      }
-    }),
-  }
-}
-
-function csvCell(value: unknown) {
-  const text = value === null || value === undefined ? '' : String(value)
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-}
-
-export function createCsv(dataset: AnalysisDataset, columnKeys: readonly string[]) {
-  const lines: string[] = []
-  const columns = requireColumns(dataset, columnKeys)
-  lines.push(['measurement_id', 'input_fingerprint', ...columnKeys].map(csvCell).join(','))
-  dataset.rows.forEach((row, rowIndex) => {
-    lines.push(
-      [
-        row.measurementId,
-        row.inputFingerprint,
-        ...columns.map((column) => (Number.isFinite(column.values[rowIndex]) ? column.values[rowIndex] : null)),
-      ]
-        .map(csvCell)
-        .join(','),
-    )
-  })
-  return new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8' })
 }

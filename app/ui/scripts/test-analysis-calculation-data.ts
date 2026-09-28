@@ -7,10 +7,7 @@ import type { CatalogMaterialModel } from '../src/contracts/catalog'
 import {
   analyzeRelationships,
   buildAnalysisDataset,
-  createCsv,
   getRelationshipPlot,
-  getTablePage,
-  mineDataset,
 } from '../src/features/analysis/analysis-engine'
 
 const modelDefinitions = JSON.parse(
@@ -186,19 +183,6 @@ assert.ok(relationships.pairs.some((pair) => pair.inputKey === 'measurement.vars
 const plot = getRelationshipPlot(dataset, 'measurement.vars.x', scalarKey)
 assert.equal(plot.points.length, 24)
 assert.equal(plot.points[0].measurementId, 1)
-
-const mining = mineDataset(dataset, {
-  featureKeys: ['measurement.vars.x', 'measurement.vars.z'],
-  outlierFraction: 0.05,
-})
-assert.equal(mining.points.length, 24)
-
-const table = getTablePage(dataset, ['measurement.vars.x', scalarKey, tensorMeanKey], 0, 100)
-assert.equal(table.rows.length, 24)
-assert.deepEqual(table.rows[0].values, [1, 5, 11])
-const csv = await createCsv(dataset, ['measurement.vars.x', scalarKey]).text()
-assert.match(csv, /measurement_id,input_fingerprint,measurement\.vars\.x,target:calculation:10/u)
-assert.doesNotMatch(csv, /\[object Object\]/u)
 
 const workerSource = readFileSync('src/features/analysis/analysis.worker.ts', 'utf8')
 assert.doesNotMatch(workerSource, /RecordedData|Recorded Data|dbTables\.RecordedData/u)

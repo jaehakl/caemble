@@ -28,10 +28,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('useAnalysisController', () => {
-  it('routes a stale-check Worker error to a terminal stale-check state', async () => {
-    const { result } = renderHook(() =>
-      useAnalysisController({ dataReadable: true, experimentId: 7, outlierPercent: 5, tab: 'explore' }),
+  it('reloads by terminating the old Worker and loading the current Experiment again', () => {
+    const { result } = renderHook(() => useAnalysisController({ dataReadable: true, experimentId: 7 }))
+    const first = FakeAnalysisWorker.current!
+    act(() => result.current.restartWorker())
+    const second = FakeAnalysisWorker.current!
+    expect(first.terminate).toHaveBeenCalledOnce()
+    expect(second).not.toBe(first)
+    expect(second.postMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: 'load-context', experimentId: 7 }),
     )
+    expect(result.current.busy).toBe('load')
+  })
+  it('routes a stale-check Worker error to a terminal stale-check state', async () => {
+    const { result } = renderHook(() => useAnalysisController({ dataReadable: true, experimentId: 7 }))
     await waitFor(() => expect(FakeAnalysisWorker.current).not.toBeNull())
     const worker = FakeAnalysisWorker.current!
     const loadRequest = worker.postMessage.mock.calls[0]?.[0]
@@ -68,9 +78,7 @@ describe('useAnalysisController', () => {
   })
 
   it('turns a malformed Worker response into a terminal contract error', async () => {
-    const { result } = renderHook(() =>
-      useAnalysisController({ dataReadable: true, experimentId: 7, outlierPercent: 5, tab: 'explore' }),
-    )
+    const { result } = renderHook(() => useAnalysisController({ dataReadable: true, experimentId: 7 }))
     await waitFor(() => expect(FakeAnalysisWorker.current).not.toBeNull())
 
     act(() => FakeAnalysisWorker.current!.respond({ type: 'profile', requestId: '', profile: null }))

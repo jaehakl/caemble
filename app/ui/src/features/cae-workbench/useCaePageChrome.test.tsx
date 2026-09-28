@@ -52,13 +52,13 @@ function workbenchStub() {
 
 it('uses the sole New action to open Templates and removes the old Examples and Load actions', () => {
   const setDialog = vi.fn()
+  const requestAnalysisCommand = vi.fn()
   const { result } = renderHook(() =>
     useCaePageChrome({
-      analysisTab: 'explore',
       authenticated: false,
       calculationDirty: false,
       calculationSaveState: {} as CalculationSaveState,
-      dataReadable: false,
+      dataReadable: true,
       experimentAuthoringState: null,
       guardReplacement: vi.fn(),
       predictionState: {
@@ -69,14 +69,13 @@ it('uses the sole New action to open Templates and removes the old Examples and 
         status: '',
       },
       requestAccount: vi.fn(),
-      requestAnalysisCommand: vi.fn(),
+      requestAnalysisCommand,
       requestCalculationSave: vi.fn(),
       requestPredictionCommand: vi.fn(),
       requestRunSelected: vi.fn(),
       runSafely: vi.fn(),
       selectedCalculationId: null,
       setActiveSection: vi.fn(),
-      setAnalysisTab: vi.fn(),
       setDialog,
       workbench: workbenchStub(),
       batchGenerationControl: <button>일괄생성</button>,
@@ -86,6 +85,16 @@ it('uses the sole New action to open Templates and removes the old Examples and 
   expect(result.current.actions.newExperiment).toMatchObject({ id: 'new-experiment', label: '템플릿' })
   expect(result.current.actions).not.toHaveProperty('examples')
   expect(result.current.actions).not.toHaveProperty('loadExperiment')
+  const analysis = render(
+    <TooltipProvider>
+      <WorkbenchRibbon activeSectionId="analysis" panels={result.current.ribbonPanels} />
+    </TooltipProvider>,
+  )
+  expect(screen.getByRole('button', { name: 'Explore' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /^(Mining|Data|Data CSV)$/ })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
+  expect(requestAnalysisCommand).toHaveBeenCalledExactlyOnceWith('reload')
+  analysis.unmount()
   render(
     <TooltipProvider>
       <WorkbenchRibbon activeSectionId="calculation" panels={result.current.ribbonPanels} />
@@ -147,7 +156,6 @@ it.each([
   } as CaeWorkbenchState
   const { result } = renderHook(() =>
     useCaePageChrome({
-      analysisTab: 'explore',
       authenticated: true,
       calculationDirty: false,
       calculationSaveState: {} as CalculationSaveState,
@@ -169,7 +177,6 @@ it.each([
       runSafely: vi.fn(),
       selectedCalculationId: null,
       setActiveSection: vi.fn(),
-      setAnalysisTab: vi.fn(),
       setDialog: vi.fn(),
       workbench,
     }),

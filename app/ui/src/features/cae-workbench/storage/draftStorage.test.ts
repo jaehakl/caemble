@@ -258,10 +258,22 @@ describe('Workbench draft storage', () => {
 
     const restored = await loadWorkbenchDraft('public')
     expect(restored?.layout.activeSection).toBe(defaultWorkbenchLayoutState.activeSection)
-    expect(restored?.layout.analysisTab).toBe(defaultWorkbenchLayoutState.analysisTab)
+    expect(restored?.layout).not.toHaveProperty('analysisTab')
     expect(restored?.layout.bottomMode).toBe(defaultWorkbenchLayoutState.bottomMode)
     expect(restored?.layout.leftWidthRatio).toBe(defaultWorkbenchLayoutState.leftWidthRatio)
     expect(restored?.layout.analysisLeftWidthRatio).toBe(defaultWorkbenchLayoutState.analysisLeftWidthRatio)
+  })
+
+  it.each(['mining', 'data'])('drops the retired %s tab without losing the saved layout', async (analysisTab) => {
+    await saveWorkbenchDraft('public', draft)
+    const storageKey = workbenchDraftStorageKey('public')
+    const envelope = JSON.parse(sessionStorage.getItem(storageKey)!)
+    envelope.draft.layout = { ...envelope.draft.layout, activeSection: 'analysis', analysisTab }
+    sessionStorage.setItem(storageKey, JSON.stringify(envelope))
+    const restored = await loadWorkbenchDraft('public')
+    expect(restored?.layout).toEqual({ ...draft.layout, activeSection: 'analysis' })
+    expect(restored?.selection).toEqual(draft.selection)
+    expect(restored?.layout).not.toHaveProperty('analysisTab')
   })
 
   it('rejects malformed external storage data', async () => {

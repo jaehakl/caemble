@@ -30,9 +30,6 @@ export type BottomDockMode = (typeof bottomDockModes)[number]
 export const measurementRightTabIds = ['recorded-data', 'detail'] as const
 export type MeasurementRightTabId = (typeof measurementRightTabIds)[number]
 
-export const analysisTabIds = ['explore', 'mining', 'data'] as const
-export type AnalysisTabId = (typeof analysisTabIds)[number]
-
 export const workbenchLayoutLimits = Object.freeze({
   appMinWidthPx: 1280,
   resizeHandlePx: 8,
@@ -58,7 +55,6 @@ export type WorkbenchLayoutState = Readonly<{
   rightTabs: Readonly<{
     measurement: MeasurementRightTabId
   }>
-  analysisTab: AnalysisTabId
 }>
 
 export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
@@ -73,7 +69,6 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   bottomHeightRatio: 0.5,
   viewerExpanded: false,
   rightTabs: Object.freeze({ measurement: 'recorded-data' }),
-  analysisTab: 'explore',
 })
 
 export type WorkbenchDraftDomain = Readonly<{

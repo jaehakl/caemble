@@ -2,9 +2,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { AnalysisWorkspace } from './AnalysisPage'
-import type { AnalysisMiningResult, AnalysisProfile, AnalysisRelationshipPlot } from './analysis-types'
+import type { AnalysisProfile, AnalysisRelationshipPlot } from './analysis-types'
 
 const requestRelationshipPlot = vi.hoisted(() => vi.fn())
+const restartWorker = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({ isAuthenticated: true, isLoading: false }),
@@ -53,46 +54,41 @@ const relationshipPlot: AnalysisRelationshipPlot = {
     { measurementId: 42, x: 3, y: 4 },
   ],
 }
-const mining: AnalysisMiningResult = {
-  fingerprint: 'profile',
-  featureKeys: ['input'],
-  explainedVariance: [0.8, 0.2],
-  loadings: [],
-  clusterCount: 2,
-  silhouette: 0.5,
-  outlierFraction: 0.05,
-  points: relationshipPlot.points.map((point, index) => ({
-    measurementId: point.measurementId,
-    inputFingerprint: `input-${index}`,
-    pc1: point.x,
-    pc2: point.y,
-    cluster: index,
-    anomalyScore: index,
-    outlier: index === 1,
-  })),
-}
-
 vi.mock('./useAnalysisController', () => ({
   useAnalysisController: () => ({
     busy: null,
-    dataColumnKeys: [],
     exploreInputKey: 'input',
     exploreTargetKey: 'target',
-    mining,
-    miningFeatureKeys: ['input'],
     profile,
     relationshipOffset: 0,
     relationshipPlot,
     requestRelationshipPlot,
+    restartWorker,
+    stale: true,
+    error: 'test failure',
   }),
 }))
 
 describe('Analysis scatter selection', () => {
+  it('has no retired views or export actions and preserves reload and retry', () => {
+    const { rerender } = render(<AnalysisWorkspace experimentId={7} command={{ id: 1, type: 'reload' }} />)
+    expect(restartWorker).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Mining|Data CSV|선택 데이터 CSV/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Analysis · Explore')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '새로 불러오기' }))
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(restartWorker).toHaveBeenCalledTimes(3)
+    rerender(<AnalysisWorkspace experimentId={7} command={{ id: 1, type: 'reload' }} />)
+    expect(restartWorker).toHaveBeenCalledTimes(3)
+    rerender(<AnalysisWorkspace experimentId={7} command={{ id: 2, type: 'reload' }} />)
+    expect(restartWorker).toHaveBeenCalledTimes(4)
+  })
   it('searches the two Explore lists independently and selects a relationship from the settings panel', () => {
     const settingsContainer = document.createElement('div')
     document.body.append(settingsContainer)
     try {
-      render(<AnalysisWorkspace experimentId={7} tab="explore" settingsContainer={settingsContainer} embedded />)
+      render(<AnalysisWorkspace experimentId={7} settingsContainer={settingsContainer} embedded />)
       const input = within(settingsContainer).getByRole('listbox', { name: 'Input variable' })
       const target = within(settingsContainer).getByRole('listbox', { name: 'Calculation Data' })
       fireEvent.change(screen.getByRole('textbox', { name: 'Input variable 검색' }), { target: { value: 'missing' } })
@@ -108,62 +104,55 @@ describe('Analysis scatter selection', () => {
     }
   })
 
-  it.each(['explore', 'mining'] as const)(
-    'selects a Measurement in %s and reflects only committed selection',
-    (tab) => {
-      const onSelectMeasurement = vi.fn()
-      const props = { experimentId: 7, tab, onSelectMeasurement, selectedMeasurementId: 41 }
-      const { rerender } = render(<AnalysisWorkspace {...props} />)
-      const chart = screen.getByRole('group', {
-        name: tab === 'explore' ? 'Length와 Power 산점도' : 'PCA 2D projection',
-      })
-      const first = within(chart).getByRole('button', { name: /^Measurement #41/ })
-      const second = within(chart).getByRole('button', { name: /^Measurement #42/ })
-      const appearance = second.lastElementChild?.outerHTML
+  it('selects a Measurement in Explore and reflects only committed selection', () => {
+    const onSelectMeasurement = vi.fn()
+    const props = { experimentId: 7, onSelectMeasurement, selectedMeasurementId: 41 }
+    const { rerender } = render(<AnalysisWorkspace {...props} />)
+    const chart = screen.getByRole('group', {
+      name: 'Length와 Power 산점도',
+    })
+    const first = within(chart).getByRole('button', { name: /^Measurement #41/ })
+    const second = within(chart).getByRole('button', { name: /^Measurement #42/ })
+    const appearance = second.lastElementChild?.outerHTML
 
-      expect(first).toHaveAttribute('aria-pressed', 'true')
-      expect(second).toHaveAttribute('aria-pressed', 'false')
-      fireEvent.click(second)
-      expect(onSelectMeasurement).toHaveBeenLastCalledWith(42)
-      expect(first).toHaveAttribute('aria-pressed', 'true')
-      expect(second).toHaveAttribute('aria-pressed', 'false')
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    expect(second).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(second)
+    expect(onSelectMeasurement).toHaveBeenLastCalledWith(42)
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    expect(second).toHaveAttribute('aria-pressed', 'false')
 
-      rerender(<AnalysisWorkspace {...props} selectedMeasurementId={42} />)
-      expect(first).toHaveAttribute('aria-pressed', 'false')
-      expect(second).toHaveAttribute('aria-pressed', 'true')
-      expect(second.querySelector('.stroke-foreground')).toHaveClass('opacity-100')
-      expect(second.lastElementChild?.outerHTML).toBe(appearance)
-      expect(screen.getByRole('tab', { selected: true })).toHaveTextContent(tab === 'explore' ? 'Explore' : 'Mining')
+    rerender(<AnalysisWorkspace {...props} selectedMeasurementId={42} />)
+    expect(first).toHaveAttribute('aria-pressed', 'false')
+    expect(second).toHaveAttribute('aria-pressed', 'true')
+    expect(second.querySelector('.stroke-foreground')).toHaveClass('opacity-100')
+    expect(second.lastElementChild?.outerHTML).toBe(appearance)
 
-      fireEvent.click(second)
-      fireEvent.click(chart)
-      expect(onSelectMeasurement.mock.calls).toEqual([[42], [42]])
-      expect(second).toHaveAttribute('aria-pressed', 'true')
-    },
-  )
+    fireEvent.click(second)
+    fireEvent.click(chart)
+    expect(onSelectMeasurement.mock.calls).toEqual([[42], [42]])
+    expect(second).toHaveAttribute('aria-pressed', 'true')
+  })
 
-  it.each(['explore', 'mining'] as const)(
-    'supports keyboard selection in %s without resetting settings',
-    async (tab) => {
-      const user = userEvent.setup()
-      const onSelectMeasurement = vi.fn()
-      render(<AnalysisWorkspace experimentId={7} tab={tab} onSelectMeasurement={onSelectMeasurement} />)
-      const setting = screen.getByRole(tab === 'explore' ? 'textbox' : 'slider', {
-        name: tab === 'explore' ? 'Input variable 검색' : '이상치 비율',
-      })
-      fireEvent.change(setting, { target: { value: tab === 'explore' ? 'Length' : '8' } })
-      const first = screen.getByRole('button', { name: /^Measurement #41/ })
-      const second = screen.getByRole('button', { name: /^Measurement #42/ })
-      first.focus()
-      await user.keyboard('{Enter}')
-      await user.tab()
-      expect(second).toHaveFocus()
-      await user.keyboard(' ')
+  it('supports keyboard selection in Explore without resetting settings', async () => {
+    const user = userEvent.setup()
+    const onSelectMeasurement = vi.fn()
+    render(<AnalysisWorkspace experimentId={7} onSelectMeasurement={onSelectMeasurement} />)
+    const setting = screen.getByRole('textbox', {
+      name: 'Input variable 검색',
+    })
+    fireEvent.change(setting, { target: { value: 'Length' } })
+    const first = screen.getByRole('button', { name: /^Measurement #41/ })
+    const second = screen.getByRole('button', { name: /^Measurement #42/ })
+    first.focus()
+    await user.keyboard('{Enter}')
+    await user.tab()
+    expect(second).toHaveFocus()
+    await user.keyboard(' ')
 
-      expect(onSelectMeasurement.mock.calls).toEqual([[41], [42]])
-      expect(setting).toHaveValue(tab === 'explore' ? 'Length' : '8')
-    },
-  )
+    expect(onSelectMeasurement.mock.calls).toEqual([[41], [42]])
+    expect(setting).toHaveValue('Length')
+  })
 
   it('keeps a chart without a selection callback non-interactive', () => {
     render(<AnalysisWorkspace experimentId={7} />)

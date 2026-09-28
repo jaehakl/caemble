@@ -2,6 +2,10 @@
 export const documentationAnchorRedirects: Readonly<
   Record<string, Readonly<Record<string, { item: string; anchor: string }>>>
 > = {
+  'workbench-analysis': {
+    mining: { item: 'workbench-analysis', anchor: 'explore' },
+    'data와-csv': { item: 'workbench-analysis', anchor: 'explore' },
+  },
   'workbench-quickstart': {
     '시작-페이지와-showcase': { item: 'workbench-showcase', anchor: '시작-페이지와-showcase' },
     'experiment-레이아웃과-불러오기': { item: 'workbench-showcase', anchor: 'experiment-레이아웃과-불러오기' },

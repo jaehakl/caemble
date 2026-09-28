@@ -31,7 +31,7 @@ import type {
   PredictionWorkspaceCommand,
 } from '@/features/prediction/PredictionWorkspace'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { AnalysisTabId, WorkbenchSectionId } from '@/features/cae-workbench/types'
+import type { WorkbenchSectionId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { createRuntimeConsoleStore, RuntimeConsoleSummary, RuntimeConsoleView } from '@/features/runtime-console'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
@@ -226,10 +226,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     [calculationDirty, currentSection, guardReplacement, setLayout],
   )
 
-  const setAnalysisTab = useCallback(
-    (analysisTab: AnalysisTabId) => setLayout((current) => ({ ...current, analysisTab })),
-    [setLayout],
-  )
   const requestAnalysisCommand = useCallback((type: AnalysisRibbonCommand) => {
     setAnalysisCommand({ id: ++commandSequence.current, type })
   }, [])
@@ -245,7 +241,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }, [location.pathname, location.search, navigate])
 
   const chrome = useCaePageChrome({
-    analysisTab: page.analysisTab,
     authenticated: auth.isAuthenticated,
     dataReadable: experimentDataReadable,
     calculationDirty,
@@ -260,7 +255,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     requestRunSelected: page.requestRunSelected,
     runSafely: page.runSafely,
     setActiveSection,
-    setAnalysisTab,
     setDialog: page.setDialog,
     workbench,
     predictionState,
@@ -331,11 +325,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     ) : page.activeSection === 'analysis' ? (
       <div
         key="analysis-settings"
-        className={
-          page.analysisTab === 'explore'
-            ? 'h-full min-h-0 overflow-hidden bg-background'
-            : 'h-full min-h-0 overflow-auto bg-background'
-        }
+        className="h-full min-h-0 overflow-hidden bg-background"
         ref={setAnalysisSettingsContainer}
       />
     ) : null
@@ -374,7 +364,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           experimentId={workbench.experimentId}
           settingsContainer={analysisSettingsContainer}
           selectedMeasurementId={workbench.selection.measurement?.id ?? null}
-          tab={page.analysisTab}
           onRequestLogin={requestAccount}
           onSelectMeasurement={(measurementId) =>
             page.runSafely(async () => {
@@ -383,7 +372,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               if (row && preflight.result) preflight.clear()
             })
           }
-          onTabChange={setAnalysisTab}
         />
       </Suspense>
     ) : null

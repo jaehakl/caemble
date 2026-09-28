@@ -13,16 +13,6 @@ export type AnalysisColumnDescriptor = Readonly<{
   unit?: string
   quantityKind?: string
   statistic?: string
-  min?: number
-  max?: number
-  mean?: number
-  std?: number
-  p05?: number
-  p25?: number
-  p50?: number
-  p75?: number
-  p95?: number
-  histogram?: readonly Readonly<{ min: number; max: number; count: number }>[]
 }>
 
 export type AnalysisProfile = Readonly<{
@@ -34,25 +24,6 @@ export type AnalysisProfile = Readonly<{
   calculationCount: number
   columns: readonly AnalysisColumnDescriptor[]
   warnings: readonly string[]
-}>
-
-export type AnalysisMiningResult = Readonly<{
-  fingerprint: string
-  featureKeys: readonly string[]
-  explainedVariance: readonly number[]
-  loadings: readonly Readonly<{ key: string; pc1: number; pc2: number }>[]
-  points: readonly Readonly<{
-    measurementId: number
-    inputFingerprint: string
-    pc1: number
-    pc2: number
-    cluster: number
-    anomalyScore: number
-    outlier: boolean
-  }>[]
-  clusterCount: number
-  silhouette: number
-  outlierFraction: number
 }>
 
 export type AnalysisRelationshipPair = Readonly<{
@@ -82,20 +53,8 @@ export type AnalysisRelationshipPlot = Readonly<{
   }>[]
 }>
 
-export type AnalysisTablePage = Readonly<{
-  fingerprint: string
-  offset: number
-  total: number
-  columns: readonly string[]
-  rows: readonly Readonly<{
-    measurementId: number
-    inputFingerprint: string
-    values: readonly (number | null)[]
-  }>[]
-}>
-
 export type AnalysisProgressStage =
-  'Measurement 조회' | 'Calculation Data 조회' | '데이터셋 구성' | '통계 계산' | '상관 분석' | 'PCA·군집'
+  'Measurement 조회' | 'Calculation Data 조회' | '데이터셋 구성' | '통계 계산' | '상관 분석'
 
 export type AnalysisWorkerRequest =
   | Readonly<{
@@ -117,25 +76,6 @@ export type AnalysisWorkerRequest =
       inputKey: string
       targetKey: string
     }>
-  | Readonly<{
-      type: 'mine'
-      requestId: string
-      featureKeys: readonly string[]
-      outlierFraction: number
-    }>
-  | Readonly<{
-      type: 'table-page'
-      requestId: string
-      columnKeys: readonly string[]
-      offset: number
-      limit: number
-    }>
-  | Readonly<{
-      type: 'export-csv'
-      requestId: string
-      columnKeys: readonly string[]
-    }>
-
 export type AnalysisWorkerResponse =
   | Readonly<{
       type: 'progress'
@@ -163,22 +103,6 @@ export type AnalysisWorkerResponse =
       type: 'relationship-plot'
       requestId: string
       result: AnalysisRelationshipPlot
-    }>
-  | Readonly<{
-      type: 'mining'
-      requestId: string
-      result: AnalysisMiningResult
-    }>
-  | Readonly<{
-      type: 'table-page'
-      requestId: string
-      page: AnalysisTablePage
-    }>
-  | Readonly<{
-      type: 'csv'
-      requestId: string
-      blob: Blob
-      filename: string
     }>
   | Readonly<{
       type: 'error'
