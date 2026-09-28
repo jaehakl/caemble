@@ -93,9 +93,6 @@ export function PredictionVarsPane({
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <p className="mb-3 text-[11px] text-muted-foreground">
-          막대를 누른 채 위아래로 이동하면 여러 값을 조절할 수 있습니다.
-        </p>
         {schema && vars ? (
           <VarsEditor
             schema={schema}

@@ -5,12 +5,10 @@ import type { CaeWorkbenchState } from './state/useCaeWorkbenchState'
 
 export function ExperimentVarsPanel({
   workbench,
-  previewing,
   busy = false,
   onValueChange,
 }: {
   workbench: CaeWorkbenchState
-  previewing: boolean
   busy?: boolean
   onValueChange?: (vars: Parameters<CaeWorkbenchState['setCandidateVariables']>[0]) => void
 }) {
@@ -46,20 +44,15 @@ export function ExperimentVarsPanel({
   }, [schema, value])
   const message = busy
     ? '실행 중에는 vars를 편집할 수 없습니다.'
-    : previewing
-      ? '미리보기 중에는 vars를 편집할 수 없습니다.'
-      : selectionRestoring
-        ? 'Measurement를 불러오는 중입니다.'
-        : !sourceValidated
-          ? 'Experiment 소스 검증이 필요합니다.'
-          : !ready || document.resultSessionKey !== workbench.workspaceSession
-            ? 'vars를 준비하는 중입니다.'
-            : null
+    : selectionRestoring
+      ? 'Measurement를 불러오는 중입니다.'
+      : !sourceValidated
+        ? 'Experiment 소스 검증이 필요합니다.'
+        : !ready || document.resultSessionKey !== workbench.workspaceSession
+          ? 'vars를 준비하는 중입니다.'
+          : null
   return (
     <div className="space-y-3 p-3">
-      <p className="text-[11px] text-muted-foreground">
-        막대를 누른 채 위아래로 이동하면 여러 값을 조절할 수 있습니다.
-      </p>
       {message ? (
         <p role="status" className="text-xs text-muted-foreground">
           {message}

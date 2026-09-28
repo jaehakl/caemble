@@ -20,7 +20,7 @@ it('preserves the expanded tensor across Candidate revisions and collapses it on
     ...workbench.experimentDocument,
     varsSchema: { vector: { shape: [2], min: 0, max: 10 } },
   }
-  const { rerender } = render(<ExperimentVarsPanel workbench={workbench} previewing={false} />)
+  const { rerender } = render(<ExperimentVarsPanel workbench={workbench} />)
   fireEvent.click(screen.getByRole('button', { name: 'vector tensor 편집' }))
   const editor = screen.getByRole('region', { name: 'vector tensor 상세 편집' })
   const evaluating = {
@@ -29,15 +29,10 @@ it('preserves the expanded tensor across Candidate revisions and collapses it on
     experimentSourceValidated: false,
     experimentDocument: { ...workbench.experimentDocument, revision: 5, variables: null },
   }
-  rerender(<ExperimentVarsPanel workbench={evaluating} previewing={false} />)
+  rerender(<ExperimentVarsPanel workbench={evaluating} />)
   expect(screen.getByRole('region', { name: 'vector tensor 상세 편집' })).toBe(editor)
   expect(screen.getByLabelText('vector 평균')).toHaveTextContent('평균 4')
-  rerender(
-    <ExperimentVarsPanel
-      workbench={{ ...evaluating, experiment: {} as CaeWorkbenchState['experiment'] }}
-      previewing={false}
-    />,
-  )
+  rerender(<ExperimentVarsPanel workbench={{ ...evaluating, experiment: {} as CaeWorkbenchState['experiment'] }} />)
   expect(screen.queryByRole('region', { name: 'vector tensor 상세 편집' })).not.toBeInTheDocument()
 })
 
@@ -59,7 +54,7 @@ function workbenchState() {
 
 it('edits the current Candidate through the shared user-vars pathway', () => {
   const workbench = workbenchState()
-  render(<ExperimentVarsPanel workbench={workbench} previewing={false} />)
+  render(<ExperimentVarsPanel workbench={workbench} />)
   const bar = screen.getByRole('slider', { name: 'width' })
   expect(bar).toHaveAttribute('aria-valuenow', '3')
   fireEvent.keyDown(bar, { key: 'End' })
@@ -68,32 +63,27 @@ it('edits the current Candidate through the shared user-vars pathway', () => {
 
 it('keeps vars editable during reevaluation but invalidates a changed source', () => {
   const workbench = workbenchState()
-  const { rerender } = render(<ExperimentVarsPanel workbench={workbench} previewing={false} />)
+  const { rerender } = render(<ExperimentVarsPanel workbench={workbench} />)
   const evaluating = {
     ...workbench,
     candidateVars: { width: 8 },
     experimentSourceValidated: false,
     experimentDocument: { ...workbench.experimentDocument, revision: 5, variables: null },
   }
-  rerender(<ExperimentVarsPanel workbench={evaluating} previewing={false} />)
+  rerender(<ExperimentVarsPanel workbench={evaluating} />)
   expect(screen.getByRole('slider', { name: 'width' })).toHaveAttribute('aria-disabled', 'false')
   expect(screen.getByRole('slider', { name: 'width' })).toHaveAttribute('aria-valuenow', '8')
-  rerender(
-    <ExperimentVarsPanel
-      workbench={{ ...evaluating, experiment: {} as CaeWorkbenchState['experiment'] }}
-      previewing={false}
-    />,
-  )
+  rerender(<ExperimentVarsPanel workbench={{ ...evaluating, experiment: {} as CaeWorkbenchState['experiment'] }} />)
   expect(screen.getByRole('slider', { name: 'width' })).toHaveAttribute('aria-disabled', 'true')
 })
 
-it.each(['preview', 'restore', 'source', 'session', 'invalid'] as const)('blocks edits for %s', (state) => {
+it.each(['busy', 'restore', 'source', 'session', 'invalid'] as const)('blocks edits for %s', (state) => {
   const workbench = workbenchState()
   if (state === 'restore') workbench.selectionRestoring = true
   if (state === 'source') workbench.experimentSourceValidated = false
   if (state === 'session') workbench.workspaceSession = 2
   if (state === 'invalid') workbench.candidateVars = { width: [3] }
-  render(<ExperimentVarsPanel workbench={workbench} previewing={state === 'preview'} />)
+  render(<ExperimentVarsPanel workbench={workbench} busy={state === 'busy'} />)
   expect(screen.getByRole('status')).toBeVisible()
   const bar = screen.queryByRole('slider', { name: 'width' })
   if (bar) {

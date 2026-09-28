@@ -486,7 +486,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 vars={
                   <ExperimentVarsPanel
                     workbench={workbench}
-                    previewing={Boolean(preview)}
                     busy={simulationBusy}
                     onValueChange={(vars) => {
                       workbench.selection.clearMeasurement()

@@ -356,7 +356,8 @@ describe('Workbench section navigation', () => {
     expect(screen.getByRole('button', { name: '일괄생성' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'measurement' })).not.toBeInTheDocument()
   })
-  it('commits Vars directly to the Workbench and clears selection and preview', () => {
+  it.each([false, true])('commits Vars and clears selection and preview (preview=%s)', (preview) => {
+    mocks.preview = preview
     render(
       <QueryClientProvider client={new QueryClient()}>
         <MemoryRouter>
@@ -368,6 +369,8 @@ describe('Workbench section navigation', () => {
     expect(mocks.clearMeasurement).toHaveBeenCalledOnce()
     expect(mocks.setCandidateVariables).toHaveBeenCalledWith({ x: 0.5 }, 'user-vars')
     expect(mocks.clearPreview).toHaveBeenCalledOnce()
+    expect(mocks.varsProps.busy).toBeFalsy()
+    expect(mocks.run).not.toHaveBeenCalled()
   })
   it('preserves temporary execution, regeneration and cancellation controls', () => {
     mocks.authenticated = true
