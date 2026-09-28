@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { AnalysisWorkspace } from './AnalysisPage'
 import type { AnalysisMiningResult, AnalysisProfile, AnalysisRelationshipPlot } from './analysis-types'
 
+const requestRelationshipPlot = vi.hoisted(() => vi.fn())
+
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }))
@@ -81,10 +83,31 @@ vi.mock('./useAnalysisController', () => ({
     profile,
     relationshipOffset: 0,
     relationshipPlot,
+    requestRelationshipPlot,
   }),
 }))
 
 describe('Analysis scatter selection', () => {
+  it('searches the two Explore lists independently and selects a relationship from the settings panel', () => {
+    const settingsContainer = document.createElement('div')
+    document.body.append(settingsContainer)
+    try {
+      render(<AnalysisWorkspace experimentId={7} tab="explore" settingsContainer={settingsContainer} embedded />)
+      const input = within(settingsContainer).getByRole('listbox', { name: 'Input variable' })
+      const target = within(settingsContainer).getByRole('listbox', { name: 'Calculation Data' })
+      fireEvent.change(screen.getByRole('textbox', { name: 'Input variable 검색' }), { target: { value: 'missing' } })
+      expect(within(input).queryByRole('option')).not.toBeInTheDocument()
+      expect(within(target).getByRole('option', { name: /Power/ })).toBeInTheDocument()
+      fireEvent.change(screen.getByRole('textbox', { name: 'Input variable 검색' }), { target: { value: 'Length' } })
+      fireEvent.click(within(input).getByRole('option', { name: /Length/ }))
+      expect(requestRelationshipPlot).toHaveBeenLastCalledWith('input', 'target')
+      fireEvent.click(within(target).getByRole('option', { name: /Power/ }))
+      expect(requestRelationshipPlot).toHaveBeenLastCalledWith('input', 'target')
+    } finally {
+      settingsContainer.remove()
+    }
+  })
+
   it.each(['explore', 'mining'] as const)(
     'selects a Measurement in %s and reflects only committed selection',
     (tab) => {

@@ -318,7 +318,7 @@ export function createDbTables(client: CaembleClient) {
           resolveObjects: true,
           validate: parseCalculationListResponse,
         }),
-      upsertRow: async (payload: readonly CalculationUpsertInput[]) => {
+      upsertRow: async (payload: readonly CalculationUpsertInput[], context?: RequestContext) => {
         const stored = []
         for (const item of payload) {
           stored.push({
@@ -327,11 +327,13 @@ export function createDbTables(client: CaembleClient) {
               client,
               { purpose: 'layout', experiment_id: item.experiment_id, request_id: crypto.randomUUID() },
               item.output_layout,
+              context?.signal,
             ),
           })
         }
         return request<CalculationUpsertResponse[]>('post', '/calculation/upsert', stored, {
           ...csrfOmitted,
+          signal: context?.signal,
           validate: parseCalculationUpsertResponse,
         })
       },

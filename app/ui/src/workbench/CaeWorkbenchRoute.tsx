@@ -331,7 +331,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     ) : page.activeSection === 'analysis' ? (
       <div
         key="analysis-settings"
-        className="h-full min-h-0 overflow-auto bg-background"
+        className={
+          page.analysisTab === 'explore'
+            ? 'h-full min-h-0 overflow-hidden bg-background'
+            : 'h-full min-h-0 overflow-auto bg-background'
+        }
         ref={setAnalysisSettingsContainer}
       />
     ) : null
@@ -658,6 +662,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 right={rightPane}
                 rightLabel={`${page.activeSection} Detail`}
                 viewer={viewerPane}
+                showViewer={page.activeSection !== 'analysis'}
               />
             )}
           </div>

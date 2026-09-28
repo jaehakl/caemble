@@ -8,6 +8,7 @@ export type WorkbenchShellProps = Readonly<{
   ribbon: ReactNode
   left: ReactNode
   viewer: ReactNode
+  showViewer?: boolean
   right: ReactNode
   leftWidthRatio?: number
   rightWidthRatio?: number
@@ -24,6 +25,7 @@ export function WorkbenchShell({
   ribbon,
   left,
   viewer,
+  showViewer = true,
   right,
   leftWidthRatio = defaultWorkbenchLayoutState.leftWidthRatio,
   rightWidthRatio = defaultWorkbenchLayoutState.rightWidthRatio,
@@ -37,7 +39,7 @@ export function WorkbenchShell({
   return (
     <div
       className={cn('flex h-full min-h-0 flex-col overflow-hidden bg-background', className)}
-      style={{ minWidth: workbenchLayoutLimits.appMinWidthPx }}
+      style={{ minWidth: showViewer ? workbenchLayoutLimits.appMinWidthPx : 0 }}
     >
       <header className="shrink-0">
         {menubar}
@@ -53,6 +55,7 @@ export function WorkbenchShell({
         rightLabel={rightLabel}
         rightWidthRatio={rightWidthRatio}
         viewer={viewer}
+        showViewer={showViewer}
         viewerLabel={viewerLabel}
       />
     </div>

@@ -250,6 +250,7 @@ describe('Workbench draft storage', () => {
             analysisTab: 'retired',
             bottomMode: 'retired',
             leftWidthRatio: 5,
+            analysisLeftWidthRatio: 5,
           },
         },
       }),
@@ -260,6 +261,7 @@ describe('Workbench draft storage', () => {
     expect(restored?.layout.analysisTab).toBe(defaultWorkbenchLayoutState.analysisTab)
     expect(restored?.layout.bottomMode).toBe(defaultWorkbenchLayoutState.bottomMode)
     expect(restored?.layout.leftWidthRatio).toBe(defaultWorkbenchLayoutState.leftWidthRatio)
+    expect(restored?.layout.analysisLeftWidthRatio).toBe(defaultWorkbenchLayoutState.analysisLeftWidthRatio)
   })
 
   it('rejects malformed external storage data', async () => {

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
   refresh: vi.fn(),
   previewFailed: false,
+  previewLoading: false,
   fetching: false,
   failed: false,
   rows: [
@@ -33,6 +34,7 @@ const mocks = vi.hoisted(() => ({
     {
       id: 4,
       revision: 1,
+      source_revision: 1,
       experiment_id: 2,
       name: 'Second',
       source_code: 'export default function calculate(record) { return 2 }',
@@ -94,9 +96,11 @@ vi.mock('@tanstack/react-query', async (original) => ({
 }))
 vi.mock('./useCalculationPreview', () => ({
   useCalculationPreview: () => ({
-    preview: mocks.previewFailed
-      ? { status: 'error', code: 'runtime', message: 'preview failed' }
-      : { status: 'success', output: { dtype: 'float64', shape: [], axes: [], data: 1 } },
+    preview: mocks.previewLoading
+      ? { status: 'loading', message: 'preview loading' }
+      : mocks.previewFailed
+        ? { status: 'error', code: 'runtime', message: 'preview failed' }
+        : { status: 'success', output: { dtype: 'float64', shape: [], axes: [], data: 1 } },
     logs: [],
     invalidatePreview: mocks.invalidate,
     refreshPreview: mocks.refresh,
@@ -157,7 +161,7 @@ function Harness({
     onOutputChartRatioChange: vi.fn(),
     onRequestLogin: vi.fn(),
     onSaveStateChange: vi.fn(),
-    onUsageChanged: vi.fn(),
+    onUsageChanged: vi.fn().mockResolvedValue(undefined),
     publicDemoMutable: false,
     onSelectMeasurement: mocks.measurement,
     recordedData: null,
@@ -177,6 +181,7 @@ function Harness({
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.previewFailed = false
+  mocks.previewLoading = false
   mocks.fetching = false
   mocks.failed = false
   mocks.measurementRows = []
@@ -522,3 +527,65 @@ it('does not write unchanged information and blocks saving changed code without 
   fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
   expect(within(screen.getByRole('dialog')).getByRole('button', { name: '저장' })).toBeDisabled()
 })
+
+it.each([false, true])('saves the preflight contract for unchanged code, metadata changed: %s', async (rename) => {
+  const update = vi.spyOn(calculationLibraryApi, 'updateMetadata')
+  const upsert = vi
+    .spyOn(dbTables.Calculation, 'upsertRow')
+    .mockResolvedValue([{ id: 4, revision: 2, source_revision: rename ? 2 : 1 }] as never)
+  render(<Harness initialSelection={4} />)
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Calculation code' })).toHaveValue(mocks.rows[1].source_code),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+  const dialog = screen.getByRole('dialog')
+  if (rename) fireEvent.change(within(dialog).getByLabelText('이름'), { target: { value: 'Renamed' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: '저장' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(update).not.toHaveBeenCalled()
+  expect(upsert).toHaveBeenCalledExactlyOnceWith([
+    expect.objectContaining({
+      id: 4,
+      base_revision: 1,
+      base_source_revision: 1,
+      name: rename ? 'Renamed' : 'Second',
+      source_code: mocks.rows[1].source_code,
+      contract_status: 'ready',
+      preflight_measurement_id: 5,
+      output_layout: { dtype: 'float64', shape: [], axes: [] },
+      experiment_record_ids: [],
+    }),
+  ])
+})
+
+it.each(['failed', 'loading', 'no measurement'] as const)(
+  'blocks unchanged preflight-required code and metadata saves when preview is %s',
+  async (state) => {
+    mocks.previewFailed = state === 'failed'
+    mocks.previewLoading = state === 'loading'
+    const update = vi.spyOn(calculationLibraryApi, 'updateMetadata')
+    const upsert = vi.spyOn(dbTables.Calculation, 'upsertRow')
+    const saveState = vi.fn()
+    render(
+      <Harness
+        initialSelection={4}
+        overrides={{ onSaveStateChange: saveState, ...(state === 'no measurement' ? { measurementId: null } : {}) }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Calculation 정보' }))
+    const dialog = screen.getByRole('dialog')
+    expect(
+      within(dialog).getByText('현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.'),
+    ).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '저장' })).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('이름'), { target: { value: 'Renamed' } })
+    expect(within(dialog).getByRole('button', { name: '저장' })).toBeDisabled()
+    fireEvent.submit(within(dialog).getByRole('button', { name: '저장' }).closest('form')!)
+    expect(saveState).toHaveBeenLastCalledWith({
+      disabled: true,
+      disabledReason: '현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.',
+    })
+    expect(update).not.toHaveBeenCalled()
+    expect(upsert).not.toHaveBeenCalled()
+  },
+)

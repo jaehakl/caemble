@@ -82,6 +82,7 @@ const storedDraftBaseSchema = z
           activeSection: z.enum(workbenchSectionIds).catch(defaultWorkbenchLayoutState.activeSection),
           activeExperimentFile: z.string().nullable(),
           leftWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.leftWidthRatio),
+          analysisLeftWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.analysisLeftWidthRatio ?? 0.4),
           rightWidthRatio: ratioSchema.catch(defaultWorkbenchLayoutState.rightWidthRatio),
           calculationColumnRatios: z.preprocess(
             (value) => {

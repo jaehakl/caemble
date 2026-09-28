@@ -249,13 +249,13 @@ export function CalculationWorkbench({
     selectedRow.source_code !== draft.sourceCode
   const saveDisabledReason =
     baseSaveDisabledReason ??
-    (selectedRow?.source_code === draft.sourceCode
+    (!requiresPreflight
       ? undefined
       : experimentRecordsQuery.isPending
         ? 'ExperimentRecord 계약을 불러오는 중입니다.'
         : dependencyState.error
           ? dependencyState.error.message
-          : requiresPreflight && preview.status !== 'success' && selectedRow?.source_code !== draft.sourceCode
+          : preview.status !== 'success' || measurementId === null
             ? '현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.'
             : undefined)
   useEffect(() => {
@@ -434,6 +434,7 @@ export function CalculationWorkbench({
       if (baseSaveDisabledReason) return false
       const description = (values?.description ?? draft.description).trim()
       if (
+        !requiresPreflight &&
         selectedRow &&
         draft.sourceCode === selectedRow.source_code &&
         name === selectedRow.name &&
@@ -444,6 +445,7 @@ export function CalculationWorkbench({
       setSaving(true)
       try {
         if (
+          !requiresPreflight &&
           selectedRow &&
           draft.sourceCode === selectedRow.source_code &&
           (name !== selectedRow.name || description !== (selectedRow.description ?? ''))

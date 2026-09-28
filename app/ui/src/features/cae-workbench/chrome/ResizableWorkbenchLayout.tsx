@@ -22,6 +22,7 @@ const clamp = (value: number, minimum: number, maximum: number) => Math.min(Math
 export function ResizableWorkbenchLayout({
   left,
   viewer,
+  showViewer = true,
   right,
   leftWidthRatio = defaultWorkbenchLayoutState.leftWidthRatio,
   rightWidthRatio = defaultWorkbenchLayoutState.rightWidthRatio,
@@ -34,6 +35,7 @@ export function ResizableWorkbenchLayout({
 }: {
   left: ReactNode
   viewer: ReactNode
+  showViewer?: boolean
   right: ReactNode
   leftWidthRatio?: number
   rightWidthRatio?: number
@@ -64,7 +66,9 @@ export function ResizableWorkbenchLayout({
     return () => observer.disconnect()
   }, [])
 
-  const sideSpace = workbenchLayoutLimits.resizeHandlePx * 2 + workbenchLayoutLimits.viewerMinWidthPx
+  const sideSpace = showViewer
+    ? workbenchLayoutLimits.resizeHandlePx * 2 + workbenchLayoutLimits.viewerMinWidthPx
+    : workbenchLayoutLimits.resizeHandlePx
   const leftMaximum = Math.max(
     workbenchLayoutLimits.leftMinWidthPx,
     containerWidth - sideSpace - workbenchLayoutLimits.rightMinWidthPx,
@@ -137,7 +141,9 @@ export function ResizableWorkbenchLayout({
     if (next !== null) event.preventDefault()
   }
 
-  const columns = `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
+  const columns = showViewer
+    ? `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
+    : `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(0, 1fr)`
   return (
     <div
       className={cn('grid h-full min-h-0 flex-1 overflow-hidden bg-background', className)}
@@ -146,7 +152,7 @@ export function ResizableWorkbenchLayout({
         {
           gridTemplateColumns: columns,
           minHeight: workbenchLayoutLimits.viewerMinHeightPx,
-          minWidth: workbenchLayoutLimits.appMinWidthPx,
+          minWidth: showViewer ? workbenchLayoutLimits.appMinWidthPx : 0,
         } satisfies CSSProperties
       }
     >
@@ -167,22 +173,26 @@ export function ResizableWorkbenchLayout({
         orientation="vertical"
         value={effectiveLeftWidth}
       />
-      <section aria-label={viewerLabel} className="min-h-0 min-w-0 overflow-hidden">
-        {viewer}
-      </section>
-      <ResizeHandle
-        label="오른쪽 Detail 너비 조절"
-        maximum={rightMaximum}
-        minimum={workbenchLayoutLimits.rightMinWidthPx}
-        onKeyDown={(event) => resizeWithKeyboard(event, 'right')}
-        onPointerDown={(event) => {
-          if (event.button !== 0) return
-          event.preventDefault()
-          setDrag({ pane: 'right', startClient: event.clientX, startValuePx: effectiveRightWidth })
-        }}
-        orientation="vertical"
-        value={effectiveRightWidth}
-      />
+      {showViewer ? (
+        <>
+          <section aria-label={viewerLabel} className="min-h-0 min-w-0 overflow-hidden">
+            {viewer}
+          </section>
+          <ResizeHandle
+            label="오른쪽 Detail 너비 조절"
+            maximum={rightMaximum}
+            minimum={workbenchLayoutLimits.rightMinWidthPx}
+            onKeyDown={(event) => resizeWithKeyboard(event, 'right')}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              setDrag({ pane: 'right', startClient: event.clientX, startValuePx: effectiveRightWidth })
+            }}
+            orientation="vertical"
+            value={effectiveRightWidth}
+          />
+        </>
+      ) : null}
       <section aria-label={rightLabel} className="min-h-0 min-w-0 overflow-hidden">
         {right}
       </section>

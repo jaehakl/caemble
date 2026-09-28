@@ -175,19 +175,21 @@ vi.mock('./WorkbenchShellContainer', () => ({
     ribbon,
     left,
     viewer,
+    showViewer = true,
     right,
   }: {
     menubar: ReactNode
     ribbon: ReactNode
     left: ReactNode
     viewer: ReactNode
+    showViewer?: boolean
     right: ReactNode
   }) => (
     <>
       {menubar}
       {ribbon}
       <aside aria-label="Left pane">{left}</aside>
-      <main>{viewer}</main>
+      {showViewer ? <main>{viewer}</main> : null}
       <aside aria-label="Right pane">{right}</aside>
     </>
   ),
@@ -388,7 +390,7 @@ describe('Workbench section navigation', () => {
     fireEvent.change(screen.getByLabelText('Candidate variable'), { target: { value: '11' } })
     fireEvent.click(screen.getByRole('button', { name: 'analysis' }))
     expect(await screen.findByText('Analysis settings')).toBeInTheDocument()
-    expect(mocks.viewerProps.recordedData).toEqual({ savedMeasurement: 'sentinel' })
+    expect(screen.queryByTestId('workbench-viewer')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Candidate variable')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
     await waitFor(() => expect(screen.getByLabelText('Candidate variable')).toHaveValue('11'))
@@ -448,14 +450,16 @@ describe('Workbench Viewer result updates', () => {
       fireEvent.click(point)
       await waitFor(() => expect(mocks.loadMeasurement).toHaveBeenCalledWith(id, 7))
       expect(screen.getByRole('button', { name: 'Measurement #41' })).toHaveAttribute('aria-pressed', 'true')
-      expect(mocks.viewerProps.recordedData).toEqual({ preview: 'sentinel' })
+      expect(screen.queryByTestId('workbench-viewer')).not.toBeInTheDocument()
       expect(mocks.clearPreview).not.toHaveBeenCalled()
 
       await act(async () => finish({ id, recorded_at: null }))
-      await waitFor(() => expect(mocks.viewerProps.recordedData).toEqual({ savedMeasurement: 'sentinel', id }))
       expect(mocks.clearPreview).toHaveBeenCalledTimes(1)
       expect(point).toHaveAttribute('aria-pressed', 'true')
       expect(screen.getByText('Analysis settings')).toBeInTheDocument()
+      expect(screen.queryByTestId('workbench-viewer')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'experiment' }))
+      await waitFor(() => expect(mocks.viewerProps.recordedData).toEqual({ savedMeasurement: 'sentinel', id }))
       expect(mocks.viewerProps.autoSelectResult).toBe(true)
     },
   )
@@ -479,9 +483,11 @@ describe('Workbench Viewer result updates', () => {
     if (outcome === 'failed') await waitFor(() => expect(mocks.reportError).toHaveBeenCalledWith(error))
     else expect(mocks.reportError).not.toHaveBeenCalled()
     expect(mocks.clearPreview).not.toHaveBeenCalled()
-    expect(mocks.viewerProps.recordedData).toEqual({ preview: 'sentinel' })
+    expect(screen.queryByTestId('workbench-viewer')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Measurement #41' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Measurement #42' })).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'experiment' }))
+    expect(mocks.viewerProps.recordedData).toEqual({ preview: 'sentinel' })
   })
 
   it('updates selected Measurements through the existing Viewer instance', () => {

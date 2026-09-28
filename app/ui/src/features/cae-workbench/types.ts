@@ -48,6 +48,7 @@ export type WorkbenchLayoutState = Readonly<{
   activeSection: WorkbenchSectionId
   activeExperimentFile: string | null
   leftWidthRatio: number
+  analysisLeftWidthRatio?: number
   rightWidthRatio: number
   calculationColumnRatios?: readonly [number, number]
   calculationOutputChartRatio?: number
@@ -64,6 +65,7 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   activeSection: 'experiment',
   activeExperimentFile: 'experiment.tsx',
   leftWidthRatio: 0.234,
+  analysisLeftWidthRatio: 0.4,
   rightWidthRatio: 0.5,
   calculationColumnRatios: Object.freeze([4 / 7, 3 / 7] as const),
   calculationOutputChartRatio: 0.65,

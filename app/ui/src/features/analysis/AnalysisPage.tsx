@@ -40,25 +40,27 @@ function AnalysisSettingsSlot({
   children,
   container,
   description,
+  fillHeight = false,
   id,
   title,
 }: {
   children: ReactNode
   container?: Element | null
   description?: string
+  fillHeight?: boolean
   id: string
   title?: string
 }) {
   if (!container) return children
   return createPortal(
-    <div className="p-3" data-analysis-settings={id}>
+    <div className={cn('p-3', fillHeight && 'h-full min-h-0')} data-analysis-settings={id}>
       {title ? (
-        <Card>
-          <CardHeader className="p-4 pb-0">
+        <Card className={cn(fillHeight && 'flex h-full min-h-0 flex-col')}>
+          <CardHeader className="shrink-0 p-4 pb-0">
             <CardTitle className="text-base">{title}</CardTitle>
             {description ? <CardDescription className="text-xs leading-5">{description}</CardDescription> : null}
           </CardHeader>
-          <CardContent className="space-y-4 p-4">{children}</CardContent>
+          <CardContent className={cn('p-4', fillHeight ? 'min-h-0 flex-1' : 'space-y-4')}>{children}</CardContent>
         </Card>
       ) : (
         children
@@ -187,7 +189,7 @@ function ScatterPlot({
     <div className="overflow-x-auto">
       <svg
         aria-label={label}
-        className="h-[380px] w-full min-w-[560px]"
+        className="h-auto max-h-[380px] w-full"
         role={onSelectMeasurement ? 'group' : 'img'}
         viewBox="0 0 730 390"
       >
@@ -405,11 +407,13 @@ function ColumnPicker({
 
 function SearchableColumnSelect({
   columns,
+  fillHeight = false,
   label,
   onChange,
   value,
 }: {
   columns: readonly AnalysisColumnDescriptor[]
+  fillHeight?: boolean
   label: string
   onChange: (key: string) => void
   value: string
@@ -421,9 +425,9 @@ function SearchableColumnSelect({
       !needle || `${columnLabel(column)} ${column.key} ${column.unit ?? ''}`.toLocaleLowerCase().includes(needle),
   )
   return (
-    <div className="space-y-2">
-      <p className="text-sm font-medium">{label}</p>
-      <div className="relative">
+    <div className={cn('flex min-w-0 flex-col gap-2', fillHeight && 'h-full min-h-0')}>
+      <p className="shrink-0 text-sm font-medium">{label}</p>
+      <div className="relative shrink-0">
         <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           aria-label={`${label} 검색`}
@@ -433,7 +437,11 @@ function SearchableColumnSelect({
           value={query}
         />
       </div>
-      <div aria-label={label} className="max-h-44 space-y-1 overflow-y-auto rounded-lg border p-1.5" role="listbox">
+      <div
+        aria-label={label}
+        className={cn('space-y-1 overflow-y-auto rounded-lg border p-1.5', fillHeight ? 'min-h-0 flex-1' : 'max-h-44')}
+        role="listbox"
+      >
         {shown.map((column) => (
           <button
             aria-selected={column.key === value}
@@ -682,20 +690,25 @@ export function AnalysisWorkspace({
               container={settingsContainer}
               description="input vars 하나와 숫자 CalculationData 하나를 선택하면 산점도가 즉시 갱신됩니다."
               id="explore"
+              fillHeight
               title="Explore"
             >
-              <SearchableColumnSelect
-                columns={inputColumns}
-                label="Input variable"
-                onChange={(value) => requestRelationshipPlot(value, exploreTargetKey)}
-                value={exploreInputKey}
-              />
-              <SearchableColumnSelect
-                columns={targetColumns}
-                label="Calculation Data"
-                onChange={(value) => requestRelationshipPlot(exploreInputKey, value)}
-                value={exploreTargetKey}
-              />
+              <div className={cn('grid grid-cols-2 gap-3', settingsContainer && 'h-full min-h-0')}>
+                <SearchableColumnSelect
+                  columns={inputColumns}
+                  fillHeight={Boolean(settingsContainer)}
+                  label="Input variable"
+                  onChange={(value) => requestRelationshipPlot(value, exploreTargetKey)}
+                  value={exploreInputKey}
+                />
+                <SearchableColumnSelect
+                  columns={targetColumns}
+                  fillHeight={Boolean(settingsContainer)}
+                  label="Calculation Data"
+                  onChange={(value) => requestRelationshipPlot(exploreInputKey, value)}
+                  value={exploreTargetKey}
+                />
+              </div>
             </AnalysisSettingsSlot>
 
             <div className="grid [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))] gap-3">

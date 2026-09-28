@@ -23,12 +23,12 @@ function fixture() {
       bytes: Map<number, Uint8Array>
     }
   >()
-  const requests: { url: string; body: unknown }[] = []
+  const requests: { url: string; body: unknown; signal?: AbortSignal | null }[] = []
   let failUpload = true
   const fetcher: typeof fetch = async (url, options) => {
     const address = new URL(String(url))
     const body = options?.body && typeof options.body === 'string' ? JSON.parse(options.body) : undefined
-    requests.push({ url: String(url), body })
+    requests.push({ url: String(url), body, signal: options?.signal })
     if (address.hostname === 'bucket.test') {
       expect(new Headers(options?.headers).has('authorization')).toBe(false)
       expect(options?.credentials).toBe('omit')
@@ -164,17 +164,22 @@ describe('direct object storage', () => {
     const tables = createDbTables(client)
     const ticks = Array.from({ length: 20000 }, (_, index) => index + 0.125)
     const layout = { dtype: 'float64' as const, shape: [ticks.length], axes: [{ name: 'x', ticks }] }
-    await tables.Calculation.upsertRow([
-      {
-        experiment_id: 1,
-        name: 'large',
-        source_code: '0',
-        contract_status: 'ready',
-        experiment_record_ids: [],
-        preflight_measurement_id: 2,
-        output_layout: layout,
-      },
-    ])
+    const controller = new AbortController()
+    await tables.Calculation.upsertRow(
+      [
+        {
+          experiment_id: 1,
+          name: 'large',
+          source_code: '0',
+          contract_status: 'ready',
+          experiment_record_ids: [],
+          preflight_measurement_id: 2,
+          output_layout: layout,
+        },
+      ],
+      { signal: controller.signal },
+    )
+    expect(requests.every((request) => request.signal === controller.signal)).toBe(true)
     await tables.CalculationData.save({
       calculation_id: 9,
       measurement_id: 2,
@@ -192,6 +197,27 @@ describe('direct object storage', () => {
     })
     expect(JSON.stringify(upsert.body).length).toBeLessThan(2048)
     expect(JSON.stringify(saved.body).length).toBeLessThan(2048)
+  })
+
+  it('does not upload layouts or save a Calculation after cancellation', async () => {
+    const { client, requests } = fixture()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      createDbTables(client).Calculation.upsertRow(
+        [
+          {
+            experiment_id: 1,
+            name: 'cancelled',
+            source_code: '0',
+            contract_status: 'ready',
+            experiment_record_ids: [],
+          },
+        ],
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(requests).toHaveLength(0)
   })
 
   it('keeps exactly 64 KiB inline and separates larger values including axis arrays', async () => {
