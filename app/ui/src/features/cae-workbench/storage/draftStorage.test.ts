@@ -93,8 +93,8 @@ describe('Workbench draft storage', () => {
     expect(restored?.layout.activeSection).toBe('calculation')
     expect(restored?.candidate.vars).toEqual({ x: 0.5 })
     expect(restored?.experiment).toEqual(draft.experiment)
-    await saveWorkbenchDraft('public', { ...restored!, layout: { ...restored!.layout, activeSection: 'measurement' } })
-    expect((await loadWorkbenchDraft('public'))?.layout.activeSection).toBe('measurement')
+    await saveWorkbenchDraft('public', { ...restored!, layout: { ...restored!.layout, activeSection: 'experiment' } })
+    expect((await loadWorkbenchDraft('public'))?.layout.activeSection).toBe('experiment')
   })
   it('migrates the retired Agent dock to Console without discarding the saved draft', async () => {
     const storageKey = workbenchDraftStorageKey('public')
@@ -123,18 +123,18 @@ describe('Workbench draft storage', () => {
           ...draft,
           layout: {
             ...draft.layout,
-            rightTabs: { ...draft.layout.rightTabs, experiment: 'detail' },
+            rightTabs: { measurement: 'recorded-data', experiment: 'detail' },
           },
         },
       }),
     )
 
     const restored = await loadWorkbenchDraft('public')
-    expect(restored?.layout.rightTabs).toEqual({ measurement: 'recorded-data' })
+    expect(restored?.layout).not.toHaveProperty('rightTabs')
     expect(restored?.experiment.name).toBe('Local draft')
   })
 
-  it.each(['material', 'admin', 'lab', 'help', 'setting'])(
+  it.each(['measurement', 'material', 'admin', 'lab', 'help', 'setting'])(
     'restores the retired %s section as Experiment without discarding the draft',
     async (activeSection) => {
       const storageKey = workbenchDraftStorageKey('public')
@@ -197,6 +197,45 @@ describe('Workbench draft storage', () => {
 
     await saveWorkbenchDraft('user:first', selectedDraft)
     await expect(loadWorkbenchDraft('user:first')).resolves.toEqual(selectedDraft)
+  })
+
+  it('restores a v4 execution tab as simulation while preserving source, Vars and selections', async () => {
+    const record = {
+      id: 4,
+      user_id: 'first',
+      namespace: 'first',
+      repository_slug: 'private',
+      experiment_key: 'draft',
+      version_major: 1,
+      version_minor: 0,
+      version_patch: 0,
+      name: 'Private',
+      source_bundle: draft.experiment.baselineBundle!,
+      source_hash: 'hash',
+    }
+    const storageKey = workbenchDraftStorageKey('user:first')
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'user:first',
+        draft: {
+          ...draft,
+          experiment: { ...draft.experiment, record },
+          candidate: { vars: { x: 0.5 }, materialSnapshot: null },
+          layout: { ...draft.layout, activeSection: 'measurement', rightTabs: { measurement: 'detail' } },
+          selection: { experimentId: 4, measurementId: 12, calculationId: 9 },
+        },
+      }),
+    )
+
+    const restored = await loadWorkbenchDraft('user:first')
+    expect(restored?.layout.activeSection).toBe('experiment')
+    expect(restored?.layout).not.toHaveProperty('rightTabs')
+    expect(restored?.candidate.vars).toEqual({ x: 0.5 })
+    expect(restored?.experiment.baselineBundle).toEqual(draft.experiment.baselineBundle)
+    expect(restored?.experiment.record?.id).toBe(4)
+    expect(restored?.selection).toEqual({ experimentId: 4, measurementId: 12, calculationId: 9 })
   })
 
   it('discards child IDs when the stored parent does not match the draft Experiment', async () => {

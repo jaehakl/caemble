@@ -54,7 +54,7 @@ function savedDraft(
   experimentId: number,
   measurementId: number | null = null,
   calculationId: number | null = null,
-  activeSection: WorkbenchDraft['layout']['activeSection'] = 'measurement',
+  activeSection: WorkbenchDraft['layout']['activeSection'] = 'calculation',
 ): WorkbenchDraft {
   const record = savedExperiment(experimentId)
   return {
@@ -134,7 +134,7 @@ function renderSession({
         </div>
         <button
           data-testid="calculation-tab"
-          onClick={() => session.setLayout((current) => ({ ...current, activeSection: 'measurement' }))}
+          onClick={() => session.setLayout((current) => ({ ...current, activeSection: 'calculation' }))}
         />
         <button
           data-testid="experiment-tab"
@@ -253,11 +253,11 @@ describe('useCaePageSession', () => {
 
     fireEvent.click(screen.getByTestId('experiment-tab'))
     fireEvent.click(screen.getByTestId('calculation-tab'))
-    expect(screen.getByTestId('session-state')).toHaveTextContent('true|measurement')
+    expect(screen.getByTestId('session-state')).toHaveTextContent('true|calculation')
 
     await act(async () => router.navigate('/?experiment=7&section=experiment&measurement=4&calculation=9'))
     await waitFor(() => expect(router.state.location.search).toBe('?experiment=7'))
-    expect(screen.getByTestId('session-state')).toHaveTextContent('true|measurement')
+    expect(screen.getByTestId('session-state')).toHaveTextContent('true|calculation')
     expect(workbench.loadExperiment).toHaveBeenCalledTimes(1)
   })
 
@@ -303,7 +303,7 @@ describe('useCaePageSession', () => {
       resolveCalculation({ id: 9, experiment_id: 7 })
     })
 
-    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|measurement'))
+    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|calculation'))
     expect(workbench.restoreDraft).toHaveBeenLastCalledWith({
       ...draft,
       experiment: {

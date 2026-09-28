@@ -50,16 +50,15 @@ it('retains arrow-key tab navigation in the compact menubar', () => {
   render(<WorkbenchMenubar activeSectionId="experiment" onActiveSectionChange={change} />)
   expect(screen.getByRole('menubar')).toHaveClass('h-8')
   expect(screen.getAllByRole('menuitemradio').map((tab) => tab.textContent)).toEqual([
-    '구성',
-    '실행',
-    '가공',
+    '시뮬레이션',
+    '후처리',
     '통계',
     '예측',
   ])
-  fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '구성' }), { key: 'ArrowRight' })
-  expect(change).toHaveBeenCalledWith('measurement')
-  expect(screen.getByRole('menuitemradio', { name: '실행' })).toHaveFocus()
-  fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '가공' }), { key: 'ArrowRight' })
+  fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '시뮬레이션' }), { key: 'ArrowRight' })
+  expect(change).toHaveBeenCalledWith('calculation')
+  expect(screen.getByRole('menuitemradio', { name: '후처리' })).toHaveFocus()
+  fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '후처리' }), { key: 'ArrowRight' })
   expect(change).toHaveBeenLastCalledWith('analysis')
   expect(screen.getByRole('menuitemradio', { name: '통계' })).toHaveFocus()
 })

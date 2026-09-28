@@ -1,22 +1,11 @@
-import { PCA } from 'ml-pca'
 import { flattenVarsTensor, varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import type { Vars } from '@/lib/cad/model/types'
 import type { VarsSchema } from '@/lib/cad/model/vars'
 
-export type VarsPoint = Readonly<{ id: string; vars: Readonly<Vars> }>
-export type SpaceLayout = Readonly<{ key: string; shape: readonly number[]; min: number; max: number; size: number }>
-export type MeasurementProjection = Readonly<{
-  layouts: readonly SpaceLayout[]
-  active: readonly number[]
-  mean: readonly number[]
-  axes: readonly (readonly number[])[]
-  variance: readonly number[]
-  points: readonly Readonly<{ id: string; values: readonly number[]; xy: readonly number[] }>[]
-}>
-
+type SpaceLayout = Readonly<{ key: string; shape: readonly number[]; min: number; max: number; size: number }>
 const cellLimit = 8_000_000
 
-export function spaceLayouts(schema: VarsSchema): SpaceLayout[] {
+function spaceLayouts(schema: VarsSchema): SpaceLayout[] {
   let total = 0
   return Object.keys(schema)
     .sort()
@@ -36,7 +25,7 @@ export function spaceLayouts(schema: VarsSchema): SpaceLayout[] {
     })
 }
 
-export function spaceValues(layouts: readonly SpaceLayout[], vars: Readonly<Vars>): number[] {
+function spaceValues(layouts: readonly SpaceLayout[], vars: Readonly<Vars>): number[] {
   return layouts.flatMap((layout) =>
     flattenVarsTensor(vars[layout.key], layout.shape, layout.key).map((value) => {
       if (!Number.isFinite(value) || value < layout.min || value > layout.max)
@@ -46,7 +35,7 @@ export function spaceValues(layouts: readonly SpaceLayout[], vars: Readonly<Vars
   )
 }
 
-export function spaceVars(layouts: readonly SpaceLayout[], values: readonly number[]): Vars {
+function spaceVars(layouts: readonly SpaceLayout[], values: readonly number[]): Vars {
   let offset = 0
   return Object.fromEntries(
     layouts.map((layout) => {
@@ -57,89 +46,6 @@ export function spaceVars(layouts: readonly SpaceLayout[], values: readonly numb
       return [layout.key, varsTensorFromFlat(flat, layout.shape)]
     }),
   )
-}
-
-export function projectSpace(projection: MeasurementProjection, values: readonly number[]): number[] {
-  return [0, 1].map(
-    (axis) =>
-      projection.axes[axis]?.reduce(
-        (sum, weight, index) => sum + weight * (values[projection.active[index]] - projection.mean[index]),
-        0,
-      ) ?? 0,
-  )
-}
-
-export function fitMeasurementProjection(schema: VarsSchema, points: readonly VarsPoint[]): MeasurementProjection {
-  const layouts = spaceLayouts(schema)
-  const size = layouts.reduce((n, layout) => n + layout.size, 0)
-  if (size * points.length > cellLimit) throw new Error('PCA 데이터가 수치 값 메모리 한도를 초과합니다.')
-  const values = points.map((point) => spaceValues(layouts, point.vars))
-  const active: number[] = []
-  let offset = 0
-  for (const layout of layouts) {
-    for (let index = 0; index < layout.size; index++) {
-      if (layout.min !== layout.max) active.push(offset + index)
-    }
-    offset += layout.size
-  }
-  const mean = active.map((index) => values.reduce((sum, row) => sum + row[index] / Math.max(1, values.length), 0))
-  const axes: number[][] = []
-  const variance: number[] = []
-  const hasVariance = values.some((row) => active.some((index, column) => Math.abs(row[index] - mean[column]) > 1e-12))
-  if (values.length > 1 && active.length && hasVariance) {
-    // SVD also supports more Vars components than observations, without a d×d covariance matrix.
-    const pca = new PCA(
-      values.map((row) => active.map((index) => row[index])),
-      { center: true, scale: false, method: 'SVD' },
-    )
-    const eigenvalues = pca.getEigenvalues()
-    const eigenvectors = pca.getEigenvectors()
-    const explained = pca.getExplainedVariance()
-    for (let axis = 0; axis < Math.min(2, eigenvalues.length); axis++) {
-      if (eigenvalues[axis] <= eigenvalues[0] * 1e-12) break
-      const vector = eigenvectors.getColumn(axis)
-      const largest = vector.reduce(
-        (best, value, index) => (Math.abs(value) > Math.abs(vector[best]) ? index : best),
-        0,
-      )
-      axes.push(vector.map((value) => (vector[largest] < 0 ? -value : value)))
-      variance.push(explained[axis])
-    }
-  }
-  const projection: MeasurementProjection = { layouts, active, mean, axes, variance, points: [] }
-  return {
-    ...projection,
-    points: points.map((point, index) => ({
-      id: point.id,
-      values: values[index],
-      xy: projectSpace(projection, values[index]),
-    })),
-  }
-}
-
-export function varsAtProjection(projection: MeasurementProjection, target: readonly number[]): Vars {
-  if (!projection.axes.length || !projection.points.length) throw new Error('PCA 방향을 계산할 데이터가 없습니다.')
-  const nearest = projection.points
-    .map((point) => ({
-      point,
-      distance: Math.hypot(...projection.axes.map((_, axis) => point.xy[axis] - target[axis])),
-    }))
-    .sort((a, b) => a.distance - b.distance || a.point.id.localeCompare(b.point.id, 'en'))
-    .slice(0, 7)
-  const exact = nearest.filter((entry) => entry.distance === 0)
-  const neighbors = exact.length ? exact : nearest
-  const ratios = neighbors.map((entry) => (exact.length ? 1 : nearest[0].distance / entry.distance))
-  const sum = ratios.reduce((total, value) => total + value, 0)
-  const base = projection.points[0].values.map((_, index) =>
-    neighbors.reduce((total, entry, n) => total + (entry.point.values[index] * ratios[n]) / sum, 0),
-  )
-  const origin = projectSpace(projection, base)
-  projection.axes.forEach((axis, index) =>
-    axis.forEach((weight, component) => {
-      base[projection.active[component]] += (target[index] - origin[index]) * weight
-    }),
-  )
-  return spaceVars(projection.layouts, base)
 }
 
 export function sampleMeasurementVars(

@@ -21,14 +21,11 @@ export type DefinitionStatus = 'empty' | 'new' | 'saved-clean' | 'saved-dirty'
 /** @deprecated The v14 editor dock is retained only for draft migration. */
 export type WorkbenchTabId = 'experiment' | 'experiments' | 'recorded-data'
 
-export const workbenchSectionIds = ['experiment', 'measurement', 'calculation', 'prediction', 'analysis'] as const
+export const workbenchSectionIds = ['experiment', 'calculation', 'prediction', 'analysis'] as const
 export type WorkbenchSectionId = (typeof workbenchSectionIds)[number]
 
 export const bottomDockModes = ['hidden', 'console'] as const
 export type BottomDockMode = (typeof bottomDockModes)[number]
-
-export const measurementRightTabIds = ['recorded-data', 'detail'] as const
-export type MeasurementRightTabId = (typeof measurementRightTabIds)[number]
 
 export const workbenchLayoutLimits = Object.freeze({
   appMinWidthPx: 1280,
@@ -52,9 +49,6 @@ export type WorkbenchLayoutState = Readonly<{
   bottomMode: BottomDockMode
   bottomHeightRatio: number
   viewerExpanded: boolean
-  rightTabs: Readonly<{
-    measurement: MeasurementRightTabId
-  }>
 }>
 
 export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
@@ -68,7 +62,6 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   bottomMode: 'hidden',
   bottomHeightRatio: 0.5,
   viewerExpanded: false,
-  rightTabs: Object.freeze({ measurement: 'recorded-data' }),
 })
 
 export type WorkbenchDraftDomain = Readonly<{

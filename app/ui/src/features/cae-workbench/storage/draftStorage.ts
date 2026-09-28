@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { savedExperimentRecordSchema } from '@/contracts/api/experimentValidators'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
 import type { WorkbenchDraft, WorkbenchSelectionContext } from '../types'
-import { bottomDockModes, defaultWorkbenchLayoutState, measurementRightTabIds, workbenchSectionIds } from '../types'
+import { bottomDockModes, defaultWorkbenchLayoutState, workbenchSectionIds } from '../types'
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
 export const WORKBENCH_DRAFT_SCHEMA_VERSION = 4 as const
@@ -68,6 +68,7 @@ const storedDraftBaseSchema = z
       (value) => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return value
         const layout = { ...(value as Record<string, unknown>) }
+        delete layout.rightTabs
         delete layout.analysisTab
         if (!['material', 'admin', 'lab', 'help', 'setting'].includes(String(layout.activeSection))) return layout
         return { ...layout, activeSection: 'experiment' }
@@ -99,9 +100,6 @@ const storedDraftBaseSchema = z
           ),
           bottomHeightRatio: ratioSchema.catch(defaultWorkbenchLayoutState.bottomHeightRatio),
           viewerExpanded: z.boolean().transform(() => false),
-          rightTabs: z.object({
-            measurement: z.enum(measurementRightTabIds).catch(defaultWorkbenchLayoutState.rightTabs.measurement),
-          }),
         })
         .passthrough(),
     ),

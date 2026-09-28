@@ -22,23 +22,25 @@ const mocks = vi.hoisted(() => ({
   loadMeasurement: vi.fn(),
   reportError: vi.fn(),
   sessionBusy: false,
+  authenticated: false,
+  documentReady: true,
+  clean: true,
+  preflightBusy: false,
+  run: vi.fn(),
+  cancel: vi.fn(),
+  clearMeasurement: vi.fn(),
+  setCandidateVariables: vi.fn(),
+  varsProps: {} as Record<string, unknown>,
 }))
 
-vi.mock('@/features/measurement/useMeasurementSession', () => ({
-  useMeasurementSession: () => ({
-    query: {},
-    busy: mocks.sessionBusy,
-    running: false,
-    valid: true,
-    schema: {},
-    ready: true,
-    persistable: true,
-    currentId: 'draft',
-    invalidateSelection: vi.fn(),
-  }),
-}))
 vi.mock('@/features/auth/use-auth', () => ({
-  useAuth: () => ({ user: null, isAuthenticated: false, isPending: false, queryScope: 'guest' }),
+  useAuth: () => ({ user: null, isAuthenticated: mocks.authenticated, isPending: false, queryScope: 'guest' }),
+}))
+vi.mock('@/features/cae-workbench/ExperimentVarsPanel', () => ({
+  ExperimentVarsPanel: (props: Record<string, unknown>) => {
+    mocks.varsProps = props
+    return null
+  },
 }))
 vi.mock('@/features/measurement/MeasurementTable', () => ({
   MeasurementTable: ({ active, onSelect }: { active: boolean; onSelect: (id: number) => void }) => (
@@ -53,11 +55,18 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
     experiment: {},
     experimentDocument: {
       varsSchema: {},
+      status: mocks.documentReady ? 'Ready' : 'Error',
+      revision: 1,
+      successfulRevision: mocks.documentReady ? 1 : 0,
+      variables: {},
       measurement: {},
       resultSessionKey: 'session',
       materialWarnings: [],
       draftTaskNames: [],
     },
+    experimentClean: mocks.clean,
+    candidateVars: {},
+    setCandidateVariables: mocks.setCandidateVariables,
     experimentIsDemo: mocks.isDemo,
     experimentManageable: mocks.manageable,
     selectionRestoring: mocks.restoring,
@@ -69,9 +78,10 @@ vi.mock('@/features/cae-workbench/state/useCaeWorkbenchState', () => ({
       recordedRules: {},
       measurement: mocks.measurement,
       loadMeasurement: mocks.loadMeasurement,
+      clearMeasurement: mocks.clearMeasurement,
     },
     selectionContext: { calculationId: null },
-    measurementActions: {},
+    measurementActions: { busy: mocks.sessionBusy },
     calculationDataActions: {},
   }),
 }))
@@ -132,13 +142,7 @@ vi.mock('@/features/cae-workbench/chrome', () => ({
       {label}
     </button>
   ),
-  defaultWorkbenchSections: [
-    { id: 'experiment' },
-    { id: 'measurement' },
-    { id: 'calculation' },
-    { id: 'prediction' },
-    { id: 'analysis' },
-  ],
+  defaultWorkbenchSections: [{ id: 'experiment' }, { id: 'calculation' }, { id: 'prediction' }, { id: 'analysis' }],
   WorkbenchMenubar: ({
     sections,
     onActiveSectionChange,
@@ -223,7 +227,9 @@ vi.mock('@/features/measurement/usePreflight', () => ({
   usePreflight: () => {
     const [preview, setPreview] = useState(mocks.preview)
     return {
-      busy: false,
+      busy: mocks.preflightBusy,
+      run: mocks.run,
+      cancel: mocks.cancel,
       status: '',
       error: null,
       viewerEpoch: 0,
@@ -300,12 +306,18 @@ beforeEach(() => {
   mocks.manageable = false
   mocks.restoring = false
   mocks.preview = false
+  mocks.documentReady = true
+  mocks.clean = true
+  mocks.preflightBusy = false
+  mocks.authenticated = false
   mocks.sessionBusy = false
   mocks.loadMeasurement.mockReset()
 })
 
 describe('Workbench section navigation', () => {
   it('offers only batch generation and disables it during another run', () => {
+    mocks.authenticated = true
+    mocks.manageable = true
     const client = new QueryClient()
     const route = () => (
       <QueryClientProvider client={client}>
@@ -327,6 +339,56 @@ describe('Workbench section navigation', () => {
     expect(screen.getByRole('button', { name: '일괄생성' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '실행' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '재생성 및 실행' })).toBeDisabled()
+  })
+  it.each(['guest', 'readonly', 'dirty', 'unready', 'restoring'])('disables batch generation for %s state', (state) => {
+    mocks.authenticated = state !== 'guest'
+    mocks.manageable = state !== 'readonly'
+    mocks.clean = state !== 'dirty'
+    mocks.documentReady = state !== 'unready'
+    mocks.restoring = state === 'restoring'
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(screen.getByRole('button', { name: '일괄생성' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'measurement' })).not.toBeInTheDocument()
+  })
+  it('commits Vars directly to the Workbench and clears selection and preview', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    act(() => (mocks.varsProps.onValueChange as (vars: { x: number }) => void)({ x: 0.5 }))
+    expect(mocks.clearMeasurement).toHaveBeenCalledOnce()
+    expect(mocks.setCandidateVariables).toHaveBeenCalledWith({ x: 0.5 }, 'user-vars')
+    expect(mocks.clearPreview).toHaveBeenCalledOnce()
+  })
+  it('preserves temporary execution, regeneration and cancellation controls', () => {
+    mocks.authenticated = true
+    const route = () => (
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(route())
+    fireEvent.click(screen.getByRole('button', { name: '실행' }))
+    expect(mocks.run).toHaveBeenCalledWith()
+    fireEvent.click(screen.getByRole('button', { name: '재생성 및 실행' }))
+    expect(mocks.run).toHaveBeenCalledWith(true)
+    mocks.preflightBusy = true
+    rerender(route())
+    expect(mocks.varsProps.busy).toBe(true)
+    expect(screen.getByRole('button', { name: '재생성 및 실행' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '취소' }))
+    expect(mocks.cancel).toHaveBeenCalledOnce()
   })
   it('connects editor selection directly to the same store used by the Viewer', () => {
     render(

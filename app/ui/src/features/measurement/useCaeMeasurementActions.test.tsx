@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   execution: vi.fn(),
   retry: vi.fn(),
   save: vi.fn(),
-  deleteRows: vi.fn(),
   calculate: vi.fn(),
   cancelCalculation: vi.fn(),
   invalidate: vi.fn(),
@@ -50,7 +49,7 @@ vi.mock('@/api/cae', () => ({
     retry: mocks.retry,
   },
 }))
-vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save, deleteRows: mocks.deleteRows } } }))
+vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save } } }))
 vi.mock('@/features/cae/CaeBatchProvider', () => ({
   useCaeBatches: () => ({
     batches: mocks.batches,
@@ -190,84 +189,6 @@ beforeEach(() => {
 })
 
 describe('server-owned CAE measurement actions', () => {
-  it('reports a rejected deletion and clears that error on a successful retry', async () => {
-    const message = 'Cancel active CAE jobs before deleting their Measurements.'
-    mocks.deleteRows.mockRejectedValueOnce(new ApiError(409, message, null)).mockResolvedValueOnce(undefined)
-    const rendered = renderActions(measurement(41))
-    await act(async () => {
-      expect(await rendered.result.current.deleteMeasurements([measurement(41)])).toBe(false)
-    })
-    expect(rendered.result.current.error).toBe(message)
-    expect(rendered.result.current.busy).toBe(false)
-    expect(mocks.invalidate).not.toHaveBeenCalled()
-    await act(async () => {
-      expect(await rendered.result.current.deleteMeasurements([measurement(41)])).toBe(true)
-    })
-    expect(mocks.deleteRows).toHaveBeenNthCalledWith(1, [41])
-    expect(mocks.deleteRows).toHaveBeenNthCalledWith(2, [41])
-    expect(mocks.invalidate).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'user:first', 10, [41])
-    expect(rendered.result.current.error).toBeNull()
-    expect(rendered.result.current.busy).toBe(false)
-  })
-
-  it('notifies recorded data once after invalidation and before a delayed Calculation', async () => {
-    let finish: (value: typeof summary) => void = () => {}
-    mocks.calculate.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    const rendered = renderActions()
-    const recorded = vi.fn(() => {
-      expect(mocks.invalidate).toHaveBeenCalled()
-      expect(mocks.calculate).not.toHaveBeenCalled()
-    })
-    let run: ReturnType<typeof rendered.result.current.runReviewed>
-    act(() => {
-      run = rendered.result.current.runReviewed(
-        { candidateId: 'candidate:a', vars: { length: 23 } },
-        undefined,
-        recorded,
-      )
-    })
-    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(1))
-    expect(recorded).toHaveBeenCalledExactlyOnceWith(41)
-    expect(rendered.result.current.busy).toBe(true)
-    await act(async () => {
-      finish(summary)
-      await run
-    })
-    expect(recorded).toHaveBeenCalledTimes(1)
-  })
-  it('runs reviewed Vars without regenerating them and preserves the candidate/result identity', async () => {
-    const rendered = renderActions()
-    const progress = vi.fn()
-    await act(async () => {
-      const result = await rendered.result.current.runReviewed(
-        {
-          candidateId: 'candidate:a',
-          vars: { length: 23 },
-          materialSnapshot,
-        },
-        progress,
-      )
-      expect(result).toMatchObject({ candidateId: 'candidate:a', measurementId: 41 })
-    })
-    expect(progress).toHaveBeenCalledWith({ measurementId: 41, state: 'succeeded', error: null })
-    expect(mocks.create).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: 'candidate', vars: { length: 23 }, material_snapshot: materialSnapshot }),
-    )
-    expect(mocks.generate).not.toHaveBeenCalled()
-    await act(async () => {
-      await rendered.result.current.runReviewed({
-        candidateId: 'measurement:42',
-        measurementId: 42,
-        vars: { length: 25 },
-      })
-    })
-    expect(mocks.create).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'measurement', measurement_id: 42 }))
-  })
   it('submits one multi-Candidate batch and continues after Calculation failures across result pages', async () => {
     const completed = batch(Array.from({ length: 102 }, (_, index) => index + 1))
     mocks.create.mockResolvedValue({ ...completed, jobs: completed.jobs.slice(0, 100) })
@@ -660,11 +581,10 @@ describe('server-owned CAE measurement actions', () => {
       .mockResolvedValueOnce({ ...execution, job: { ...execution.job, state: 'failed' } })
     mocks.retry.mockRejectedValueOnce(new ApiError(409, 'Already retried', {}))
     const rendered = renderActions(measurement(41))
-    await act(async () => {
-      expect(
-        await rendered.result.current.runReviewed({ candidateId: 'measurement:41', measurementId: 41, vars: {} }),
-      ).toMatchObject({ measurementId: 41 })
+    act(() => {
+      rendered.result.current.runSelected()
     })
+    await waitFor(() => expect(rendered.result.current.busy).toBe(false))
     expect(mocks.retry).toHaveBeenCalledOnce()
     expect(mocks.calculate).toHaveBeenCalledExactlyOnceWith(41, expect.any(Object))
     expect(mocks.create).not.toHaveBeenCalled()
@@ -685,18 +605,15 @@ describe('server-owned CAE measurement actions', () => {
       }),
     )
     const rendered = renderActions(measurement(41))
-    let completion!: Promise<unknown>
     act(() => {
-      completion = rendered.result.current
-        .runReviewed({ candidateId: 'measurement:41', measurementId: 41, vars: {} })
-        .catch((cause) => cause)
+      rendered.result.current.runSelected()
     })
     await waitFor(() => expect(mocks.retry).toHaveBeenCalledOnce())
     act(() => rendered.result.current.cancel())
     await act(async () => {
       finish(batch())
-      expect(await completion).toMatchObject({ name: 'AbortError' })
     })
+    await waitFor(() => expect(rendered.result.current.busy).toBe(false))
     expect(mocks.cancel.mock.calls).toEqual([
       ['batch-1', ['job-41']],
       ['batch-1', ['job-41']],
