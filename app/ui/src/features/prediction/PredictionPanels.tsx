@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react'
 import { AlertCircle, Calculator, LoaderCircle, RefreshCw, X } from 'lucide-react'
-import type { AvailableExperimentRecord, CalculationDataOutput } from '@/api'
+import type { CalculationDataOutput } from '@/api'
 import { TensorEditor, type TensorEditorComparisonStatus } from '@/components/tensor-editor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,8 +15,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { flattenVarsTensor, varsTensorFromFlat, type Tensor, type Vars, type VarsSchemaEntry } from '@/lib/cad/model'
-import { MeasurementVarsEditor } from '../measurement/MeasurementVarsEditor'
+import { flattenVarsTensor, varsTensorFromFlat, type Vars, type VarsSchemaEntry } from '@/lib/cad/model'
+import { VarsEditor } from '@/components/vars-editor'
 import type {
   PredictionCohortExclusionReason,
   PredictionCohortSummary,
@@ -27,7 +26,6 @@ import type {
 } from './knn'
 import { comparePredictionOutput, predictionOutputRange, type PredictionValidationMetric } from './metrics'
 import type { PredictionWorkerModelProfile } from './protocol'
-import type { PredictionSamplingRange } from './sampling'
 
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
@@ -38,108 +36,33 @@ const directionLabels: Readonly<Record<PredictionDirection, string>> = {
 
 export type PredictionVarsPaneProps = Readonly<{
   candidateSessionKey: string
-  currentExperimentId: number | null
-  demos: readonly AvailableExperimentRecord[]
   direction: PredictionDirection
   disabled: boolean
   guideVisible: boolean
-  isDemo: boolean
-  manageable: boolean
-  loadingExperiments: boolean
-  mine: readonly AvailableExperimentRecord[]
   schema: PredictionVarsSchema | null
-  samplingRanges: Readonly<Record<string, PredictionSamplingRange>>
-  resetValues: Readonly<Record<string, Tensor | undefined>>
   status: string
   updating: boolean
   vars: Readonly<Vars> | null
   onDismissGuide: () => void
-  onExperimentChange: (experimentId: number) => void
-  onSamplingRangeChange: (key: string, range: PredictionSamplingRange) => void
-  onVariableChange: (key: string, value: Tensor) => void
-  onValidityChange?: (valid: boolean) => void
+  onVarsChange: (vars: Readonly<Vars>) => void
 }>
 
 export function PredictionVarsPane({
   candidateSessionKey,
-  currentExperimentId,
-  demos,
   direction,
   disabled,
   guideVisible,
-  isDemo,
-  manageable,
-  loadingExperiments,
-  mine,
   schema,
-  samplingRanges,
-  resetValues,
   status,
   updating,
   vars,
   onDismissGuide,
-  onExperimentChange,
-  onSamplingRangeChange,
-  onVariableChange,
-  onValidityChange,
+  onVarsChange,
 }: PredictionVarsPaneProps) {
-  const currentExperiment = [...mine, ...demos].find((experiment) => experiment.id === currentExperimentId)
   return (
-    <section className="flex h-full min-h-0 flex-col gap-2" aria-label="Prediction vars">
-      <div className="rounded-lg border bg-card p-2.5">
-        <label className="mb-1.5 block text-xs font-medium text-muted-foreground" htmlFor="prediction-experiment">
-          Experiment
-        </label>
-        <select
-          className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-          disabled={loadingExperiments}
-          id="prediction-experiment"
-          value={currentExperimentId ?? ''}
-          onChange={(event) => onExperimentChange(Number(event.target.value))}
-        >
-          {currentExperimentId === null ? <option value="">선택하세요</option> : null}
-          {mine.length ? (
-            <optgroup label="내 Experiment">
-              {mine.map((experiment) => (
-                <option key={experiment.id} value={experiment.id}>
-                  {experiment.isDemo ? '(Demo) ' : ''}
-                  {experiment.name}
-                </option>
-              ))}
-            </optgroup>
-          ) : null}
-          {demos.length ? (
-            <optgroup label="Demo">
-              {demos
-                .filter((experiment) => !mine.some((owned) => owned.id === experiment.id))
-                .map((experiment) => (
-                  <option key={experiment.id} value={experiment.id}>
-                    {experiment.demoDefault ? '★ ' : ''}
-                    {experiment.name}
-                  </option>
-                ))}
-            </optgroup>
-          ) : null}
-        </select>
-        {isDemo ? (
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Badge>Demo</Badge>
-            <Badge className="border bg-transparent text-foreground">
-              {manageable ? '관리자 편집 가능' : '읽기 전용'}
-            </Badge>
-            {currentExperiment && !currentExperiment.predictionReady ? (
-              <Badge className="bg-destructive text-white">Not Ready</Badge>
-            ) : null}
-            <span>
-              {manageable
-                ? '저장 작업은 현재 공개 데이터에 즉시 반영됩니다.'
-                : '브라우저 Prediction은 자유롭게 체험할 수 있습니다.'}
-            </span>
-          </div>
-        ) : null}
-      </div>
+    <section className="flex h-full min-h-0 flex-col" aria-label="Prediction vars">
       {guideVisible ? (
-        <div className="relative rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 pr-9 text-xs leading-5">
+        <div className="relative border-b bg-primary/5 px-3 py-2 pr-9 text-xs leading-5">
           <strong>1.</strong> Vars를 바꿔 Forward 결과를 확인하세요. <strong>2.</strong> 오른쪽 결과를 Target으로 움직여
           Inverse Design과 Viewer 형상 변화를 확인하세요.
           <Button
@@ -153,7 +76,7 @@ export function PredictionVarsPane({
           </Button>
         </div>
       ) : null}
-      <header className="flex flex-wrap items-start justify-between gap-2 rounded-lg border bg-card px-3 py-2.5">
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-2 border-b px-3 py-2.5">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">Vars</h3>
           <p className="mt-0.5 truncate text-xs text-muted-foreground" title={status}>
@@ -169,112 +92,23 @@ export function PredictionVarsPane({
           <Badge>{directionLabels[direction]}</Badge>
         </div>
       </header>
-      <div className={`flex min-h-0 flex-1 flex-col transition-opacity ${updating ? 'opacity-60' : ''}`}>
-        <PredictionVarsEditor
-          key={`${candidateSessionKey}:${JSON.stringify(schema)}`}
-          {...{
-            disabled,
-            schema,
-            samplingRanges,
-            resetValues,
-            vars,
-            onSamplingRangeChange,
-            onVariableChange,
-            onValidityChange,
-          }}
-        />
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          막대를 누른 채 위아래로 이동하면 여러 값을 조절할 수 있습니다.
+        </p>
+        {schema && vars ? (
+          <VarsEditor
+            schema={schema}
+            value={vars}
+            disabled={disabled}
+            resetKey={candidateSessionKey}
+            onValueChange={onVarsChange}
+          />
+        ) : (
+          <p className="text-xs text-muted-foreground">Vars를 준비하는 중입니다.</p>
+        )}
       </div>
     </section>
-  )
-}
-
-function PredictionVarsEditor({
-  schema,
-  vars,
-  disabled,
-  samplingRanges,
-  resetValues,
-  onSamplingRangeChange,
-  onVariableChange,
-  onValidityChange,
-}: Pick<
-  PredictionVarsPaneProps,
-  | 'schema'
-  | 'vars'
-  | 'disabled'
-  | 'samplingRanges'
-  | 'resetValues'
-  | 'onSamplingRangeChange'
-  | 'onVariableChange'
-  | 'onValidityChange'
->) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const [valid, setValid] = useState(true)
-  const [resetRevision, setResetRevision] = useState(0)
-  const rangesValid = Object.entries(schema ?? {}).every(([key, item]) => {
-    const range = samplingRanges[key] ?? item
-    return (
-      Number.isFinite(range.min) &&
-      Number.isFinite(range.max) &&
-      range.min >= item.min &&
-      range.max <= item.max &&
-      range.min <= range.max
-    )
-  })
-  useEffect(() => onValidityChange?.(valid && rangesValid), [valid, rangesValid, onValidityChange])
-  const activeKey = selectedKey ?? Object.keys(schema ?? {})[0]
-  const entry = schema?.[activeKey]
-  const range = samplingRanges[activeKey] ?? entry
-  return (
-    <MeasurementVarsEditor
-      key={resetRevision}
-      layout="vertical"
-      schema={schema}
-      vars={vars}
-      selectedKey={selectedKey}
-      onSelectedKeyChange={setSelectedKey}
-      disabled={disabled}
-      onValidityChange={setValid}
-      onVarsChange={(next) => onVariableChange(activeKey, next[activeKey])}
-      editorControls={
-        entry && range ? (
-          <div className="flex shrink-0 flex-wrap items-end gap-2">
-            {(['min', 'max'] as const).map((bound) => (
-              <label key={bound} className="min-w-0 flex-1 text-xs">
-                Sampling {bound === 'min' ? 'Min' : 'Max'}
-                <Input
-                  aria-label={`${activeKey} Sampling ${bound === 'min' ? 'Min' : 'Max'}`}
-                  type="number"
-                  className="mt-1 h-8"
-                  min={entry.min}
-                  max={entry.max}
-                  step="any"
-                  disabled={disabled || !valid}
-                  value={Number.isFinite(range[bound]) ? range[bound] : ''}
-                  onChange={(event) =>
-                    onSamplingRangeChange(activeKey, {
-                      ...range,
-                      [bound]: event.target.value === '' ? Number.NaN : Number(event.target.value),
-                    })
-                  }
-                />
-              </label>
-            ))}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={disabled || resetValues[activeKey] === undefined}
-              onClick={() => {
-                setResetRevision((current) => current + 1)
-                onVariableChange(activeKey, resetValues[activeKey]!)
-              }}
-            >
-              Reset
-            </Button>
-          </div>
-        ) : null
-      }
-    />
   )
 }
 

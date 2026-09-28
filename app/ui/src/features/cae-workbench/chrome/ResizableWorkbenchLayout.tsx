@@ -32,6 +32,7 @@ export function ResizableWorkbenchLayout({
   viewerLabel = '3D CAD View',
   rightLabel = 'Detail',
   className,
+  limits = workbenchLayoutLimits,
 }: {
   left: ReactNode
   viewer: ReactNode
@@ -45,9 +46,10 @@ export function ResizableWorkbenchLayout({
   viewerLabel?: string
   rightLabel?: string
   className?: string
+  limits?: { [Key in keyof typeof workbenchLayoutLimits]: number }
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [containerWidth, setContainerWidth] = useState<number>(workbenchLayoutLimits.appMinWidthPx)
+  const [containerWidth, setContainerWidth] = useState<number>(limits.appMinWidthPx)
   const [drag, setDrag] = useState<DragState | null>(null)
 
   useLayoutEffect(() => {
@@ -66,39 +68,24 @@ export function ResizableWorkbenchLayout({
     return () => observer.disconnect()
   }, [])
 
-  const sideSpace = showViewer
-    ? workbenchLayoutLimits.resizeHandlePx * 2 + workbenchLayoutLimits.viewerMinWidthPx
-    : workbenchLayoutLimits.resizeHandlePx
-  const leftMaximum = Math.max(
-    workbenchLayoutLimits.leftMinWidthPx,
-    containerWidth - sideSpace - workbenchLayoutLimits.rightMinWidthPx,
-  )
-  const effectiveLeftWidth = clamp(leftWidthRatio * containerWidth, workbenchLayoutLimits.leftMinWidthPx, leftMaximum)
-  const rightMaximum = Math.max(workbenchLayoutLimits.rightMinWidthPx, containerWidth - sideSpace - effectiveLeftWidth)
-  const effectiveRightWidth = clamp(
-    rightWidthRatio * containerWidth,
-    workbenchLayoutLimits.rightMinWidthPx,
-    rightMaximum,
-  )
+  const sideSpace = showViewer ? limits.resizeHandlePx * 2 + limits.viewerMinWidthPx : limits.resizeHandlePx
+  const leftMaximum = Math.max(limits.leftMinWidthPx, containerWidth - sideSpace - limits.rightMinWidthPx)
+  const effectiveLeftWidth = clamp(leftWidthRatio * containerWidth, limits.leftMinWidthPx, leftMaximum)
+  const rightMaximum = Math.max(limits.rightMinWidthPx, containerWidth - sideSpace - effectiveLeftWidth)
+  const effectiveRightWidth = clamp(rightWidthRatio * containerWidth, limits.rightMinWidthPx, rightMaximum)
   useEffect(() => {
     if (!drag) return
     const handlePointerMove = (event: PointerEvent) => {
       if (drag.pane === 'left') {
         onLeftWidthRatioChange?.(
-          clamp(
-            drag.startValuePx + event.clientX - drag.startClient,
-            workbenchLayoutLimits.leftMinWidthPx,
-            leftMaximum,
-          ) / containerWidth,
+          clamp(drag.startValuePx + event.clientX - drag.startClient, limits.leftMinWidthPx, leftMaximum) /
+            containerWidth,
         )
       }
       if (drag.pane === 'right') {
         onRightWidthRatioChange?.(
-          clamp(
-            drag.startValuePx - event.clientX + drag.startClient,
-            workbenchLayoutLimits.rightMinWidthPx,
-            rightMaximum,
-          ) / containerWidth,
+          clamp(drag.startValuePx - event.clientX + drag.startClient, limits.rightMinWidthPx, rightMaximum) /
+            containerWidth,
         )
       }
     }
@@ -115,7 +102,7 @@ export function ResizableWorkbenchLayout({
       window.removeEventListener('pointerup', stopDragging)
       window.removeEventListener('pointercancel', stopDragging)
     }
-  }, [containerWidth, drag, leftMaximum, onLeftWidthRatioChange, onRightWidthRatioChange, rightMaximum])
+  }, [containerWidth, drag, leftMaximum, onLeftWidthRatioChange, onRightWidthRatioChange, rightMaximum, limits])
 
   const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, pane: DragState['pane']) => {
     const step = event.shiftKey ? 64 : 16
@@ -123,27 +110,27 @@ export function ResizableWorkbenchLayout({
     if (pane === 'left') {
       if (event.key === 'ArrowLeft') next = effectiveLeftWidth - step
       if (event.key === 'ArrowRight') next = effectiveLeftWidth + step
-      if (event.key === 'Home') next = workbenchLayoutLimits.leftMinWidthPx
+      if (event.key === 'Home') next = limits.leftMinWidthPx
       if (event.key === 'End') next = leftMaximum
       if (next !== null) {
-        onLeftWidthRatioChange?.(clamp(next, workbenchLayoutLimits.leftMinWidthPx, leftMaximum) / containerWidth)
+        onLeftWidthRatioChange?.(clamp(next, limits.leftMinWidthPx, leftMaximum) / containerWidth)
       }
     }
     if (pane === 'right') {
       if (event.key === 'ArrowRight') next = effectiveRightWidth - step
       if (event.key === 'ArrowLeft') next = effectiveRightWidth + step
-      if (event.key === 'Home') next = workbenchLayoutLimits.rightMinWidthPx
+      if (event.key === 'Home') next = limits.rightMinWidthPx
       if (event.key === 'End') next = rightMaximum
       if (next !== null) {
-        onRightWidthRatioChange?.(clamp(next, workbenchLayoutLimits.rightMinWidthPx, rightMaximum) / containerWidth)
+        onRightWidthRatioChange?.(clamp(next, limits.rightMinWidthPx, rightMaximum) / containerWidth)
       }
     }
     if (next !== null) event.preventDefault()
   }
 
   const columns = showViewer
-    ? `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
-    : `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(0, 1fr)`
+    ? `${effectiveLeftWidth}px ${limits.resizeHandlePx}px minmax(${limits.viewerMinWidthPx}px, 1fr) ${limits.resizeHandlePx}px ${effectiveRightWidth}px`
+    : `${effectiveLeftWidth}px ${limits.resizeHandlePx}px minmax(0, 1fr)`
   return (
     <div
       className={cn('grid h-full min-h-0 flex-1 overflow-hidden bg-background', className)}
@@ -151,8 +138,8 @@ export function ResizableWorkbenchLayout({
       style={
         {
           gridTemplateColumns: columns,
-          minHeight: workbenchLayoutLimits.viewerMinHeightPx,
-          minWidth: showViewer ? workbenchLayoutLimits.appMinWidthPx : 0,
+          minHeight: limits.viewerMinHeightPx,
+          minWidth: showViewer ? limits.appMinWidthPx : 0,
         } satisfies CSSProperties
       }
     >
@@ -163,7 +150,7 @@ export function ResizableWorkbenchLayout({
       <ResizeHandle
         label="왼쪽 목록 너비 조절"
         maximum={leftMaximum}
-        minimum={workbenchLayoutLimits.leftMinWidthPx}
+        minimum={limits.leftMinWidthPx}
         onKeyDown={(event) => resizeWithKeyboard(event, 'left')}
         onPointerDown={(event) => {
           if (event.button !== 0) return
@@ -181,7 +168,7 @@ export function ResizableWorkbenchLayout({
           <ResizeHandle
             label="오른쪽 Detail 너비 조절"
             maximum={rightMaximum}
-            minimum={workbenchLayoutLimits.rightMinWidthPx}
+            minimum={limits.rightMinWidthPx}
             onKeyDown={(event) => resizeWithKeyboard(event, 'right')}
             onPointerDown={(event) => {
               if (event.button !== 0) return

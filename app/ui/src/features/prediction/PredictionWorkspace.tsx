@@ -1,16 +1,14 @@
 import { materialVarsHash } from '@/lib/material/resolution'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
-import type { AvailableExperimentRecord, CalculationDataOutput, CalculationOutputLayout } from '@/api'
+import type { CalculationDataOutput, CalculationOutputLayout } from '@/api'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { calculationSourceHash } from '@/lib/calculation'
-import { varsFingerprint as candidateFingerprint, varsTensorFromFlat, type Tensor, type Vars } from '@/lib/cad/model'
+import { varsFingerprint as candidateFingerprint, varsTensorFromFlat, type Vars } from '@/lib/cad/model'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import { compatibleVarsResetValues } from '../calculation/varsTensor'
-import { availableExperimentsQueryOptions } from '../experiment/queryOptions'
 import {
   predictionFingerprint,
   predictionForwardRefreshState,
@@ -126,7 +124,6 @@ export function PredictionWorkspace({
   onActivity,
   onChromeStateChange,
   onViewerStateChange,
-  onExperimentChange,
   onRequestLogin,
   selectedCalculationId,
   varsContainer,
@@ -139,13 +136,11 @@ export function PredictionWorkspace({
   onActivity?: RuntimeActivityCallback
   onViewerStateChange?: (state: PredictionViewerState | null) => void
   onChromeStateChange: (state: PredictionWorkspaceChromeState) => void
-  onExperimentChange: (experiment: AvailableExperimentRecord) => void
   onRequestLogin: () => void
   selectedCalculationId: number | null
   varsContainer: HTMLDivElement | null
   workbench: CaeWorkbenchState
 }) {
-  const [varsEditorValid, setVarsEditorValid] = useState(true)
   const [viewerState, setViewerState] = useState<PredictionViewerState | null>(null)
   const [results, dispatchResults] = useReducer(predictionResultsReducer, initialPredictionResults)
   const {
@@ -225,7 +220,6 @@ export function PredictionWorkspace({
   const experimentIdRef = useRef(experimentId)
   const queryScope = usePrivateQueryScope()
   const queryClient = useQueryClient()
-  const availableQuery = useQuery(availableExperimentsQueryOptions(queryScope))
   const contextExperimentMatches = context?.experimentId === experimentId
   const varsSchema = workbench.experimentDocument.varsSchema as VarsSchema | null
   const candidateVars = workbench.candidateVars
@@ -381,18 +375,6 @@ export function PredictionWorkspace({
     Object.keys(samplingRanges).length === Object.keys(defaultSamplingRanges).length
       ? samplingRanges
       : defaultSamplingRanges
-  const resetValues = useMemo(
-    () =>
-      compatibleVarsResetValues(
-        contextExperimentMatches
-          ? context.measurements.flatMap((measurement) =>
-              measurement.vars ? [measurement.vars as Readonly<Vars>] : [],
-            )
-          : [],
-        varsSchema ?? {},
-      ),
-    [context, contextExperimentMatches, varsSchema],
-  )
 
   useEffect(() => {
     if (!guideProgress.forward || !guideProgress.inverse) return
@@ -1010,7 +992,6 @@ export function PredictionWorkspace({
   )
 
   const validationDisabledReason = useMemo(() => {
-    if (!varsEditorValid) return 'Vars 입력을 올바르게 확정하세요.'
     if (!authenticated) return '로그인 후 검증할 수 있습니다.'
     if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
     if (!contextExperimentMatches) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
@@ -1040,7 +1021,6 @@ export function PredictionWorkspace({
       return '현재 Vars가 최신 Inverse 결과가 아닙니다.'
     return undefined
   }, [
-    varsEditorValid,
     authenticated,
     busy,
     candidateEvaluationReady,
@@ -1067,7 +1047,6 @@ export function PredictionWorkspace({
   ])
 
   const samplingDisabledReason = useMemo(() => {
-    if (!varsEditorValid) return 'Vars 입력을 올바르게 확정하세요.'
     if (!authenticated) return '로그인 후 sampling할 수 있습니다.'
     if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
     if (!contextExperimentMatches || !varsSchema) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
@@ -1095,7 +1074,6 @@ export function PredictionWorkspace({
     if (!active) return 'Sampling 범위가 고정되지 않은 Vars가 하나 이상 필요합니다.'
     return undefined
   }, [
-    varsEditorValid,
     authenticated,
     busy,
     contextExperimentMatches,
@@ -1984,39 +1962,20 @@ export function PredictionWorkspace({
 
   const varsPane = (
     <PredictionVarsPane
-      onValidityChange={setVarsEditorValid}
-      currentExperimentId={experimentId}
-      candidateSessionKey={`${experimentId ?? 'none'}:prediction`}
-      demos={availableQuery.data?.demos ?? []}
+      candidateSessionKey={`${workbench.workspaceSession}:prediction`}
       direction={direction}
       disabled={
         validating || samplingProgress !== null || dataStale || freshnessPending || !varsSchema || !candidateVars
       }
       guideVisible={workbench.experimentIsDemo && (!guideProgress.forward || !guideProgress.inverse)}
-      isDemo={workbench.experimentIsDemo}
-      manageable={workbench.experimentManageable}
-      loadingExperiments={availableQuery.isPending}
-      mine={availableQuery.data?.mine ?? []}
-      resetValues={resetValues}
-      samplingRanges={effectiveSamplingRanges}
       schema={varsSchema}
       status={status}
       updating={predictionUpdating}
       vars={candidateVars}
       onDismissGuide={() => setGuideProgress({ forward: true, inverse: true })}
-      onExperimentChange={(id) => {
-        const row = [...(availableQuery.data?.mine ?? []), ...(availableQuery.data?.demos ?? [])].find(
-          (item) => item.id === id,
-        )
-        if (row && row.id !== experimentId) onExperimentChange(row)
-      }}
-      onSamplingRangeChange={(key, range) =>
-        setSamplingRanges((current) => Object.freeze({ ...current, [key]: Object.freeze(range) }))
-      }
-      onVariableChange={(key: string, value: Tensor) => {
+      onVarsChange={(nextVars) => {
         if (lifecycleRef.current.freshnessPending || lifecycleRef.current.dataStale) return
         if (!candidateVars) return
-        const nextVars = Object.freeze({ ...candidateVars, [key]: value })
         if (candidateFingerprint(nextVars) === currentCandidateFingerprint) return
         if (!workbench.setCandidateVariables(nextVars, 'user-vars')) return
         userChangedVarsRef.current = true
@@ -2040,7 +1999,7 @@ export function PredictionWorkspace({
         {varsContainer ? createPortal(varsPane, varsContainer) : null}
         <div className="grid h-full place-items-center p-6 text-center">
           <div>
-            <p className="font-medium">왼쪽에서 공개 Demo를 선택하거나 로그인하세요.</p>
+            <p className="font-medium">Experiment를 열거나 로그인하세요.</p>
             <button className="mt-3 text-sm font-medium text-primary underline" type="button" onClick={onRequestLogin}>
               로그인
             </button>

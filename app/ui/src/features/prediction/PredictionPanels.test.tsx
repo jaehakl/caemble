@@ -110,7 +110,7 @@ describe('Prediction calculation result display', () => {
   })
 })
 
-it('keeps Calculation Vars collapsed and edits Prediction Vars above a resizable list', () => {
+it('uses the shared Vars bars and removes Experiment and Sampling controls', () => {
   const schema = { width: { min: 0, max: 10, shape: [] } }
   const onVariableChange = vi.fn()
   const { rerender } = render(
@@ -125,50 +125,24 @@ it('keeps Calculation Vars collapsed and edits Prediction Vars above a resizable
   expect(screen.getByRole('button', { name: /width/ })).toHaveAttribute('aria-expanded', 'false')
   const props = {
     candidateSessionKey: 'candidate',
-    currentExperimentId: null,
-    demos: [],
-    mine: [],
     direction: 'forward' as const,
     disabled: false,
     guideVisible: false,
-    isDemo: false,
-    manageable: true,
-    loadingExperiments: false,
     schema,
-    samplingRanges: {},
-    resetValues: { width: 1 },
-    onValidityChange: vi.fn(),
     status: 'Ready',
     updating: false,
     onDismissGuide: vi.fn(),
-    onExperimentChange: vi.fn(),
-    onSamplingRangeChange: vi.fn(),
-    onVariableChange,
+    onVarsChange: vi.fn(),
   }
   rerender(<PredictionVarsPane {...props} vars={null} />)
+  expect(screen.getByText('Vars를 준비하는 중입니다.')).toBeInTheDocument()
   rerender(<PredictionVarsPane {...props} vars={{ width: 2 }} />)
-  expect(screen.getByRole('button', { name: 'Var width' })).toHaveAttribute('aria-pressed', 'true')
-  const separator = screen.getByRole('separator')
-  expect(separator).toHaveAttribute('aria-orientation', 'horizontal')
-  expect(separator).toHaveAttribute('aria-valuenow', '60')
-  fireEvent.keyDown(separator, { key: 'ArrowUp' })
-  expect(separator).toHaveAttribute('aria-valuenow', '58')
-  const input = screen.getByRole('textbox', { name: 'width' })
-  fireEvent.change(input, { target: { value: '11' } })
-  expect(props.onValidityChange).toHaveBeenLastCalledWith(false)
-  fireEvent.blur(input)
-  expect(onVariableChange).not.toHaveBeenCalled()
-  expect(screen.getByRole('alert')).toBeInTheDocument()
-  fireEvent.change(input, { target: { value: '4' } })
-  fireEvent.keyDown(input, { key: 'Enter' })
-  expect(onVariableChange).toHaveBeenLastCalledWith('width', 4)
-  expect(props.onValidityChange).toHaveBeenLastCalledWith(true)
-  fireEvent.change(screen.getByLabelText('width Sampling Min'), { target: { value: '2' } })
-  expect(props.onSamplingRangeChange).toHaveBeenLastCalledWith('width', { min: 2, max: 10, shape: [] })
-  fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
-  expect(onVariableChange).toHaveBeenLastCalledWith('width', 1)
-  fireEvent.change(screen.getByRole('textbox', { name: 'width' }), { target: { value: 'bad' } })
+  expect(screen.queryByLabelText('Experiment')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Sampling/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+  const slider = screen.getByRole('slider', { name: 'width' })
+  fireEvent.keyDown(slider, { key: 'End' })
+  expect(props.onVarsChange).toHaveBeenLastCalledWith({ width: 10 })
   rerender(<PredictionVarsPane {...props} candidateSessionKey="next" vars={{ width: 3 }} />)
-  expect(screen.getByRole('textbox', { name: 'width' })).toHaveValue('3')
-  expect(props.onValidityChange).toHaveBeenLastCalledWith(true)
+  expect(screen.getByRole('slider', { name: 'width' })).toHaveAttribute('aria-valuenow', '3')
 })

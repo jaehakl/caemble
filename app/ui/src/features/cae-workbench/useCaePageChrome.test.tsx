@@ -85,6 +85,17 @@ it('uses the sole New action to open Templates and removes the old Examples and 
   expect(result.current.actions.newExperiment).toMatchObject({ id: 'new-experiment', label: '템플릿' })
   expect(result.current.actions).not.toHaveProperty('examples')
   expect(result.current.actions).not.toHaveProperty('loadExperiment')
+  expect(result.current.actions).not.toHaveProperty('predictionSample')
+  const prediction = render(
+    <TooltipProvider>
+      <WorkbenchRibbon activeSectionId="prediction" panels={result.current.ribbonPanels} />
+    </TooltipProvider>,
+  )
+  expect(screen.queryByRole('region', { name: 'Sampling' })).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Latin Hypercube Sample & Run 횟수')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Sample & Run' })).not.toBeInTheDocument()
+  prediction.unmount()
+
   const analysis = render(
     <TooltipProvider>
       <WorkbenchRibbon activeSectionId="analysis" panels={result.current.ribbonPanels} />

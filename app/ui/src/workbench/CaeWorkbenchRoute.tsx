@@ -1,3 +1,5 @@
+import { PredictionComparison } from '@/features/prediction/PredictionComparison'
+import { PredictionLayout } from '@/features/prediction/PredictionLayout'
 import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
 import { varsFingerprint } from '@/lib/cad/model/vars'
 import { useMeasurementSession } from '@/features/measurement/useMeasurementSession'
@@ -315,14 +317,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const activeRecordedRules = workbench.selection.recordedRules
 
   const leftPane =
-    page.activeSection === 'experiment' ? null : page.activeSection === 'calculation' ? null : page.activeSection ===
-      'prediction' ? (
-      <div
-        key="prediction-vars"
-        className="h-full min-h-0 overflow-hidden bg-background p-2"
-        ref={setPredictionVarsContainer}
-      />
-    ) : page.activeSection === 'analysis' ? (
+    page.activeSection === 'analysis' ? (
       <div
         key="analysis-settings"
         className="h-full min-h-0 overflow-hidden bg-background"
@@ -376,42 +371,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </Suspense>
     ) : null
 
-  const rightPane = (
-    <div className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden">
-      <div
-        className={page.activeSection === 'prediction' ? 'hidden' : 'h-full min-h-0'}
-        hidden={page.activeSection === 'prediction'}
-      >
-        {contextualRightPane}
-      </div>
-      {predictionActivated ? (
-        <div
-          className={page.activeSection === 'prediction' ? 'h-full min-h-0 p-2' : 'hidden'}
-          hidden={page.activeSection !== 'prediction'}
-        >
-          <Suspense fallback={<PaneLoading label="Prediction을 불러오는 중입니다." />}>
-            <PredictionWorkspace
-              active={page.activeSection === 'prediction'}
-              authenticated={auth.isAuthenticated}
-              dataReadable={experimentDataReadable}
-              command={predictionCommand}
-              onActivity={runtimeConsole.append}
-              onChromeStateChange={setPredictionState}
-              onViewerStateChange={setPredictionViewer}
-              onExperimentChange={(row) =>
-                page.guardReplacement(async () => {
-                  await workbench.loadExperiment(row)
-                  page.setLayout((current) => ({ ...current, activeSection: 'prediction' }))
-                })
-              }
-              onRequestLogin={requestAccount}
-              selectedCalculationId={workbench.selectionContext.calculationId}
-              varsContainer={predictionVarsContainer}
-              workbench={workbench}
-            />
-          </Suspense>
-        </div>
-      ) : null}
+  const rightPane = contextualRightPane
+  const predictionPane = (
+    <div className="h-full min-h-0 p-2">
+      <Suspense fallback={<PaneLoading label="Prediction을 불러오는 중입니다." />}>
+        <PredictionWorkspace
+          active={page.activeSection === 'prediction'}
+          authenticated={auth.isAuthenticated}
+          dataReadable={experimentDataReadable}
+          command={predictionCommand}
+          onActivity={runtimeConsole.append}
+          onChromeStateChange={setPredictionState}
+          onViewerStateChange={setPredictionViewer}
+          onRequestLogin={requestAccount}
+          selectedCalculationId={workbench.selectionContext.calculationId}
+          varsContainer={predictionVarsContainer}
+          workbench={workbench}
+        />
+      </Suspense>
     </div>
   )
 
@@ -427,70 +404,38 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         workbench.experimentDocument.evaluatedSnapshot?.sourceHash)
       ? predictionViewer
       : null
-  const predictionContracts = Object.fromEntries(
-    Object.entries(predictionResult?.preview.resultContracts ?? {}).filter(
-      ([name, contract]) => contract.visualization.kind === 'box-grid' && predictionResult?.preview.recorded[name],
-    ),
-  )
   const viewerPane = (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1">
-        <WorkbenchViewer
-          onActivity={runtimeConsole.append}
-          onGeometryRequiredChange={isPrediction ? workbench.setPredictionGeometryRequired : undefined}
-          initialDefaults={workbench.experimentRecord?.viewer_defaults}
-          presentation={
-            workbench.viewerPresentation
-              ? {
-                  ...workbench.viewerPresentation,
-                  canSaveInitialView: workbench.viewerPresentation.canSaveInitialView && !isPrediction && !preview,
-                }
-              : undefined
-          }
-          persistenceKey={
-            isPrediction
-              ? `prediction:${workbench.experimentId}:${workbench.experimentDocument.resultSessionKey}`
-              : undefined
-          }
-          resultPlaceholder={isPrediction && !predictionResult ? `BoxGrid 예측 · ${predictionState.status}` : undefined}
-          captureRef={viewerCaptureRef}
-          activeExperimentTaskName={page.activeExperimentFile}
-          experiment={preview?.experiment ?? workbench.experiment}
-          experimentDocument={preview?.document ?? workbench.experimentDocument}
-          onFindSelectionSource={findSelectionSource}
-          onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
-          key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
-          autoSelectResult={isPrediction || Boolean(preview || workbench.selection.measurement)}
-          resultContracts={
-            isPrediction
-              ? predictionContracts
-              : (preview?.payload.result_contracts ?? workbench.selection.resultContracts)
-          }
-          visualizations={isPrediction ? {} : (preview?.payload.visualizations ?? workbench.selection.visualizations)}
-          resultErrors={isPrediction ? {} : (preview?.errors ?? workbench.selection.resultErrors)}
-          resultSourceHash={
-            isPrediction
-              ? predictionResult?.sourceHash
-              : (preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash)
-          }
-          resultVarsHash={
-            isPrediction
-              ? predictionResult?.varsHash
-              : (preview?.payload.vars_hash ?? workbench.selection.materialSnapshot?.varsHash)
-          }
-          recordedData={
-            isPrediction ? predictionResult?.preview.recorded : (preview?.data ?? workbench.selection.flatRecordedData)
-          }
-          recordedRules={
-            isPrediction ? predictionResult?.preview.rules : (preview?.rules ?? workbench.selection.recordedRules)
-          }
-          loading={isPrediction ? false : !preview && (workbench.selection.loading || workbench.selectionRestoring)}
-          downloadProgress={workbench.selection.downloadProgress}
-          selectionStore={viewerSelection}
-          selectionSourceStatus={selectionSourceStatus}
-        />
-      </div>
-    </div>
+    <WorkbenchViewer
+      onActivity={runtimeConsole.append}
+      initialDefaults={workbench.experimentRecord?.viewer_defaults}
+      presentation={
+        workbench.viewerPresentation
+          ? {
+              ...workbench.viewerPresentation,
+              canSaveInitialView: workbench.viewerPresentation.canSaveInitialView && !preview,
+            }
+          : undefined
+      }
+      captureRef={viewerCaptureRef}
+      activeExperimentTaskName={page.activeExperimentFile}
+      experiment={preview?.experiment ?? workbench.experiment}
+      experimentDocument={preview?.document ?? workbench.experimentDocument}
+      onFindSelectionSource={findSelectionSource}
+      onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
+      key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${preflight.viewerEpoch}`}
+      autoSelectResult={Boolean(preview || workbench.selection.measurement)}
+      resultContracts={preview?.payload.result_contracts ?? workbench.selection.resultContracts}
+      visualizations={preview?.payload.visualizations ?? workbench.selection.visualizations}
+      resultErrors={preview?.errors ?? workbench.selection.resultErrors}
+      resultSourceHash={preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash}
+      resultVarsHash={preview?.payload.vars_hash ?? workbench.selection.materialSnapshot?.varsHash}
+      recordedData={preview?.data ?? workbench.selection.flatRecordedData}
+      recordedRules={preview?.rules ?? workbench.selection.recordedRules}
+      loading={!preview && (workbench.selection.loading || workbench.selectionRestoring)}
+      downloadProgress={workbench.selection.downloadProgress}
+      selectionStore={viewerSelection}
+      selectionSourceStatus={selectionSourceStatus}
+    />
   )
   const menubar = (
     <WorkbenchMenubar
@@ -542,9 +487,29 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               />
             </div>
           ) : null}
+          {predictionActivated ? (
+            <div className={isPrediction ? 'h-full min-h-0' : 'hidden'} hidden={!isPrediction}>
+              <PredictionLayout
+                menubar={menubar}
+                ribbon={ribbon}
+                vars={<div className="h-full min-h-0" ref={setPredictionVarsContainer} />}
+                viewer={
+                  <PredictionComparison
+                    key={`${workbench.workspaceSession}:${workbench.experimentId}`}
+                    workbench={workbench}
+                    prediction={predictionResult}
+                    status={predictionState.status}
+                    active={isPrediction}
+                    onActivity={runtimeConsole.append}
+                  />
+                }
+                calculations={predictionPane}
+              />
+            </div>
+          ) : null}
           <div
-            className={page.activeSection === 'measurement' ? 'hidden' : 'h-full min-h-0'}
-            hidden={page.activeSection === 'measurement'}
+            className={page.activeSection === 'measurement' || isPrediction ? 'hidden' : 'h-full min-h-0'}
+            hidden={page.activeSection === 'measurement' || isPrediction}
           >
             {page.activeSection === 'experiment' ? (
               <ExperimentWorkspace
@@ -640,7 +605,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 saveCommand={calculationSaveCommand}
                 selectedCalculationId={workbench.selectionContext.calculationId}
               />
-            ) : (
+            ) : isPrediction ? null : (
               <WorkbenchShellContainer
                 className="h-full min-h-0"
                 left={leftPane}

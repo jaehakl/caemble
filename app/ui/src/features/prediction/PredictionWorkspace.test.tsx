@@ -135,20 +135,10 @@ vi.mock('./PredictionPanels', () => ({
       </button>
     )
   },
-  PredictionVarsPane: ({
-    onVariableChange,
-    onValidityChange,
-  }: {
-    onVariableChange: (key: string, value: number) => void
-    onValidityChange: (valid: boolean) => void
-  }) => (
-    <>
-      <button type="button" onClick={() => onVariableChange('x', 2)}>
-        Edit Vars
-      </button>
-      <button onClick={() => onValidityChange(false)}>Invalid Vars draft</button>
-      <button onClick={() => onValidityChange(true)}>Discard Vars draft</button>
-    </>
+  PredictionVarsPane: ({ onVarsChange }: { onVarsChange: (vars: { x: number }) => void }) => (
+    <button type="button" onClick={() => onVarsChange({ x: 2 })}>
+      Edit Vars
+    </button>
   ),
 }))
 
@@ -252,7 +242,6 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
         command={command}
         onChromeStateChange={onChromeStateChange}
         onViewerStateChange={mocks.viewerState}
-        onExperimentChange={() => undefined}
         onRequestLogin={() => undefined}
         selectedCalculationId={1}
         varsContainer={varsContainer}
@@ -608,18 +597,6 @@ it('publishes Inverse surrogate BoxGrid while preserving the user Target', async
   await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '10'))
   expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
   expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: recordedPreview }))
-})
-
-it('blocks Save & Run and Sampling until a Vars draft is valid', async () => {
-  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
-  await renderWorkspace()
-  await waitFor(() =>
-    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true, canSample: true })),
-  )
-  fireEvent.click(screen.getByRole('button', { name: 'Invalid Vars draft' }))
-  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: false, canSample: false }))
-  fireEvent.click(screen.getByRole('button', { name: 'Discard Vars draft' }))
-  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true, canSample: true }))
 })
 
 it('predicts and enables Save & Run from metadata while Geometry and material snapshots are absent', async () => {
