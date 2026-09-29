@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cae.source_bundle import require_experiment_source_bundle
 from cae.batches import cancel_batch, require_batch
 from cae.db import CaeBatch, CaeUploadChunk
 from db import Experiment, Measurement
@@ -213,6 +214,9 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
             raise HTTPException(404, "Experiment not found.")
         if experiment.source_hash != cae.spec["source_hash"]:
             raise HTTPException(409, "Experiment source changed before commit.")
+    require_experiment_source_bundle(
+        experiment.source_bundle if experiment is not None else cae.spec["source_bundle"]
+    )
     total, incomplete = (await db.execute(select(
         func.count(Job.id), func.count(Job.id).filter(or_(
             Job.input.is_(None), func.jsonb_typeof(Job.input) != "object", Job.state != "staged",

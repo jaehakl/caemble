@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cae.source_bundle import require_experiment_source_bundle
 from cae.db import CaeBatch, CaeUploadChunk
 from cae.models import BatchCreateRequest
 from db import Experiment, Measurement
@@ -63,6 +64,7 @@ async def create_batch(
     experiment = None
     if request.preflight:
         from service.experiment import _bundle_hash
+        require_experiment_source_bundle(request.source_bundle)
         if _bundle_hash(request.source_bundle) != request.experiment_source_hash:
             raise HTTPException(422, "Preflight source bundle hash differs from its manifest.")
     else:
@@ -75,6 +77,8 @@ async def create_batch(
             raise HTTPException(404, "Experiment not found.")
         if experiment.source_hash != request.experiment_source_hash:
             raise HTTPException(409, "The Experiment source changed before batch submission.")
+    if experiment is not None:
+        require_experiment_source_bundle(experiment.source_bundle)
     batch = JobBatch(
         user_id=user.id, request_id=str(request.request_id), request_hash=request_hash,
         total=len(request.items), created_count=len(request.items), uploaded_count=0,
@@ -290,6 +294,7 @@ async def retry_batch(
     )
     if experiment is None or experiment.source_hash != cae.spec["source_hash"]:
         raise HTTPException(409, "The original Experiment is no longer available.")
+    require_experiment_source_bundle(experiment.source_bundle)
     for job in jobs:
         measurement = await db.scalar(
             select(Measurement).where(Measurement.job_id == job.id).with_for_update()

@@ -1,3 +1,4 @@
+import { assertExperimentSourcePath } from './moduleResolution'
 import type { Tensor } from '../model/types'
 import type { ExperimentSourceBundle } from '@/contracts/cad-persistence'
 
@@ -74,6 +75,7 @@ export function updateExperimentSourceFile(
   path: string,
   source: string,
 ): ExperimentSourceDocument {
+  if (!Object.prototype.hasOwnProperty.call(document.sourceBundle.files, path)) assertExperimentSourcePath(path)
   return createCadSourceDocument('experiment', createExperimentSourceBundle({ ...document.sourceBundle.files, [path]: source }))
 }
 
@@ -82,6 +84,7 @@ export function addExperimentTask(document: ExperimentSourceDocument, taskName: 
 }
 
 export function addExperimentSourceFile(document: ExperimentSourceDocument, path: string, source: string) {
+  assertExperimentSourcePath(path)
   return createCadSourceDocument('experiment', createExperimentSourceBundle({ ...document.sourceBundle.files, [path]: source }))
 }
 

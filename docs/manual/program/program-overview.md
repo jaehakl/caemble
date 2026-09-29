@@ -13,9 +13,8 @@ Experiment는 형상, 재료, 해석 조건과 실행 순서를 함께 담은 �
 | `material.tsx` | 이름이 있는 Material 객체 또는 변수에 따라 Material을 만드는 함수 |
 | `tasks/<name>.tsx` | 사용할 Solver와 버전, 필요할 경우 Task 전용 형상, `config({ vars })` 해석 설정 |
 | `simulate.py` | Task 실행 순서, 조건 분기, 중간 데이터 전달·해제, 결과 기록 |
-| 그 밖의 `.ts`, `.tsx` 파일 | 같은 소스 묶음 안에서 상대 경로로 불러오는 보조 코드 |
 
-공통 형상과 Task 보조 형상은 `geometry.tsx`, Material 정의는 `material.tsx`에서 이름을 붙여 내보내고(named export), `experiment.tsx`와 각 Task에서 상대 경로로 가져옵니다. 필요한 보조 코드는 같은 소스 묶음(bundle)에 파일을 추가해 사용할 수 있습니다. 소스 묶음 밖의 패키지, URL, 동적 `import()`와 `require()`는 지원하지 않습니다.
+공통 형상과 Task 보조 형상은 `geometry.tsx`, Material 정의는 `material.tsx`에서 이름을 붙여 내보내고(named export), `experiment.tsx`와 각 Task에서 상대 경로로 가져옵니다. 소스 묶음(bundle)은 위 경로만 허용합니다. Task 이름은 `[A-Za-z][A-Za-z0-9_-]*`이며 중첩 Task 경로와 별도 보조 파일은 사용하지 않습니다. 공유 상수는 `experiment.tsx`에 선언할 수 있으며 런타임 순환 import를 만들지 않아야 합니다. 소스 묶음 밖의 패키지, URL, 동적 `import()`와 `require()`는 지원하지 않습니다.
 
 `experiment.tsx`의 `lengthUnit`, `varsSchema`, `geometry({ vars })`, `geometryGroup`, `surfaceGroup`, `recordedData`는 여러 Task가 공유할 형상·입력과 최종 결과의 규칙을 정합니다. 숫자만 보고 SI 단위라고 가정하지 말고, 형상의 길이 단위와 각 DataSchema의 UCUM 단위를 함께 확인하세요.
 

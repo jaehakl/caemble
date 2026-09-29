@@ -80,11 +80,7 @@ function taskSolver(analysis: SourceAnalysis) {
   })
 }
 
-function collectFileReferences(
-  path: string,
-  source: string,
-  policy: 'experiment' | 'geometry' | 'material' | 'module' | 'task',
-) {
+function collectFileReferences(path: string, source: string, policy: 'experiment' | 'geometry' | 'material' | 'task') {
   const ast = parseCadSource(source, policy, path)
   const analysis = { bindings: collectSourceBindings(ast.program.body) }
   const quantityKinds = new Set<string>()
@@ -205,9 +201,7 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
             ? ('geometry' as const)
             : path === EXPERIMENT_MATERIAL_PATH
               ? ('material' as const)
-              : experimentTaskName(path) !== null
-                ? ('task' as const)
-                : ('module' as const),
+              : ('task' as const),
       ] as const,
   )
   sourceFiles.forEach(([path, policy]) => {

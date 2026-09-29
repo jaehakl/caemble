@@ -221,30 +221,6 @@ export function ExperimentEditor({
     selectFile(path)
   }
 
-  const addFile = () => {
-    const value = window.prompt('번들에 추가할 .ts 또는 .tsx 상대 경로를 입력하세요. 예: lib/profile.ts')
-    if (value === null) return
-    const path = value.trim().replace(/\\/gu, '/')
-    if (!path) {
-      window.alert('파일 경로를 입력하세요.')
-      return
-    }
-    if (!path.endsWith('.ts') && !path.endsWith('.tsx')) {
-      window.alert('추가 파일은 .ts 또는 .tsx만 사용할 수 있습니다.')
-      return
-    }
-    if (path in document.sourceBundle.files) {
-      window.alert('같은 경로의 파일이 이미 있습니다.')
-      return
-    }
-    try {
-      controller.handleAddExperimentFile(path, 'export {}\n')
-      selectFile(path)
-    } catch (cause: unknown) {
-      window.alert(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
-
   const deleteFile = () => {
     const taskName = experimentTaskName(activeFile)
     if (protectedCorePaths.includes(activeFile)) return
@@ -299,14 +275,6 @@ export function ExperimentEditor({
             onClick={addTask}
           >
             + Task
-          </button>
-          <button
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={controller.sourceReadOnly || disabled}
-            type="button"
-            onClick={addFile}
-          >
-            + File
           </button>
         </div>
       </header>

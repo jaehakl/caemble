@@ -4,16 +4,15 @@ Experiment는 여러 소스 파일을 하나의 묶음(bundle)으로 저장합�
 
 ## 같은 소스 묶음 안에서 가져오기
 
-핵심 파일뿐 아니라 사용자가 추가한 로컬 `.ts`, `.tsx` 파일도 함께 저장합니다. TypeScript/TSX에서는 같은 묶음 안의 다른 파일을 상대 경로로 가져올 수 있습니다. Python은 `simulate.py` 한 파일만 사용합니다. `@caemble/core` 외의 패키지, URL, 동적 `import()`와 `require()`는 지원하지 않습니다.
+`experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`, `tasks/<name>.tsx`만 저장할 수 있습니다. Task 이름은 `[A-Za-z][A-Za-z0-9_-]*`입니다. `object.ts`, `sensor.ts`, `lib/*.ts`나 중첩 Task 경로는 사용 여부와 관계없이 오류로 거부합니다. 기존 묶음은 열람·수정할 수 있지만 금지된 파일을 정리하기 전에는 새 저장·빌드·실행을 할 수 없습니다. TypeScript/TSX에서는 같은 묶음 안의 다른 파일을 상대 경로로 가져올 수 있습니다. Python은 `simulate.py` 한 파일만 사용합니다. `@caemble/core` 외의 패키지, URL, 동적 `import()`와 `require()`는 지원하지 않습니다.
 
-Experiment 정의는 `experiment({...})`, 각 Task는 `defineTask({...})`를 기본 내보내기(default export)로 제공합니다. `material.tsx`는 이름이 있는 Material 객체 또는 생성 함수를, `geometry.tsx`는 PascalCase 이름의 `Geometry<Props>` 함수 컴포넌트를 내보냅니다. 형상 컴포넌트는 여러 개를 내보낼 수 있습니다. 의존하는 코드는 같은 Experiment 묶음에 두며 별도 Geometry 저장소나 버전 주소를 해석하지 않습니다.
+Experiment 정의는 `experiment({...})`, 각 Task는 `defineTask({...})`를 기본 내보내기(default export)로 제공합니다. `material.tsx`는 이름이 있는 Material 객체 또는 생성 함수를, `geometry.tsx`는 PascalCase 이름의 `Geometry<Props>` 함수 컴포넌트를 내보냅니다. 형상 컴포넌트는 여러 개를 내보낼 수 있습니다. 의존하는 코드는 같은 Experiment 묶음에 두며 별도 Geometry 저장소나 버전 주소를 해석하지 않습니다. 공유 상수는 `experiment.tsx`에 둘 수 있습니다. Geometry에서 Task를 다시 import하는 등의 순환 의존성은 허용하지 않습니다. CLI의 `caemble.json`과 소스 디렉터리 밖 검증 산출물은 이 소스 경로 제한의 대상이 아닙니다.
 
 아래는 상대 경로 import를 보여 주는 부분 예시입니다. 완성 파일이 아니므로 실제 형상 작성에는 필요한 공개 API import와 컴포넌트 정의를 함께 사용하세요.
 
 ```tsx
-// geometry.tsx
-import { profilePoints } from "./lib/profile";
-export const Conductor: Geometry = () => <Polygon points={profilePoints} />;
+// tasks/trace.tsx
+import { objectPatches } from "../experiment";
 ```
 
 ## 예제·저장된 실험·데모 구분하기

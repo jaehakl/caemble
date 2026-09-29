@@ -10,7 +10,6 @@ import {
 } from '@/features/runtime-console/types'
 import {
   EXPERIMENT_SIMULATION_PATH,
-  addExperimentSourceFile,
   addExperimentTask,
   removeExperimentSourceFile,
   removeExperimentTask,
@@ -75,7 +74,6 @@ export type CadDocumentController = Readonly<{
   evaluatedSnapshot: EvaluatedExperimentSnapshot | null
   evaluationTimeoutMs: EvaluationTimeoutMs
   generateCandidate: () => number | null
-  handleAddExperimentFile: (path: string, source: string) => void
   handleAddExperimentTask: (taskName: string, source: string) => void
   handleExperimentFileChange: (path: string, source: string) => void
   handleRemoveExperimentFile: (path: string) => void
@@ -874,12 +872,7 @@ export function useCadWorkspace(
     },
     [experiment, onExperimentChange],
   )
-  const handleAddExperimentFile = useCallback(
-    (path: string, source: string) => {
-      if (experiment && onExperimentChange) onExperimentChange(addExperimentSourceFile(experiment, path, source))
-    },
-    [experiment, onExperimentChange],
-  )
+
   const handleRemoveExperimentTask = useCallback(
     (taskName: string) => {
       if (experiment && onExperimentChange) onExperimentChange(removeExperimentTask(experiment, taskName))
@@ -963,7 +956,6 @@ export function useCadWorkspace(
     evaluatedSnapshot: ownsCurrentSession ? evaluatedSnapshot : null,
     evaluationTimeoutMs,
     generateCandidate,
-    handleAddExperimentFile,
     handleAddExperimentTask,
     handleExperimentFileChange,
     handleRemoveExperimentFile,

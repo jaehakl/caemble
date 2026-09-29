@@ -49,7 +49,6 @@ vi.mock('@/lib/cad/source', () => {
   const keepDocument = (document: unknown) => document
   return {
     EXPERIMENT_SIMULATION_PATH: 'simulate.py',
-    addExperimentSourceFile: keepDocument,
     addExperimentTask: keepDocument,
     removeExperimentSourceFile: keepDocument,
     removeExperimentTask: keepDocument,

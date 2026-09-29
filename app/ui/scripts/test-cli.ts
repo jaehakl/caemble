@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -13,6 +13,7 @@ const output = mkdtempSync(path.join(tmpdir(), 'caemble-cli-test-'))
 function run(args: string[], expected = 0) {
   const result = spawnSync(process.execPath, [cli, '--repo', repo, '--json', ...args], {
     cwd: output,
+    env: { ...process.env, CAEMBLE_API_URL: 'http://127.0.0.1:1', CAEMBLE_API_TOKEN: 'source-path-test' },
     encoding: 'utf8',
     timeout: 60000,
     windowsHide: true,
@@ -46,6 +47,36 @@ for (const document of documents) {
 assert.equal(run(['unknown'], 2).error.exitCode, 2)
 writeFileSync(path.join(output, 'manifest.json'), JSON.stringify({ kind: 'caemble.build', version: 2 }), 'utf8')
 assert.equal(run(['png', 'geometry', output, '--out', path.join(output, 'invalid.png')], 4).error.exitCode, 4)
+const forbiddenSource = path.join(output, 'forbidden-source')
+mkdirSync(forbiddenSource)
+writeFileSync(path.join(forbiddenSource, 'experiment.tsx'), 'export default null')
+writeFileSync(path.join(forbiddenSource, 'object.ts'), 'export const unused = 1')
+for (const command of ['check', 'build']) {
+  const result = run(['experiment', command, forbiddenSource, '--out', path.join(output, command)], 1)
+  assert.match(result.error.message, /object\.ts.*Allowed:/)
+}
+// A validly shaped old artifact must also be rejected before any item read or API request.
+writeFileSync(
+  path.join(output, 'manifest.json'),
+  JSON.stringify({
+    kind: 'caemble.build',
+    version: 2,
+    source_hash: 'a'.repeat(64),
+    catalog_revision: 'test',
+    builder_version: '2',
+    mode: 'candidate',
+    source_bundle: { files: { 'experiment.tsx': '', 'sensor.ts': '' } },
+    items: [{ index: 1, file: 'items/1.json', input_hash: 'b'.repeat(64), byte_length: 1 }],
+  }),
+)
+for (const args of [
+  ['experiment', 'push', forbiddenSource, '--artifact', output],
+  ['experiment', 'test', output, '--out', path.join(output, 'results')],
+  ['batch', 'submit', output, '--experiment', '1'],
+]) {
+  const result = run(args, 4)
+  assert.match(result.error.details.message, /sensor\.ts.*Allowed:/)
+}
 const fixture = path.join(output, 'fixture.json')
 writeFileSync(fixture, JSON.stringify(calculationExampleInput), 'utf8')
 for (const example of calculationExamples) {

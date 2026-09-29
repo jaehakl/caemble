@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
+from .source_bundle import validate_experiment_source_bundle
 from .database import Catalog
 from .errors import CatalogError, CatalogNotFoundError
 from .schema import APPLICATION_ID, TABLE_ORDER, create_schema, parse_experiment_version
@@ -292,6 +293,10 @@ def validate_experiment_calculations(calculations: Any) -> list[dict[str, Any]]:
 def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]) -> None:
     calculations = validate_experiment_calculations(experiment.get("calculations", []))
     bundle = experiment["sourceBundle"]
+    try:
+        validate_experiment_source_bundle(bundle)
+    except ValueError as error:
+        raise CatalogError(str(error)) from error
     bundle_hash = hashlib.sha256(canonical_json(bundle).encode("utf-8")).hexdigest()
     try:
         version = parse_experiment_version(experiment.get("version", "1.0.0"))
@@ -578,7 +583,12 @@ def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
     with Catalog.open_readonly(source, immutable=False) as catalog:
         meta = catalog.meta()
         for experiment in catalog.list_experiments(limit=1_000_000)[0]:
-            validate_experiment_calculations(catalog.experiment(experiment["coordinate"])["calculations"])
+            detail = catalog.experiment(experiment["coordinate"])
+            validate_experiment_calculations(detail["calculations"])
+            try:
+                validate_experiment_source_bundle(detail["sourceBundle"])
+            except ValueError as error:
+                raise CatalogError(f"{experiment['coordinate']}: {error}") from error
         for model in catalog.material_models():
             validate_parameter_schema(model["parameterSchema"])
             model_subject(model)

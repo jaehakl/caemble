@@ -14,7 +14,7 @@ import type {
   TSType,
   TSTypeAliasDeclaration,
 } from '@babel/types'
-import { resolveExperimentModuleSpecifier } from './moduleResolution'
+import { assertExperimentSourcePaths, resolveExperimentModuleSpecifier } from './moduleResolution'
 
 const generate = (generateModule as unknown as { default?: typeof generateModule }).default ?? generateModule
 const traverse = (traverseModule as unknown as { default?: typeof traverseModule }).default ?? traverseModule
@@ -55,7 +55,7 @@ export type MaterialSourceAnalysis = Readonly<{
   exports: readonly string[]
 }>
 
-type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material' | 'module'
+type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material'
 
 const geometrySharedProps = new Set(['children', 'id', 'materials', 'position', 'rotation', 'scale'])
 
@@ -276,7 +276,6 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
     }
     if (
       policy !== 'material' &&
-      policy !== 'module' &&
       statement.importKind !== 'type' &&
       statement.specifiers.some((specifier) => {
         if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return false
@@ -478,11 +477,8 @@ function runtimeStaticImports(ast: File) {
   })
 }
 
-export function analyzeBundleModuleSource(source: string, path: string) {
-  return Object.freeze({ ast: parseCadSource(source, 'module', path) })
-}
-
 export function assertExperimentModuleGraph(files: Readonly<Record<string, string>>) {
+  assertExperimentSourcePaths(Object.keys(files))
   const modules = Object.fromEntries(
     Object.entries(files).filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx')),
   )
@@ -495,9 +491,7 @@ export function assertExperimentModuleGraph(files: Readonly<Record<string, strin
           ? 'geometry'
           : path === 'material.tsx'
             ? 'material'
-            : /^tasks\/[A-Za-z][A-Za-z0-9_-]*\.tsx$/u.test(path)
-              ? 'task'
-              : 'module'
+            : 'task'
     const ast = parseCadSource(source, policy, path)
     dependencies.set(
       path,

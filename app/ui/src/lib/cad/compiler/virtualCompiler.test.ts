@@ -122,6 +122,23 @@ export default experiment({
     expect(browserError!.diagnostics[0].range.startLineNumber).toBe(3)
   })
 
+  it.each(['object.ts', 'tasks/nested/trace.tsx', 'extra.py'])(
+    'rejects unused %s in both compiler entry points',
+    async (path) => {
+      await expect(
+        compileVirtualCadDocument({ sourceHash: 'forbidden', sources: { [path]: '' }, catalogTypes: 'export {}' }),
+      ).rejects.toThrow(path)
+      const { compileCadDocument } = await import('./monacoCompiler')
+      await expect(
+        compileCadDocument(
+          { kind: 'experiment', sourceBundle: { files: { ...templates[0].sourceBundle.files, [path]: '' } } },
+          { catalog },
+        ),
+      ).rejects.toThrow(path)
+      expect(() => compileNodeCadDocument({ [path]: '' }, 'forbidden', catalog, 'src/lib/cad/api')).toThrow(path)
+    },
+  )
+
   it('retains policy and module-graph rejection before type checking', async () => {
     await expect(
       compileVirtualCadDocument({
@@ -133,7 +150,7 @@ export default experiment({
     await expect(
       compileVirtualCadDocument({
         sourceHash: 'graph',
-        sources: { 'extra.ts': "import { Part } from './missing'; export const Value = Part" },
+        sources: { 'geometry.tsx': "import { Part } from './missing'; export const Value: Geometry = () => <Part />" },
         catalogTypes: 'export {}',
       }),
     ).rejects.toMatchObject({

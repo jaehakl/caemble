@@ -10,13 +10,13 @@ Caemble 저장소에서 작업하며 루트의 `AGENTS.md`를 먼저 읽습니�
 
 먼저 `.\caemble.cmd doctor`로 환경을 확인합니다. CLI가 없거나 오래된 경우 `npm --prefix app/ui run build:cli`를 실행하고 다시 확인합니다. POSIX에서는 `sh ./caemble`을 사용합니다. 정확한 옵션은 설치된 CLI의 도움말을 확인합니다.
 
-서버 작업에는 `.env`의 `CAEMBLE_API_URL`과 `caemble` 범위의 `CAEMBLE_API_TOKEN`이 필요합니다. 외부 작성 에이전트의 모델 인증 정보는 에이전트가 관리합니다. 소스 묶음에는 `.env`, 토큰, 개인 키나 관련 없는 작업 파일을 넣지 않습니다.
+서버 작업에는 `.env`의 `CAEMBLE_API_URL`과 `caemble` 범위의 `CAEMBLE_API_TOKEN`이 필요합니다. 외부 작성 에이전트의 모델 인증 정보는 에이전트가 관리합니다. 소스 묶음의 `{ files }`에는 `experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`, `tasks/<name>.tsx`만 허용합니다. Task 이름은 `[A-Za-z][A-Za-z0-9_-]*`이며 중첩 경로는 허용하지 않습니다. `object.ts`, `sensor.ts`, `lib/*.ts` 등은 미사용 파일이어도 check/build/push와 서버 저장·실행에서 거부합니다. CLI 메타데이터 `caemble.json`은 소스 묶음에 포함되지 않습니다. 검증 산출물은 소스 디렉터리 밖에 저장합니다.
 
 ## 작성할 때 확인할 순서
 
 1. **수정할 원본을 확인합니다.** 저장소 revision, API 주소, 인증 사용자, Catalog revision, Experiment ID·좌표·버전과 소스 해시를 기록합니다. 기존 실험은 원본 식별 정보를 포함한 전체 소스 묶음을 내려받습니다. 다른 revision에서 파일 하나만 복사한 상태로 수정을 시작하지 않습니다.
 2. **완성된 예제를 고릅니다.** Catalog의 Python 라이브러리나 `catalogctl`로 현재 Solver descriptor(지원 입력·출력과 설정을 설명하는 정의)와 전체 예제를 확인합니다. Solver 이름·버전, method ID, 재료 역할, 출력 이름과 QuantityKind는 여기서 가져옵니다. UI의 초기 소스는 초안이며, 자리만 마련한 Task와 아무 해석도 하지 않는 `simulate.py` 본문은 해석 성공을 보여 주지 않습니다.
-3. **파일의 역할을 구분합니다.** `experiment.tsx`는 `experiment(...)`로 실험을 정의하고, `geometry.tsx`나 가져온 로컬 모듈은 이름을 가진 Geometry 컴포넌트를 제공합니다. `material.tsx`는 Material 인스턴스, 각 `tasks/*.tsx`는 default export한 `defineTask(...)`, `simulate.py`는 실행 순서를 담당합니다. 사용할 속성의 정확한 선언과 Element 참조를 읽습니다. TypeScript 검사 통과만으로 Caemble 소스 작성 규칙을 모두 만족하는 것은 아닙니다.
+3. **파일의 역할을 구분합니다.** `experiment.tsx`는 `experiment(...)`로 실험을 정의하고, `geometry.tsx`는 이름을 가진 Geometry 컴포넌트를 제공합니다. `material.tsx`는 Material 인스턴스, 각 `tasks/*.tsx`는 default export한 `defineTask(...)`, `simulate.py`는 실행 순서를 담당합니다. 사용할 속성의 정확한 선언과 Element 참조를 읽습니다. TypeScript 검사 통과만으로 Caemble 소스 작성 규칙을 모두 만족하는 것은 아닙니다.
 4. **형상·재료·출력을 연결합니다.** 아래의 입력 연결 점검표를 사용해 실제 Solver가 받는 설정과 기록할 결과를 확인합니다.
 5. **단계별로 검사합니다.** 경로·import 연결·소스 규칙을 확인하고 공통 TypeScript 컴파일러와 로컬 빌드·평가를 사용합니다. `simulate.py`는 기존 CAE Python 환경의 프로그램 검증기로 검사합니다. Node의 TypeScript 검사는 Python을 검증하지 않습니다. Python 허용 목록은 프로그램과 이름을 검사하며 물리 해의 성공을 보장하지 않습니다. 필요한 관련 CAE 검사도 로컬에서 수행합니다.
 6. **빌드된 입력을 살펴봅니다.** 고정된 변수, 명시적 Material 모델 스냅샷, Task 식별 정보, 형상과 진단을 확인합니다. 형상이나 선택 대상을 바꿨다면 구조 PNG를 만듭니다. 미리보기 메시의 모양과 Solver 입력·수치법·기록 계약의 정확성은 각각 확인해야 합니다.

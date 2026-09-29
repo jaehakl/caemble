@@ -1,3 +1,4 @@
+import { assertExperimentSourcePaths } from '@/lib/cad/source/moduleResolution'
 import { buildArtifactSchema, type BuildArtifact } from '@/contracts/build'
 import type { BuiltMeasurement } from '@/lib/cad/execution/measurement'
 import type { CadScene } from '@/lib/cad/evaluation/types'
@@ -13,6 +14,7 @@ export type BuiltArtifactInput = Readonly<{
 
 export function parseBuildArtifact(value: unknown): BuildArtifact {
   const artifact = buildArtifactSchema.parse(value)
+  assertExperimentSourcePaths(Object.keys(artifact.source_bundle.files))
   artifact.items.forEach((item, index) => {
     if (item.index !== index + 1 || item.file !== `items/${index + 1}.json`)
       throw new Error('Artifact items must be consecutive and uniquely addressed.')

@@ -63,7 +63,7 @@ CurvedEdgeCylinder는 전 영역에서 양의 반지름을 갖는 정칙 형상�
 
 frequency축은 실제 입력 파장별 기여이며 연속 스펙트럼 밀도 W/Hz·W/nm나 센서의 보정된 분광 채널이 아닙니다. Viewer의 Hz/nm 표시는 같은 데이터의 좌표 변환입니다. 프로파일에서 나머지 공간 축을 sum으로 집계하고 파장을 선택하세요. 합산 방향과 W 단위를 확인하며 원시 신호를 smoothing하지 않습니다.
 
-기본 예제는 중앙 위치의 단색 조건입니다. 특성화할 때는 예제에서 별도 source를 만들고 `sensor.ts`의 `inputWavelengths`를 세 파장으로 고정합니다. `slitPosition` 범위를 넓힌 뒤 세 위치를 각각 Candidate로 **미리 빌드**하고 기존 실행 기능을 사용하세요. 각 Measurement는 그 위치의 세 파장을 frequency축에 기록합니다. 위치를 time·component축에 넣거나 `simulate.py`에서 Task를 추가하지 않습니다. CLI에서 고정 Candidate는 `experiment build <source> --mode candidate --vars <vars.json> --out <artifact>`로 빌드하고 동일 artifact를 `experiment test` 또는 `batch submit`에 사용합니다.
+기본 예제는 중앙 위치의 단색 조건입니다. 특성화할 때는 예제에서 별도 source를 만들고 `experiment.tsx`의 `inputWavelengths`를 세 파장으로 고정합니다. `slitPosition` 범위를 넓힌 뒤 세 위치를 각각 Candidate로 **미리 빌드**하고 기존 실행 기능을 사용하세요. 각 Measurement는 그 위치의 세 파장을 frequency축에 기록합니다. 위치를 time·component축에 넣거나 `simulate.py`에서 Task를 추가하지 않습니다. CLI에서 고정 Candidate는 `experiment build <source> --mode candidate --vars <vars.json> --out <artifact>`로 빌드하고 동일 artifact를 `experiment test` 또는 `batch submit`에 사용합니다.
 
 예제 Calculation은 총전력·도달 효율·u/v 합산 프로파일·전력 가중 중심을 제공합니다. 중심은 무신호에서 평가 오류가 되며 0이나 NaN으로 대체하지 않습니다. 국소 파장 샘플링 Calculation은 인접 파장 사이의 `pitch / |Δcentroid/Δλ|`를 계산합니다. 단일 파장, 무신호 또는 거의 영인 분산에서는 평가할 수 없습니다. 다중 피크나 회절 차수 중첩을 하나의 역보정식으로 해석하지 마세요.
 

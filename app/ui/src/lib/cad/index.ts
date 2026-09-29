@@ -142,7 +142,6 @@ export type {
   ExperimentSourceDocument,
 } from './source/document'
 export {
-  analyzeBundleModuleSource,
   analyzeGeometrySource,
   analyzeMaterialSource,
   assertExperimentModuleGraph,

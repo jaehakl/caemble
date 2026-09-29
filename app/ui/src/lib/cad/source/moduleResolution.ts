@@ -9,22 +9,12 @@ export function isExperimentTypeScriptPath(path: string) {
 export function assertExperimentSourcePath(path: unknown): asserts path is string {
   if (
     typeof path !== 'string' ||
-    path.length === 0 ||
-    path.startsWith('/') ||
-    path.includes('\\')
+    !(['experiment.tsx', 'geometry.tsx', 'material.tsx', 'simulate.py'].includes(path) ||
+      /^tasks\/[A-Za-z][A-Za-z0-9_-]*\.tsx$/u.exec(path)?.[0] === path)
   ) {
-    throw new CadModelError(`Experiment source file path is invalid: ${String(path)}`)
-  }
-  const segments = path.split('/')
-  if (
-    segments.some(
-      (segment) => segment.length === 0 || segment === '.' || segment === '..' || !sourceSegmentPattern.test(segment),
+    throw new CadModelError(
+      `Experiment source path is not allowed: ${String(path)}. Allowed: experiment.tsx, geometry.tsx, material.tsx, simulate.py, tasks/<name>.tsx (name: [A-Za-z][A-Za-z0-9_-]*).`,
     )
-  ) {
-    throw new CadModelError(`Experiment source file path is invalid: ${path}`)
-  }
-  if (path !== 'simulate.py' && !isExperimentTypeScriptPath(path)) {
-    throw new CadModelError(`Experiment source file type is not supported: ${path}`)
   }
 }
 
@@ -42,6 +32,7 @@ export function assertExperimentSourcePaths(paths: readonly string[]) {
 }
 
 export function experimentTypeScriptPaths(files: Readonly<Record<string, unknown>>) {
+  assertExperimentSourcePaths(Object.keys(files))
   return Object.keys(files)
     .filter(isExperimentTypeScriptPath)
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
@@ -79,7 +70,7 @@ export function resolveExperimentModuleSpecifier(
   const target = normalizedRelativeTarget(importerPath, specifier)
   const candidates = isExperimentTypeScriptPath(target)
     ? [target]
-    : [`${target}.ts`, `${target}.tsx`, `${target}/index.ts`, `${target}/index.tsx`]
+    : [`${target}.tsx`]
   const matches = candidates.filter((candidate) => Object.prototype.hasOwnProperty.call(files, candidate))
   if (matches.length === 0) {
     throw new CadModelError(`Experiment module import is unresolved in ${importerPath}: ${specifier}`)
@@ -89,5 +80,6 @@ export function resolveExperimentModuleSpecifier(
       `Experiment module import is ambiguous in ${importerPath}: ${specifier} (${matches.join(', ')})`,
     )
   }
+  assertExperimentSourcePath(matches[0])
   return matches[0]
 }

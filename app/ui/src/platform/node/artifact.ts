@@ -4,6 +4,7 @@ import path from 'node:path'
 import { parseArtifactInput, parseBuildArtifact } from '@/lib/cae/artifact'
 import type { BuildArtifact, BuildArtifactItem } from '@/contracts/build'
 import type { ExperimentSourceBundle } from '@/contracts/cad-persistence'
+import { assertExperimentSourcePath, assertExperimentSourcePaths } from '@/lib/cad/source/moduleResolution'
 import { cadSourceHash } from '@/lib/cad/source/document'
 import { CliError } from './environment'
 
@@ -21,14 +22,11 @@ export async function readSourceBundle(directory: string): Promise<ExperimentSou
   const entries = await readdir(directory, { recursive: true, withFileTypes: true })
   for (const entry of entries) {
     const relative = path.relative(directory, path.join(entry.parentPath, entry.name)).replace(/\\/g, '/')
-    if (
-      !entry.isFile() ||
-      !/\.(tsx?|py)$/.test(entry.name) ||
-      /(^|\/)(node_modules|\.git|\.venv|dist|dist-cli)\//.test(relative)
-    )
-      continue
+    if (entry.isDirectory() || relative === 'caemble.json') continue
+    assertExperimentSourcePath(relative)
     files[relative] = await readFile(await containedPath(directory, relative), 'utf8')
   }
+  assertExperimentSourcePaths(Object.keys(files))
   if (!files['experiment.tsx']) throw new CliError('The source directory must contain experiment.tsx.')
   return { files }
 }

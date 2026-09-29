@@ -28,6 +28,7 @@ from user_auth.db import User
 from service.experiment_access import require_experiment_read
 from service.box_grid import validate_box_grid_schema
 from service.calculation_source import get_or_create_calculation_source
+from cae.source_bundle import require_experiment_source_bundle
 from cae.batches import require_no_active_batches
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user, normalize_int_ids
@@ -294,6 +295,7 @@ async def save_experiment(
     user: Any,
 ) -> dict[str, Any]:
     try:
+        require_experiment_source_bundle(_source_bundle_payload(request.sourceBundle))
         if request.requestId or request.thumbnail is not None or request.preflightBatchId:
             from service.experiment_save_assets import save_with_assets
             return await save_with_assets(db, request, user)
@@ -311,6 +313,7 @@ async def _save_experiment(
     commit: bool = True,
 ) -> dict[str, Any]:
     source_bundle = _source_bundle_payload(request.sourceBundle)
+    require_experiment_source_bundle(source_bundle)
     source_hash = _bundle_hash(source_bundle)
     name = request.name.strip()
     namespace = request.namespace.strip()
