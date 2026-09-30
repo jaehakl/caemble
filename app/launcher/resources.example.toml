@@ -1,0 +1,26 @@
+# Copy to .data/resources.toml, or set CAEMBLE_RESOURCES_FILE.
+# Omitted CPU/RAM budgets use half the available CPUs/physical RAM.
+# cpu_cores = 12
+# ram_budget_bytes = 68719476736
+startup_ram_bytes = 1073741824
+sample_interval_seconds = 1.0
+metrics_max_age_seconds = 3.0 # Must be at least sample_interval_seconds.
+# ram_growth_headroom_bytes defaults to max(1 GiB, 10% of budget).
+# system_ram_headroom_bytes defaults to max(2 GiB, 10% of physical RAM).
+# gpu_devices = ["GPU-full-device-uuid"] # Omitted: discover NVIDIA devices.
+
+[defaults.cae]
+# cpu_cores = 4 # Omitted: min(4, total launcher CPU budget).
+gpu_count = 0
+
+# Explicitly configure AI GPU use for the installed models.
+[defaults.ai]
+# cpu_cores = 4
+gpu_count = 0
+# gpu_count = 1
+# gpu_memory_bytes = 8589934592
+
+# Exact handler profiles override app defaults; API/CLI requests override both.
+#[defaults."ai.sdxl.inpaint"]
+#gpu_count = 1
+#gpu_memory_bytes = 8589934592

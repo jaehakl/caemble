@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import uuid
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from sqlalchemy import and_, cast, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from fastapi import HTTPException
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only
+from sqlalchemy.orm import defer, load_only
 
 from gpstation.db import Job, JobBatch, Launcher
 from gpstation.models import JobData, JobSummary
 from settings import settings
-from gpstation.service.batches import fail_server_jobs, finish_job, job_event, serialize_events
+from gpstation.service.batches import finish_job, job_event, serialize_events
+from gpstation.service.execution import resource_fits, sync_attempt
 
 JOB_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "killed"}
 JOB_ACTIVE_STATES = {"assigned", "answer_ready", "running", "finalizing"}
@@ -43,6 +44,8 @@ def job_to_data(job: Job) -> JobData:
         cancel_requested_at=job.cancel_requested_at,
         last_error=job.last_error,
         attempt_count=job.attempt_count,
+        attempt_id=job.attempt_id, instance_id=job.instance_id, resources=job.resources or {},
+        allocation=job.allocation, cleanup_state=job.cleanup_state, waiting_reason=job.waiting_reason,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -64,6 +67,7 @@ class JobService:
         handler_type: str,
         slave_app_id: str,
         offer: dict[str, Any],
+        resources: dict | None = None,
     ) -> Job:
         if slave_app_id == "cae":
             raise HTTPException(422, "CAE jobs must be submitted through /cae/batches.")
@@ -73,7 +77,7 @@ class JobService:
             slave_app_id=slave_app_id,
             offer=offer,
             state="queued",
-            progress=[],
+            progress=[], resources=resources or {}, attempt_count=1, attempt_id=str(uuid.uuid4()),
         )
         db.add(job)
         await db.commit()
@@ -101,7 +105,7 @@ class JobService:
     ) -> Job | None:
         stmt = (
             select(Job)
-            .options(load_only(Job.id, Job.answer, Job.state, Job.last_error))
+            .options(load_only(Job.id, Job.answer, Job.state, Job.last_error, Job.launcher_id, Job.boot_id, Job.instance_id, Job.attempt_id, Job.reservation_id, Job.attempt_count))
             .where(Job.id == job_id)
         )
         if user_id is not None:
@@ -131,6 +135,7 @@ class JobService:
                 Job.cancel_requested_at,
                 Job.last_error,
                 Job.attempt_count,
+                Job.attempt_id, Job.instance_id, Job.resources, Job.allocation, Job.cleanup_state, Job.waiting_reason,
                 Job.progress.op("->")(-1).label("latest_progress"),
                 Job.created_at,
                 Job.updated_at,
@@ -162,6 +167,8 @@ class JobService:
                 cancel_requested_at=row.cancel_requested_at,
                 last_error=row.last_error,
                 attempt_count=row.attempt_count,
+                attempt_id=row.attempt_id, instance_id=row.instance_id, resources=row.resources or {},
+                allocation=row.allocation, cleanup_state=row.cleanup_state, waiting_reason=row.waiting_reason,
                 latest_progress=row.latest_progress,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
@@ -170,218 +177,55 @@ class JobService:
         ]
 
     @staticmethod
-    async def claim_next_compatible_job(
-        db: AsyncSession,
-        *,
-        idle_launcher_ids: set[str],
-    ) -> tuple[Job, str] | None:
-        if not idle_launcher_ids:
+    async def claim_next_compatible_job(db: AsyncSession, *, available_launchers: dict[str, dict]) -> tuple[Job, str] | None:
+        if not available_launchers:
             return None
         await serialize_events(db)
-        assignment = (
-            await db.execute(
-                select(Job, Launcher)
-                .outerjoin(JobBatch, JobBatch.id == Job.batch_id)
-                .join(
-                    Launcher,
-                    and_(
-                        Launcher.user_id == Job.user_id,
-                        Launcher.slave_app_ids.op("?")(Job.slave_app_id),
-                        func.coalesce(Launcher.job_modes.op("->>")(Job.slave_app_id), "webrtc")
-                        == Job.job_mode,
-                        or_(func.coalesce(Job.input["storage_version"].astext, "0") != "1",
-                            Launcher.storage_versions.op("->>")(Job.slave_app_id) == "1"),
-                    ),
-                )
-                .where(
-                    Job.state == "queued",
-                    or_(Job.job_mode == "webrtc", Job.input.is_not(None)),
-                    Launcher.id.in_(idle_launcher_ids),
-                    Launcher.disconnected_at.is_(None),
-                    Launcher.status == "ready",
-                )
-                .order_by(
-                    func.coalesce(JobBatch.last_dispatched_at, JobBatch.created_at, Job.created_at).asc(),
-                    Job.created_at.asc(),
-                    Job.item_index.asc().nulls_last(),
-                    Job.id.asc(),
-                    Launcher.last_heartbeat_at.desc(),
-                    Launcher.connected_at.asc(),
-                    Launcher.id.asc(),
-                )
-                .limit(1)
-                .with_for_update(of=(Job, Launcher), skip_locked=True)
-            )
-        ).first()
-        if assignment is None:
-            await db.rollback()
-            return None
-
-        job, launcher = assignment
-        launcher_id = str(launcher.id)
-        now = utcnow()
-        launcher.status = "busy"
-        launcher.updated_at = now
-        job.launcher_id = launcher_id
-        job.state = "assigned"
-        job.assigned_at = now
-        if job.job_mode == "webrtc":
-            job.attempt_count = int(job.attempt_count or 0) + 1
-        job.updated_at = now
-        if job.batch_id is not None:
-            batch = await db.get(JobBatch, job.batch_id)
-            batch.last_dispatched_at = func.now()
-            batch.state = "running"
-        if job.job_mode == "websocket":
+        candidates = (await db.execute(
+            select(Job, Launcher).options(defer(Job.input), defer(Job.artifact_metadata),
+                defer(Job.progress), defer(Job.answer), defer(Job.offer))
+            .outerjoin(JobBatch, JobBatch.id == Job.batch_id)
+            .join(Launcher, and_(Launcher.user_id == Job.user_id,
+                Launcher.slave_app_ids.op("?")(Job.slave_app_id),
+                func.coalesce(Launcher.job_modes.op("->>")(Job.slave_app_id), "webrtc") == Job.job_mode,
+                or_(func.coalesce(Job.input["storage_version"].astext, "0") != "1",
+                    Launcher.storage_versions.op("->>")(Job.slave_app_id) == "1")))
+            .where(Job.state == "queued", or_(Job.job_mode == "webrtc", Job.input.is_not(None)),
+                Launcher.id.in_(available_launchers), Launcher.disconnected_at.is_(None),
+                Launcher.status.in_(("ready", "busy")))
+            .order_by(func.coalesce(JobBatch.last_dispatched_at, JobBatch.created_at, Job.created_at).asc(),
+                Job.created_at.asc(), Job.item_index.asc().nulls_last(), Job.id.asc(),
+                Launcher.last_heartbeat_at.desc(), Launcher.connected_at.asc(), Launcher.id.asc())
+            .with_for_update(of=Job, skip_locked=True)
+        )).all()
+        for job, launcher in candidates:
+            snapshot = available_launchers[str(launcher.id)]
+            report = snapshot["resources"]
+            if snapshot.get("rejected", {}).get(job.id, -1) >= report.get("revision", 0):
+                continue
+            if not resource_fits(job.resources or {}, report, job.slave_app_id, job.handler_type):
+                job.waiting_reason = "resources_unavailable"
+                continue
+            now = utcnow()
+            job.launcher_id = str(launcher.id)
+            job.boot_id = snapshot["boot_id"]
+            job.instance_id, job.reservation_id = str(uuid.uuid4()), str(uuid.uuid4())
+            job.attempt_id = job.attempt_id or str(uuid.uuid4())
+            job.attempt_count = max(1, job.attempt_count or 0)
+            job.state, job.execution_phase, job.cleanup_state = "assigned", "reserving", "reserved"
+            job.assigned_at = job.updated_at = now
+            job.cleaned_at = None
+            job.waiting_reason = None
+            await sync_attempt(db, job)
+            if job.batch_id is not None:
+                batch = await db.get(JobBatch, job.batch_id)
+                batch.last_dispatched_at = now
+                batch.state = "running"
             await job_event(db, job, "job.assigned")
+            await db.commit()
+            return job, str(launcher.id)
         await db.commit()
-        return job, launcher_id
-
-    @staticmethod
-    async def mark_launcher_answer(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        user_id: str,
-        answer: dict[str, Any],
-    ) -> Job | None:
-        now = utcnow()
-        return await JobService._update_launcher_job(
-            db,
-            job_id=job_id,
-            launcher_id=launcher_id,
-            user_id=user_id,
-            expected_states={"assigned"},
-            values={
-                "answer": answer,
-                "answer_ready_at": now,
-                "state": "answer_ready",
-                "updated_at": now,
-            },
-        )
-
-    @staticmethod
-    async def mark_launcher_running(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        user_id: str,
-    ) -> Job | None:
-        now = utcnow()
-        return await JobService._update_launcher_job(
-            db,
-            job_id=job_id,
-            launcher_id=launcher_id,
-            user_id=user_id,
-            expected_states={"answer_ready"},
-            values={"state": "running", "started_at": now, "updated_at": now},
-        )
-
-    @staticmethod
-    async def append_launcher_progress(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        user_id: str,
-        progress: Any,
-    ) -> Job | None:
-        now = utcnow()
-        item = {"time": now.isoformat(), "progress": progress}
-        return await JobService._update_launcher_job(
-            db,
-            job_id=job_id,
-            launcher_id=launcher_id,
-            user_id=user_id,
-            expected_states={"running"},
-            values={
-                "progress": Job.progress.op("||")(cast([item], JSONB)),
-                "updated_at": now,
-            },
-        )
-
-    @staticmethod
-    async def mark_launcher_result(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        user_id: str,
-    ) -> Job | None:
-        now = utcnow()
-        return await JobService._update_launcher_job(
-            db,
-            job_id=job_id,
-            launcher_id=launcher_id,
-            user_id=user_id,
-            expected_states={"running"},
-            values={"state": "succeeded", "finished_at": now, "updated_at": now},
-            release_launcher=True,
-        )
-
-    @staticmethod
-    async def mark_launcher_error(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        user_id: str,
-        detail: str,
-        state: str = "failed",
-    ) -> Job | None:
-        now = utcnow()
-        return await JobService._update_launcher_job(
-            db,
-            job_id=job_id,
-            launcher_id=launcher_id,
-            user_id=user_id,
-            expected_states=JOB_ACTIVE_STATES,
-            values={"state": state, "last_error": detail, "finished_at": now, "updated_at": now},
-            release_launcher=True,
-        )
-
-    @staticmethod
-    async def _update_launcher_job(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        user_id: str,
-        expected_states: set[str],
-        values: dict[str, Any],
-        extra_conditions: tuple[Any, ...] = (),
-        release_launcher: bool = False,
-    ) -> Job | None:
-        job = await db.scalar(
-            update(Job)
-            .where(
-                Job.id == job_id,
-                Job.launcher_id == launcher_id,
-                Job.user_id == user_id,
-                Job.state.in_(expected_states),
-                *extra_conditions,
-            )
-            .values(**values)
-            .returning(Job)
-            .execution_options(populate_existing=True)
-        )
-        if job is None:
-            await db.rollback()
-            return None
-        if release_launcher:
-            await db.execute(
-                update(Launcher)
-                .where(
-                    Launcher.id == launcher_id,
-                    Launcher.user_id == user_id,
-                    Launcher.disconnected_at.is_(None),
-                )
-                .values(status="ready", updated_at=utcnow())
-            )
-        await db.commit()
-        return job
+        return None
 
     @staticmethod
     async def request_kill(
@@ -411,113 +255,38 @@ class JobService:
         if job.job_mode == "websocket":
             await finish_job(db, job, "cancelled", "Cancelled by user.")
         elif job.state == "queued":
-            job.state = "killed"
-            job.finished_at = now
+            await finish_job(db, job, "killed", "Cancelled by user.")
         await db.commit()
         return job
 
     @staticmethod
-    async def fail_assigned_job(
-        db: AsyncSession,
-        *,
-        job_id: str,
-        launcher_id: str,
-        detail: str,
-        state: str = "failed",
-    ) -> Job | None:
-        await serialize_events(db)
-        server_job = await db.scalar(
-            select(Job)
-            .where(Job.id == job_id, Job.launcher_id == launcher_id, Job.job_mode == "websocket")
-            .with_for_update()
-        )
-        if server_job is not None:
-            await finish_job(db, server_job, state, detail)
-            await db.commit()
-            return server_job
-        now = utcnow()
-        job = await db.scalar(
-            update(Job)
-            .where(
-                Job.id == job_id,
-                Job.launcher_id == launcher_id,
-                Job.state.in_(JOB_ACTIVE_STATES),
-            )
-            .values(state=state, last_error=detail, finished_at=now, updated_at=now)
-            .returning(Job)
-        )
-        if job is None:
-            await db.rollback()
-            return None
-        await db.execute(
-            update(Launcher)
-            .where(Launcher.id == launcher_id, Launcher.disconnected_at.is_(None))
-            .values(status="ready", updated_at=now)
-        )
-        await db.commit()
-        return job
-
-    @staticmethod
-    async def disconnect_launchers_and_fail_jobs(
-        db: AsyncSession,
-        *,
-        launcher_ids: set[str] | list[str],
-        detail: str,
-    ) -> list[Job]:
-        launcher_ids = {str(launcher_id) for launcher_id in launcher_ids}
+    async def disconnect_launchers_and_fail_jobs(db: AsyncSession, *, launcher_ids: set[str] | list[str], detail: str) -> list[Job]:
         if not launcher_ids:
-            await db.rollback()
+            await db.commit()
             return []
+        await serialize_events(db)
         now = utcnow()
-        await db.execute(
-            update(Launcher)
-            .where(Launcher.id.in_(launcher_ids))
-            .values(status="disconnected", disconnected_at=now, updated_at=now)
-        )
-        jobs = list(
-            (
-                await db.scalars(
-                    update(Job)
-                    .where(
-                        Job.launcher_id.in_(launcher_ids),
-                        Job.job_mode == "webrtc",
-                        Job.state.in_(JOB_ACTIVE_STATES),
-                    )
-                    .values(state="failed", last_error=detail, finished_at=now, updated_at=now)
-                    .returning(Job)
-                )
-            ).all()
-        )
+        await db.execute(update(Launcher).where(Launcher.id.in_(launcher_ids)).values(
+            status="disconnected", disconnected_at=now, updated_at=now))
+        jobs = list((await db.scalars(select(Job).where(Job.launcher_id.in_(launcher_ids),
+            Job.state.in_(JOB_ACTIVE_STATES)).with_for_update())).all())
+        for job in jobs:
+            await finish_job(db, job, "cancelled" if job.cancel_requested_at else "failed", detail)
         await db.commit()
-        return jobs + await fail_server_jobs(db, detail=detail, launcher_ids=launcher_ids)
+        return jobs
 
     @staticmethod
     async def recover_after_server_restart(db: AsyncSession) -> list[Job]:
+        await serialize_events(db)
         now = utcnow()
-        await db.execute(
-            update(Launcher)
-            .where(Launcher.disconnected_at.is_(None))
-            .values(status="disconnected", disconnected_at=now, updated_at=now)
-        )
-        jobs = list(
-            (
-                await db.scalars(
-                    update(Job)
-                    .where(
-                        Job.launcher_id.is_not(None),
-                        Job.job_mode == "webrtc",
-                        Job.state.in_(JOB_ACTIVE_STATES),
-                    )
-                    .values(
-                        state="failed",
-                        last_error="server restarted",
-                        finished_at=now,
-                        updated_at=now,
-                    )
-                    .returning(Job)
-                )
-            ).all()
-        )
+        await db.execute(update(Launcher).where(Launcher.disconnected_at.is_(None)).values(
+            status="recovering", reconnect_deadline=now + timedelta(seconds=30), updated_at=now))
+        jobs = list((await db.scalars(select(Job).where(Job.state.in_(JOB_ACTIVE_STATES),
+            Job.reservation_id.is_not(None)).with_for_update())).all())
+        for job in jobs:
+            if job.waiting_reason != "recovering":
+                job.waiting_reason = "recovering"
+                await job_event(db, job, "job.recovering", {"waiting_reason": "recovering"})
         await db.commit()
         return jobs
 
@@ -566,29 +335,9 @@ class JobService:
             await db.rollback()
             return []
 
-        launcher_ids: set[str] = set()
         for job in jobs:
-            if job.job_mode == "websocket":
-                await finish_job(db, job, "failed", "Worker execution or connection timed out.")
-                continue
-            job.state = "failed"
-            job.last_error = (
-                "job lifetime exceeded"
-                if job.created_at < now - JOB_MAX_LIFETIME
-                else "job idle timeout"
-            )
-            job.finished_at = now
-            job.updated_at = now
-            if job.launcher_id:
-                launcher_ids.add(str(job.launcher_id))
-        if launcher_ids:
-            await db.execute(
-                update(Launcher)
-                .where(
-                    Launcher.id.in_(launcher_ids),
-                    Launcher.disconnected_at.is_(None),
-                )
-                .values(status="ready", updated_at=now)
-            )
+            detail = "Worker execution or connection timed out." if job.job_mode == "websocket" else (
+                "job lifetime exceeded" if job.created_at < now - JOB_MAX_LIFETIME else "job idle timeout")
+            await finish_job(db, job, "cancelled" if job.cancel_requested_at else "failed", detail)
         await db.commit()
         return jobs

@@ -49,6 +49,10 @@ export class GpStationJobSession implements JobSession {
     return this.peer.closed;
   }
 
+  get execution() {
+    return this.peer.execution;
+  }
+
   async call<TInput = unknown, TResult = unknown>(
     handlerType: string,
     input?: TInput,
@@ -272,6 +276,7 @@ export class GpStationClient {
         body: JSON.stringify({
           handler_type: handlerType,
           slave_app_id: slaveAppId,
+          ...(options.resources ? { resources: options.resources } : {}),
           offer: {
             type: 'offer',
             sdp: peerConnection.localDescription.sdp,
@@ -288,6 +293,8 @@ export class GpStationClient {
       if (!answer.answer || answer.answer.type !== 'answer' || !answer.answer.sdp) {
         throw new Error(answer.last_error || `job ${created.job.id} did not produce an answer (state=${answer.state})`);
       }
+      if (answer.job_id !== created.job.id) throw new Error('Job answer belongs to another job.');
+      jobPeer.bindExecution(answer);
       await peerConnection.setRemoteDescription({ type: 'answer', sdp: answer.answer.sdp });
       emitDiagnostic(peerConnection, dataChannel, diagnostic, {
         stage: 'remote-answer',

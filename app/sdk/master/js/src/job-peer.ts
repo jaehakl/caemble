@@ -4,6 +4,7 @@ import type {
   AttachmentMetadata,
   CallResult,
   ConnectDiagnosticEvent,
+  ExecutionIdentity,
   IncomingFile,
   JobEvent,
   PendingResponse,
@@ -16,7 +17,7 @@ const BUFFERED_AMOUNT_LOW_THRESHOLD = 128 * 1024;
 const BUFFERED_AMOUNT_DRAIN_TIMEOUT_MS = 30_000;
 const JOB_RESULT_PAYLOAD_ATTACHMENTS = 'gpstation.job-result.payload-attachments';
 
-type JobControlFrame = {
+type JobControlFrame = Partial<ExecutionIdentity> & {
   kind: string;
   id?: string;
   type?: string;
@@ -43,6 +44,7 @@ export class GpStationJobPeer {
   private finishSent = false;
   private isClosed = false;
   private receiveChain: Promise<void> = Promise.resolve();
+  private executionIdentity?: ExecutionIdentity;
 
   constructor(
     private readonly peerConnection: RTCPeerConnection,
@@ -61,6 +63,28 @@ export class GpStationJobPeer {
 
   get closed(): boolean {
     return this.isClosed || this.peerConnection.signalingState === 'closed' || this.dataChannel.readyState === 'closed';
+  }
+
+  get execution(): ExecutionIdentity | undefined {
+    return this.executionIdentity;
+  }
+
+  bindExecution(value: Partial<ExecutionIdentity>): void {
+    if (this.executionIdentity) throw new Error('The peer is already bound to an execution.');
+    const fields = ['launcher_id', 'boot_id', 'instance_id', 'job_id', 'attempt_id', 'reservation_id'] as const;
+    if (fields.some((key) => typeof value[key] !== 'string' || !value[key]) ||
+        !Number.isSafeInteger(value.attempt_count) || (value.attempt_count ?? 0) < 1) {
+      throw new Error('The API did not return a complete execution identity. Upgrade API and SDK together.');
+    }
+    this.executionIdentity = Object.freeze({
+      launcher_id: value.launcher_id!, boot_id: value.boot_id!, instance_id: value.instance_id!,
+      job_id: value.job_id!, attempt_id: value.attempt_id!, attempt_count: value.attempt_count!,
+      reservation_id: value.reservation_id!,
+    });
+  }
+
+  private sendControl(message: JobControlFrame): void {
+    this.dataChannel.send(JSON.stringify({ ...message, ...this.executionIdentity }));
   }
 
   waitUntilOpen(timeoutMs: number): Promise<void> {
@@ -85,7 +109,7 @@ export class GpStationJobPeer {
 
   sendReady(jobId: string): void {
     this.ensureOpen('send job ready');
-    this.dataChannel.send(JSON.stringify({ kind: 'job.ready', id: jobId }));
+    this.sendControl({ kind: 'job.ready', id: jobId });
     emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
       stage: 'job-ready',
       message: 'sent job ready',
@@ -142,7 +166,7 @@ export class GpStationJobPeer {
         size: attachment.blob.size,
       }));
     }
-    this.dataChannel.send(JSON.stringify(frame));
+    this.sendControl(frame);
     for (const attachment of attachments) {
       await this.sendRequestAttachment(callId, attachment);
     }
@@ -258,7 +282,7 @@ export class GpStationJobPeer {
       this.finishReject = reject;
       this.finishJobId = jobId;
       try {
-        this.dataChannel.send(JSON.stringify({ kind: 'job.finish', id: jobId }));
+        this.sendControl({ kind: 'job.finish', id: jobId });
         this.finishSent = true;
       } catch (error) {
         this.clearFinish();
@@ -296,6 +320,9 @@ export class GpStationJobPeer {
   }
 
   private async handleControlMessage(message: JobControlFrame, controlBytes?: number): Promise<void> {
+    if (this.executionIdentity && Object.entries(this.executionIdentity).some(([key, value]) => message[key as keyof ExecutionIdentity] !== value)) {
+      return;
+    }
     if (message.kind === 'job.error') {
       if (message.id && this.pendingCall?.id === message.id) {
         this.rejectPendingCall(new Error(message.detail || 'job error'));
@@ -305,7 +332,12 @@ export class GpStationJobPeer {
       return;
     }
     if (message.kind === 'job.event') {
-      this.pendingCall?.onEvent?.({ id: message.id, type: message.type, payload: message.payload });
+      this.pendingCall?.onEvent?.({
+        id: message.id,
+        type: message.type,
+        payload: message.payload,
+        ...(this.executionIdentity ? { execution: this.executionIdentity } : {}),
+      });
       return;
     }
     if (message.kind === 'job.finished') {
@@ -316,7 +348,7 @@ export class GpStationJobPeer {
       }
       try {
         this.ensureOpen('acknowledge job finish');
-        this.dataChannel.send(JSON.stringify({ kind: 'job.finished.ack', id: jobId }));
+        this.sendControl({ kind: 'job.finished.ack', id: jobId });
         await this.waitForSendBuffer(0, 'after job finished ack');
         emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
           stage: 'job-finished-ack',
@@ -572,7 +604,7 @@ export class GpStationJobPeer {
 
   private acknowledgeResult(callId: string, attachmentCount: number, attachmentBytes: number): void {
     this.ensureOpen('acknowledge job result');
-    this.dataChannel.send(JSON.stringify({ kind: 'job.result.ack', id: callId }));
+    this.sendControl({ kind: 'job.result.ack', id: callId });
     emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
       stage: 'job-result-ack',
       message: 'sent job result ack',

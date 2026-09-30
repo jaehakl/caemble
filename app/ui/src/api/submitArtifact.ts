@@ -4,6 +4,7 @@ import { type BuildArtifact, type BuildArtifactItem } from '@/contracts/build'
 import { parseArtifactInput, parseBuildArtifact } from '@/lib/cae/artifact'
 import { cadSourceHash } from '@/lib/cad/source/document'
 import { externalizeObjects, OBJECT_INLINE_BYTES, uploadObject } from './objectStorage'
+import type { ResourceRequest } from '@/contracts/api/execution'
 
 export async function sha256Bytes(bytes: Uint8Array) {
   const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer as ArrayBuffer)
@@ -17,6 +18,7 @@ export async function submitArtifact(
     experimentId: number | null
     preflight?: boolean
     requestId: string
+    resources?: ResourceRequest
     readItem: (item: BuildArtifactItem) => Promise<Uint8Array>
     signal?: AbortSignal
     onRegistered?: (id: string) => void | Promise<void>
@@ -30,6 +32,7 @@ export async function submitArtifact(
   options.signal?.throwIfAborted()
   const batch = await batches.create({
     request_id: options.requestId,
+    ...(options.resources ? { resources: options.resources } : {}),
     experiment_id: options.experimentId,
     ...(options.preflight ? { preflight: true, source_bundle: artifact.source_bundle } : {}),
     experiment_source_hash: artifact.source_hash,

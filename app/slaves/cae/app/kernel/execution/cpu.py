@@ -8,6 +8,7 @@ from threadpoolctl import threadpool_limits
 
 from app.kernel.api import CpuAllocation
 from sdk.slave.io import log
+from sdk.slave.execution import execution_context
 
 CPU_BUDGET_ENV = "CAEMBLE_CAE_CPU_BUDGET"
 THREAD_ENV = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
@@ -30,6 +31,9 @@ def cpu_allocation(requested: int | None = None) -> CpuAllocation:
     if requested is not None and (isinstance(requested, bool) or not isinstance(requested, int) or requested < 1):
         raise ValueError(f"{CPU_BUDGET_ENV} must be a positive integer")
     budget = max(1, available // 2) if requested is None else min(requested, available)
+    managed = execution_context()
+    if managed is not None:
+        budget = min(budget, managed.allocation.cpu_cores)
     log(f"solver CPU allocation available={available} requested={requested} budget={budget}")
     return CpuAllocation(available, budget)
 

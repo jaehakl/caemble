@@ -19,6 +19,7 @@ from app.llm.generation import (
     thinking_override,
 )
 from app.model_catalog import resolve_llm_model
+from sdk.slave.execution import cpu_threads, execution_context
 
 LLM_SPLIT_MODE_NONE = 0
 LLM_SPLIT_MODE_LAYER = 1
@@ -151,14 +152,24 @@ def build_prompt_llm_config(
     resolved_temperature = model.temperature if temperature is None else temperature
     resolved_context_size = model.context_size if context_size is None else context_size
     resolved_top_p = model.top_p if top_p is None else top_p
-    use_gpu = model.use_max_gpu
+    managed = execution_context()
+    use_gpu = model.use_max_gpu and (managed is None or bool(managed.allocation.gpu_devices))
     cuda_device_count = get_cuda_device_count() if use_gpu else 0
     main_gpu = _resolve_llm_main_gpu(use_gpu, cuda_device_count, model.main_gpu)
     n_gpu_layers = model.n_gpu_layers if model.n_gpu_layers is not None else (-1 if use_gpu else 0)
+    if managed is not None and not managed.allocation.gpu_devices:
+        n_gpu_layers = 0
+    if managed is not None and use_gpu and cuda_device_count != len(managed.allocation.gpu_devices):
+        raise ValueError("Allocated CUDA devices are unavailable to this execution")
     split_mode = _parse_llm_split_mode(model.split_mode) if main_gpu is not None else None
     tensor_split = tuple(model.tensor_split) or None if main_gpu is not None else None
     if split_mode == LLM_SPLIT_MODE_NONE:
         tensor_split = None
+    if managed is not None and main_gpu is not None:
+        if not 0 <= main_gpu < cuda_device_count:
+            raise ValueError("LLM main_gpu must index the execution's allocated CUDA devices")
+        if tensor_split is not None and len(tensor_split) != cuda_device_count:
+            raise ValueError("LLM tensor_split must match the execution's allocated CUDA devices")
     lease_device_ids = _resolve_llm_lease_device_ids(
         main_gpu=main_gpu,
         split_mode=split_mode,
@@ -171,12 +182,15 @@ def build_prompt_llm_config(
     n_batch = model.n_batch
     n_ubatch = model.n_ubatch
     offload_kqv = model.offload_kqv
+    if managed is not None and not managed.allocation.gpu_devices:
+        offload_kqv = False
+    n_threads = cpu_threads(model.n_threads)
     enable_thinking = model.enable_thinking
     model_key = (
         model_path_value,
         context_size,
         n_gpu_layers,
-        model.n_threads,
+        n_threads,
         main_gpu,
         split_mode,
         tensor_split,
@@ -193,7 +207,7 @@ def build_prompt_llm_config(
         model_path=model_path_value,
         context_size=context_size,
         n_gpu_layers=n_gpu_layers,
-        n_threads=model.n_threads,
+        n_threads=n_threads,
         main_gpu=main_gpu,
         split_mode=split_mode,
         tensor_split=tensor_split,
@@ -367,6 +381,8 @@ def _get_prompt_llm_locked(config: PromptLlmConfig) -> Any:
         }
         if config.n_threads is not None:
             llama_kwargs["n_threads"] = config.n_threads
+        if execution_context() is not None:
+            llama_kwargs["n_threads_batch"] = cpu_threads(config.n_threads)
         if config.main_gpu is not None:
             llama_kwargs["main_gpu"] = config.main_gpu
         if config.split_mode is not None:

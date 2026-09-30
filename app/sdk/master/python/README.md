@@ -36,6 +36,7 @@ async def main() -> None:
                 "max_tokens": 128,
             },
             slave_app_id="ai",
+            resources={"cpu_cores": 2, "startup_ram_bytes": 2 * 1024**3, "gpu_count": 0},
         )
         print(result.payload)
 
@@ -46,6 +47,13 @@ asyncio.run(main())
 ## Keep a job session open
 
 Set `auto_finish=False` to make more than one ordered call over the same WebRTC DataChannel. Finish the session explicitly before leaving the client context.
+
+Resource overrides belong to the job, not its input payload. Omitted fields use the launcher's
+app/handler profile. `gpu_count=0` requests CPU-only execution; positive counts require that
+many exclusive GPUs. `gpu_memory_bytes` is the requested free memory per GPU. These are
+admission requests, not hard RAM or VRAM limits. An open session keeps the same allocation
+and exposes its immutable identity as `session.execution`. Start another job for calls that
+need different resources. Protocol 2 requires upgrading the API, launcher and SDK together.
 
 ```python
 first = await client.run_job(

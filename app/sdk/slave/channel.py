@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
+from sdk.slave.execution import execution_frame
 
 CHUNK_SIZE = 16 * 1024
 INLINE_RESULT_CONTROL_BYTES = 32 * 1024
@@ -74,13 +75,13 @@ def _job_result_frame(
     payload: Any,
     attachments: list[DataChannelAttachment],
 ) -> dict[str, Any]:
-    return {
+    return execution_frame({
         "kind": "job.result",
         "id": job_id,
         "type": message_type,
         "payload": payload,
         "attachments": [attachment_metadata(attachment) for attachment in attachments],
-    }
+    })
 
 
 def _result_payload_attachments(

@@ -103,9 +103,11 @@ systemd 설정과 안내 로그에 같은 값을 사용한다. 이 시간 안에
 systemd가 서비스 프로세스를 강제 종료한다. 로그에는 종료 시작과
 소요 시간을 표시한다. 이 제한은 API 종료 대기에만 적용하며 dependency 설치·migration 시간은 포함하지 않는다.
 
-Launcher는 API 연결 해제 시 기존 worker 종료 처리를 수행하고, 3초 안에 끝나지 않는 CAE worker는
-프로세스 트리를 강제 종료한다. 원격 worker의 실제 종료 시점은 연결 단절 감지에 영향을 받으며,
-배포는 완료 확인을 기다리지 않는다. 중단 작업은 기존 연결 해제·재시작 복구로 종료 상태에 반영하며,
+Launcher 제어 연결에는 기본 30초의 재접속 유예가 있으며 그동안 신규 배정을 중단한다.
+같은 boot의 재접속은 인스턴스와 예약을 대조한다. CAE 결과 WebSocket이 끊기면 해당 attempt는
+실패하고 정리되며 수동 재시도가 필요하다. 유예 만료·취소·실패에 따른 프로세스 트리 종료를
+확인하기 전에는 예약을 반환하지 않는다. 원격 worker의 실제 종료 시점은 연결 단절 감지에 영향을 받으며,
+배포는 완료 확인을 기다리지 않는다. 중단 작업은 연결 해제·재시작 복구로 종료 상태에 반영하며,
 재시작 복구 시 `failed`와 `server restarted` 사유를 유지한다. 완료 결과는 보존하고 아직 실행되지 않은
 대기 작업은 재시작 후 실행한다.
 
@@ -168,15 +170,41 @@ poetry install
 poetry run launcher
 ```
 
-한 launcher는 worker와 job을 한 번에 하나만 실행한다. `models.toml`, 모델 weight, cache,
+한 launcher는 CPU·RAM·GPU 예산 안에서 여러 slave 인스턴스를 실행한다. 인스턴스당 활성 Job은
+하나이며 attempt마다 새 프로세스를 만든다. `app/launcher/resources.example.toml`을
+`.data/resources.toml`로 복사하거나 `CAEMBLE_RESOURCES_FILE`로 정책 파일을 지정한다.
+생략한 CPU·RAM 예산은 각각 가용 논리 CPU와 물리 RAM의 절반이다. 앱·handler 기본값과
+API/CLI override, RAM 여유 계산 및 GPU 배타 할당은 [worker 운영 안내](workers.md)를 따른다.
+Launchers 화면은 예산과 인스턴스 상태를 표시하며 설정 파일은 장비에서 편집한다.
+`models.toml`, 모델 weight, cache,
 `.env`, `.venv`, VOICEVOX runtime은 장비 로컬에 둔다.
 CAE manifest는 `websocket`을 선언하며 worker가 서버로 결과를 직접 업로드한다. AI 등
 기존 `webrtc` manifest의 브라우저 Master 동작은 유지된다.
 
-배포 후에는 같은 사용자 Launcher 두 대에 Repeat Run을 등록하고 브라우저를 닫은 뒤에도
-진행되는지 확인한다. 재접속 시 진행·메시지·완료 알림·선택 Measurement 결과를 확인하고,
-worker 중단과 실패 재시도, AI WebRTC 실행을 각각 확인한다. 배포 스크립트 자체는 이
+배포 후에는 launcher 한 대에 작은 Batch를 등록하여 두 Job의 실행 시간이 실제로 겹치고,
+자원 부족으로 대기한 Job이 정리 후 시작되는지 확인한다. 한 Job의 취소가 다른 Job에 영향을
+주지 않아야 한다. 브라우저를 닫은 뒤에도 실행이 진행되고 재접속 시 진행·메시지·완료 알림·
+선택 Measurement 결과가 복구되는지 확인한다. 제어 연결 재접속, 결과 연결 중단과 수동 재시도,
+AI WebRTC 실행도 각각 확인한다. 배포 스크립트 자체는 이
 브라우저·실제 DB·실제 worker 검증을 대신하지 않는다.
+
+## 공통 실행·자원 계약 전환 (revision 000000000019)
+
+Execution protocol 2는 launcher 설치, boot, 연결 session, slave 인스턴스, Job,
+attempt와 예약을 구분한다. API·SDK·launcher·CAE/AI·UI·CLI를 같은 release로 갱신한다.
+이전 실행 메시지를 허용하는 호환 모드는 없다. 기존 완료 Measurement와 RecordedData는
+보존하며 입력 고정 및 Batch commit 절차도 유지한다.
+
+전환 전에 활성 작업과 launcher를 종료하고 API 및 DB writer를 중단한다. DB 백업과 이전
+release를 확보한 뒤 새 release에서 `poetry run alembic upgrade head`를 적용하고
+`poetry run alembic current`로 revision을 확인한다. Migration은 launcher 식별·자원 보고,
+Job 실행 식별·자원 요청과 `execution_attempts` 이력을 추가한다. Schema reset은 사용하지 않는다.
+새 API를 올린 뒤 같은 release의 launcher를 시작하고 위 병렬 실행 점검을 수행한다.
+
+Rollback도 writer와 launcher를 중단한 상태에서 수행한다. 정리되지 않은 예약이 있는 동안은
+revision 19 downgrade가 거부된다. 각 프로세스 트리 종료와 API의 정리 기록을 확인한 후
+`poetry run alembic downgrade 000000000018`을 실행하고 이전 release를 복원한다.
+개발 검사 통과는 운영 DB migration과 장비별 프로세스 containment 검증을 대신하지 않는다.
 
 
 ## Calculation 공유 정의·선언 계약 제거 (revision 000000000017~000000000018)

@@ -52,6 +52,7 @@ async def create_job(
         handler_type=body.handler_type,
         slave_app_id=body.slave_app_id,
         offer=body.offer,
+        resources=body.resources.model_dump(exclude_none=True) if body.resources else {},
     )
     return JobCreateResult(
         job=job_to_data(job),
@@ -97,7 +98,8 @@ async def wait_job_answer(
             detail="Job not found",
         )
     return JobAnswerWaitResult(
-        job_id=str(job.id),
+        job_id=str(job.id), launcher_id=job.launcher_id, boot_id=job.boot_id, instance_id=job.instance_id,
+        attempt_id=job.attempt_id, reservation_id=job.reservation_id, attempt_count=job.attempt_count,
         state=job.state,
         answer=job.answer,
         last_error=job.last_error,

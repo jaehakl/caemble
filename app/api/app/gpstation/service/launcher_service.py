@@ -56,20 +56,22 @@ class LauncherService:
         ip_address: str | None,
         job_modes: dict[str, str] | None = None,
         storage_versions: dict[str, int] | None = None,
+        installation_id: str, boot_id: str, session_id: str, resources: dict,
     ) -> Launcher:
         now = datetime.now(timezone.utc)
-        launcher = Launcher(
-            user_id=user_id,
-            launcher_name=launcher_name,
-            ip_address=ip_address,
-            status="ready",
-            slave_app_ids=list(dict.fromkeys(slave_app_ids)),
-            job_modes=job_modes or {},
-            storage_versions=storage_versions or {},
-            connected_at=now,
-            last_heartbeat_at=now,
-        )
-        db.add(launcher)
+        launcher = await db.scalar(select(Launcher).where(Launcher.user_id == user_id,
+            Launcher.installation_id == installation_id).with_for_update())
+        if launcher is None:
+            launcher = Launcher(user_id=user_id, installation_id=installation_id,
+                launcher_name=launcher_name, status="ready", connected_at=now, last_heartbeat_at=now)
+            db.add(launcher)
+        launcher.boot_id, launcher.session_id = boot_id, session_id
+        launcher.launcher_name, launcher.ip_address = launcher_name, ip_address
+        launcher.status, launcher.resources = "ready", resources
+        launcher.slave_app_ids = list(dict.fromkeys(slave_app_ids))
+        launcher.job_modes, launcher.storage_versions = job_modes or {}, storage_versions or {}
+        launcher.last_heartbeat_at = now
+        launcher.disconnected_at = launcher.reconnect_deadline = None
         await db.commit()
         await db.refresh(launcher)
         return launcher

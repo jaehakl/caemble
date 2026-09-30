@@ -27,8 +27,12 @@ from gpstation.db import Job, JobBatch, JobEvent, JobRecord, Launcher
 from gpstation.service import worker_connection
 from gpstation.service.server_handlers import server_handlers
 from gpstation.service.state import runtime, utcnow
-from sdk.protocol.packets import Attachment
+from gpstation.service.execution import execution_identity
+from box_grid_fixtures import box_schema, box_tensor
+from sdk.protocol.packets import Attachment, send_packet
 from sdk.slave.server import ServerSlaveApp, run_server_job
+from sdk.slave.execution import ExecutionContext
+from sdk.protocol.execution import ExecutionIdentity, ResourceAllocation
 from settings import settings
 from test_calculation_database import (
     _create_database,
@@ -117,7 +121,10 @@ class WorkerConnectionTests(unittest.TestCase):
         owner, _, experiment_id, _ = await _seed_owners(database)
         engine = create_async_engine(make_async_db_url(_database_url(database)))
         sessions = async_sessionmaker(engine, expire_on_commit=False)
-        schema = {"dtype": "float64"}
+        schema = box_schema((100000, 1, 1, 1, 1, 1, 1))
+        tensor = box_tensor((1, 1, 1, 1, 1, 1, 1))
+        tensor["shape"][0] = tensor["boxGrid"]["gridShape"][0] = 100000
+        tensor["axes"][0]["ticks"] = list(range(100000))
         async with sessions() as db:
             batch = JobBatch(
                 user_id=owner,
@@ -153,10 +160,14 @@ class WorkerConnectionTests(unittest.TestCase):
                 batch_id=batch.id,
                 item_index=1,
                 state="assigned",
-                attempt_count=1,
+                attempt_count=1, attempt_id=str(uuid.uuid4()), boot_id="boot",
+                instance_id=str(uuid.uuid4()), reservation_id=str(uuid.uuid4()), execution_phase="start_authorized",
+                allocation={"cpu_ids": [0], "cpu_cores": 1, "startup_ram_bytes": 1024,
+                    "ram_available_bytes": 1024**3, "gpu_devices": [], "gpu_memory_bytes": 0},
                 input={
                     "measurement": {
-                        "experiment": {"simulationProgram": {"recordedData": {"signal": schema}}}
+                        "experiment": {"simulationProgram": {"recordedData": {"signal": schema},
+                            "resultContracts": {"signal": tensor["provenance"]}}}
                     }
                 },
             )
@@ -185,7 +196,7 @@ class WorkerConnectionTests(unittest.TestCase):
             await db.commit()
             assignment = await worker_connection.worker_assignment(db, job)
         await runtime.register_launcher(launcher.id, AsyncMock(), "test-key")
-        await runtime.mark_launcher_job(launcher.id, job.id)
+        await runtime.mark_instance(launcher.id, {**execution_identity(job), "state": "starting"})
         server_handlers["cae.simulation"] = recording
         app = FastAPI()
 
@@ -200,6 +211,10 @@ class WorkerConnectionTests(unittest.TestCase):
 
         async def compute(payload, attachments, context):
             self.assertIn("measurement", payload)
+            await send_packet(context.websocket.send, context.websocket.send, {
+                "type": "job.failed", **execution_identity(job), "attempt_id": str(uuid.uuid4()),
+                "detail": "stale terminal must not fail the current attempt",
+            })
             await context.send(
                 {"type": "job.progress", "progress": {"stage": "계산", "completed": 1, "total": 2}}
             )
@@ -208,8 +223,7 @@ class WorkerConnectionTests(unittest.TestCase):
                 "sequence": 1,
                 "name": "signal",
                 "value": {
-                    "shape": [100000],
-                    "axes": [{"ticks": list(range(100000))}],
+                    **tensor,
                     "storage": {"kind": "attachments", "ids": ["signal"], "byteLength": len(raw)},
                 },
             }
@@ -217,11 +231,11 @@ class WorkerConnectionTests(unittest.TestCase):
             for _ in range(2):
                 await context.send(packet, [attachment])
                 ack, _ = await context.receive()
-                self.assertEqual(ack, {"type": "job.record.ack", "sequence": 1})
+                self.assertEqual(ack, {"type": "job.record.ack", "sequence": 1, **execution_identity(job)})
             staged.set()
             await finish.wait()
             cleaned.set()
-            return {"recordSequences": [1]}
+            return {"recordSequences": [1], "visualizationSequences": []}
 
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
@@ -231,7 +245,8 @@ class WorkerConnectionTests(unittest.TestCase):
         try:
             with patch.object(worker_connection, "SessionLocal", sessions), patch(
                 "sdk.slave.server.emit", side_effect=emitted.append
-            ):
+            ), patch("sdk.slave.server.execution_context", return_value=ExecutionContext(
+                ExecutionIdentity.model_validate(assignment), ResourceAllocation.model_validate(assignment["allocation"]))):
                 server_task = asyncio.create_task(server.serve(sockets=[listener]))
                 while not server.started:
                     await asyncio.sleep(0.01)
@@ -250,7 +265,7 @@ class WorkerConnectionTests(unittest.TestCase):
                 finish.set()
                 await asyncio.wait_for(worker_task, timeout=20)
                 self.assertTrue(cleaned.is_set())
-                self.assertEqual([event["type"] for event in emitted], ["job.cleaned"])
+                self.assertEqual([event["type"] for event in emitted], ["job.running", "job.cleaned"])
                 async with sessions() as db:
                     stored = await db.scalar(select(RecordedData))
                     self.assertEqual(base64.b64decode(stored.data["storage"]["data"]), raw)
@@ -268,19 +283,15 @@ class WorkerConnectionTests(unittest.TestCase):
                     self.assertTrue(
                         await worker_connection.worker_cleaned(
                             db,
-                            job_id=job.id,
-                            attempt_count=1,
-                            launcher_id=launcher.id,
+                            identity=execution_identity(job),
                             user_id=owner,
                         )
                     )
-                    await runtime.mark_launcher_job(launcher.id, "next-job")
+                    await runtime.mark_instance(launcher.id, {"instance_id": "next-instance", "reservation_id": "next-reservation", "job_id": "next-job"})
                     self.assertTrue(
                         await worker_connection.worker_cleaned(
                             db,
-                            job_id=job.id,
-                            attempt_count=1,
-                            launcher_id=launcher.id,
+                            identity=execution_identity(job),
                             user_id=owner,
                         )
                     )

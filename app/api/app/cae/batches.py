@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 
 from caemble_catalog import Catalog
 from fastapi import HTTPException
@@ -21,6 +22,7 @@ from gpstation.service.batches import (
     serialize_events,
 )
 from gpstation.service.state import utcnow
+from gpstation.service.execution import execution_identity
 from models import UserData
 from utils.crud.common import is_admin_user
 
@@ -44,6 +46,10 @@ async def create_batch(
 ) -> JobBatch:
     await serialize_events(db)
     request_data = request.model_dump(mode="json")
+    if request.resources is None or not request.resources.model_dump(exclude_none=True):
+        request_data.pop("resources", None)
+    else:
+        request_data["resources"] = request.resources.model_dump(exclude_none=True)
     if not request.preflight:
         for key in ("preflight", "source_bundle"):
             request_data.pop(key)
@@ -100,6 +106,8 @@ async def create_batch(
             handler_type="cae.simulation", slave_app_id="cae", job_mode="websocket",
             state="staged", attempt_count=1, progress=[], offer={},
             artifact_metadata=item.model_dump(mode="json"),
+            resources=request.resources.model_dump(exclude_none=True) if request.resources else {},
+            attempt_id=str(uuid.uuid4()),
         ))
     await add_event(db, batch, "batch.created", payload={"experiment_id": request.experiment_id})
     await db.commit()
@@ -156,6 +164,8 @@ def job_snapshot(job: Job, measurement_id: int | None) -> dict:
         "input_hash": (job.artifact_metadata or {}).get("input_hash"),
         "measurement_id": measurement_id,
         "cleanup_pending": bool(job.launcher_id and job.cleaned_at is None),
+        "attempt_id": job.attempt_id, "instance_id": job.instance_id, "resources": job.resources or {},
+        "allocation": job.allocation, "cleanup_state": job.cleanup_state, "waiting_reason": job.waiting_reason,
         "progress": job.progress[-1].get("progress") if job.progress else None,
         "last_error": job.last_error, "created_at": job.created_at, "updated_at": job.updated_at,
     }
@@ -212,7 +222,7 @@ async def list_batches(
 
 async def cancel_batch(
     db: AsyncSession, batch_id: str, user_id: str, job_ids: list[str] | None = None
-) -> tuple[JobBatch, list[tuple[str, str]]]:
+) -> tuple[JobBatch, list[dict]]:
     await serialize_events(db)
     batch = await require_batch(db, batch_id, user_id, lock=True)
     cancellations = []
@@ -228,7 +238,7 @@ async def cancel_batch(
                 continue
             job.cancel_requested_at = utcnow()
             if job.launcher_id and job.cleaned_at is None:
-                cancellations.append((job.launcher_id, job.id))
+                cancellations.append(execution_identity(job))
             await finish_job(db, job, "cancelled", "Cancelled by user.")
     elif batch.state not in {"completed", "cancelled"}:
         was_uploading = batch.state == "uploading"
@@ -247,7 +257,7 @@ async def cancel_batch(
         for job in jobs:
             job.cancel_requested_at = utcnow()
             if job.launcher_id and job.cleaned_at is None:
-                cancellations.append((job.launcher_id, job.id))
+                cancellations.append(execution_identity(job))
             await finish_job(db, job, "cancelled", "Cancelled by user.")
         if was_uploading:
             await db.execute(delete(CaeUploadChunk).where(
@@ -308,6 +318,10 @@ async def retry_batch(
         else:
             batch.cancelled -= 1
         job.attempt_count += 1
+        job.attempt_id = str(uuid.uuid4())
+        job.instance_id = job.reservation_id = job.boot_id = None
+        job.allocation = None
+        job.execution_phase = job.cleanup_state = job.waiting_reason = None
         job.state = "queued"
         job.launcher_id = None
         job.worker_token_hash = None
@@ -349,19 +363,15 @@ async def stop_batch(db: AsyncSession, batch_id: str, user_id: str, job_ids: lis
     from gpstation.service.job_orchestrator import job_orchestrator
 
     batch, assignments = await cancel_batch(db, batch_id, user_id, job_ids)
-    for launcher_id, job_id in assignments:
+    for identity in assignments:
+        launcher_id = identity["launcher_id"]
         try:
             async with job_orchestrator.launcher_send_lock(launcher_id):
                 await job_orchestrator.send_launcher_message(
                     launcher_id,
-                    {
-                        "type": "job.cancel",
-                        "job_id": job_id,
-                        "reason": "job cancelled" if job_ids is not None else "batch cancelled",
-                    },
+                    {"type": "job.cancel", **identity, "reason": "job cancelled" if job_ids is not None else "batch cancelled"},
                 )
         except Exception:
-            await job_orchestrator.disconnect_launcher(launcher_id)
-            await job_orchestrator.launcher_disconnected(db, launcher_id=launcher_id)
+            pass  # The fenced cancel is replayed on control reconnect.
     job_orchestrator.wake_dispatcher()
     return batch

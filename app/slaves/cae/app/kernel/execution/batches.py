@@ -19,6 +19,7 @@ from app.kernel.execution.cpu import NativeThreads
 from app.kernel.execution.serialization import MmapPayloadCodec
 from app.kernel.resources.buffers import BufferStore
 from sdk.slave.io import log
+from sdk.slave.execution import execution_context
 
 
 def batch_worker(connection, cancellation) -> None:
@@ -182,7 +183,11 @@ class ChildExecutionService:
     def batch_workers(self, requested, private_bytes):
         count = min(requested, self.cpu.budget)
         if private_bytes:
-            count = min(count, max(1, (psutil.virtual_memory().available // 2) // private_bytes))
+            available = psutil.virtual_memory().available // 2
+            managed = execution_context()
+            if managed is not None:
+                available = min(available, managed.allocation.ram_available_bytes)
+            count = min(count, max(1, available // private_bytes))
         return max(1, count)
 
     async def _rpc(self, *request):

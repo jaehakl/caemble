@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import ConfigDict, Field, model_validator
 
 from models import BaseModel
+from sdk.protocol.execution import ResourceRequest
 
 
 class BatchItemManifest(BaseModel):
@@ -25,6 +26,7 @@ class BatchCreateRequest(BaseModel):
     catalog_revision: str
     builder_version: Literal["2"]
     storage_version: Literal[1] | None = None
+    resources: ResourceRequest | None = None
     items: list[BatchItemManifest] = Field(min_length=1)
 
     @model_validator(mode="before")

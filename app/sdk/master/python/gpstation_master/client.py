@@ -29,12 +29,14 @@ from .rtc import (
 from .types import (
     CallResult,
     ConnectDiagnosticEvent,
+    ExecutionIdentity,
     JobAnswerWaitResult,
     JobCreateResult,
     JobDescriptor,
     JobEvent,
     LauncherView,
     RequestAttachment,
+    ResourceRequest,
     RunJobSessionResult,
     SignalPayload,
 )
@@ -62,6 +64,7 @@ class GpStationJobSession:
     ) -> None:
         self.job_id = job_id
         self._peer = peer
+        self.execution = peer.execution
         self._default_timeout_seconds = default_timeout_seconds
         self._default_on_event = default_on_event
         self._on_closed = on_closed
@@ -291,6 +294,7 @@ class GpStationClient:
         on_job_created: JobCreatedCallback | None = None,
         on_event: EventCallback | None = None,
         attachments: Sequence[RequestAttachment] = (),
+        resources: ResourceRequest | None = None,
     ) -> CallResult[Any]: ...
 
     @overload
@@ -308,6 +312,7 @@ class GpStationClient:
         on_job_created: JobCreatedCallback | None = None,
         on_event: EventCallback | None = None,
         attachments: Sequence[RequestAttachment] = (),
+        resources: ResourceRequest | None = None,
     ) -> RunJobSessionResult[Any]: ...
 
     async def run_job(
@@ -324,6 +329,7 @@ class GpStationClient:
         on_job_created: JobCreatedCallback | None = None,
         on_event: EventCallback | None = None,
         attachments: Sequence[RequestAttachment] = (),
+        resources: ResourceRequest | None = None,
     ) -> CallResult[Any] | RunJobSessionResult[Any]:
         self._ensure_open()
         configuration = rtc_configuration_with_defaults(rtc_configuration or self._rtc_configuration)
@@ -341,6 +347,7 @@ class GpStationClient:
                     on_job_created=on_job_created,
                     on_event=on_event,
                     attachments=attachments,
+                    resources=resources,
                     attempt=0,
                 )
             except _RunJobAttemptError as error:
@@ -375,6 +382,7 @@ class GpStationClient:
                         on_job_created=on_job_created,
                         on_event=on_event,
                         attachments=attachments,
+                        resources=resources,
                         attempt=1,
                     )
                 except _RunJobAttemptError as retry_error:
@@ -402,6 +410,7 @@ class GpStationClient:
         on_job_created: JobCreatedCallback | None,
         on_event: EventCallback | None,
         attachments: Sequence[RequestAttachment],
+        resources: ResourceRequest | None,
         attempt: int,
     ) -> CallResult[Any] | RunJobSessionResult[Any]:
         prepared = await self._take_prepared_connection(slave_app_id, rtc_configuration)
@@ -504,6 +513,7 @@ class GpStationClient:
                         "handler_type": handler_type,
                         "slave_app_id": slave_app_id,
                         "offer": {"type": "offer", "sdp": local_sdp},
+                        **({"resources": dict(resources)} if resources is not None else {}),
                     },
                 )
             )
@@ -519,6 +529,11 @@ class GpStationClient:
                 raise GpStationError(
                     answer.last_error or f"job {job_id} did not produce an answer (state={answer.state})"
                 )
+            if answer.execution is None:
+                raise GpStationProtocolError("Job answer is missing execution identity; upgrade API and SDK together")
+            if answer.job_id != job_id or answer.execution.job_id != job_id:
+                raise GpStationProtocolError("Job answer belongs to another job")
+            peer.execution = answer.execution
             async with asyncio.timeout(timeout_seconds):
                 await peer_connection.setRemoteDescription(
                     RTCSessionDescription(type="answer", sdp=answer.answer.sdp)
@@ -815,6 +830,7 @@ def _parse_job_descriptor(value: Any) -> JobDescriptor:
         attempt_count=value.get("attempt_count", 0),
         created_at=value.get("created_at"),
         updated_at=value.get("updated_at"),
+        execution=_parse_execution(value),
     )
 
 
@@ -825,7 +841,19 @@ def _parse_job_answer_wait_result(value: Any) -> JobAnswerWaitResult:
         state=value["state"],
         answer=_parse_signal_payload(answer) if answer is not None else None,
         last_error=value.get("last_error"),
+        execution=_parse_execution(value),
     )
+
+
+def _parse_execution(value: Mapping[str, Any]) -> ExecutionIdentity | None:
+    if not value.get("attempt_id"):
+        return None
+    keys = ("launcher_id", "boot_id", "instance_id", "job_id", "attempt_id", "attempt_count", "reservation_id")
+    fields = {key: value.get(key, value.get("id") if key == "job_id" else None) for key in keys}
+    if (any(not isinstance(fields[key], str) or not fields[key] for key in keys if key != "attempt_count")
+            or type(fields["attempt_count"]) is not int or fields["attempt_count"] < 1):
+        raise GpStationProtocolError("Incomplete execution identity")
+    return ExecutionIdentity(**fields)
 
 
 def _parse_signal_payload(value: Any) -> SignalPayload:

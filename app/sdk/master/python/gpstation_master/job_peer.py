@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Generic, TypeVar
 
 from .binary import decode_binary_frame, encode_binary_frame
@@ -20,6 +20,7 @@ from .types import (
     AttachmentMetadata,
     CallResult,
     ConnectDiagnosticEvent,
+    ExecutionIdentity,
     JobEvent,
     ReceivedFile,
     RequestAttachment,
@@ -65,6 +66,7 @@ class GpStationJobPeer:
         self._peer_connection = peer_connection
         self._data_channel = data_channel
         self._diagnostic = diagnostic
+        self.execution: ExecutionIdentity | None = None
         self._pending_call: _PendingCall[Any] | None = None
         self._response: _PendingResponse | None = None
         self._finish_future: asyncio.Future[None] | None = None
@@ -320,6 +322,8 @@ class GpStationJobPeer:
         message: dict[str, Any],
         control_bytes: int | None = None,
     ) -> None:
+        if self.execution is not None and any(message.get(key) != value for key, value in asdict(self.execution).items()):
+            return
         kind = message.get("kind")
         if kind == "job.error":
             detail = message.get("detail") if isinstance(message.get("detail"), str) else "job error"
@@ -336,6 +340,7 @@ class GpStationJobPeer:
                         id=message.get("id") if isinstance(message.get("id"), str) else None,
                         type=message.get("type") if isinstance(message.get("type"), str) else None,
                         payload=message.get("payload"),
+                        execution=self.execution,
                     )
                 )
             return
@@ -618,6 +623,7 @@ class GpStationJobPeer:
             size=size,
         )
 
-    @staticmethod
-    def _encode_control(value: dict[str, Any]) -> str:
+    def _encode_control(self, value: dict[str, Any]) -> str:
+        if self.execution is not None:
+            value = {**value, **asdict(self.execution)}
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

@@ -1,171 +1,156 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from typing import Any
+from uuid import uuid4
 
 import websockets
-from sdk.protocol.messages import (
-    ControlError,
-    JobCancel,
-    JobStart,
-    LauncherAccepted,
-    WorkerReset,
-    parse_server_message,
-)
+from sdk.protocol.messages import parse_server_message
 
+from app.journal import LauncherJournal
 from app.settings import LauncherSettings
-from app.slave_registry import SlaveAppRegistry, load_default_registry
+from app.slave_registry import SlaveAppRegistry
 from app.subprocess_manager import WorkerManager
 
 BACKOFF_SECONDS = [1, 2, 5, 10, 30]
 
 
-async def run_slave_launcher(settings: LauncherSettings) -> None:
-    attempt = 0
-    while True:
-        delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
-        try:
-            await run_connection(settings)
-            attempt = 0
-        except asyncio.CancelledError:
-            raise
-        except KeyboardInterrupt:
-            raise
-        except Exception as exc:
-            attempt += 1
-            print(f"Control connection failed: {exc}")
-            print(f"Reconnecting in {delay}s...")
-            await asyncio.sleep(delay)
+class ControlConnection:
+    """Transport can disappear while process ownership and cleanup continue."""
+    def __init__(self) -> None:
+        self.websocket = None
+        self.session_id: str | None = None
+        self.send_lock = asyncio.Lock()
+        self.pending: dict[tuple[str, str], dict[str, Any]] = {}
 
-
-async def run_connection(settings: LauncherSettings) -> None:
-    headers = {"Authorization": f"Bearer {settings.access_token}"}
-    async with await open_websocket(settings.control_websocket_url, headers) as websocket:
-        send_lock = asyncio.Lock()
-        registry = load_default_registry()
-        manager: WorkerManager | None = None
-        heartbeat_task: asyncio.Task[None] | None = None
-        try:
-            await send_json(
-                websocket,
-                send_lock,
-                launcher_hello_payload(settings, registry),
-            )
-            accepted = parse_server_message(json.loads(await websocket.recv()))
-            if not isinstance(accepted, LauncherAccepted):
-                raise RuntimeError(f"Expected launcher.accepted, received {accepted.type}")
-            print(f"Launcher connection: {accepted.launcher_id}", flush=True)
-            print_slave_environment_status(registry)
-            manager = WorkerManager(
-                settings,
-                lambda message: send_json(websocket, send_lock, message),
-                registry,
-            )
-            heartbeat_task = asyncio.create_task(send_heartbeats(websocket, send_lock, manager, settings))
-
-            async for raw_message in websocket:
-                await handle_server_message(manager, json.loads(raw_message))
-        finally:
-            if heartbeat_task is not None:
-                heartbeat_task.cancel()
-            if manager is not None:
-                await manager.stop_all("launcher shutdown")
-            if heartbeat_task is not None:
+    async def send(self, message: dict[str, Any]) -> None:
+        async with self.send_lock:
+            if self.websocket is not None:
                 try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
+                    await self.websocket.send(json.dumps({**message, "session_id": self.session_id}, ensure_ascii=False))
+                    return
+                except (OSError, websockets.ConnectionClosed):
+                    self.websocket = None
+            if message["type"] == "launcher.heartbeat":
+                return  # Reconnect sends a fresh inventory; never replay an old snapshot.
+            self.pending[(str(message.get("instance_id", "")), message["type"])] = message
+
+    async def flush(self) -> None:
+        messages = list(self.pending.values())
+        self.pending.clear()
+        for message in messages:
+            await self.send(message)
 
 
-async def open_websocket(url: str, headers: dict[str, str]) -> Any:
+async def run_slave_launcher(settings: LauncherSettings) -> None:
+    connection = ControlConnection()
+    manager = WorkerManager(settings, connection.send, journal=LauncherJournal(settings.state_dir))
+    grace_task: asyncio.Task | None = None
+    attempt = 0
     try:
-        return websockets.connect(url, additional_headers=headers)
-    except TypeError:
-        return websockets.connect(url, extra_headers=headers)
+        await manager.initialize()
+        while True:
+            try:
+                await run_connection(settings, manager, connection,
+                                     on_connected=lambda: grace_task.cancel() if grace_task is not None and not manager.stopping else None)
+                attempt = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                print(f"Control connection failed: {error}", flush=True)
+                attempt += 1
+            finally:
+                connection.websocket = None
+            if grace_task is None or grace_task.done():
+                grace_task = asyncio.create_task(expire_control_grace(manager, settings.control_grace_seconds))
+            delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
+            await asyncio.sleep(delay)
+    finally:
+        if grace_task is not None:
+            grace_task.cancel()
+            await asyncio.gather(grace_task, return_exceptions=True)
+        await manager.close()
 
 
-async def send_json(websocket: Any, send_lock: asyncio.Lock, message: dict[str, Any]) -> None:
-    async with send_lock:
-        await websocket.send(json.dumps(message, ensure_ascii=False))
+async def expire_control_grace(manager: WorkerManager, seconds: float) -> None:
+    await asyncio.sleep(seconds)
+    await manager.stop_all("control connection grace expired")
 
 
-async def send_heartbeats(
-    websocket: Any,
-    send_lock: asyncio.Lock,
-    manager: WorkerManager,
-    settings: LauncherSettings,
-) -> None:
+async def run_connection(settings: LauncherSettings, manager: WorkerManager,
+                         connection: ControlConnection, on_connected=lambda: None) -> None:
+    headers = {"Authorization": f"Bearer {settings.access_token}"}
+    session_id = str(uuid4())
+    async with open_websocket(settings.control_websocket_url, headers) as websocket:
+        await websocket.send(json.dumps(launcher_hello_payload(settings, manager.registry, manager, session_id), ensure_ascii=False))
+        accepted = parse_server_message(json.loads(await websocket.recv()))
+        if accepted.type != "launcher.accepted" or accepted.boot_id != manager.boot_id or accepted.session_id != session_id:
+            raise RuntimeError("Invalid execution protocol handshake")
+        if manager.launcher_id is not None and manager.launcher_id != accepted.launcher_id:
+            raise RuntimeError("Server changed launcher identity during the same boot")
+        manager.launcher_id = accepted.launcher_id
+        on_connected()
+        if manager.stopping:
+            await manager.stop_all("finishing expired control grace cleanup")
+        if not manager.instances:
+            manager.stopping = False
+        connection.websocket, connection.session_id = websocket, session_id
+        print(f"Launcher connection: {accepted.launcher_id} boot={manager.boot_id} session={session_id}", flush=True)
+        await connection.flush()
+        heartbeat = asyncio.create_task(send_heartbeats(connection, manager, settings))
+        try:
+            async for raw_message in websocket:
+                value = json.loads(raw_message)
+                if value.get("session_id") != session_id:
+                    continue
+                await handle_server_message(manager, value)
+        finally:
+            connection.websocket = None
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+
+
+def open_websocket(url: str, headers: dict[str, str]) -> Any:
+    keyword = "additional_headers" if "additional_headers" in inspect.signature(websockets.connect).parameters else "extra_headers"
+    return websockets.connect(url, **{keyword: headers})
+
+
+async def send_heartbeats(connection: ControlConnection, manager: WorkerManager, settings: LauncherSettings) -> None:
     while True:
         await asyncio.sleep(settings.heartbeat_interval_seconds)
-        await send_json(
-            websocket,
-            send_lock,
-            {
-                "type": "launcher.heartbeat",
-                "status": "busy" if manager.current_job_id else "ready",
-                "current_job_id": manager.current_job_id,
-                "loaded_slave_app_id": manager.current_worker_slave_app_id(),
-                "worker_status": manager.worker_status,
-                "metadata": {},
-            },
-        )
+        await connection.send({"type": "launcher.heartbeat", "boot_id": manager.boot_id,
+                               "status": "recovering" if manager.stopping else "busy" if manager.instances else "ready",
+                               "instances": manager.inventory(), "resources": manager.resource_report(),
+                               "cleanup_receipts": list(manager.receipts.values()), "metadata": {}})
 
 
 async def handle_server_message(manager: WorkerManager, value: Any) -> None:
-    message = parse_server_message(value)
-    if isinstance(message, JobStart):
-        await manager.start_job(
-            job_id=message.job_id,
-            handler_type=message.handler_type,
-            slave_app_id=message.slave_app_id,
-            offer=message.offer.model_dump(exclude_none=True) if message.offer else None,
-            job_mode=message.job_mode,
-            websocket_url=message.websocket_url,
-            token=message.token,
-            attempt_count=message.attempt_count,
-        )
-        return
-    if isinstance(message, JobCancel):
-        await manager.cancel_job(message.job_id, message.reason)
-        return
-    if isinstance(message, WorkerReset):
-        await manager.reset_worker(message.reason, notify_reset=True)
-        return
-    if isinstance(message, ControlError):
-        print(f"Server control error: {message.detail}", flush=True)
-        return
-    raise RuntimeError(f"Unexpected server message after handshake: {message.type}")
+    message = parse_server_message(value).model_dump(exclude_none=True)
+    message_type = message["type"]
+    if message_type == "job.reserve":
+        await manager.reserve_job(message)
+    elif message_type == "job.start":
+        await manager.start_job(message)
+    elif message_type in {"job.cancel", "worker.reset"}:
+        await manager.cancel_job(message)
+    elif message_type == "job.cleaned.ack":
+        await manager.acknowledge_cleanup(message)
+    elif message_type == "launcher.stop_all" and message["boot_id"] == manager.boot_id:
+        # Stop in a task so the control loop can still receive acknowledgements.
+        asyncio.create_task(manager.stop_all(message["reason"]))
+    elif message_type == "error":
+        print(f"Server control error: {message['detail']}", flush=True)
 
 
-def print_slave_environment_status(registry: SlaveAppRegistry) -> None:
-    for slave_app_id in registry.ids():
-        slave_app = registry.require(slave_app_id)
-        if slave_app.executable_ready:
-            print(
-                f"[slave:{slave_app_id}] environment ready: {slave_app.python_executable}",
-                flush=True,
-            )
-        else:
-            print(
-                f"[slave:{slave_app_id}] environment missing: {slave_app.python_executable}; "
-                f"run `{slave_app.install_hint}`",
-                flush=True,
-            )
-
-
-def launcher_hello_payload(settings: LauncherSettings, registry: SlaveAppRegistry) -> dict[str, Any]:
-    slave_app_ids = [
-        slave_app_id
-        for slave_app_id in registry.ids()
-        if registry.require(slave_app_id).executable_ready
-    ]
-    return {
-        "type": "launcher.hello",
-        "launcher_name": settings.launcher_name,
-        "slave_app_ids": slave_app_ids,
-        "job_modes": {app_id: registry.require(app_id).job_mode for app_id in slave_app_ids},
-        "storage_versions": {app_id: registry.require(app_id).storage_version for app_id in slave_app_ids
-                             if registry.require(app_id).storage_version is not None},
-        "metadata": registry.metadata(slave_app_ids),
-    }
+def launcher_hello_payload(settings: LauncherSettings, registry: SlaveAppRegistry,
+                           manager: WorkerManager, session_id: str) -> dict[str, Any]:
+    ids = [app_id for app_id in registry.ids() if registry.require(app_id).executable_ready]
+    return {"type": "launcher.hello", "execution_protocol": 2, "launcher_name": settings.launcher_name,
+            "installation_id": manager.installation_id, "boot_id": manager.boot_id, "session_id": session_id,
+            "slave_app_ids": ids, "job_modes": {app_id: registry.require(app_id).job_mode for app_id in ids},
+            "storage_versions": {app_id: registry.require(app_id).storage_version for app_id in ids
+                                 if registry.require(app_id).storage_version is not None},
+            "metadata": registry.metadata(ids), "instances": manager.inventory(),
+            "resources": manager.resource_report(), "cleanup_receipts": list(manager.receipts.values())}

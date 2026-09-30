@@ -26,6 +26,7 @@ from sdk.slave.config import (
     load_rtc_memory_cache_enabled,
 )
 from sdk.slave.io import emit, log, read_stdin_line
+from sdk.slave.execution import ExecutionChannel, execution_context
 from sdk.slave.rtc import (
     PreparedWorkerPeer,
     elapsed_ms,
@@ -54,6 +55,7 @@ class WorkerJobPeerState:
 
 
 async def _run_worker_stdio(*, app: SlaveApp) -> None:
+    managed = execution_context()
     try:
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
         from aioice.ice import Connection as AioIceConnection
@@ -80,7 +82,7 @@ async def _run_worker_stdio(*, app: SlaveApp) -> None:
         else None
     )
     try:
-        await app.run_initialize(SlaveContext(session_id="worker", ttl_seconds=0))
+        await app.run_initialize(SlaveContext(session_id="worker", ttl_seconds=0, execution=managed))
         if prepare_task is not None:
             try:
                 prepared_peer = await prepare_task
@@ -115,6 +117,8 @@ async def _run_worker_stdio(*, app: SlaveApp) -> None:
                 await drain_worker_job_task(current_job_task)
                 current_job_task = None
                 current_job_id = None
+                if managed is not None:
+                    break
                 if memory_cache_enabled and prepared_peer is None:
                     try:
                         prepared_peer = await prepare_worker_peer(RTCPeerConnection, rtc_configuration, label="worker")
@@ -132,6 +136,13 @@ async def _run_worker_stdio(*, app: SlaveApp) -> None:
             should_stop = False
             try:
                 message = json.loads(line)
+                if managed is not None:
+                    try:
+                        managed.require_identity(message)
+                    except ValueError:
+                        log("ignoring command for a different execution attempt")
+                        stdin_task = asyncio.create_task(asyncio.to_thread(read_stdin_line))
+                        continue
                 message_type = message.get("type")
                 if message_type == "stop":
                     should_stop = True
@@ -141,6 +152,8 @@ async def _run_worker_stdio(*, app: SlaveApp) -> None:
                         await drain_worker_job_task(current_job_task)
                         current_job_task = None
                         current_job_id = None
+                        if managed is not None:
+                            break
                         if memory_cache_enabled and prepared_peer is None:
                             try:
                                 prepared_peer = await prepare_worker_peer(RTCPeerConnection, rtc_configuration, label="worker")
@@ -149,6 +162,9 @@ async def _run_worker_stdio(*, app: SlaveApp) -> None:
                                 log(f"worker ICE memory cache disabled: {exc}")
                 if message_type == "job.start":
                     if current_job_task is not None and not current_job_task.done():
+                        if managed is not None:
+                            stdin_task = asyncio.create_task(asyncio.to_thread(read_stdin_line))
+                            continue
                         emit(
                             {
                                 "type": "job.error",
@@ -220,9 +236,12 @@ def create_worker_job_peer(
 
 def attach_worker_job_peer_handlers(pc: Any, job_id: str, handler_type: str, job_started_at: float) -> WorkerJobPeerState:
     state = WorkerJobPeerState()
+    managed = execution_context()
 
     @pc.on("datachannel")
     def on_datachannel(channel: Any) -> None:
+        if managed is not None:
+            channel = ExecutionChannel(channel, managed)
         log(f"job datachannel: {channel.label}")
         state.channel_holder["channel"] = channel
 
@@ -244,6 +263,12 @@ def attach_worker_job_peer_handlers(pc: Any, job_id: str, handler_type: str, job
                     return
                 if isinstance(raw_message, str):
                     payload = json.loads(raw_message)
+                    if managed is not None:
+                        try:
+                            managed.require_identity(payload)
+                        except ValueError:
+                            log("ignoring datachannel packet for a different execution attempt")
+                            return
                     kind = payload.get("kind")
                     if kind == "job.ready":
                         if str(payload.get("id")) != job_id:
@@ -433,7 +458,10 @@ async def run_worker_job(
 ) -> None:
     job_id = str(message["job_id"])
     handler_type = str(message["handler_type"])
-    context = SlaveContext(session_id=job_id, ttl_seconds=0)
+    managed = execution_context()
+    if managed is not None:
+        managed.require_identity(message)
+    context = SlaveContext(session_id=job_id, ttl_seconds=0, execution=managed)
     pc = None
     state: WorkerJobPeerState | None = None
     try:
@@ -552,6 +580,7 @@ async def run_worker_job(
     finally:
         if pc is not None:
             await pc.close()
+        emit({"type": "job.cleaned", "job_id": job_id, "attempt_count": message.get("attempt_count", 0)})
 
 
 async def run_worker_job_session(
@@ -622,6 +651,7 @@ async def run_worker_job_call(
                     session_id=base_context.session_id,
                     ttl_seconds=base_context.ttl_seconds,
                     call_id=call_id,
+                    execution=base_context.execution,
                     _event_sender=emit_event,
                 ),
             )

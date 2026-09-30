@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from sdk.slave.execution import execution_context
 
 
 ModelKey = tuple[Any, ...]
@@ -184,6 +185,8 @@ def _get_gpu_lock(device_id: int) -> asyncio.Lock:
 
 def _normalize_device_ids(device_ids: tuple[int, ...]) -> tuple[int, ...]:
     device_count = get_cuda_device_count()
+    if execution_context() is not None and any(not 0 <= device < device_count for device in device_ids):
+        raise ValueError("GPU device index is outside this execution's allocation")
     if device_count <= 0:
         return ()
     return tuple(

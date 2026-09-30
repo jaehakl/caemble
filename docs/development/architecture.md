@@ -44,18 +44,20 @@ describe executables and are not Solver descriptors.
    persists finalized BuiltMeasurements without executing user code. One commit
    verifies source, Catalog, ownership and saved Measurement inputs, then creates
    all Measurement links and queues all Jobs atomically. No item runs before commit.
-6. Persisted jobs are assigned to available launchers owned by the same user.
-   A launcher starts one CAE worker at a time. Each worker connects directly to
+6. Persisted jobs are proposed to compatible launchers owned by the same user.
+   The launcher atomically reserves resources before the API authorizes startup.
+   It can run several independent CAE instances, each with one Job. Each connects directly to
    the server through a job-scoped WebSocket; binary chunks bypass launcher stdio.
 7. `simulate.py` calls a catalog-selected Solver and records its tensors. A
    record is retained until its acknowledgement, and `sim.release()` ends the
    run-side ownership of the artifact.
 8. The API stages each acknowledged record for the current execution attempt.
-   After the worker confirms execution and resource cleanup, one transaction
+   After the worker confirms execution and handler resource cleanup, one transaction
    publishes RecordedData, Measurement completion, job success and the event.
    Partial and stale-attempt results are never published. Analysis
    and the 3D Viewer read the persisted tensors through their respective
-   projections.
+   projections. Launcher CPU/GPU reservations remain held until its supervisor
+   confirms that the entire attempt process tree has exited.
 
 Batch definitions, prepared inputs, progress messages, terminal events and read
 state survive a browser disconnect. The browser subscribes to server events and
@@ -88,7 +90,7 @@ summary with `limit=0`. Foreground runs await shared updates instead of polling.
 Reconnect resumes from the last event cursor and backs off at 5, 10 and 30
 seconds; a healthy SSE connection does not cause periodic detail requests.
 
-GPStation owns `job_batches`, numbered `jobs`, execution-scoped `job_records`
+GPStation owns `job_batches`, numbered `jobs`, `execution_attempts`, execution-scoped `job_records`
 staging and ordered `job_events`. CAE owns `cae_batches`, frozen Experiment inputs,
 Measurement links and the conversion to RecordedData. The dispatcher rotates among
 compatible batches using their last assignment time, then item order, with owner
@@ -97,7 +99,9 @@ and execution-mode capability checks and row locks. CAE owns temporary upload ch
 Batch upload is `uploading`; its numbered Jobs remain `staged`. After commit Jobs
 follow `queued -> assigned -> running -> finalizing -> succeeded/failed/cancelled`.
 Interrupted execution fails; committed unstarted work and incomplete uploads survive
-restart. Retry uses the same saved input and a new attempt number. Inactive uploads
+restart. Retry uses the same saved input and a new attempt ID and number after
+the previous reservation has been cleaned. Temporary resource shortages leave
+jobs queued with a waiting reason. Inactive uploads
 expire after 24 hours; cancellation and expiry share the commit lock. Queued CAE
 jobs do not expire. Legacy jobs without stored input require a new client build.
 
@@ -206,8 +210,9 @@ dedicated account or container.
   tokens.
 - The API enforces user ownership for Experiments, Measurements, jobs, and
   RecordedData.
-- Launcher tokens authorize worker control, and one launcher owns one active job
-  at a time.
+- Launcher tokens authorize worker control. One launcher manages several
+  independently contained slave instances within one local resource ledger;
+  each instance owns one active Job.
 - GPStation supports separate `webrtc` and `websocket` execution modes. AI and
   other non-CAE launcher applications retain their WebRTC protocol. The current
   web UI exposes CAE server-master execution; CAE declares WebSocket and has no
@@ -217,11 +222,36 @@ dedicated account or container.
   invokes the existing runtime and does not receive API tokens.
 - The `caemble` access-key scope permits owner authoring and execution APIs. Even
   an administrator-owned key acts as an ordinary user and cannot manage keys.
-- The CAE worker preserves run and job identity, record acknowledgement,
+- The CAE worker preserves full execution identity, record acknowledgement,
   cancellation, and release lifecycle across its streamed messages.
 - API launcher sockets are process-local, so a
   deployment keeps the API at one worker/replica unless that state is moved to a
   shared service.
+
+Execution identity is the immutable tuple `launcher_id`, `boot_id`, `instance_id`,
+`job_id`, `attempt_id`, `attempt_count`, `reservation_id`. A control connection's
+`session_id` changes on reconnect without changing that execution. Messages and
+results are fenced by execution identity; replaced control sessions cannot mutate
+the current connection. Worker cleanup and process-tree exit are separate barriers.
+Reservations include retained model/cache resources until tree exit, even after
+the Job has produced its result. A launcher control disconnect has a default
+30-second grace period with new admissions paused. Losing the CAE result stream
+fails that attempt; computation and result transfer are not automatically replayed.
+
+`sdk.protocol.execution` defines identity and resource contracts independently of
+WebRTC or WebSocket. `sdk.slave.execution` applies allocation at process startup
+and provides a shared execution context. CPU affinity, native thread budgets and
+GPU visibility belong to execution configuration, outside Solver physical inputs.
+Independent Batch Jobs can run concurrently; one Measurement's `simulate.py`
+ordering and physical coupling remain unchanged. Live RSS and available RAM
+govern admission with startup and growth allowances, not a hard memory ceiling;
+see [worker resource policy](../operations/workers.md#launcher-resource-policy).
+Budgets cover one launcher's process trees, without coordination between launchers.
+
+Future evaluations, Datasets and Models should connect through stable identifiers,
+revisions and artifact references, never through a running process or a machine-local
+path. This execution boundary does not add an Optimization algorithm, Predictor
+training/inference, Dataset/Model management, or a general workflow engine.
 
 ## Implementation map
 

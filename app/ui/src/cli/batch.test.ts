@@ -1,9 +1,45 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCaembleClient } from '@/api/http'
-import { batchCommand } from './batch'
+import { submitArtifact } from '@/api/submitArtifact'
+import { openArtifact } from '@/platform/node/artifact'
+import { existsSync } from 'node:fs'
+import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { batchCommand, batchResources } from './batch'
 import type { CommandContext } from './types'
 
+vi.mock('@/platform/node/artifact', () => ({ openArtifact: vi.fn() }))
+vi.mock('@/api/submitArtifact', () => ({ submitArtifact: vi.fn() }))
+vi.mock('node:fs', async (original) => {
+  const actual = await original<typeof import('node:fs')>()
+  const mocked = { existsSync: vi.fn() }
+  return { ...actual, ...mocked, default: { ...actual, ...mocked } }
+})
+vi.mock('node:fs/promises', async (original) => {
+  const actual = await original<typeof import('node:fs/promises')>()
+  const mocked = { readFile: vi.fn(), writeFile: vi.fn() }
+  return { ...actual, ...mocked, default: { ...actual, ...mocked } }
+})
+
 afterEach(() => vi.restoreAllMocks())
+
+describe('batch resource arguments', () => {
+  it('keeps physical artifact inputs separate and normalizes memory units', () => {
+    expect(batchResources({})).toBeUndefined()
+    expect(
+      batchResources({ 'cpu-cores': '4', 'startup-ram-mib': '1024', 'gpu-count': '1', 'gpu-memory-mib': '2048' }),
+    ).toEqual({ cpu_cores: 4, startup_ram_bytes: 1024 ** 3, gpu_count: 1, gpu_memory_bytes: 2 * 1024 ** 3 })
+  })
+  it.each([
+    { 'cpu-cores': '0' },
+    { 'cpu-cores': '1.5' },
+    { 'startup-ram-mib': '-1' },
+    { 'gpu-count': '0', 'gpu-memory-mib': '1' },
+    { 'gpu-count': 'not-a-number' },
+  ])('rejects invalid requests before submission: %o', (options) => {
+    expect(() => batchResources(options)).toThrow()
+  })
+})
 const environment: CommandContext['environment'] = {
   repo: 'D:/caemble',
   cae: 'D:/caemble/app/slaves/cae',
@@ -14,6 +50,94 @@ const environment: CommandContext['environment'] = {
   cli: 'D:/caemble/app/ui/dist-cli/caemble.cjs',
   worker: 'D:/caemble/app/ui/dist-cli/worker.cjs',
 }
+
+describe('batch submission resource resume', () => {
+  const resources = { cpu_cores: 4, startup_ram_bytes: 1024 ** 3, gpu_count: 1, gpu_memory_bytes: 2 * 1024 ** 3 }
+  const saved = { api: 'https://api.example', experimentId: 7, requestId: 'saved-request', resources }
+  const stored = {
+    directory: path.resolve('artifact'),
+    artifact: {
+      kind: 'caemble.build' as const,
+      version: 2 as const,
+      mode: 'candidate' as const,
+      source_hash: 'frozen-source',
+      source_bundle: { files: { 'experiment.tsx': 'export {}' } },
+      catalog_revision: 'frozen-catalog',
+      builder_version: '2' as const,
+      items: [],
+    },
+    readItem: vi.fn(),
+  }
+
+  it.each([{}, { 'request-id': saved.requestId }])(
+    'replays saved resources when flags are omitted: %o',
+    async (options) => {
+      vi.mocked(openArtifact).mockResolvedValue(stored)
+      vi.mocked(existsSync).mockReturnValue(true)
+      vi.mocked(readFile).mockResolvedValue(JSON.stringify(saved))
+      const fetch = vi.fn<typeof globalThis.fetch>()
+      const client = createCaembleClient({ baseUrl: saved.api, auth: { kind: 'bearer', token: 'test-key' }, fetch })
+
+      await batchCommand('submit', {
+        environment,
+        options: { experiment: '7', ...options },
+        args: ['artifact'],
+        signal: new AbortController().signal,
+        client: () => client,
+      })
+
+      expect(submitArtifact).toHaveBeenCalledOnce()
+      const submitted = vi.mocked(submitArtifact).mock.calls[0][0]
+      expect(submitted).toMatchObject({ requestId: saved.requestId, resources, experimentId: 7 })
+      expect(submitted.artifact).toBe(stored.artifact)
+      expect(submitted.readItem).toBe(stored.readItem)
+      expect(writeFile).toHaveBeenCalledWith(
+        path.join(stored.directory, 'submission.json'),
+        JSON.stringify(saved, null, 2),
+        'utf8',
+      )
+      await submitted.onRegistered?.('resumed-batch')
+      expect(writeFile).toHaveBeenLastCalledWith(
+        path.join(stored.directory, 'submission.json'),
+        JSON.stringify({ ...saved, batchId: 'resumed-batch' }, null, 2),
+        'utf8',
+      )
+    },
+  )
+
+  it.each([{}, { 'request-id': saved.requestId }])(
+    'rejects changed resources for the saved request before writing or sending: %o',
+    async (options) => {
+      vi.mocked(openArtifact).mockResolvedValue(stored)
+      vi.mocked(existsSync).mockReturnValue(true)
+      vi.mocked(readFile).mockResolvedValue(JSON.stringify(saved))
+      const fetch = vi.fn<typeof globalThis.fetch>()
+      const client = createCaembleClient({ baseUrl: saved.api, auth: { kind: 'bearer', token: 'test-key' }, fetch })
+
+      await expect(
+        batchCommand('submit', {
+          environment,
+          options: {
+            experiment: '7',
+            'cpu-cores': '8',
+            'startup-ram-mib': '1024',
+            'gpu-count': '1',
+            'gpu-memory-mib': '2048',
+            ...options,
+          },
+          args: ['artifact'],
+          signal: new AbortController().signal,
+          client: () => client,
+        }),
+      ).rejects.toMatchObject({ exitCode: 4, message: expect.stringContaining('different resource settings') })
+
+      expect(writeFile).not.toHaveBeenCalled()
+      expect(submitArtifact).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+    },
+  )
+})
+
 describe('remote observation lifecycle', () => {
   it('times out a silent connection without sending server cancellation', async () => {
     vi.spyOn(process.stdout, 'write').mockReturnValue(true)

@@ -25,13 +25,17 @@ async def add_event(
     job: Job | None = None,
     payload: dict | None = None,
 ) -> JobEvent:
+    from gpstation.service.execution import execution_identity
+
     event = JobEvent(
         user_id=batch.user_id,
         batch_id=batch.id,
         job_id=job.id if job else None,
         attempt_count=job.attempt_count if job else None,
         type=kind,
-        payload=payload or {},
+        # Snapshot identity now: looking up Job while replaying would label an
+        # earlier event with the current retry's instance and reservation.
+        payload={**(payload or {}), **(execution_identity(job) if job is not None else {})},
     )
     db.add(event)
     await db.flush()
@@ -58,6 +62,12 @@ async def finish_job(
     job.finished_at = utcnow()
     job.updated_at = job.finished_at
     job.worker_token_hash = None
+    job.waiting_reason = None
+    job.execution_phase = state
+    if job.reservation_id and job.cleaned_at is None:
+        job.cleanup_state = "cleaning"
+    from gpstation.service.execution import sync_attempt
+    await sync_attempt(db, job)
     await db.execute(
         delete(JobRecord).where(
             JobRecord.job_id == job.id, JobRecord.attempt_count == job.attempt_count
@@ -109,15 +119,6 @@ async def fail_server_jobs(
     jobs = list((await db.scalars(query)).all())
     for job in jobs:
         await finish_job(db, job, "cancelled" if job.cancel_requested_at else "failed", detail)
-        if restarting or launcher_ids is not None:
-            job.cleaned_at = utcnow()
-    cleanup = update(Job).where(
-        Job.job_mode == "websocket", Job.cleaned_at.is_(None), Job.state.in_(TERMINAL_STATES)
-    )
-    if launcher_ids is not None:
-        cleanup = cleanup.where(Job.launcher_id.in_(launcher_ids))
-    if restarting or launcher_ids is not None:
-        await db.execute(cleanup.values(cleaned_at=utcnow()))
     await db.commit()
     return jobs
 

@@ -4,6 +4,8 @@ from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator
 
+from sdk.protocol.execution import ExecutionIdentity, ResourceAllocation, ResourceRequest
+
 
 class SignalPayload(BaseModel):
     type: Literal["offer", "answer", "ice", "end-of-candidates"]
@@ -15,59 +17,101 @@ class SignalPayload(BaseModel):
 
 class LauncherHello(BaseModel):
     type: Literal["launcher.hello"]
+    execution_protocol: Literal[2]
+    installation_id: str = Field(min_length=1)
+    boot_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
     launcher_name: str
     slave_app_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     job_modes: dict[str, Literal["webrtc", "websocket"]] = Field(default_factory=dict)
     storage_versions: dict[str, Literal[1]] = Field(default_factory=dict)
+    instances: list[dict[str, Any]] = Field(default_factory=list)
+    resources: dict[str, Any] = Field(default_factory=dict)
+    cleanup_receipts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LauncherHeartbeat(BaseModel):
     type: Literal["launcher.heartbeat"]
-    status: Literal["ready", "busy"] = "ready"
-    current_job_id: str | None = None
-    loaded_slave_app_id: str | None = None
-    worker_status: str | None = None
+    boot_id: str
+    session_id: str
+    status: Literal["ready", "busy", "recovering"] = "ready"
+    instances: list[dict[str, Any]] = Field(default_factory=list)
+    resources: dict[str, Any] = Field(default_factory=dict)
+    cleanup_receipts: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
-
 
 
 class LauncherAccepted(BaseModel):
     type: Literal["launcher.accepted"]
+    execution_protocol: Literal[2] = 2
     launcher_id: str
+    boot_id: str
+    session_id: str
     server_time: str
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    instances: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class JobStart(BaseModel):
-    type: Literal["job.start"]
-    job_id: str
+class ExecutionMessage(ExecutionIdentity):
+    # Local worker stdio has no control connection. The supervisor adds the
+    # current session when forwarding an event to the API.
+    session_id: str | None = None
+
+
+class JobReserve(ExecutionMessage):
+    type: Literal["job.reserve"]
     handler_type: str
     slave_app_id: str
     job_mode: Literal["webrtc", "websocket"] = "webrtc"
+    resources: ResourceRequest = Field(default_factory=ResourceRequest)
+
+
+class JobReserved(ExecutionMessage):
+    type: Literal["job.reserved"]
+    allocation: ResourceAllocation
+
+
+class JobRejected(ExecutionMessage):
+    type: Literal["job.rejected"]
+    reason: str
+    resource_revision: int = Field(ge=0)
+
+
+class JobStart(ExecutionMessage):
+    type: Literal["job.start"]
+    handler_type: str
+    slave_app_id: str
+    job_mode: Literal["webrtc", "websocket"] = "webrtc"
+    allocation: ResourceAllocation
     offer: SignalPayload | None = None
     websocket_url: str | None = None
     token: str | None = None
-    attempt_count: int = 0
 
     @model_validator(mode="after")
-    def require_connection(self) -> JobStart:
+    def require_connection(self):
         if self.job_mode == "webrtc" and self.offer is None:
             raise ValueError("WebRTC jobs require an offer")
-        if self.job_mode == "websocket" and (not self.websocket_url or not self.token or self.attempt_count < 1):
-            raise ValueError("WebSocket jobs require a URL, token, and positive attempt_count")
+        if self.job_mode == "websocket" and (not self.websocket_url or not self.token):
+            raise ValueError("WebSocket jobs require a URL and token")
         return self
 
 
-class JobCancel(BaseModel):
+class JobCancel(ExecutionMessage):
     type: Literal["job.cancel"]
-    job_id: str
     reason: str = "cancelled"
 
 
-class WorkerReset(BaseModel):
+class WorkerReset(ExecutionMessage):
     type: Literal["worker.reset"]
     reason: str = "reset requested"
+
+
+class LauncherStopAll(BaseModel):
+    type: Literal["launcher.stop_all"]
+    boot_id: str
+    session_id: str
+    reason: str = "launcher shutdown requested"
 
 
 class ControlError(BaseModel):
@@ -75,77 +119,62 @@ class ControlError(BaseModel):
     detail: str
 
 
-class JobAnswer(BaseModel):
+class JobAnswer(ExecutionMessage):
     type: Literal["job.answer"]
-    job_id: str
     answer: SignalPayload
 
 
-class JobRunning(BaseModel):
+class JobRunning(ExecutionMessage):
     type: Literal["job.running"]
-    job_id: str
 
 
-class JobProgress(BaseModel):
+class JobProgress(ExecutionMessage):
     type: Literal["job.progress"]
-    job_id: str
     progress: Any = None
 
 
-class JobResult(BaseModel):
+class JobResult(ExecutionMessage):
     type: Literal["job.result"]
-    job_id: str
 
 
-class JobError(BaseModel):
+class JobError(ExecutionMessage):
     type: Literal["job.error"]
-    job_id: str
     code: str = "job_error"
     detail: str
-    attempt_count: int | None = None
 
 
-class JobCancelled(BaseModel):
+class JobCancelled(ExecutionMessage):
     type: Literal["job.cancelled"]
-    job_id: str
     reason: str = "cancelled"
-    attempt_count: int | None = None
 
 
-class JobCleaned(BaseModel):
+class JobCleaned(ExecutionMessage):
     type: Literal["job.cleaned"]
-    job_id: str
-    attempt_count: int
 
 
-class WorkerResetDone(BaseModel):
+class JobCleanedAck(ExecutionMessage):
+    type: Literal["job.cleaned.ack"]
+
+
+class WorkerResetDone(ExecutionMessage):
     type: Literal["worker.reset.done"]
 
 
 LauncherToServerMessage = Union[
-        LauncherHello,
-        LauncherHeartbeat,
-        JobAnswer,
-        JobRunning,
-        JobProgress,
-        JobResult,
-        JobError,
-        JobCancelled,
-        JobCleaned,
-        WorkerResetDone,
-    ]
-
+    LauncherHello, LauncherHeartbeat, JobReserved, JobRejected, JobAnswer,
+    JobRunning, JobProgress, JobResult, JobError, JobCancelled, JobCleaned,
+    WorkerResetDone,
+]
 ServerToLauncherMessage = Union[
-        LauncherAccepted,
-        JobStart,
-        JobCancel,
-        WorkerReset,
-        ControlError,
-    ]
+    LauncherAccepted, JobReserve, JobStart, JobCancel, JobCleanedAck,
+    WorkerReset, LauncherStopAll, ControlError,
+]
 
 _LAUNCHER_TO_SERVER = {
     "launcher.hello": LauncherHello,
     "launcher.heartbeat": LauncherHeartbeat,
+    "job.reserved": JobReserved,
+    "job.rejected": JobRejected,
     "job.answer": JobAnswer,
     "job.running": JobRunning,
     "job.progress": JobProgress,
@@ -157,9 +186,12 @@ _LAUNCHER_TO_SERVER = {
 }
 _SERVER_TO_LAUNCHER = {
     "launcher.accepted": LauncherAccepted,
+    "job.reserve": JobReserve,
     "job.start": JobStart,
     "job.cancel": JobCancel,
+    "job.cleaned.ack": JobCleanedAck,
     "worker.reset": WorkerReset,
+    "launcher.stop_all": LauncherStopAll,
     "error": ControlError,
 }
 

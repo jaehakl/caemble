@@ -47,6 +47,24 @@ def test_batch_memory_reduces_workers(monkeypatch):
     assert service.batch_workers(2, 0) == 2
 
 
+def test_launcher_allocation_caps_cpu_and_advisory_batch_memory(monkeypatch):
+    import json
+    from app.kernel.api import CpuAllocation
+    from app.kernel.execution.batches import ChildExecutionService
+
+    monkeypatch.setenv("CAEMBLE_EXECUTION_JSON", json.dumps({
+        "identity": {"launcher_id": "launcher", "boot_id": "boot", "instance_id": "instance", "job_id": "job",
+                     "attempt_id": "attempt", "attempt_count": 1, "reservation_id": "reservation"},
+        "allocation": {"cpu_ids": [0, 1], "cpu_cores": 2, "startup_ram_bytes": 100, "ram_available_bytes": 300},
+    }))
+    monkeypatch.setattr(psutil, "Process", lambda: SimpleNamespace(cpu_affinity=lambda: list(range(8))))
+    assert cpu_allocation(8).budget == 2
+    service = object.__new__(ChildExecutionService)
+    service.cpu = CpuAllocation(8, 2)
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=10000))
+    assert service.batch_workers(8, 200) == 1
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("repeats", [1, 2])
 async def test_managed_batches_preserve_order_mmap_and_process_ownership(tmp_path, repeats):

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { resourceAllocationSchema, resourceRequestSchema, type ResourceRequest } from './execution'
 
 export const caeJobSchema = z
   .object({
@@ -10,6 +11,13 @@ export const caeJobSchema = z
     progress: z.record(z.string(), z.unknown()).nullable(),
     last_error: z.string().nullable(),
     cleanup_pending: z.boolean().optional(),
+    attempt_id: z.string().nullable().optional(),
+    instance_id: z.string().nullable().optional(),
+    resources: resourceRequestSchema.optional(),
+    allocation: resourceAllocationSchema.nullable().optional(),
+    waiting_reason: z.string().nullable().optional(),
+    cleanup_state: z.string().nullable().optional(),
+    ram_used_bytes: z.number().int().nonnegative().nullable().optional(),
     created_at: z.string(),
     updated_at: z.string(),
   })
@@ -63,6 +71,8 @@ export const caeEventSchema = z.object({
   batch_id: z.string(),
   job_id: z.string().nullable().optional(),
   attempt_count: z.number().int().nullable().optional(),
+  attempt_id: z.string().nullable().optional(),
+  instance_id: z.string().nullable().optional(),
   measurement_id: z.number().int().nullable().optional(),
   payload: z.record(z.string(), z.unknown()),
   created_at: z.string(),
@@ -82,5 +92,6 @@ export type CaeBatchRequest = Readonly<{
   catalog_revision: string
   builder_version: '2'
   storage_version?: 1
+  resources?: ResourceRequest
   items: readonly Readonly<{ index: number; input_hash: string; byte_length: number; measurement_id?: number }>[]
 }>

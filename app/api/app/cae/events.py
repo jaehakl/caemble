@@ -39,6 +39,8 @@ async def stream_events(request: Request, user_id: str, after: int):
                 "batch_id": event.batch_id,
                 "job_id": event.job_id,
                 "attempt_count": event.attempt_count,
+                "attempt_id": event.payload.get("attempt_id"),
+                "instance_id": event.payload.get("instance_id"),
                 "measurement_id": event.payload.get("measurement_id"),
                 "payload": event.payload,
                 "created_at": event.created_at.isoformat(),

@@ -71,6 +71,32 @@ Launcher connections and the dispatcher are held in process memory. Run exactly
 one API worker/replica. Restart marks active executions failed, while committed
 queued inputs and incomplete uploads remain available.
 
+Execution protocol 2 requires a synchronized API, launcher, slave and master SDK
+upgrade. A logical Job and its execution attempt are distinct. Full immutable
+execution identity scopes control messages, result packets and staging; each
+reconnect also gets a new control session. The dispatcher preserves owner checks,
+slave compatibility and rotation between committed Batches while proposing more
+than one Job to a launcher. Resource shortage is a waiting condition.
+
+The API stores an optional `resources` request separately from domain `input`:
+`cpu_cores`, `startup_ram_bytes`, `gpu_count`, and `gpu_memory_bytes`. Missing
+fields inherit launcher application/handler profiles. The launcher performs the
+final atomic reservation from fresh local telemetry; only its accepted reservation
+can be authorized for startup. Reported server capacity is advisory. Explicit
+`gpu_count: 0` requests CPU-only execution; a positive count requires exclusive
+devices, with the requested free memory per GPU. RAM startup estimates are not
+peak reservations or hard limits. See [worker policy](../operations/workers.md).
+
+Launcher control reconnection has a default 30-second grace period, during which
+new assignments are paused and existing instances can be reconciled. A lost
+worker result WebSocket fails its attempt and requires manual retry after cleanup.
+Terminal result publication and reservation release have separate barriers:
+current-attempt records are published after handler completion, while the launcher
+returns CPU/GPU reservations only after the full process tree exits. Previous
+attempt messages cannot publish data or release the current reservation.
+Launcher status exposes budgets, instance identities and waiting reasons for
+inspection; resource policy editing remains local to the launcher machine.
+
 ## Persistence boundaries
 
 The API trusts domain payloads after basic Pydantic deserialization. Ownership,

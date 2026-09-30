@@ -79,7 +79,7 @@ class APIKey(Base):
 
 class Launcher(TimestampMixin, Base):
     __tablename__ = "launchers"
-    __table_args__ = (Index("ix_launchers_user_id", "user_id"),)
+    __table_args__ = (Index("ix_launchers_user_id", "user_id"), UniqueConstraint("user_id", "installation_id", name="uq_launchers_installation"))
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
@@ -92,6 +92,11 @@ class Launcher(TimestampMixin, Base):
         nullable=False,
     )
     launcher_name: Mapped[str] = mapped_column(Text, nullable=False)
+    installation_id: Mapped[Optional[str]] = mapped_column(Text)
+    boot_id: Mapped[Optional[str]] = mapped_column(Text)
+    session_id: Mapped[Optional[str]] = mapped_column(Text)
+    resources: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    reconnect_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     ip_address: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     slave_app_ids: Mapped[List[str]] = mapped_column(
@@ -160,6 +165,15 @@ class Job(TimestampMixin, Base):
     input: Mapped[Optional[dict]] = mapped_column(JSONB)
     artifact_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
     worker_token_hash: Mapped[Optional[str]] = mapped_column(Text)
+    attempt_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False))
+    instance_id: Mapped[Optional[str]] = mapped_column(Text)
+    reservation_id: Mapped[Optional[str]] = mapped_column(Text)
+    boot_id: Mapped[Optional[str]] = mapped_column(Text)
+    resources: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    allocation: Mapped[Optional[dict]] = mapped_column(JSONB)
+    execution_phase: Mapped[Optional[str]] = mapped_column(Text)
+    cleanup_state: Mapped[Optional[str]] = mapped_column(Text)
+    waiting_reason: Mapped[Optional[str]] = mapped_column(Text)
     cleaned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     offer: Mapped[dict] = mapped_column(
         JSONB,
@@ -191,6 +205,28 @@ class Job(TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="jobs")
     launcher: Mapped[Optional[Launcher]] = relationship(back_populates="jobs")
+
+
+class ExecutionAttempt(Base):
+    """Durable execution identity; resource refusal does not create a new attempt."""
+    __tablename__ = "execution_attempts"
+    __table_args__ = (UniqueConstraint("job_id", "attempt_count", name="uq_execution_attempt_job_count"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
+    job_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    launcher_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False), ForeignKey("launchers.id", ondelete="SET NULL"))
+    boot_id: Mapped[Optional[str]] = mapped_column(Text)
+    instance_id: Mapped[Optional[str]] = mapped_column(Text)
+    reservation_id: Mapped[Optional[str]] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    result_state: Mapped[Optional[str]] = mapped_column(Text)
+    cleanup_state: Mapped[Optional[str]] = mapped_column(Text)
+    resources: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    allocation: Mapped[Optional[dict]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cleaned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class JobBatch(TimestampMixin, Base):

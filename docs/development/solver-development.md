@@ -576,10 +576,24 @@ CPU-bound Solver 실패나 취소 때문에 resident worker 전체가 종료되�
 
 ### CPU 예산과 batch 실행
 
-`CAEMBLE_CAE_CPU_BUDGET`은 양의 정수 실행 설정입니다. 기본은 affinity를
-반영한 가용 논리 CPU 수의 절반(내림, 최소 1)이고 명시값은 가용 수로
-제한합니다. launcher와 로컬 CLI가 같은 정책을 사용합니다. 예산은 invocation에
-고정하며 물리 config, Catalog와 `simulate.py`의 옵션에는 추가하지 않습니다.
+Launcher가 관리하는 attempt의 CPU 예산은 공통 실행 allocation에서 받습니다.
+SDK bootstrap은 앱 import 전에 CPU affinity, native thread 한도와 할당 GPU의
+`CUDA_VISIBLE_DEVICES`를 적용하며 Solver child도 이를 상속합니다. Resident
+executor와 내부 batch worker는 이 CPU 예산을 넘을 수 없습니다. GPU ordinal은
+할당된 visible 장치 안의 순서입니다. 독립 Job 사이만 병렬 배정하며 한 Measurement의
+`simulate.py` 실행 순서와 물리 연결은 바꾸지 않습니다.
+
+관리 context가 없는 로컬 CLI의 `CAEMBLE_CAE_CPU_BUDGET`은 양의 정수 실행
+설정입니다. 기본은 affinity를 반영한 가용 논리 CPU 수의 절반(내림, 최소 1)이고
+명시값은 가용 수로 제한합니다. 예산은 invocation에 고정하며 물리 config,
+Catalog와 `simulate.py`의 옵션에는 추가하지 않습니다. Solver ABI 3도 유지합니다.
+
+Launcher RAM 배정은 실제 process-tree RSS와 시작·성장 여유를 사용합니다.
+`startup_ram_bytes`는 초기 관측 전의 임시 추정량이며 peak 예약이나 hard limit이
+아닙니다. 내부 buffer 계획에는 CPU 비중으로 제한된 `ram_available_bytes`와
+현재 OS 가용 RAM을 함께 사용합니다. Worker의 정리 알림 이후에도 launcher는
+하위 프로세스와 잔류 GPU model/cache를 포함한 전체 트리 종료를 확인한 뒤에만
+예약을 반환합니다. 정책과 여유 계산은 [worker 운영 안내](../operations/workers.md)에 있습니다.
 
 `invocation.execution.map_batches(initializer, function, prepared, batches, workers)`는
 모듈 locator 두 개와 준비 데이터, batch iterable을 받습니다. 초기화 함수는

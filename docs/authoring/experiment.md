@@ -74,6 +74,25 @@ $batch = .\caemble.cmd batch submit .work/checked --experiment $saved.id --json 
 
 `push`는 원본 식별 정보에 맞춰 소스를 저장하고 지정한 산출물이 소스와 일치하는지 확인합니다. `batch submit`은 이미 빌드한 큰 입력 바이트를 S3에 직접 올린 뒤 원격 배치에 참조를 등록합니다. 로컬 Solver 실행이나 재빌드는 하지 않습니다. 위 로컬 검사와 서버 제출은 같은 `.work/checked`를 사용합니다.
 
+Batch가 commit되면 독립 Job들이 대기열에 등록됩니다. Launcher 한 대에서도 CPU·RAM·GPU
+여유에 따라 여러 Job을 동시에 실행하며, 자원이 부족한 Job은 실패하지 않고 기다립니다.
+앞선 attempt의 프로세스 트리가 정리되면 다음 Job을 자동으로 시작합니다. 한 Measurement
+내부의 `simulate.py` 실행 순서와 물리 연결은 그대로입니다.
+
+필요하면 제출 시 각 Job의 자원 요청을 지정합니다. 생략한 필드는 launcher의 앱·handler
+기본값을 사용합니다. 아래 옵션은 입력 산출물을 다시 만들거나 물리 파라미터를 바꾸지 않습니다.
+
+```powershell
+.\caemble.cmd batch submit .work/checked --experiment $saved.id --cpu-cores 4 --startup-ram-mib 1024 --gpu-count 0
+```
+
+`--cpu-cores`는 Job 내부 계산까지 포함한 논리 CPU 수이고 `--startup-ram-mib`는
+시작 시점의 RAM 추정량입니다. RAM의 절대 상한이 아니며 launcher는 실행 중 관측한 사용량과
+OS 여유를 기준으로 새 Job을 배정합니다. `--gpu-count 0`은 CPU 실행, 양수는 해당 개수의
+GPU 배타 할당을 요청합니다. GPU가 필요한 경우 `--gpu-memory-mib`로 장치당 필요한
+가용 메모리도 지정할 수 있습니다. 필요한 GPU를 사용할 수 없으면 기다리며 자동 CPU
+전환은 하지 않습니다. 자세한 장비 정책은 [worker 운영 안내](../operations/workers.md)를 봅니다.
+
 `watch`는 진행 상태를 관찰합니다. **Ctrl+C나 관찰 시간 초과로 watch를 종료해도 원격 배치는 계속 실행됩니다.** 취소가 필요하면 `batch cancel <batch-id>`를 사용합니다. `batch show`가 반환한 Measurement ID를 `measurement inspect <measurement-id>`로 조회하고, 저장된 기록을 내려받아 수치를 확인합니다.
 
 ### 배치 목록과 작업을 나누어 조회하기

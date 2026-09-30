@@ -170,13 +170,28 @@ export function createDbTables(client: CaembleClient) {
           ...csrfRequired,
           validate: parseLauncherReconcileResponse,
         }),
-      cancelCurrentJob: (id: string) =>
-        request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/cancel-current-job`, undefined, {
-          ...csrfRequired,
-          validate: parseOkResponse,
-        }),
-      resetWorker: (id: string) =>
-        request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/reset-worker`, undefined, {
+      cancelInstance: (id: string, instanceId: string) =>
+        request<{ ok: true }>(
+          'post',
+          `/web/launchers/${encodeURIComponent(id)}/instances/${encodeURIComponent(instanceId)}/cancel`,
+          undefined,
+          {
+            ...csrfRequired,
+            validate: parseOkResponse,
+          },
+        ),
+      resetInstance: (id: string, instanceId: string) =>
+        request<{ ok: true }>(
+          'post',
+          `/web/launchers/${encodeURIComponent(id)}/instances/${encodeURIComponent(instanceId)}/reset`,
+          undefined,
+          {
+            ...csrfRequired,
+            validate: parseOkResponse,
+          },
+        ),
+      stopAll: (id: string) =>
+        request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/stop-all`, undefined, {
           ...csrfRequired,
           validate: parseOkResponse,
         }),

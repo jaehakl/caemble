@@ -6,7 +6,8 @@ The CAE worker receives a trusted built Measurement from the GPStation server
 over its job WebSocket, executes its Solvers, and uploads RecordedData directly
 to the server. The launcher controls its process; browsers observe server events.
 CAE uses only server-master jobs. AI and other WebRTC slaves retain their existing
-master connections.
+master connections. A launcher can run several independent CAE instances within
+its resource budget, with one active Job and a fresh process per attempt.
 
 Read [Solver development](solver-development.md) and this
 project's `AGENTS.md` completely before adding or changing a Solver.
@@ -94,10 +95,30 @@ Each numerical or visualization packet retains its resources until the server
 confirms durable staging. The two packet kinds share one sequence counter and
 have separate ACKs and terminal sequence lists. Completion is sent only after
 every record and visualization ACK and after invocation children,
-deferred process cleanup, and run resources have closed. The launcher releases
-its job slot after the server completion ACK and the worker's `job.cleaned` message.
+deferred process cleanup, and run resources have closed. After the server completion
+ACK, the worker sends `job.cleaned` and exits. This handler cleanup message starts
+supervisor teardown; the launcher returns the reservation only after confirming
+that the entire process tree has exited.
 Cancellation and connection loss also await cleanup. Interrupted computations fail;
 retry is an explicit server action, and the worker never restarts computation itself.
+
+The SDK's shared execution context contains immutable launcher/boot/instance/Job/
+attempt/reservation identity and a resource allocation. WebSocket packets and
+ACKs carry that identity without changing Measurement or Record payload schemas.
+Bootstrap applies CPU affinity, native thread limits and allocated GPU visibility
+before application imports. Solver children inherit them. The resident executor
+caps its internal CPU budget to the allocation; batch workers use one thread and
+Torch uses the allocated intra-op budget with one inter-op thread.
+
+RAM admission is based on live process-tree RSS plus temporary startup and growth
+allowances. The worker's `ram_available_bytes` is an advisory buffer-planning value
+bounded by its CPU share and live system availability; `startup_ram_bytes` is not
+its peak memory budget. Allocation estimates do not enforce an absolute RAM limit.
+CPU/GPU settings remain outside Experiment physical parameters and Solver ABI 3.
+Parallelism is across independent Jobs; `simulate.py` ordering and physical
+connections inside a Measurement remain unchanged. Standalone CLI execution
+without a managed context retains its existing local CPU-budget policy. See
+[worker operations](../operations/workers.md) for policy and reconnect behavior.
 
 ## Tests
 

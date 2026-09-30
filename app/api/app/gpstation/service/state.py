@@ -18,10 +18,14 @@ class LauncherRuntime:
     id: str
     websocket: WebSocket
     access_key_id: str
-    current_job_id: str | None = None
-    loaded_slave_app_id: str | None = None
-    worker_status: str | None = None
-    resetting: bool = False
+    boot_id: str = ""
+    session_id: str = ""
+    instances: dict[str, dict[str, Any]] = field(default_factory=dict)
+    resources: dict[str, Any] = field(default_factory=dict)
+    connected: bool = True
+    recovering: bool = True
+    rejected: dict[str, int] = field(default_factory=dict)
+    last_command_at: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_db_heartbeat_at: float = field(default_factory=time.monotonic)
     last_db_heartbeat_status: str = "ready"
@@ -40,19 +44,39 @@ class RuntimeRegistry:
         launcher_id: str,
         websocket: WebSocket,
         access_key_id: str,
+        *, boot_id: str = "", session_id: str = "", instances: list[dict] | None = None, resources: dict | None = None,
     ) -> LauncherRuntime:
         launcher = LauncherRuntime(
             id=launcher_id,
             websocket=websocket,
-            access_key_id=access_key_id,
+            access_key_id=access_key_id, boot_id=boot_id, session_id=session_id,
+            instances={item["instance_id"]: item for item in (instances or []) if item.get("instance_id")},
+            resources=resources or {},
         )
         async with self.lock:
             self.launchers[launcher_id] = launcher
         return launcher
 
-    async def remove_launcher(self, launcher_id: str) -> None:
+    async def remove_launcher(self, launcher_id: str, session_id: str | None = None) -> None:
         async with self.lock:
-            self.launchers.pop(launcher_id, None)
+            current = self.launchers.get(launcher_id)
+            if current is not None and (session_id is None or current.session_id == session_id):
+                self.launchers.pop(launcher_id, None)
+
+    async def suspend_launcher(self, launcher_id: str, session_id: str) -> bool:
+        async with self.lock:
+            current = self.launchers.get(launcher_id)
+            if current is None or current.session_id != session_id:
+                return False
+            current.connected = False
+            current.recovering = True
+            return True
+
+    async def session_matches(self, launcher_id: str, session_id: str) -> bool:
+        async with self.lock:
+            current = self.launchers.get(launcher_id)
+            return current is not None and current.session_id == session_id and current.connected
+
 
     async def get_launcher(self, launcher_id: str) -> LauncherRuntime | None:
         async with self.lock:
@@ -60,7 +84,7 @@ class RuntimeRegistry:
 
     async def get_launcher_ids(self) -> set[str]:
         async with self.lock:
-            return set(self.launchers)
+            return {key for key, value in self.launchers.items() if value.connected}
 
     async def close_launchers_for_access_key(self, access_key_id: str, *, code: int = 1008) -> int:
         async with self.lock:
@@ -90,82 +114,52 @@ class RuntimeRegistry:
             except Exception:
                 continue
 
-    async def mark_heartbeat(
-        self,
-        launcher_id: str,
-        *,
-        loaded_slave_app_id: str | None = None,
-        worker_status: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
+    async def mark_heartbeat(self, launcher_id: str, *, instances: list[dict] | None = None,
+                             resources: dict | None = None, metadata: dict | None = None) -> None:
         async with self.lock:
             launcher = self.launchers.get(launcher_id)
             if launcher is not None:
-                launcher.loaded_slave_app_id = loaded_slave_app_id
-                launcher.worker_status = worker_status
+                # Keep pending API offers until an explicit response resolves them.
+                pending = {key: item for key, item in launcher.instances.items() if item.get("state") == "reserving"}
+                launcher.instances = {**pending, **{item["instance_id"]: item for item in (instances or []) if item.get("instance_id")}}
+                launcher.resources = resources or {}
                 launcher.metadata = metadata or {}
 
-    async def mark_launcher_job(
-        self,
-        launcher_id: str,
-        job_id: str | None,
-        *,
-        loaded_slave_app_id: str | None = None,
-        worker_status: str | None = None,
-    ) -> None:
+    async def mark_instance(self, launcher_id: str, instance: dict) -> None:
         async with self.lock:
             launcher = self.launchers.get(launcher_id)
             if launcher is not None:
-                launcher.current_job_id = job_id
-                if loaded_slave_app_id is not None:
-                    launcher.loaded_slave_app_id = loaded_slave_app_id
-                if worker_status is not None:
-                    launcher.worker_status = worker_status
+                launcher.instances[instance["instance_id"]] = instance
 
-    async def clear_launcher_worker(self, launcher_id: str) -> None:
+    async def remove_instance(self, launcher_id: str, instance_id: str, reservation_id: str) -> None:
         async with self.lock:
             launcher = self.launchers.get(launcher_id)
             if launcher is not None:
-                launcher.current_job_id = None
-                launcher.loaded_slave_app_id = None
-                launcher.worker_status = "idle"
-                launcher.resetting = False
-                launcher.metadata = {}
-
-    async def mark_launcher_resetting(self, launcher_id: str) -> LauncherRuntime | None:
-        async with self.lock:
-            launcher = self.launchers.get(launcher_id)
-            if launcher is None or launcher.resetting:
-                return None
-            launcher.resetting = True
-            launcher.worker_status = "resetting"
-            return launcher
+                instance = launcher.instances.get(instance_id)
+                if instance and instance.get("reservation_id") == reservation_id:
+                    launcher.instances.pop(instance_id)
+                    launcher.last_command_at.pop(reservation_id, None)
 
     async def launcher_snapshots(self) -> dict[str, dict[str, Any]]:
         async with self.lock:
-            return {
-                launcher_id: {
-                    "current_job_id": launcher.current_job_id,
-                    "loaded_slave_app_id": launcher.loaded_slave_app_id,
-                    "worker_status": launcher.worker_status,
-                    "resetting": launcher.resetting,
-                    "metadata": dict(launcher.metadata),
-                }
-                for launcher_id, launcher in self.launchers.items()
-            }
+            return {key: {"boot_id": value.boot_id, "session_id": value.session_id,
+                          "connected": value.connected, "recovering": value.recovering,
+                          "instances": [{**item, "state": item.get("state", item.get("status", "unknown"))} for item in value.instances.values()], "resources": dict(value.resources),
+                          "metadata": dict(value.metadata)} for key, value in self.launchers.items()}
 
-    async def idle_launcher_ids(self) -> set[str]:
+    async def available_launchers(self) -> dict[str, dict[str, Any]]:
         async with self.lock:
-            return {
-                launcher_id
-                for launcher_id, launcher in self.launchers.items()
-                if launcher.current_job_id is None and not launcher.resetting
-            }
+            return {key: {"resources": dict(value.resources), "boot_id": value.boot_id,
+                          "rejected": dict(value.rejected)} for key, value in self.launchers.items()
+                    if value.connected and not value.recovering
+                    and not any(item.get("state") == "reserving" for item in value.instances.values())}
 
-    async def launcher_matches_job(self, launcher_id: str, job_id: str) -> bool:
+    async def launcher_matches_job(self, launcher_id: str, job_id: str, reservation_id: str | None = None) -> bool:
         async with self.lock:
             launcher = self.launchers.get(launcher_id)
-            return launcher is not None and launcher.current_job_id == job_id
+            return launcher is not None and any(item.get("job_id") == job_id and
+                (reservation_id is None or item.get("reservation_id") == reservation_id)
+                for item in launcher.instances.values())
 
     async def heartbeat_actions(
         self,

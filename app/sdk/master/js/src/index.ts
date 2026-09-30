@@ -8,6 +8,8 @@ export type {
   CandidateSummary,
   ConnectDiagnosticEvent,
   ConnectOptions,
+  ExecutionIdentity,
+  ResourceRequest,
   GpStationClientOptions,
   JobEvent,
   JobAnswerWaitResult,

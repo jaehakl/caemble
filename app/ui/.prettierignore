@@ -87,7 +87,6 @@ src/features/analysis/analysis-types.ts
 src/features/analysis/analysis.worker.ts
 src/features/cae-workbench/CaeWorkbenchDialogs.tsx
 src/features/jobs/JobsPage.tsx
-src/features/launchers/LaunchersPage.tsx
 src/features/materials/CatalogPickerDialog.tsx
 src/features/materials/material-utils.ts
 src/features/materials/material-value.ts

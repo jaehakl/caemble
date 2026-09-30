@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.settings import settings
+from sdk.slave.execution import cpu_threads
 
 
 VOICEVOX_RESULT_OK = 0
@@ -283,7 +284,7 @@ def get_voicevox_runtime() -> VoicevoxRuntime:
         if _runtime is None:
             _runtime = VoicevoxRuntime(
                 settings.resolve_ai_path(settings.voicevox_runtime_dir),
-                settings.voicevox_cpu_num_threads,
+                cpu_threads(settings.voicevox_cpu_num_threads),
             )
         return _runtime
 

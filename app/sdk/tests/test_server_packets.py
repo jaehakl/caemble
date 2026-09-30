@@ -33,10 +33,15 @@ async def test_packet_rejects_corrupt_binary_sequence(chunk) -> None:
 
 
 def test_webrtc_assignment_remains_default_and_server_mode_is_explicit() -> None:
-    legacy = JobStart(type="job.start", job_id="job", handler_type="ai.test", slave_app_id="ai", offer={"type": "offer", "sdp": "sdp"})
-    assert legacy.job_mode == "webrtc"
-    assert LauncherHello(type="launcher.hello", launcher_name="legacy").job_modes == {}
+    identity = dict(launcher_id="launcher", boot_id="boot", instance_id="instance", job_id="job",
+                    attempt_id="attempt", attempt_count=1, reservation_id="reservation")
+    allocation = dict(cpu_ids=[0], cpu_cores=1, startup_ram_bytes=1024, ram_available_bytes=4096)
+    assigned = JobStart(type="job.start", **identity, allocation=allocation, handler_type="ai.test", slave_app_id="ai", offer={"type": "offer", "sdp": "sdp"})
+    assert assigned.job_mode == "webrtc"
+    assert LauncherHello(type="launcher.hello", execution_protocol=2, installation_id="install", boot_id="boot", session_id="connection", launcher_name="current").job_modes == {}
+    with pytest.raises(ValueError):
+        LauncherHello(type="launcher.hello", launcher_name="legacy")
     with pytest.raises(ValueError, match="require an offer"):
-        JobStart(type="job.start", job_id="job", handler_type="ai.test", slave_app_id="ai")
-    server = JobStart(type="job.start", job_id="job", handler_type="cae", slave_app_id="cae", job_mode="websocket", websocket_url="ws://localhost/job", token="token", attempt_count=1)
+        JobStart(type="job.start", **identity, allocation=allocation, handler_type="ai.test", slave_app_id="ai")
+    server = JobStart(type="job.start", **identity, allocation=allocation, handler_type="cae", slave_app_id="cae", job_mode="websocket", websocket_url="ws://localhost/job", token="token")
     assert server.offer is None

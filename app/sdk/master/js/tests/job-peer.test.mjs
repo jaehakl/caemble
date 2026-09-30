@@ -201,3 +201,47 @@ test('missing payload attachment is rejected without an ACK', async () => {
   assert.equal(resultAcks(dataChannel).length, 0);
   peer.close();
 });
+
+const execution = {
+  launcher_id: 'launcher', boot_id: 'boot', instance_id: 'instance', job_id: 'job',
+  attempt_id: 'attempt', attempt_count: 1, reservation_id: 'reservation',
+};
+
+test('execution identity fences results and accompanies ready, call, and ACK', async () => {
+  const { peer, dataChannel } = setup();
+  peer.bindExecution(execution);
+  peer.sendReady('job');
+  const call = peer.call('job', 'example', {}, 1000);
+  for (const frame of dataChannel.sent.filter((value) => typeof value === 'string').map(JSON.parse)) {
+    for (const [key, value] of Object.entries(execution)) assert.equal(frame[key], value);
+  }
+  emitControl(dataChannel, { ...execution, kind: 'job.result', id: 'job', payload: { ok: true }, attachments: [] });
+  assert.deepEqual(await call, { payload: { ok: true }, files: [] });
+  assert.equal(resultAcks(dataChannel)[0].attempt_id, 'attempt');
+  const events = [];
+  const current = peer.call('job:2', 'example', {}, 1000, (event) => events.push(event));
+  let settled = false;
+  current.then(() => { settled = true; }, () => { settled = true; });
+  emitControl(dataChannel, { ...execution, attempt_id: 'old', kind: 'job.result', id: 'job:2', payload: {}, attachments: [] });
+  emitControl(dataChannel, { ...execution, attempt_id: 'old', kind: 'job.error', id: 'job:2', detail: 'old failure' });
+  emitControl(dataChannel, { ...execution, attempt_id: 'old', kind: 'job.event', id: 'job:2', type: 'progress', payload: {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(settled, false);
+  assert.deepEqual(events, []);
+  assert.equal(resultAcks(dataChannel).length, 1);
+  emitControl(dataChannel, { ...execution, kind: 'job.event', id: 'job:2', type: 'progress', payload: { value: 0.5 } });
+  emitControl(dataChannel, { ...execution, kind: 'job.result', id: 'job:2', payload: { current: true }, attachments: [] });
+  assert.deepEqual(await current, { payload: { current: true }, files: [] });
+  assert.deepEqual(events, [{ id: 'job:2', type: 'progress', payload: { value: 0.5 }, execution }]);
+  assert.equal(resultAcks(dataChannel).length, 2);
+  peer.close();
+});
+
+test('managed peer requires complete immutable identity binding', () => {
+  const { peer } = setup();
+  assert.throws(() => peer.bindExecution({ job_id: 'job' }), /complete execution identity/);
+  peer.bindExecution(execution);
+  assert.throws(() => peer.bindExecution(execution), /already bound/);
+  assert.ok(Object.isFrozen(peer.execution));
+  peer.close();
+});

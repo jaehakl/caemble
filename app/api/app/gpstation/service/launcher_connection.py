@@ -14,6 +14,8 @@ from gpstation.service.auth_service import Principal, authenticate_db_authorizat
 from gpstation.service.job_orchestrator import LauncherPolicyViolation, job_orchestrator
 from gpstation.service.launcher_service import LauncherService
 from gpstation.service.state import runtime, utcnow
+from gpstation.service.batches import serialize_events
+from gpstation.service.execution import IDENTITY_FIELDS, locked_execution, sync_attempt
 from sdk.protocol.messages import LauncherHello, parse_launcher_message
 
 LAUNCHER_HELLO_TIMEOUT_SECONDS = 10
@@ -22,6 +24,7 @@ LAUNCHER_HELLO_TIMEOUT_SECONDS = 10
 async def run_launcher_control(websocket: WebSocket) -> None:
     launcher_id: str | None = None
     principal: Principal | None = None
+    session_id: str | None = None
     async with SessionLocal() as db:
         try:
             try:
@@ -58,6 +61,8 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 websocket.receive_json(),
                 timeout=LAUNCHER_HELLO_TIMEOUT_SECONDS,
             )
+            if hello_payload.get("execution_protocol") != 2:
+                raise LauncherPolicyViolation("Execution protocol 2 required; upgrade API, launcher, slave and SDK together")
             hello = parse_launcher_message(hello_payload)
             if not isinstance(hello, LauncherHello):
                 add_auth_audit(
@@ -75,6 +80,8 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 await websocket.close(code=status.WS_1003_UNSUPPORTED_DATA)
                 return
 
+            await job_orchestrator._expire_reconnect_grace(db)
+            session_id = hello.session_id
             launcher = await LauncherService.create_connected_launcher(
                 db,
                 user_id=principal.user_id,
@@ -82,14 +89,23 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 slave_app_ids=hello.slave_app_ids,
                 job_modes=hello.job_modes,
                 storage_versions=hello.storage_versions,
+                installation_id=hello.installation_id, boot_id=hello.boot_id, session_id=hello.session_id,
+                resources=hello.resources,
                 ip_address=websocket.client.host if websocket.client else None,
             )
             launcher_id = str(launcher.id)
+            previous = await runtime.get_launcher(launcher_id)
             await runtime.register_launcher(
                 launcher_id,
                 websocket,
-                principal.access_key_id,
+                principal.access_key_id, boot_id=hello.boot_id, session_id=hello.session_id,
+                instances=hello.instances, resources=hello.resources,
             )
+            if previous is not None and previous.websocket is not websocket:
+                try:
+                    await previous.websocket.close(code=1001)
+                except Exception:
+                    pass
             add_auth_audit(
                 db,
                 "launcher_connected",
@@ -106,13 +122,17 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 {
                     "type": "launcher.accepted",
                     "launcher_id": launcher_id,
+                    "execution_protocol": 2, "boot_id": hello.boot_id, "session_id": hello.session_id,
+                    "instances": hello.instances,
                     "server_time": utcnow().isoformat(),
                 }
             )
-            job_orchestrator.wake_dispatcher()
+            await job_orchestrator.reconcile_launcher(db, launcher_id=launcher_id, user_id=principal.user_id, hello=hello)
 
             while True:
                 payload = await websocket.receive_json()
+                if not await runtime.session_matches(launcher_id, session_id):
+                    break
                 await handle_launcher_message(
                     db,
                     launcher_id,
@@ -174,7 +194,7 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 await db.rollback()
                 await job_orchestrator.launcher_disconnected(
                     db,
-                    launcher_id=launcher_id,
+                    launcher_id=launcher_id, session_id=session_id,
                 )
                 add_auth_audit(
                     db,
@@ -194,7 +214,12 @@ async def handle_launcher_message(
     payload: dict[str, Any],
 ) -> None:
     message = parse_launcher_message(payload)
+    current = await runtime.get_launcher(launcher_id)
+    if current is None or message.session_id != current.session_id:
+        return
     if message.type == "launcher.heartbeat":
+        if message.boot_id != current.boot_id:
+            return
         persist_heartbeat, revalidate_key = await runtime.heartbeat_actions(
             launcher_id,
             message.status,
@@ -225,12 +250,31 @@ async def handle_launcher_message(
             await db.rollback()
         await runtime.mark_heartbeat(
             launcher_id,
-            loaded_slave_app_id=message.loaded_slave_app_id,
-            worker_status=message.worker_status,
+            instances=message.instances, resources=message.resources,
             metadata=message.metadata,
         )
         if persist_heartbeat:
             await LauncherService.mark_heartbeat(db, launcher_id, message.status)
+        cleanup_failures = [item for item in message.instances if item.get("status", item.get("state")) == "cleanup_failed"]
+        if cleanup_failures:
+            await serialize_events(db)
+            for identity in cleanup_failures:
+                job = await locked_execution(db, identity, user_id=user_id)
+                if job is not None and job.cleaned_at is None:
+                    job.cleanup_state = "cleanup_failed"
+                    await sync_attempt(db, job)
+            await db.commit()
+        from sdk.protocol.messages import JobCleaned
+        for receipt in message.cleanup_receipts:
+            terminal = receipt.get("terminal")
+            if isinstance(terminal, dict) and all(terminal.get(key) == receipt.get(key) for key in IDENTITY_FIELDS):
+                await job_orchestrator.handle_launcher_job_event(db, launcher_id=launcher_id, user_id=user_id,
+                    message=parse_launcher_message({**terminal, "session_id": message.session_id}))
+            await job_orchestrator.handle_launcher_job_event(db, launcher_id=launcher_id, user_id=user_id,
+                message=JobCleaned.model_validate({**receipt, "type": "job.cleaned", "session_id": message.session_id}))
+        await job_orchestrator.reconcile_pending_assignments(db, launcher_id=launcher_id,
+            boot_id=message.boot_id, session_id=message.session_id)
+        job_orchestrator.wake_dispatcher()
         return
     await job_orchestrator.handle_launcher_job_event(
         db,

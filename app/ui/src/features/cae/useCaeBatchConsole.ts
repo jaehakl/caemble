@@ -3,6 +3,7 @@ import { caeBatches } from '@/api/cae'
 import type { RuntimeConsoleStore } from '@/features/runtime-console/store'
 import { useCaeBatches } from './CaeBatchProvider'
 import { describeCaeProgress } from './progress'
+import { describeResourceWait } from '@/features/runtime/resources'
 
 // Mounted once in the account-scoped Workbench, independently of the selected tab or run.
 export function useCaeBatchConsole(store: RuntimeConsoleStore, visible: boolean) {
@@ -26,7 +27,18 @@ export function useCaeBatchConsole(store: RuntimeConsoleStore, visible: boolean)
       const description = progress ? describeCaeProgress(event.payload.progress) : null
       const fraction = description?.fraction ?? previous?.progress
       const message =
-        description?.message ?? (typeof event.payload.last_error === 'string' ? event.payload.last_error : event.type)
+        description?.message ??
+        (typeof event.payload.waiting_reason === 'string'
+          ? describeResourceWait(event.payload.waiting_reason)
+          : null) ??
+        (event.type === 'job.recovering'
+          ? 'Launcher 연결 복구 중'
+          : event.type === 'job.cleaned'
+            ? '프로세스 정리 완료'
+            : event.type === 'job.resumed'
+              ? 'Launcher 연결 복구 완료'
+              : null) ??
+        (typeof event.payload.last_error === 'string' ? event.payload.last_error : event.type)
       if (progress || (terminal && previous)) {
         store.append({
           id,
@@ -37,7 +49,14 @@ export function useCaeBatchConsole(store: RuntimeConsoleStore, visible: boolean)
           message,
           jobId: event.job_id ?? undefined,
           progress: event.type === 'job.succeeded' ? 1 : fraction,
-          details: { batchId: event.batch_id, attempt: event.attempt_count ?? null },
+          details: {
+            batchId: event.batch_id,
+            attempt: event.attempt_count ?? null,
+            attemptId:
+              event.attempt_id ?? (typeof event.payload.attempt_id === 'string' ? event.payload.attempt_id : null),
+            instanceId:
+              event.instance_id ?? (typeof event.payload.instance_id === 'string' ? event.payload.instance_id : null),
+          },
         })
       }
       if (terminal) ended.current.add(id)

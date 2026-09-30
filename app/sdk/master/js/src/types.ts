@@ -1,3 +1,20 @@
+export type ExecutionIdentity = Readonly<{
+  launcher_id: string;
+  boot_id: string;
+  instance_id: string;
+  job_id: string;
+  attempt_id: string;
+  attempt_count: number;
+  reservation_id: string;
+}>;
+
+export type ResourceRequest = Readonly<{
+  cpu_cores?: number;
+  startup_ram_bytes?: number;
+  gpu_count?: number;
+  gpu_memory_bytes?: number;
+}>;
+
 export type LauncherView = {
   id: string;
   user_id: string;
@@ -18,6 +35,12 @@ export type JobDescriptor = {
   progress: unknown[];
   state: string;
   launcher_id?: string | null;
+  attempt_id?: string | null;
+  instance_id?: string | null;
+  attempt_count?: number;
+  resources?: ResourceRequest;
+  waiting_reason?: string | null;
+  cleanup_state?: string | null;
 };
 
 export type JobCreateResult = {
@@ -25,7 +48,7 @@ export type JobCreateResult = {
   answer_wait_url: string;
 };
 
-export type JobAnswerWaitResult = {
+export type JobAnswerWaitResult = Partial<ExecutionIdentity> & {
   job_id: string;
   state: string;
   answer?: SignalPayload | null;
@@ -70,6 +93,7 @@ export type CallResult<T = unknown> = {
 };
 
 export type JobEvent = {
+  execution?: ExecutionIdentity;
   id?: string;
   type?: string;
   payload?: unknown;
@@ -87,6 +111,7 @@ export type JobSessionFinishOptions = {
 
 export type JobSession = {
   readonly jobId: string;
+  readonly execution: ExecutionIdentity | undefined;
   readonly closed: boolean;
   call<TInput = unknown, TResult = unknown>(
     handlerType: string,
@@ -152,6 +177,7 @@ export type ConnectOptions = {
 
 export type RunJobOptions = ConnectOptions & {
   slaveAppId?: string;
+  resources?: ResourceRequest;
   rtcConfig?: RTCConfiguration;
   onJobCreated?: (job: JobDescriptor) => void;
   autoFinish?: boolean;

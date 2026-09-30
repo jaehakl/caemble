@@ -77,7 +77,12 @@ describe('runtime response contracts', () => {
       parseLauncherRuntimeList([
         {
           launcher_id: 'launcher-1',
-          resetting: false,
+          boot_id: 'boot',
+          session_id: 'connection',
+          connected: true,
+          recovering: false,
+          instances: [],
+          resources: {},
           metadata: [],
         },
       ]),

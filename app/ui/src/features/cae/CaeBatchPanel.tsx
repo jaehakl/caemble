@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { useCaeBatches } from './CaeBatchProvider'
 import { describeCaeProgress } from './progress'
 import { resumeBrowserUpload } from './resumeUpload'
+import { describeResourceWait, formatMemory } from '@/features/runtime/resources'
 
 export function CaeBatchPanel({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { queryScope } = useAuth()
@@ -244,9 +245,21 @@ function BatchPanel({ className, compact }: { className?: string; compact: boole
                   return (
                     <li className="rounded border p-2 text-sm" key={job.id}>
                       <p>
-                        시도 {job.index} · {job.state}
+                        작업 {job.index} · attempt {job.attempt_count} · {job.state}
                         {job.measurement_id ? ` · Measurement #${job.measurement_id}` : ''}
                       </p>
+                      {job.waiting_reason ? (
+                        <p className="mt-1 text-xs text-muted-foreground">{describeResourceWait(job.waiting_reason)}</p>
+                      ) : null}
+                      {job.allocation ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          CPU {job.allocation.cpu_cores} · GPU {job.allocation.gpu_devices.length} · RAM{' '}
+                          {formatMemory(job.ram_used_bytes)}
+                        </p>
+                      ) : null}
+                      {job.cleanup_pending ? (
+                        <p className="mt-1 text-xs text-muted-foreground">프로세스 정리 중 · 자원 반환 대기</p>
+                      ) : null}
                       {progress ? (
                         <p className="mt-1 text-xs break-words text-muted-foreground">{progress.message}</p>
                       ) : null}

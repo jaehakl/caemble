@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from sdk.slave import SlaveApp, SlaveContext, run_app
+from sdk.slave.execution import configure_torch
 
 from app.embeddings import initialize as initialize_embeddings
 from app.embeddings import register_handlers as register_embeddings_handlers
@@ -27,6 +28,9 @@ register_voicevox_handlers(app)
 @app.initialize
 async def initialize(memory: dict[str, Any] | None, context: SlaveContext) -> None:
     try:
+        import torch
+
+        configure_torch(torch)
         await initialize_embeddings(context)
         await initialize_vision(context)
         await initialize_llm(context)

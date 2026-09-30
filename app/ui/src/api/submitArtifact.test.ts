@@ -49,6 +49,7 @@ describe('prebuilt remote submission', () => {
           if (pathname.endsWith('/batches'))
             expect(JSON.parse(String(options?.body))).toMatchObject({
               mode: 'candidate',
+              resources: { cpu_cores: 4, gpu_count: 0 },
               items: expect.arrayContaining([
                 { index: 1, input_hash: artifact.items[0].input_hash, byte_length: inputs[0].length },
               ]),
@@ -82,6 +83,7 @@ describe('prebuilt remote submission', () => {
         artifact,
         experimentId: 7,
         requestId: 'request',
+        resources: { cpu_cores: 4, gpu_count: 0 },
         readItem: async (item) => inputs[item.index - 1],
       })
       expect(paths.filter((path) => path.endsWith('/batches'))).toHaveLength(1)

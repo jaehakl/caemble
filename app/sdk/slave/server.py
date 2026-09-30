@@ -9,6 +9,7 @@ from typing import Any
 
 from sdk.protocol.packets import Attachment, receive_packet, send_packet
 from sdk.slave.io import emit, log, parse_args, read_stdin_line
+from sdk.slave.execution import execution_context
 
 INPUT_IDLE_TIMEOUT_SECONDS = 60
 
@@ -22,12 +23,17 @@ class ServerJobContext:
         self.websocket = websocket
         self.job_id = job_id
         self.attempt_count = attempt_count
+        self.execution = execution_context()
+        if self.execution is not None and (self.execution.identity.job_id != job_id or self.execution.identity.attempt_count != attempt_count):
+            raise ValueError("Server context does not match the allocated execution")
         self.send_lock = asyncio.Lock()
         self.incoming: asyncio.Queue[tuple[dict[str, Any], list[Attachment]]] = asyncio.Queue(maxsize=1)
         self.incoming_changed = asyncio.Event()
         self.receive_error: Exception | None = None
 
     async def send(self, payload: dict[str, Any], attachments: Sequence[Attachment] = ()) -> None:
+        if self.execution is not None:
+            payload = self.execution.envelope(payload)
         async with self.send_lock:
             await send_packet(self.websocket.send, self.websocket.send, payload, attachments)
 
@@ -43,6 +49,12 @@ class ServerJobContext:
         try:
             while True:
                 message = await receive_packet(self.websocket.recv)
+                if self.execution is not None:
+                    try:
+                        self.execution.require_identity(message[0])
+                    except ValueError:
+                        log("ignoring server packet for a different execution attempt")
+                        continue
                 if message[0].get("type") == "job.cancel":
                     raise ServerJobCancelled(message[0].get("reason") or "cancelled by server")
                 self.incoming.put_nowait(message)
@@ -84,6 +96,9 @@ async def run_server_job(app: ServerSlaveApp, assignment: dict[str, Any]) -> Non
 
     job_id = str(assignment["job_id"])
     attempt_count = int(assignment["attempt_count"])
+    managed = execution_context()
+    if managed is not None:
+        managed.require_identity(assignment)
     context: ServerJobContext | None = None
     reader: asyncio.Task[None] | None = None
     execution: asyncio.Task[dict[str, Any]] | None = None
@@ -100,8 +115,12 @@ async def run_server_job(app: ServerSlaveApp, assignment: dict[str, Any]) -> Non
             payload, attachments = await receive_packet(
                 lambda: asyncio.wait_for(websocket.recv(), timeout=INPUT_IDLE_TIMEOUT_SECONDS)
             )
+            if managed is not None:
+                managed.require_identity(payload)
             if payload.get("type") != "job.input":
                 raise ValueError("Expected job.input")
+            if managed is not None:
+                emit({"type": "job.running", "job_id": job_id, "attempt_count": attempt_count})
             reader = asyncio.create_task(context.read_messages())
             heartbeat = asyncio.create_task(context.heartbeats())
             execution = asyncio.create_task(app.handler(payload, attachments, context))
@@ -151,6 +170,7 @@ async def run_server_job(app: ServerSlaveApp, assignment: dict[str, Any]) -> Non
 
 
 async def run_server_worker(app: ServerSlaveApp) -> None:
+    managed = execution_context()
     emit({"type": "worker.ready"})
     current: asyncio.Task[None] | None = None
     job_id: str | None = None
@@ -163,12 +183,21 @@ async def run_server_worker(app: ServerSlaveApp) -> None:
                 await current
                 current = None
                 job_id = None
+                if managed is not None:
+                    break
             if line_task not in done:
                 continue
             line = line_task.result()
             if not line:
                 break
             message = json.loads(line)
+            if managed is not None:
+                try:
+                    managed.require_identity(message)
+                except ValueError:
+                    log("ignoring command for a different execution attempt")
+                    line_task = asyncio.create_task(asyncio.to_thread(read_stdin_line))
+                    continue
             if message.get("type") == "stop":
                 break
             if message.get("type") == "job.cancel" and current is not None and message.get("job_id") == job_id:
@@ -176,8 +205,13 @@ async def run_server_worker(app: ServerSlaveApp) -> None:
                 await current
                 current = None
                 job_id = None
+                if managed is not None:
+                    break
             elif message.get("type") == "job.start":
                 if current is not None:
+                    if managed is not None:
+                        line_task = asyncio.create_task(asyncio.to_thread(read_stdin_line))
+                        continue
                     raise RuntimeError("Server worker received a job while busy")
                 if message.get("job_mode") != "websocket":
                     raise ValueError("Server worker requires websocket jobs")

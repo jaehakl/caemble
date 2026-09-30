@@ -47,7 +47,7 @@ class BatchCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
                     catalog_revision="catalog", builder_version="2",
                     items=[{"index": 1, "input_hash": "b" * 64, "byte_length": 10}],
                 )
-                experiment = SimpleNamespace(source_hash="a" * 64, user_id="owner")
+                experiment = SimpleNamespace(source_hash="a" * 64, user_id="owner", source_bundle={})
                 db = SimpleNamespace(
                     scalar=AsyncMock(side_effect=[None, experiment]), add=Mock(),
                     flush=AsyncMock(), commit=AsyncMock(),
@@ -57,12 +57,14 @@ class BatchCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
 
                 with patch("cae.batches.serialize_events", AsyncMock()), patch(
                     "cae.batches.add_event", AsyncMock()
-                ):
+                ), patch("cae.batches.require_experiment_source_bundle"):
+
                     batch = await create_batch(db, request, user, catalog)
 
                 request_data = request.model_dump(mode="json")
                 request_data.pop("preflight")
                 request_data.pop("source_bundle")
+                request_data.pop("resources")
                 expected_hash = hashlib.sha256(json.dumps(
                     request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                 ).encode()).hexdigest()

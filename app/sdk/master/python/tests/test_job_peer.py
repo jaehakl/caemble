@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from dataclasses import asdict
 from collections.abc import Callable
 from typing import Any
 
 from gpstation_master.binary import encode_binary_frame
 from gpstation_master.errors import GpStationProtocolError
 from gpstation_master.job_peer import GpStationJobPeer
+from gpstation_master.types import ExecutionIdentity
 
 
 class FakePeerConnection:
@@ -65,6 +67,23 @@ class JobPeerTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.peer.close()
+
+    async def test_execution_identity_fences_stale_results_and_stamps_ack(self) -> None:
+        identity = ExecutionIdentity("launcher", "boot", "instance", "job", "attempt", 2, "reservation")
+        self.peer.execution = identity
+        call = asyncio.create_task(self.peer.call("call-1", "example", {}, 1))
+        await asyncio.sleep(0)
+        outgoing = json.loads(self.channel.sent[0])
+        for key, value in asdict(identity).items():
+            self.assertEqual(outgoing[key], value)
+        response = {"kind": "job.result", "id": "call-1", "payload": {"correct": True}, "attachments": [], **asdict(identity)}
+        self.channel.emit("message", json.dumps({**response, "attempt_id": "old"}))
+        await asyncio.sleep(0)
+        self.assertFalse(call.done())
+        self.channel.emit("message", json.dumps(response))
+        self.assertEqual((await call).payload, {"correct": True})
+        acknowledgement = json.loads(self.channel.sent[-1])
+        self.assertEqual(acknowledgement["attempt_id"], "attempt")
 
     async def test_inline_result_keeps_public_call_contract(self) -> None:
         call = asyncio.create_task(self.peer.call("call-1", "example", {}, 1))

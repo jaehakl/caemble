@@ -27,7 +27,8 @@ from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.job_service import JobService, build_job_wait_url, job_to_data
 from gpstation.service.launcher_service import LauncherService
 from gpstation.service.web_service import (
-    cancel_launcher_current_job as cancel_launcher_job,
+    cancel_launcher_instance,
+    stop_launcher_instances,
 )
 from gpstation.service.web_service import (
     create_access_token,
@@ -39,7 +40,6 @@ from gpstation.service.web_service import (
     list_launcher_runtime as get_launcher_runtime,
     list_launchers as list_launcher_crud_rows,
     reconcile_disconnected_launchers as reconcile_launchers,
-    reset_launcher_worker as reset_worker,
 )
 from gpstation.utils.csrf import require_web_csrf
 from models import UserData
@@ -85,6 +85,7 @@ async def create_job(
         handler_type=body.handler_type,
         slave_app_id=body.slave_app_id,
         offer=body.offer,
+        resources=body.resources.model_dump(exclude_none=True) if body.resources else {},
     )
     return JobCreateResult(
         job=job_to_data(job),
@@ -134,7 +135,8 @@ async def wait_job_answer(
             detail="Job not found",
         )
     return JobAnswerWaitResult(
-        job_id=str(job.id),
+        job_id=str(job.id), launcher_id=job.launcher_id, boot_id=job.boot_id, instance_id=job.instance_id,
+        attempt_id=job.attempt_id, reservation_id=job.reservation_id, attempt_count=job.attempt_count,
         state=job.state,
         answer=job.answer,
         last_error=job.last_error,
@@ -198,31 +200,18 @@ async def list_launcher_runtime(
     return await get_launcher_runtime(db, current_user)
 
 
-@router.post(
-    "/launchers/{launcher_id}/cancel-current-job",
-    response_model=OkResponse,
-    tags=["web-launchers"],
-)
-async def cancel_launcher_current_job(
-    launcher_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserData = Depends(require_roles(["admin", "user"])),
-) -> OkResponse:
-    await cancel_launcher_job(db, launcher_id, current_user)
+@router.post("/launchers/{launcher_id}/instances/{instance_id}/cancel", response_model=OkResponse, tags=["web-launchers"])
+@router.post("/launchers/{launcher_id}/instances/{instance_id}/reset", response_model=OkResponse, tags=["web-launchers"])
+async def stop_instance(launcher_id: str, instance_id: str, db: AsyncSession = Depends(get_db),
+                        current_user: UserData = Depends(require_roles(["admin", "user"]))) -> OkResponse:
+    await cancel_launcher_instance(db, launcher_id, instance_id, current_user)
     return OkResponse()
 
 
-@router.post(
-    "/launchers/{launcher_id}/reset-worker",
-    response_model=OkResponse,
-    tags=["web-launchers"],
-)
-async def reset_launcher_worker(
-    launcher_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserData = Depends(require_roles(["admin", "user"])),
-) -> OkResponse:
-    await reset_worker(db, launcher_id, current_user)
+@router.post("/launchers/{launcher_id}/stop-all", response_model=OkResponse, tags=["web-launchers"])
+async def stop_all_instances(launcher_id: str, db: AsyncSession = Depends(get_db),
+                             current_user: UserData = Depends(require_roles(["admin", "user"]))) -> OkResponse:
+    await stop_launcher_instances(db, launcher_id, current_user)
     return OkResponse()
 
 

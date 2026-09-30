@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypedDict, TypeVar
 
 if TYPE_CHECKING:
     from .client import GpStationJobSession
 
 
 TResult = TypeVar("TResult")
+
+
+class ResourceRequest(TypedDict, total=False):
+    cpu_cores: int
+    startup_ram_bytes: int
+    gpu_count: int
+    gpu_memory_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionIdentity:
+    launcher_id: str
+    boot_id: str
+    instance_id: str
+    job_id: str
+    attempt_id: str
+    attempt_count: int
+    reservation_id: str
 
 
 @dataclass(slots=True)
@@ -52,6 +70,7 @@ class JobDescriptor:
     attempt_count: int = 0
     created_at: str | None = None
     updated_at: str | None = None
+    execution: ExecutionIdentity | None = None
 
 
 @dataclass(slots=True)
@@ -66,6 +85,7 @@ class JobAnswerWaitResult:
     state: str
     answer: SignalPayload | None = None
     last_error: str | None = None
+    execution: ExecutionIdentity | None = None
 
 
 @dataclass(slots=True)
@@ -120,6 +140,7 @@ class JobEvent:
     id: str | None = None
     type: str | None = None
     payload: Any = None
+    execution: ExecutionIdentity | None = None
 
 
 @dataclass(slots=True)

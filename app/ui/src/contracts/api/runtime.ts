@@ -1,3 +1,5 @@
+import type { LauncherInstance, LauncherResources, ResourceAllocation, ResourceRequest } from './execution'
+
 export type AccessKeyScope = 'client' | 'launcher' | 'caemble'
 
 export type AccessKeyRecord = Readonly<{
@@ -45,10 +47,12 @@ export type LauncherRecord = Readonly<{
 
 export type LauncherRuntime = Readonly<{
   launcher_id: string
-  current_job_id?: string | null
-  loaded_slave_app_id?: string | null
-  worker_status?: string | null
-  resetting: boolean
+  boot_id: string
+  session_id: string
+  connected: boolean
+  recovering: boolean
+  instances: readonly LauncherInstance[]
+  resources: LauncherResources
   metadata: Readonly<Record<string, unknown>>
 }>
 
@@ -69,6 +73,12 @@ export type JobSummary = Readonly<{
   cancel_requested_at?: string | null
   last_error?: string | null
   attempt_count: number
+  attempt_id?: string | null
+  instance_id?: string | null
+  resources?: ResourceRequest
+  allocation?: ResourceAllocation | null
+  waiting_reason?: string | null
+  cleanup_state?: string | null
   created_at?: string | null
   updated_at?: string | null
 }>

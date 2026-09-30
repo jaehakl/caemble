@@ -8,7 +8,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy import Text, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gpstation.db import APIKey, Launcher
+from gpstation.db import APIKey, Launcher, Job
 from gpstation.models import (
     AccessKeyCreate,
     AccessKeyCreateResult,
@@ -128,42 +128,23 @@ async def reconcile_disconnected_launchers(
     )
 
 
-async def cancel_launcher_current_job(
-    db: AsyncSession,
-    launcher_id: str,
-    current_user: UserData,
-) -> None:
+async def cancel_launcher_instance(db: AsyncSession, launcher_id: str, instance_id: str,
+                                   current_user: UserData) -> None:
     launcher = await scoped_launcher(db, launcher_id, current_user)
-    snapshot = (await runtime.launcher_snapshots()).get(str(launcher.id))
-    job_id = snapshot.get("current_job_id") if snapshot else None
-    if job_id:
-        await job_orchestrator.kill_job(
-            db,
-            job_id=str(job_id),
-            user_id=None if is_admin(current_user) else current_user.id,
-            launcher_id=str(launcher.id),
-            reason="cancelled by website",
-        )
-
-
-async def reset_launcher_worker(
-    db: AsyncSession,
-    launcher_id: str,
-    current_user: UserData,
-) -> None:
-    launcher = await scoped_launcher(db, launcher_id, current_user)
-    accepted = await job_orchestrator.reset_launcher_worker(
-        db,
-        launcher_id=str(launcher.id),
-        user_id=None if is_admin(current_user) else current_user.id,
-    )
+    accepted = await job_orchestrator.reset_instance(db, launcher_id=launcher.id, instance_id=instance_id,
+        user_id=None if is_admin(current_user) else current_user.id)
     if not accepted:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Launcher reset is already in progress or the launcher is offline"
-            ),
-        )
+        raise HTTPException(404, "The execution instance is unavailable.")
+
+
+async def stop_launcher_instances(db: AsyncSession, launcher_id: str, current_user: UserData) -> None:
+    launcher = await scoped_launcher(db, launcher_id, current_user)
+    jobs = list((await db.scalars(select(Job).where(Job.launcher_id == launcher.id,
+        Job.reservation_id.is_not(None), Job.cleaned_at.is_(None)))).all())
+    for job in jobs:
+        await job_orchestrator.kill_job(db, job_id=job.id,
+            user_id=None if is_admin(current_user) else current_user.id,
+            launcher_id=launcher.id, reason="all launcher instances stopped by website")
 
 
 async def list_access_keys(

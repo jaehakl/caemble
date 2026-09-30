@@ -39,11 +39,20 @@ from gpstation.db import Job, JobBatch, JobEvent, JobRecord, Launcher
 from gpstation.service.batches import add_event, fail_server_jobs, finish_job, serialize_events
 from gpstation.service.job_service import JobService
 from gpstation.service.state import utcnow
+from gpstation.service.execution import execution_identity
 from gpstation.service.worker_connection import worker_cleaned
 from models import RoleEnum, UserData
 from service.measurement_service import delete_measurements
 from service.material_snapshot import material_vars_hash
 from settings import settings
+
+
+def available(ids):
+    return {key: {"boot_id": "test-boot", "resources": {
+        "revision": 1, "admission_open": True, "cpu_total": 12, "cpu_reserved": 0,
+        "ram_budget_bytes": 8 * 1024**3, "ram_used_bytes": 0, "ram_startup_reserved_bytes": 0,
+        "gpu_devices": [], "defaults": {"cpu_cores": 4, "startup_ram_bytes": 1024**2, "gpu_count": 0}},
+        "rejected": {}} for key in ids}
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
@@ -225,7 +234,8 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 output = CalculationDataOutput.model_validate({"dtype": "float64", "shape": [20000],
                     "axes": [{"name": "x", "ticks": calculated_ticket["reference"]}],
                     "data": calculated_ticket["reference"], "summary": summary})
-                saved = await save_calculation_data(db, calculation.id, measurement_id, source_hash, output, user=self.owner)
+                saved = await save_calculation_data(db, calculation.id, measurement_id, source_hash, output, user=self.owner,
+                    source_revision=calculation.source.revision)
                 self.assertEqual((await analyze_calculation_data(db, self.experiment_id, user=self.owner))["items"][0]["summary"], summary)
                 self.assertLess(len(json.dumps((await db.get(CalculationData, saved["id"])).data)), 2048)
                 await db.execute(delete(CalculationData).where(CalculationData.id == saved["id"]))
@@ -485,10 +495,10 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 job_modes={"cae": "websocket"}, storage_versions={}, connected_at=now, last_heartbeat_at=now)
             db.add(launcher)
             await db.commit()
-            self.assertIsNone(await JobService.claim_next_compatible_job(db, idle_launcher_ids={launcher.id}))
+            self.assertIsNone(await JobService.claim_next_compatible_job(db, available_launchers=available({launcher.id})))
             launcher.storage_versions = {"cae": 1}
             await db.commit()
-            assignment = await JobService.claim_next_compatible_job(db, idle_launcher_ids={launcher.id})
+            assignment = await JobService.claim_next_compatible_job(db, available_launchers=available({launcher.id}))
             self.assertEqual(assignment[0].id, job.id)
 
     async def test_dispatch_rotates_between_compatible_batches(self):
@@ -504,12 +514,12 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add_all(launchers)
             await db.commit()
             ids = {item.id for item in launchers}
-            one = await JobService.claim_next_compatible_job(db, idle_launcher_ids=ids)
-            two = await JobService.claim_next_compatible_job(db, idle_launcher_ids=ids)
+            one = await JobService.claim_next_compatible_job(db, available_launchers=available(ids))
+            two = await JobService.claim_next_compatible_job(db, available_launchers=available(ids))
             self.assertEqual((one[0].batch_id, two[0].batch_id), (first.id, second.id))
             self.assertEqual((one[0].item_index, two[0].item_index), (1, 1))
 
-    async def test_concurrent_claims_obey_owner_capability_and_one_slot(self):
+    async def test_concurrent_claims_obey_owner_capability_without_a_single_slot(self):
         batch, _ = await self.create(count=3)
         jobs = [await self.ready_job(batch.id, index=index) for index in range(1, 4)]
         now = utcnow()
@@ -526,15 +536,16 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             ids = {launcher.id for launcher in launchers}
         async def claim():
             async with self.sessions() as db:
-                return await JobService.claim_next_compatible_job(db, idle_launcher_ids=ids)
+                return await JobService.claim_next_compatible_job(db, available_launchers=available(ids))
         assignments = await asyncio.gather(claim(), claim(), claim())
         assigned = [item for item in assignments if item]
-        self.assertEqual(len(assigned), 2)
-        self.assertEqual({item[1] for item in assigned}, {launchers[0].id, launchers[1].id})
-        self.assertEqual(len({item[0].id for item in assigned}), 2)
+        self.assertEqual(len(assigned), 3)
+        self.assertTrue({item[1] for item in assigned}.issubset({launchers[0].id, launchers[1].id}))
+        self.assertEqual(len({item[0].id for item in assigned}), 3)
+        self.assertEqual(len({item[0].reservation_id for item in assigned}), 3)
         self.assertTrue(all(item[0].attempt_count == 1 for item in assigned))
         async with self.sessions() as db:
-            self.assertEqual(await db.scalar(select(func.count()).select_from(Job).where(Job.state == "queued")), 1)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Job).where(Job.state == "queued")), 0)
             self.assertEqual(len(jobs), 3)
 
     async def test_restart_and_manual_retry_reuse_frozen_input(self):
@@ -619,10 +630,9 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.rollback()
         async with self.sessions() as db:
             with patch("gpstation.service.worker_connection.runtime.launcher_matches_job", AsyncMock(return_value=True)), patch(
-                "gpstation.service.worker_connection.runtime.mark_launcher_job", AsyncMock()
+                "gpstation.service.worker_connection.runtime.remove_instance", AsyncMock()
             ):
-                self.assertTrue(await worker_cleaned(db, job_id=original.id, attempt_count=1,
-                    launcher_id=launcher_id, user_id=self.owner_id))
+                self.assertTrue(await worker_cleaned(db, identity=execution_identity(await db.get(Job, original.id)), user_id=self.owner_id))
             self.assertFalse((await measurement_execution(db, measurement_id, self.owner_id))["job"]["cleanup_pending"])
         async def retry():
             async with self.sessions() as db:
@@ -798,7 +808,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             (await db.get(Job, job.id)).launcher_id = launcher.id
             launcher_id = launcher.id
             await db.commit()
-            self.assertFalse(await worker_cleaned(db, job_id=job.id, attempt_count=1, launcher_id=launcher.id, user_id=self.owner_id))
+            self.assertFalse(await worker_cleaned(db, identity={**execution_identity(await db.get(Job, job.id)), "attempt_count": 1}, user_id=self.owner_id))
             await db.rollback()
         async with self.sessions() as db:
             self.assertEqual((await db.get(Launcher, launcher_id)).status, "busy")

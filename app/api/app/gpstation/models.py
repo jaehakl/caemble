@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import Field
 
 from models import BaseModel
+from sdk.protocol.execution import ResourceRequest
 
 
 AccessKeyScope = Literal["client", "launcher", "caemble"]
@@ -30,6 +31,7 @@ class JobCreateRequest(BaseModel):
     handler_type: str
     slave_app_id: str = "ai"
     offer: Dict[str, Any]
+    resources: ResourceRequest | None = None
 
 
 class JobData(BaseModel):
@@ -49,6 +51,12 @@ class JobData(BaseModel):
     cancel_requested_at: Optional[datetime] = None
     last_error: Optional[str] = None
     attempt_count: int = 0
+    attempt_id: str | None = None
+    instance_id: str | None = None
+    resources: dict = Field(default_factory=dict)
+    allocation: dict | None = None
+    cleanup_state: str | None = None
+    waiting_reason: str | None = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -67,6 +75,12 @@ class JobSummary(BaseModel):
     cancel_requested_at: Optional[datetime] = None
     last_error: Optional[str] = None
     attempt_count: int = 0
+    attempt_id: str | None = None
+    instance_id: str | None = None
+    resources: dict = Field(default_factory=dict)
+    allocation: dict | None = None
+    cleanup_state: str | None = None
+    waiting_reason: str | None = None
     latest_progress: Any = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -79,6 +93,12 @@ class JobCreateResult(BaseModel):
 
 class JobAnswerWaitResult(BaseModel):
     job_id: str
+    launcher_id: str | None = None
+    boot_id: str | None = None
+    instance_id: str | None = None
+    attempt_id: str | None = None
+    reservation_id: str | None = None
+    attempt_count: int = 0
     state: JobState
     answer: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
@@ -142,8 +162,10 @@ class LauncherReconcileResponse(BaseModel):
 
 class LauncherRuntimeData(BaseModel):
     launcher_id: str
-    current_job_id: str | None = None
-    loaded_slave_app_id: str | None = None
-    worker_status: str | None = None
-    resetting: bool = False
+    boot_id: str
+    session_id: str
+    connected: bool
+    recovering: bool
+    resources: dict = Field(default_factory=dict)
+    instances: list[dict] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

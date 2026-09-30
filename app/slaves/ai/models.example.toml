@@ -3,12 +3,14 @@ default_model = "Qwen3.6-35B-A3B-Q8"
 use_max_gpu = false
 # Optional. When omitted, use_max_gpu selects -1 (GPU) or 0 (CPU).
 # n_gpu_layers = -1
-# Optional. When omitted, llama.cpp chooses its thread count.
+# Optional. Managed executions cap both decoding and prompt threads by their CPU allocation.
 # n_threads = 8
 context_size = 262144
 split_mode = "tensor"
 tensor_split = []
 main_gpu = 0
+# GPU indices and tensor_split refer to the devices visible inside the execution.
+# A single allocated GPU always has local index 0, regardless of its host index.
 flash_attn = true
 swa_full = false
 n_batch = 1024

@@ -6,6 +6,31 @@ import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import type { CommandContext } from './types'
+import { resourceRequestSchema, type ResourceRequest } from '@/contracts/api/execution'
+
+export function batchResources(options: CommandContext['options']): ResourceRequest | undefined {
+  const fields = [
+    ['cpu-cores', 'cpu_cores', 1],
+    ['startup-ram-mib', 'startup_ram_bytes', 1024 ** 2],
+    ['gpu-count', 'gpu_count', 1],
+    ['gpu-memory-mib', 'gpu_memory_bytes', 1024 ** 2],
+  ] as const
+  const supplied = Object.fromEntries(
+    fields
+      .filter(([flag]) => options[flag] !== undefined)
+      .map(([flag, field, multiplier]) => {
+        const value = Number(options[flag])
+        if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(value * multiplier))
+          throw new CliError(`--${flag} requires a nonnegative safe integer.`, 2)
+        return [field, value * multiplier]
+      }),
+  )
+  if (!Object.keys(supplied).length) return undefined
+  const result = resourceRequestSchema.safeParse(supplied)
+  if (!result.success)
+    throw new CliError(`Invalid resource request: ${result.error.issues.map((issue) => issue.message).join('; ')}`, 2)
+  return result.data
+}
 
 export async function batchCommand(command: string, context: CommandContext) {
   const { args, options, signal } = context
@@ -24,20 +49,29 @@ export async function batchCommand(command: string, context: CommandContext) {
         4,
       )
     const requestId = String(options['request-id'] ?? saved?.requestId ?? crypto.randomUUID())
-    await writeFile(submissionPath, JSON.stringify({ api: client.baseUrl, experimentId, requestId }, null, 2), 'utf8')
+    const requested = batchResources(options)
+    const resources =
+      requested ?? (requestId === saved?.requestId ? resourceRequestSchema.parse(saved.resources ?? {}) : {})
+    if (
+      requestId === saved?.requestId &&
+      JSON.stringify(resources) !== JSON.stringify(resourceRequestSchema.parse(saved.resources ?? {}))
+    )
+      throw new CliError(
+        'This request ID already has different resource settings. Use a new --request-id to submit another batch.',
+        4,
+      )
+    const submission = { api: client.baseUrl, experimentId, requestId, resources }
+    await writeFile(submissionPath, JSON.stringify(submission, null, 2), 'utf8')
     return submitArtifact({
       client,
       artifact: stored.artifact,
       experimentId,
       requestId,
+      ...(Object.keys(resources).length ? { resources } : {}),
       readItem: stored.readItem,
       signal,
       onRegistered: async (id) => {
-        await writeFile(
-          submissionPath,
-          JSON.stringify({ api: client.baseUrl, experimentId, requestId, batchId: id }, null, 2),
-          'utf8',
-        )
+        await writeFile(submissionPath, JSON.stringify({ ...submission, batchId: id }, null, 2), 'utf8')
       },
       onProgress: (completed, total) => process.stderr.write(`Uploaded ${completed}/${total}\n`),
     })

@@ -8,6 +8,7 @@ from typing import Any
 
 from app.logging import log
 from app.gpu_residency import acquire_gpu_model, get_image_cuda_device_id
+from sdk.slave.execution import execution_context
 
 
 _image_locks: dict[int, asyncio.Lock] = {}
@@ -43,6 +44,9 @@ async def generate_images_batch(
     control_guidance_starts: list[float],
     control_guidance_ends: list[float],
 ) -> tuple[list[Any], list[int]]:
+    managed = execution_context()
+    if managed is not None and not managed.allocation.gpu_devices:
+        raise ValueError("SDXL requires a GPU allocation; start a GPU job for this handler")
     normalized_image_mode = image_mode.strip().lower()
     device_id = get_image_cuda_device_id()
     controlnet_key = tuple(controlnet_model_ids) if normalized_image_mode.startswith("controlnet_") else None

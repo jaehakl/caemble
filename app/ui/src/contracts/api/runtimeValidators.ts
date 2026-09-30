@@ -2,6 +2,12 @@ import { z } from 'zod'
 import type { GetListResponse } from './common'
 import type { AccessKeyRecord, JobSummary, LauncherRecord, LauncherRuntime, UserRecord } from './runtime'
 import { parseGetListResponse } from './validators'
+import {
+  launcherInstanceSchema,
+  launcherResourcesSchema,
+  resourceAllocationSchema,
+  resourceRequestSchema,
+} from './execution'
 
 const nullableTimestampSchema = z.string().nullable().optional()
 
@@ -43,10 +49,12 @@ const launcherRecordSchema = z
 const launcherRuntimeSchema = z
   .object({
     launcher_id: z.string().min(1),
-    current_job_id: z.string().nullable().optional(),
-    loaded_slave_app_id: z.string().nullable().optional(),
-    worker_status: z.string().nullable().optional(),
-    resetting: z.boolean(),
+    boot_id: z.string(),
+    session_id: z.string(),
+    connected: z.boolean(),
+    recovering: z.boolean(),
+    instances: z.array(launcherInstanceSchema),
+    resources: launcherResourcesSchema,
     metadata: z.record(z.string(), z.unknown()),
   })
   .passthrough()
@@ -73,6 +81,12 @@ const jobSummarySchema = z
     cancel_requested_at: nullableTimestampSchema,
     last_error: z.string().nullable().optional(),
     attempt_count: z.number().int().nonnegative(),
+    attempt_id: z.string().nullable().optional(),
+    instance_id: z.string().nullable().optional(),
+    resources: resourceRequestSchema.optional(),
+    allocation: resourceAllocationSchema.nullable().optional(),
+    waiting_reason: z.string().nullable().optional(),
+    cleanup_state: z.string().nullable().optional(),
     created_at: nullableTimestampSchema,
     updated_at: nullableTimestampSchema,
   })

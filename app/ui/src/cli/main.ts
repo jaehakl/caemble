@@ -32,6 +32,7 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   experiment check [source] | build [source] --out <artifact> [--example <key>] [--count N] [--vars-mode nominal|random]
   experiment test <artifact> --out <results> [--timeout seconds]
   batch submit <artifact> --experiment <id> | list | show <id> | watch <id> | cancel <id> | retry <id>
+    submit resources: --cpu-cores N --startup-ram-mib N --gpu-count N --gpu-memory-mib N
   calculation init <dir> | list --experiment <id> | pull <id> --out <dir> | check <source.js>
   calculation run <source.js> --fixture <input.json> | --result <local-run> | --measurement <id>
   calculation push <dir> --experiment <id> --measurement <id>
@@ -81,6 +82,10 @@ async function main() {
     'timeout',
     'jobs',
     'request-id',
+    'cpu-cores',
+    'startup-ram-mib',
+    'gpu-count',
+    'gpu-memory-mib',
     'version',
     'item',
     'task',

@@ -17,6 +17,9 @@ def read_stdin_line() -> str:
 
 
 def emit(message: dict[str, Any]) -> None:
+    from sdk.slave.execution import execution_frame
+
+    message = execution_frame(message)
     line = json.dumps(message, ensure_ascii=False) + "\n"
     buffer = getattr(sys.stdout, "buffer", None)
     if buffer is None:
