@@ -1,0 +1,267 @@
+"""Study persistence and public execution boundaries; no Solver execution."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import os
+import sys
+import unittest
+import uuid
+from pathlib import Path
+
+from fastapi import HTTPException
+from pydantic import ValidationError
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+
+from caemble_catalog import Catalog
+from cae.batches import list_batches
+from cae.db import CaeBatch
+from cae.studies.db import StageSubmission, Study, Trial
+from cae.studies.models import StudyCreateRequest
+from cae.studies.service import (
+    create_study, delete_study, list_studies, list_trials, require_study,
+    require_unmanaged_execution, require_unreferenced_experiments,
+    require_unreferenced_measurements, resume_study,
+)
+from db import Calculation, CalculationSource, Experiment, Measurement, make_async_db_url
+from gpstation.db import Job, JobBatch
+from gpstation.service.job_service import JobService
+from models import RoleEnum, UserData
+from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
+
+
+class StudyRequestTests(unittest.TestCase):
+    def request(self, **overrides):
+        return {"request_id": str(uuid.uuid4()), "experiment_id": 1, "source_hash": "a" * 64,
+                "vars_schema": {}, "initial_vars": {}, "objective": {"calculation_id": 1}, **overrides}
+
+    def test_invalid_limits_constraints_and_unrecognized_configuration_are_rejected(self):
+        for value in ({"max_trials": 0}, {"max_parallel": True}, {"unknown": True},
+                      {"constraints": [{"calculation_id": 2}]},
+                      {"constraints": [{"calculation_id": 2, "minimum": 3, "maximum": 2}]},
+                      {"constraints": [{"calculation_id": 2, "minimum": float("inf")}]},
+                      {"axes": [{"name": "x", "min": 2, "max": 1}]}):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                StudyCreateRequest.model_validate(self.request(**value))
+
+
+@unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
+class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.database = f"caemble_calculation_test_{uuid.uuid4().hex}"
+        asyncio.run(_create_database(cls.database))
+        try:
+            _upgrade(cls.database, "head")
+            cls.owner_id, cls.other_id, cls.experiment_id, _ = asyncio.run(_seed_owners(cls.database))
+            cls.catalog = Catalog.open_readonly()
+            entry = cls.catalog.list_experiments(limit=1)[0][0]
+            cls.example = cls.catalog.experiment(entry["coordinate"])
+        except BaseException:
+            asyncio.run(_drop_database(cls.database))
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.catalog.close()
+        asyncio.run(_drop_database(cls.database))
+
+    async def asyncSetUp(self):
+        self.engine = create_async_engine(make_async_db_url(_database_url(self.database)))
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.owner = UserData(id=self.owner_id, roles=[RoleEnum.user])
+        self.other = UserData(id=self.other_id, roles=[RoleEnum.user])
+        self.admin = UserData(id=self.other_id, roles=[RoleEnum.admin])
+        async with self.sessions() as db:
+            for model in (Study, Measurement, JobBatch, Job, Calculation, CalculationSource):
+                await db.execute(delete(model))
+            experiment = await db.get(Experiment, self.experiment_id)
+            experiment.source_bundle = self.example["sourceBundle"]
+            experiment.source_hash = self.example["bundleHash"]
+            experiment.result_contracts = {}
+            source = CalculationSource(source_code="export default () => 1", source_hash=hashlib.sha256(b"export default () => 1").hexdigest(),
+                                       name="Objective", revision=1, owner_id=self.owner_id)
+            db.add(source)
+            await db.flush()
+            calculation = Calculation(experiment_id=self.experiment_id, source_id=source.id,
+                                      contract_status="ready", validated_source_revision=1,
+                                      output_layout={"dtype": "float64", "shape": [], "axes": []})
+            db.add(calculation)
+            await db.commit()
+            self.calculation_id, self.source_id = calculation.id, source.id
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+
+    def request(self, **overrides):
+        return StudyCreateRequest.model_validate({"request_id": str(uuid.uuid4()), "experiment_id": self.experiment_id,
+            "source_hash": self.example["bundleHash"], "vars_schema": {"x": {"shape": [2], "min": 0, "max": 10}},
+            "initial_vars": {"x": [4, 5]}, "objective": {"calculation_id": self.calculation_id}, **overrides})
+
+    async def test_create_is_idempotent_and_sources_are_owned_frozen_snapshots(self):
+        request = self.request()
+        async with self.sessions() as db:
+            study = await create_study(db, request, self.owner, self.catalog)
+            self.assertEqual(len(study.settings["axes"]), 2)
+            duplicate = await create_study(db, request, self.owner, self.catalog)
+            self.assertEqual(duplicate.id, study.id)
+            study_id = study.id
+            with self.assertRaises(HTTPException) as changed:
+                await create_study(db, request.model_copy(update={"max_trials": 3}), self.owner, self.catalog)
+            self.assertEqual(changed.exception.status_code, 409)
+            await db.rollback()
+            source = await db.get(CalculationSource, self.source_id)
+            source.source_code, source.source_hash, source.revision = "changed", hashlib.sha256(b"changed").hexdigest(), 2
+            await db.commit()
+            frozen = await db.get(Study, study_id)
+            self.assertEqual(frozen.definition["calculations"][0]["source"], "export default () => 1")
+            self.assertEqual(frozen.definition["calculations"][0]["source_revision"], 1)
+            with self.assertRaises(HTTPException):
+                await require_study(db, study_id, self.other)
+            self.assertEqual((await require_study(db, study_id, self.admin)).id, study_id)
+            self.assertEqual((await list_studies(db, self.other, experiment_id=None, limit=20, offset=0))["total"], 0)
+            self.assertEqual((await list_studies(db, self.admin, experiment_id=None, limit=20, offset=0))["total"], 1)
+
+    async def stage(self, db, study):
+        batch = JobBatch(user_id=self.owner_id, request_id=str(uuid.uuid4()), request_hash="stage", total=1,
+                         created_count=1, uploaded_count=1, state="queued", generation_stopped=True)
+        db.add(batch)
+        await db.flush()
+        db.add(CaeBatch(batch_id=batch.id, experiment_id=self.experiment_id, spec={"mode": "candidate"}))
+        job = Job(user_id=self.owner_id, batch_id=batch.id, item_index=1, handler_type="cae.evaluation.build",
+                  slave_app_id="evaluation", job_mode="websocket", state="queued", input={})
+        db.add(job)
+        await db.flush()
+        measurement = Measurement(user_id=self.owner_id, experiment_id=self.experiment_id, vars={"x": [4, 5]}, material_snapshot={})
+        db.add(measurement)
+        await db.flush()
+        trial = Trial(study_id=study.id, ordinal=1, round_index=0, variables=measurement.vars, fingerprint="candidate",
+                      measurement_id=measurement.id, state="running")
+        db.add(trial)
+        await db.flush()
+        db.add(StageSubmission(trial_id=trial.id, stage="build", generation=1, batch_id=batch.id, job_id=job.id))
+        await db.commit()
+        return trial, job, batch
+
+    async def test_children_are_filtered_before_pagination_and_reject_public_mutation(self):
+        async with self.sessions() as db:
+            study = await create_study(db, self.request(), self.owner, self.catalog)
+            trial, job, batch = await self.stage(db, study)
+            self.assertEqual(len(await JobService.list_job_summaries(db, user_id=self.owner_id, active_only=False, limit=1)), 1)
+            self.assertEqual(await JobService.list_job_summaries(db, user_id=None, active_only=False, limit=1, exclude_studies=True), [])
+            self.assertEqual((await list_batches(db, self.owner_id, experiment_id=None, limit=1, offset=0, exclude_studies=True))["total"], 0)
+            for identity in ({"job_id": job.id}, {"batch_id": batch.id}):
+                with self.assertRaises(HTTPException) as caught:
+                    await require_unmanaged_execution(db, **identity, user_id=self.owner_id)
+                self.assertEqual(caught.exception.detail["study_id"], study.id)
+            page = await list_trials(db, study, limit=1, offset=0)
+            self.assertEqual(page["items"][0]["stages"][0]["job"]["id"], job.id)
+            self.assertEqual((await list_trials(db, study, limit=1, offset=1))["items"], [])
+            item = (await list_studies(db, self.owner, experiment_id=None, limit=1, offset=0))["items"][0]
+            self.assertEqual(item["executions_active"], 1)
+            self.assertFalse(item["cleanup_pending"])
+            self.assertFalse(item["manual_retry_pending"])
+
+    async def test_retained_history_protects_inputs_and_deletion_preserves_measurements(self):
+        async with self.sessions() as db:
+            study = await create_study(db, self.request(), self.owner, self.catalog)
+            trial, job, batch = await self.stage(db, study)
+            for operation in (require_unreferenced_experiments(db, [self.experiment_id]),
+                              require_unreferenced_measurements(db, [trial.measurement_id])):
+                with self.assertRaises(HTTPException):
+                    await operation
+            study.state = "paused"
+            with self.assertRaises(HTTPException):
+                await delete_study(db, study)
+            job.state = "cancelled"
+            await db.flush()
+            await delete_study(db, study)
+            await db.commit()
+            self.assertIsNotNone(await db.get(Measurement, trial.measurement_id))
+            self.assertIsNotNone(await db.get(Job, job.id))
+            self.assertIsNotNone(await db.get(JobBatch, batch.id))
+            self.assertEqual(list((await db.scalars(select(Trial))).all()), [])
+
+    async def test_resume_rejects_unresolved_failures_and_active_manual_retry(self):
+        async with self.sessions() as db:
+            study = await create_study(db, self.request(), self.owner, self.catalog)
+            trial, job, _ = await self.stage(db, study)
+            study.state, trial.state = "paused", "failed"
+            await db.flush()
+            with self.assertRaises(HTTPException):
+                await resume_study(db, study)
+            trial.state, trial.manual_retry_requested = "running", True
+            await db.flush()
+            with self.assertRaises(HTTPException):
+                await resume_study(db, study)
+            trial.state, trial.manual_retry_requested = "succeeded", False
+            await db.flush()
+            with self.assertRaises(HTTPException):
+                await resume_study(db, study)
+            job.state = "succeeded"
+            await db.flush()
+            await resume_study(db, study)
+            self.assertEqual(study.state, "running")
+
+    async def test_saved_calculation_can_validate_on_first_trial_and_fixed_axis_uses_schema_bounds(self):
+        async with self.sessions() as db:
+            calculation = await db.get(Calculation, self.calculation_id)
+            calculation.contract_status, calculation.output_layout, calculation.validated_source_revision = "needs_preflight", None, None
+            await db.commit()
+            study = await create_study(db, self.request(axes=[{"name": "x", "indices": [0], "fixed": True}]), self.owner, self.catalog)
+            self.assertIsNone(study.definition["calculations"][0]["output_layout"])
+            self.assertTrue(study.settings["axes"][0]["fixed"])
+            self.assertEqual((study.settings["axes"][0]["min"], study.settings["axes"][0]["max"]), (0, 10))
+
+    async def test_concurrent_create_reuses_one_study_and_rejects_nonfinite_nested_vars(self):
+        request = self.request()
+
+        async def create():
+            async with self.sessions() as db:
+                return (await create_study(db, request, self.owner, self.catalog)).id
+
+        first, second = await asyncio.gather(create(), create())
+        self.assertEqual(first, second)
+        async with self.sessions() as db:
+            with self.assertRaises(HTTPException) as caught:
+                await create_study(db, self.request(initial_vars={"x": [float("nan"), 5]}), self.owner, self.catalog)
+            self.assertEqual(caught.exception.status_code, 422)
+
+
+@unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
+class StudyMigrationTests(unittest.TestCase):
+    def test_revision_20_adds_tables_to_revision_19_without_replacing_experiments(self):
+        from alembic import command
+        from alembic.config import Config
+        from settings import settings
+        from test_calculation_database import API_DIR, ORIGINAL_DB_URL, _check, _table_names
+
+        database = f"caemble_calculation_test_{uuid.uuid4().hex}"
+        asyncio.run(_create_database(database))
+        try:
+            _upgrade(database, "head")
+            settings.db_url = _database_url(database)
+            try:
+                command.downgrade(Config(str(API_DIR / "alembic.ini")), "000000000019")
+            finally:
+                settings.db_url = ORIGINAL_DB_URL
+            _, _, experiment_id, _ = asyncio.run(_seed_owners(database))
+            self.assertNotIn("cae_studies", asyncio.run(_table_names(database)))
+            _upgrade(database, "head")
+            self.assertTrue({"cae_studies", "cae_trials", "cae_stage_submissions"}.issubset(asyncio.run(_table_names(database))))
+
+            async def retained():
+                engine = create_async_engine(make_async_db_url(_database_url(database)))
+                try:
+                    async with async_sessionmaker(engine)() as db:
+                        return (await db.get(Experiment, experiment_id)).source_hash
+                finally:
+                    await engine.dispose()
+
+            self.assertEqual(asyncio.run(retained()), "hash-calc-owner")
+            _check(database)
+        finally:
+            asyncio.run(_drop_database(database))

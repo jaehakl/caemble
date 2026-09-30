@@ -193,6 +193,7 @@ async def measurement_execution(db: AsyncSession, measurement_id: int, user_id: 
 async def list_batches(
     db: AsyncSession, user_id: str, *, experiment_id: int | None, limit: int, offset: int,
     attention_only: bool = False,
+    exclude_studies: bool = False,
 ) -> dict:
     cursor = await event_cursor(db, user_id)
     query = (
@@ -202,6 +203,9 @@ async def list_batches(
     )
     if experiment_id is not None:
         query = query.where(CaeBatch.experiment_id == experiment_id)
+    if exclude_studies:
+        from cae.studies.db import StageSubmission
+        query = query.where(~select(StageSubmission.id).where(StageSubmission.batch_id == JobBatch.id).exists())
     if attention_only:
         query = query.where(or_(
             JobBatch.state.in_(("uploading", "queued", "running")),

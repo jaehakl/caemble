@@ -1,4 +1,4 @@
-"""Direct object transfer for CAE jobs; no bucket credentials enter the worker."""
+"""Attempt-scoped object transfer for server jobs without bucket credentials."""
 from __future__ import annotations
 
 import asyncio
@@ -51,7 +51,7 @@ async def read_object(context, ref):
                 ticket = await storage_request(context, "read", reference=ref)
     if len(raw) != ref["byteLength"] or hashlib.sha256(raw).hexdigest() != ref["sha256"]:
         raise ValueError("Stored input hash differs from its manifest.")
-    return json.loads(raw.decode("utf-8"))
+    return base64.b64encode(raw).decode("ascii") if ref["encoding"] == "base64" else json.loads(raw.decode("utf-8"))
 
 
 async def resolve_input(context, value):

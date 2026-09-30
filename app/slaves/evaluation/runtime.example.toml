@@ -1,0 +1,2 @@
+# Optional absolute path. The default resolves node from PATH.
+# node = "C:/Program Files/nodejs/node.exe"

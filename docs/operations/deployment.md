@@ -67,9 +67,13 @@ deployment\build-ui.bat
 
 - `deployment/caemble-ui.tar.gz`: 웹 UI와 격리된 browser runner
 - `app/ui/dist-cli/caemble.cjs`: 해당 모노레포에서 사용하는 CLI. Node 24.14 이상과 CAE Poetry 환경을 사용한다.
+- `deployment/caemble-evaluation.tar.gz`: launcher 장비의 `app/slaves/evaluation/dist`에 설치하는 Node 평가 실행 파일과 선언 파일, build metadata.
 
 CLI나 인증정보를 웹 서버 정적 루트에 복사하지 않는다. 기존 CAE preparation artifact와
 `CAE_NODE_EXECUTABLE`, `CAE_PREPARATION_*` 설정은 사용하지 않는다.
+평가 runtime도 웹 정적 루트나 API 프로세스에 설치하지 않는다. Launcher 장비에서
+Node 24.14 이상과 evaluation Python 환경을 설치하고 `python -m app doctor`로 확인한다.
+Study가 고정한 runtime metadata와 다른 bundle은 해당 평가를 실행하지 않는다.
 
 ## 클라이언트 빌드 전환
 

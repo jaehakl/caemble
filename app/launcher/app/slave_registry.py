@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ class SlaveApp:
     startup_timeout_seconds: float | None = None
     job_mode: str = "webrtc"
     storage_version: int | None = None
+    readiness_args: tuple[str, ...] = ()
 
     @property
     def python_executable(self) -> Path:
@@ -26,7 +28,17 @@ class SlaveApp:
     @property
     def executable_ready(self) -> bool:
         executable = self.python_executable
-        return executable.is_file() and (os.name == "nt" or os.access(executable, os.X_OK))
+        if not executable.is_file() or (os.name != "nt" and not os.access(executable, os.X_OK)):
+            return False
+        if self.readiness_args:
+            try:
+                probe = subprocess.run([str(executable), *self.readiness_args], cwd=self.project_dir,
+                    capture_output=True, timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                return probe.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+        return True
 
     @property
     def install_hint(self) -> str:
@@ -90,6 +102,7 @@ def load_manifest(manifest_path: Path) -> SlaveApp:
         project_dir=manifest_path.parent,
         job_mode=job_mode,
         storage_version=payload.get("storage_version"),
+        readiness_args=tuple(payload.get("readiness_args", ())),
         startup_timeout_seconds=(
             float(payload["startup_timeout_seconds"])
             if payload.get("startup_timeout_seconds") is not None

@@ -21,7 +21,7 @@ async def run_measurement(
 ) -> dict[str, Any]:
     if message.get("execution_mode") == "brief":
         raise ProtocolError("Brief execution is no longer supported. Start a new Preflight with the current settings.")
-    from app.kernel.transport.object_storage import externalize_record, read_object, resolve_input
+    from sdk.slave.object_storage import externalize_record, read_object, resolve_input
     if "artifact" in message:
         artifact = await read_object(context, message["artifact"])
         built = artifact["measurement"]

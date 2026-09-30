@@ -200,7 +200,7 @@ export function createDbTables(client: CaembleClient) {
       list: (activeOnly = true, context?: RequestContext) =>
         request<JobSummary[]>(
           'get',
-          `/web/jobs?${new URLSearchParams({ active_only: String(activeOnly), limit: '200' })}`,
+          `/web/jobs?${new URLSearchParams({ active_only: String(activeOnly), limit: '200', exclude_studies: 'true' })}`,
           undefined,
           { signal: context?.signal, validate: parseJobSummaryList },
         ),

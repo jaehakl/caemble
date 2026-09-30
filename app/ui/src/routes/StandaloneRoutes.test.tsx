@@ -25,6 +25,9 @@ vi.mock('@/features/launchers/LaunchersPage', () => ({
 }))
 vi.mock('@/features/jobs/JobsPage', () => ({ JobsWorkspace: () => <section>Jobs workspace</section> }))
 vi.mock('@/features/cae/CaeBatchPanel', () => ({ CaeBatchPanel: () => <section>CAE Jobs workspace</section> }))
+vi.mock('@/features/optimization/StudyManagement', () => ({
+  StudyManagement: () => <section>Studies workspace</section>,
+}))
 
 function mount(component: ReactNode, address: string) {
   return render(<MemoryRouter initialEntries={[address]}>{component}</MemoryRouter>)
@@ -42,6 +45,7 @@ describe('standalone routes', () => {
     expect(screen.getByText('Launchers workspace')).toBeInTheDocument()
     expect(screen.getByText('Jobs workspace')).toBeInTheDocument()
     expect(screen.getByText('CAE Jobs workspace')).toBeInTheDocument()
+    expect(screen.getByText('Studies workspace')).toBeInTheDocument()
     expect(screen.queryByText(/Viewer/i)).not.toBeInTheDocument()
   })
 

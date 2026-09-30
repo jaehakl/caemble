@@ -17,6 +17,7 @@ export const documentationGroups = [
       'workbench-viewer-selection',
       'workbench-calculation',
       'workbench-prediction',
+      'workbench-optimization',
       'workbench-analysis',
       'workbench-admin-demo-curation',
     ],

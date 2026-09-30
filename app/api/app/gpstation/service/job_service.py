@@ -69,8 +69,8 @@ class JobService:
         offer: dict[str, Any],
         resources: dict | None = None,
     ) -> Job:
-        if slave_app_id == "cae":
-            raise HTTPException(422, "CAE jobs must be submitted through /cae/batches.")
+        if slave_app_id in {"cae", "evaluation"} or handler_type.startswith("cae."):
+            raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Study endpoints.")
         job = Job(
             user_id=user_id,
             handler_type=handler_type,
@@ -119,6 +119,7 @@ class JobService:
         user_id: str | None,
         active_only: bool,
         limit: int,
+        exclude_studies: bool = False,
     ) -> list[JobSummary]:
         stmt = (
             select(
@@ -145,6 +146,9 @@ class JobService:
         )
         if user_id is not None:
             stmt = stmt.where(Job.user_id == user_id)
+        if exclude_studies:
+            from cae.studies.db import StageSubmission
+            stmt = stmt.where(~select(StageSubmission.id).where(StageSubmission.job_id == Job.id).exists())
         if active_only:
             stmt = stmt.where(
                 Job.state.in_(
@@ -219,7 +223,9 @@ class JobService:
             await sync_attempt(db, job)
             if job.batch_id is not None:
                 batch = await db.get(JobBatch, job.batch_id)
-                batch.last_dispatched_at = now
+                # Rotation compares against DB-generated created_at. Use the
+                # same clock when API and PostgreSQL run on different hosts.
+                batch.last_dispatched_at = func.clock_timestamp()
                 batch.state = "running"
             await job_event(db, job, "job.assigned")
             await db.commit()

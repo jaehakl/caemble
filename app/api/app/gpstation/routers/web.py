@@ -61,6 +61,7 @@ async def csrf_token(
 @router.get("/jobs", response_model=list[JobSummary], tags=["web-jobs"])
 async def list_jobs(
     active_only: bool = Query(default=False),
+    exclude_studies: bool = Query(default=False),
     limit: int = Query(default=100),
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
@@ -70,6 +71,7 @@ async def list_jobs(
         user_id=None if is_admin(current_user) else current_user.id,
         active_only=active_only,
         limit=limit,
+        exclude_studies=exclude_studies,
     )
 
 
@@ -149,6 +151,8 @@ async def kill_job(
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> OkResponse:
+    from cae.studies.service import require_unmanaged_execution
+    await require_unmanaged_execution(db, job_id=job_id, user_id=None if is_admin(current_user) else current_user.id)
     job = await job_orchestrator.kill_job(
         db,
         job_id=job_id,

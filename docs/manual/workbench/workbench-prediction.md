@@ -12,7 +12,7 @@
 
 학습에는 현재 Experiment의 Recorded Measurement가 사용됩니다. Inverse에 필요한 후처리 결과가 없다면 [Calculation에서 결과 저장하기](workbench-calculation.md#후처리-결과-저장)를 먼저 확인하세요. 왼쪽 Vars와 오른쪽 Calculation Data 사이에는 3D Viewer가 있고, 하단 Console에서 진행 상태와 오류를 볼 수 있습니다.
 
-새로고침하면 마지막 탭과 Experiment·Measurement·Calculation 선택을 다시 검증하고, 현재 Experiment에 속하며 접근 가능한 선택만 복원합니다. 공유 URL에는 `?experiment=ID`만 저장합니다. 탭과 Measurement·Calculation은 URL에 담지 않으며, 과거의 `section`, `measurement`, `calculation`, `structure`, `sample`, `setup` 파라미터는 적용하지 않고 제거합니다.
+새로고침하면 마지막 탭과 Experiment·Measurement·Calculation 선택을 다시 검증하고, 현재 Experiment에 속하며 접근 가능한 선택만 복원합니다. 일반 공유 URL에는 `?experiment=ID`를 저장합니다. Study를 직접 여는 최적화 링크는 `study`도 사용하지만, 일반 탭과 Measurement·Calculation은 URL에 담지 않습니다. 과거의 `section`, `measurement`, `calculation`, `structure`, `sample`, `setup` 파라미터는 적용하지 않고 제거합니다.
 
 ## 공개 Demo로 체험하기
 

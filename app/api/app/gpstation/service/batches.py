@@ -17,6 +17,19 @@ async def serialize_events(db: AsyncSession) -> None:
     await db.execute(text("SELECT pg_advisory_xact_lock(1128351042)"))
 
 
+async def study_context(db: AsyncSession, job: Job | None) -> dict:
+    if job is None:
+        return {}
+    keys = ("study_id", "trial_id", "stage")
+    if "artifact_metadata" in job.__dict__:
+        metadata = job.artifact_metadata or {}
+        return {key: metadata[key] for key in keys if key in metadata}
+    # Claims defer potentially large artifact metadata. Read only attribution,
+    # without implicit async lazy loading or hydrating geometry presentation.
+    row = (await db.execute(select(*(Job.artifact_metadata[key].astext for key in keys)).where(Job.id == job.id))).one()
+    return {key: value for key, value in zip(keys, row) if value is not None}
+
+
 async def add_event(
     db: AsyncSession,
     batch: JobBatch,
@@ -35,7 +48,8 @@ async def add_event(
         type=kind,
         # Snapshot identity now: looking up Job while replaying would label an
         # earlier event with the current retry's instance and reservation.
-        payload={**(payload or {}), **(execution_identity(job) if job is not None else {})},
+        payload={**(payload or {}), **(execution_identity(job) if job is not None else {}),
+                 **(await study_context(db, job))},
     )
     db.add(event)
     await db.flush()
@@ -83,6 +97,7 @@ async def finish_job(
         return True
     field = "cancelled" if state == "killed" else state
     setattr(batch, field, getattr(batch, field) + 1)
+    attribution = await study_context(db, job)
     await add_event(
         db, batch, f"job.{state}", job=job, payload={"last_error": detail, **(result or {})}
     )
@@ -94,12 +109,18 @@ async def finish_job(
             batch,
             f"batch.{batch.state}",
             payload={
+                **attribution,
                 "total": batch.total,
                 "succeeded": batch.succeeded,
                 "failed": batch.failed,
                 "cancelled": batch.cancelled,
             },
         )
+    if attribution.get("study_id"):
+        if "artifact_metadata" not in job.__dict__:
+            await db.refresh(job, ["artifact_metadata"])
+        from cae.studies.controller import on_job_finished
+        await on_job_finished(db, job, result)
     return True
 
 

@@ -29,6 +29,12 @@ const tasks = [
     icon: Compass,
   },
   {
+    id: 'workbench-optimization',
+    title: '실제 해석으로 조건 최적화하기',
+    detail: '목적값과 제약조건을 정하고 최선 후보를 찾습니다.',
+    icon: Compass,
+  },
+  {
     id: 'program-overview',
     title: '코드로 내 실험 만들기',
     detail: '파일의 역할부터 차근차근 알아봅니다.',

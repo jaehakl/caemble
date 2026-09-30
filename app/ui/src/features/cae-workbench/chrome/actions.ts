@@ -25,6 +25,7 @@ export const defaultWorkbenchSections: readonly WorkbenchSectionDefinition[] = O
   { id: 'calculation', label: '후처리' },
   { id: 'analysis', label: '통계' },
   { id: 'prediction', label: '예측' },
+  { id: 'optimization', label: '최적화' },
 ])
 
 export type WorkbenchMenuNode =

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { dbTables, type UserData } from '@/api'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
+import { studyFixture } from '@/features/optimization/fixtures.test-support'
 
 const mocks = vi.hoisted(() => ({
   editableVars: false,
@@ -156,6 +157,41 @@ beforeEach(() => {
   mocks.clearBaseMeasurement.mockClear()
   mocks.loadBaseMeasurement.mockReset().mockResolvedValue(mocks.measurement)
   mocks.workspaceOptions.mockClear()
+})
+
+it('opens frozen Study source and best Candidate atomically and ignores an older Measurement lookup', async () => {
+  mocks.editableVars = true
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const wrapper = ({ children }: PropsWithChildren) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+  const { result } = renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper })
+  vi.spyOn(dbTables.Experiment, 'listRows').mockResolvedValue({ items: [savedExperiment(7)], total: 1 })
+  let finish!: (value: { items: (typeof mocks.measurement)[]; total: number }) => void
+  vi.spyOn(dbTables.Measurement, 'listRows').mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  let loading!: Promise<unknown>
+  act(() => {
+    loading = result.current.loadExperiment(savedExperiment(7))
+  })
+  await waitFor(() => expect(finish).toBeDefined())
+  await act(async () => {
+    expect(await result.current.openStudyCandidate(studyFixture)).toBe(true)
+  })
+  expect(result.current.candidateVars).toEqual({ width: 3 })
+  expect(result.current.candidateMaterialSnapshot).toBeNull()
+  expect(result.current.selectionContext.measurementId).toBeNull()
+  expect(result.current.experiment?.sourceBundle).toEqual(studyFixture.definition.source_bundle)
+  await act(async () => {
+    finish({ items: [mocks.measurement], total: 1 })
+    await loading
+  })
+  expect(result.current.candidateVars).toEqual({ width: 3 })
+  expect(result.current.selectionContext.measurementId).toBeNull()
 })
 
 it('turns a viewed Measurement into an editable Candidate and sends the new vars to CAD evaluation', async () => {

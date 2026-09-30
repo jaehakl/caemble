@@ -1,4 +1,5 @@
 import type { CalculationDefinition } from '@/api'
+import type { OptimizationStudy } from '@/contracts/api/optimization'
 import type { ExperimentPresentationUpdate } from '@/contracts/viewerDefaults'
 import { experimentQueryKeys } from '@/features/experiment/queryKeys'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -58,7 +59,7 @@ function createExperimentDocument(sourceBundle: ExperimentSourceBundle) {
 }
 
 export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback; predictionMode?: boolean }>
-export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling'
+export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling' | 'optimization'
 
 export function useCaeWorkbenchState(
   user: UserData | null,
@@ -370,7 +371,7 @@ export function useCaeWorkbenchState(
         dispatchEditing({
           type: 'candidateVariablesChanged',
           vars: Object.freeze(normalized),
-          clearMaterialSnapshot: origin === 'prediction-sampling',
+          clearMaterialSnapshot: origin === 'prediction-sampling' || origin === 'optimization',
         })
         return true
       } catch (cause: unknown) {
@@ -462,6 +463,33 @@ export function useCaeWorkbenchState(
       applyExperimentState(row)
     },
     [applyExperimentState],
+  )
+
+  const openStudyCandidate = useCallback(
+    async (study: OptimizationStudy) => {
+      if (!study.best_trial?.result.feasible) throw new Error('적용할 최선 후보가 없습니다.')
+      if (Object.keys(study.best_trial.variables).length !== Object.keys(study.definition.vars_schema).length)
+        throw new Error('최선 후보의 Vars가 고정된 정의와 일치하지 않습니다.')
+      const variables = validateVarsChanges(study.best_trial.variables, study.definition.vars_schema)
+      const sequence = ++requestSequence.current
+      const measurementSequence = measurementRequestSequence.current
+      const row = (
+        await dbTables.Experiment.listRows({
+          ...getListRequest('visible'),
+          filter: { id: [study.experiment_id, study.experiment_id] },
+          limit: 1,
+        })
+      ).items[0]
+      if (sequence !== requestSequence.current || measurementSequence !== measurementRequestSequence.current)
+        return false
+      const record = row?.id === study.experiment_id && row.source_hash === study.definition.source_hash ? row : null
+      const document = createExperimentDocument(study.definition.source_bundle)
+      resetSelectionForExperiment(record?.id ?? null)
+      experimentRef.current = document
+      dispatchEditing({ type: 'studyCandidateOpened', document, record, name: study.name, vars: variables })
+      return true
+    },
+    [resetSelectionForExperiment],
   )
 
   const loadExperiment = useCallback(
@@ -831,6 +859,7 @@ export function useCaeWorkbenchState(
     calculationDataActions,
     experimentDocument,
     applyExperiment,
+    openStudyCandidate,
     loadExperiment,
     newExperiment,
     detachDeletedExperiment,

@@ -31,6 +31,7 @@ import particlePage from '../../../../docs/manual/program/program-particles.md?r
 import showcasePage from '../../../../docs/manual/workbench/workbench-showcase.md?raw'
 import measurementPage from '../../../../docs/manual/workbench/workbench-measurement.md?raw'
 import savePage from '../../../../docs/manual/workbench/workbench-save.md?raw'
+import optimizationPage from '../../../../docs/manual/workbench/workbench-optimization.md?raw'
 import type { DocumentPage } from './types'
 import { manualBody } from './body'
 
@@ -140,6 +141,28 @@ export const manualDocuments: readonly DocumentPage[] = [
     },
     sourcePath: 'docs/manual/workbench/workbench-prediction.md',
     content: manualBody(page3),
+  },
+  {
+    id: 'workbench-optimization',
+    section: 'workbench',
+    anchor: 'workbench-optimization',
+    title: '실제 해석으로 변수 최적화하기',
+    summary: '현재 Candidate에서 Study를 시작하고 실제 Solver로 조건을 탐색하며 최선 후보를 적용합니다.',
+    keywords: [
+      'Optimization',
+      'Study',
+      'Trial',
+      'Tensor',
+      '최적화',
+      '목적값',
+      '제약조건',
+      '고정',
+      '재시도',
+      '중지',
+      '재개',
+    ],
+    sourcePath: 'docs/manual/workbench/workbench-optimization.md',
+    content: manualBody(optimizationPage),
   },
   {
     ...{

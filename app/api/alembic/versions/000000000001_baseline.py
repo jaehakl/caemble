@@ -28,7 +28,11 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    Base.metadata.create_all(bind=op.get_bind(), checkfirst=False)
+    # Study tables belong to revision 20. Creating them early would attach their
+    # foreign keys to historical Batch schemas before that migration runs.
+    tables = [table for table in Base.metadata.sorted_tables
+              if table.name not in {"cae_studies", "cae_trials", "cae_stage_submissions"}]
+    Base.metadata.create_all(bind=op.get_bind(), tables=tables, checkfirst=False)
     op.bulk_insert(Role.__table__, [{"name": "user"}, {"name": "admin"}])
 
 

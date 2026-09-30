@@ -10,7 +10,7 @@ and executable examples come from their implementations and fixtures.
 - [Experiment authoring](authoring/experiment.md): inspect syntax, build, test locally, and explicitly submit remotely.
 - [Calculation authoring](authoring/calculation.md): inspect Records, calculate, preflight, and save.
 - [Solver authoring](authoring/solver.md): Draft Catalog, ABI implementation, and numerical verification.
-- Workbench manual: [quick start](manual/workbench/workbench-quickstart.md), [Calculation](manual/workbench/workbench-calculation.md), [program structure](manual/program/program-overview.md), and [troubleshooting](manual/troubleshooting/troubleshooting-ready.md).
+- Workbench manual: [quick start](manual/workbench/workbench-quickstart.md), [Calculation](manual/workbench/workbench-calculation.md), [Optimization](manual/workbench/workbench-optimization.md), [program structure](manual/program/program-overview.md), and [troubleshooting](manual/troubleshooting/troubleshooting-ready.md).
 
 Use `caemble.cmd docs search <query>` or `sh ./caemble docs search <query>` to find
 other manual pages by title, keywords, or body. `docs show experiment`,

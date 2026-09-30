@@ -63,6 +63,30 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('account-scoped CAE observation', () => {
+  it('routes Study stage events away from CAE-only batch snapshots', async () => {
+    const rendered = renderBatches()
+    await waitFor(() => expect(mocks.subscribe).toHaveBeenCalledOnce())
+    const receive = mocks.subscribe.mock.calls[0][1] as (event: CaeEvent) => void
+    vi.useFakeTimers()
+    act(() =>
+      receive({
+        id: 11,
+        type: 'job.succeeded',
+        batch_id: 'evaluation-batch',
+        study_id: 'study-1',
+        trial_id: 'trial-1',
+        stage: 'build',
+        payload: {},
+        created_at: '',
+      }),
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(mocks.read).not.toHaveBeenCalled()
+    expect(rendered.result.current.batches.map((batch) => batch.id)).toEqual(['batch-1'])
+    expect(rendered.result.current.events).toEqual([])
+  })
   it('applies progress without GET requests or re-sorting summaries and coalesces detail observers', async () => {
     const detail: CaeBatch = {
       ...completed,
@@ -263,9 +287,9 @@ describe('account-scoped CAE observation', () => {
     const rendered = renderBatches()
     await waitFor(() => expect(mocks.subscribe).toHaveBeenCalledOnce())
     expect(mocks.list.mock.calls.map(([options]) => options)).toEqual([
-      {},
-      { offset: 0, attentionOnly: true },
-      { offset: 50, attentionOnly: true },
+      { excludeStudies: true },
+      { offset: 0, attentionOnly: true, excludeStudies: true },
+      { offset: 50, attentionOnly: true, excludeStudies: true },
     ])
     expect(rendered.result.current.batches).toHaveLength(100)
     expect(rendered.result.current.batches.some((batch) => batch.id === 'attention-49')).toBe(true)
@@ -276,12 +300,12 @@ describe('account-scoped CAE observation', () => {
     await act(async () => {
       await Promise.all([rendered.result.current.loadMore(), rendered.result.current.loadMore()])
     })
-    expect(mocks.list).toHaveBeenLastCalledWith({ offset: 50 }, expect.any(Object))
+    expect(mocks.list).toHaveBeenLastCalledWith({ offset: 50, excludeStudies: true }, expect.any(Object))
     expect(mocks.list).toHaveBeenCalledTimes(4)
     expect(rendered.result.current.batches).toHaveLength(150)
     expect(rendered.result.current.hasMore).toBe(true)
     await act(async () => rendered.result.current.loadMore())
-    expect(mocks.list).toHaveBeenLastCalledWith({ offset: 100 }, expect.any(Object))
+    expect(mocks.list).toHaveBeenLastCalledWith({ offset: 100, excludeStudies: true }, expect.any(Object))
     expect(rendered.result.current.hasMore).toBe(false)
     await act(async () => rendered.result.current.loadMore())
     expect(mocks.list).toHaveBeenCalledTimes(5)
@@ -290,9 +314,9 @@ describe('account-scoped CAE observation', () => {
     act(() => receive({ id: 8, type: 'job.progress', batch_id: recent[0].id, payload: {}, created_at: '' }))
     await act(async () => rendered.result.current.refresh())
     expect(mocks.list.mock.calls.slice(5).map(([options]) => options)).toEqual([
-      {},
-      { offset: 0, attentionOnly: true },
-      { offset: 50, attentionOnly: true },
+      { excludeStudies: true },
+      { offset: 0, attentionOnly: true, excludeStudies: true },
+      { offset: 50, attentionOnly: true, excludeStudies: true },
     ])
     expect(rendered.result.current.batches).toHaveLength(150)
     expect(rendered.result.current.hasMore).toBe(false)
@@ -344,7 +368,7 @@ describe('account-scoped CAE observation', () => {
     expect(rendered.result.current.loadingMore).toBe(false)
     expect(rendered.result.current.batches.some((batch) => batch.id === 'previous-199')).toBe(true)
     await act(async () => rendered.result.current.loadMore())
-    expect(mocks.list).toHaveBeenLastCalledWith({ offset: 50 }, expect.any(Object))
+    expect(mocks.list).toHaveBeenLastCalledWith({ offset: 50, excludeStudies: true }, expect.any(Object))
     expect(rendered.result.current.batches.some((batch) => batch.id === 'new-50')).toBe(true)
     for (let page = 0; rendered.result.current.hasMore && page < 5; page++) {
       await act(async () => rendered.result.current.loadMore())
@@ -386,9 +410,15 @@ describe('account-scoped CAE observation', () => {
     ]
     mocks.list.mockClear()
     await act(async () => rendered.result.current.refresh())
-    expect(mocks.list.mock.calls.map(([options]) => options)).toEqual([{}, { offset: 0, attentionOnly: true }])
+    expect(mocks.list.mock.calls.map(([options]) => options)).toEqual([
+      { excludeStudies: true },
+      { offset: 0, attentionOnly: true, excludeStudies: true },
+    ])
     await act(async () => rendered.result.current.loadMore())
-    expect(mocks.list).toHaveBeenLastCalledWith({ offset: added <= 50 ? 100 + added : 50 }, expect.any(Object))
+    expect(mocks.list).toHaveBeenLastCalledWith(
+      { offset: added <= 50 ? 100 + added : 50, excludeStudies: true },
+      expect.any(Object),
+    )
     expect(rendered.result.current.batches.some((batch) => batch.id === `new-${added - 1}`)).toBe(true)
     for (let page = 0; rendered.result.current.hasMore && page < 4; page++) {
       await act(async () => rendered.result.current.loadMore())

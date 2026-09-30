@@ -112,6 +112,8 @@ async def kill_job(
     principal: Principal = Depends(require_client),
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
+    from cae.studies.service import require_unmanaged_execution
+    await require_unmanaged_execution(db, job_id=job_id, user_id=principal.user_id)
     job = await job_orchestrator.kill_job(
         db,
         job_id=job_id,

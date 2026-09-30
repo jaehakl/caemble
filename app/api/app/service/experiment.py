@@ -155,6 +155,9 @@ async def _sync_experiment_records(
         ).all()
     )
     existing_payloads = {record.name: _record_payload(record) for record in existing}
+    if existing_payloads != requested:
+        from cae.studies.service import require_unreferenced_experiments
+        await require_unreferenced_experiments(db, [experiment.id])
     if existing_payloads != requested and _source_locked(counts):
         raise _bad(
             {
@@ -406,6 +409,9 @@ async def _save_experiment(
         if not family:
             raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
         if request.mode == "overwrite":
+            if source_hash != experiment.source_hash:
+                from cae.studies.service import require_unreferenced_experiments
+                await require_unreferenced_experiments(db, [experiment.id])
             await require_no_active_batches(db, [experiment.id])
             counts = (await _derived_counts(db, [experiment.id]))[experiment.id]
             if not commit and counts["measurements"]:
@@ -479,6 +485,9 @@ async def _save_experiment(
                 raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
         await db.flush()
         contracts_changed = experiment.result_contracts != request.result_contracts
+        if contracts_changed:
+            from cae.studies.service import require_unreferenced_experiments
+            await require_unreferenced_experiments(db, [experiment.id])
         if contracts_changed and _source_locked(counts):
             raise _bad({"code": "experiment_record_contract_locked", "message": "Result contracts cannot change while Measurements exist."}, code=status.HTTP_409_CONFLICT)
         roots = {record.name.split(".")[0] for record in request.records}
@@ -565,6 +574,8 @@ async def delete_experiment_versions(
     if {row.id for row in rows} != set(ids):
         raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
     await require_no_active_batches(db, ids)
+    from cae.studies.service import require_unreferenced_experiments
+    await require_unreferenced_experiments(db, ids)
     await _derived_counts(db, ids)
     namespaces_by_owner: dict[str, set[str]] = {}
     for row in rows:

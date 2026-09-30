@@ -79,11 +79,18 @@ async def get_recorded_data(
     except HTTPException as error:
         raise LookupError("Measurement not found.") from error
 
+    return await recorded_data_for_measurement(db, measurement)
+
+
+async def recorded_data_for_measurement(
+    db: AsyncSession, measurement: Measurement,
+) -> MeasurementRecordedDataResponse:
+    """Prepare data for a Measurement whose access the caller has established."""
     rows = (
         await db.execute(
             select(RecordedData, ExperimentRecord)
             .join(ExperimentRecord, ExperimentRecord.id == RecordedData.experiment_record_id)
-            .where(RecordedData.measurement_id == measurement_id)
+            .where(RecordedData.measurement_id == measurement.id)
             .order_by(RecordedData.id)
         )
     ).all()
@@ -172,6 +179,8 @@ async def delete_measurements(
     user: UserData,
 ) -> None:
     rows = (await db.scalars(select(Measurement).where(Measurement.id.in_(ids)).order_by(Measurement.id).with_for_update())).all()
+    from cae.studies.service import require_unreferenced_measurements
+    await require_unreferenced_measurements(db, [row.id for row in rows])
     job_ids = [row.job_id for row in rows if row.job_id]
     if job_ids and await db.scalar(select(Job.id).where(Job.id.in_(job_ids), Job.state.in_(SERVER_ACTIVE_STATES)).limit(1)):
         raise HTTPException(409, "Cancel active CAE jobs before deleting their Measurements.")

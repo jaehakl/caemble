@@ -276,3 +276,18 @@ def test_hello_inventory_is_protocol_two(tmp_path):
     assert hello["execution_protocol"] == 2
     assert hello["boot_id"] == manager.boot_id
     assert "current_job_id" not in hello
+
+
+def test_application_readiness_controls_advertisement(tmp_path, monkeypatch):
+    from pathlib import Path
+    import sys
+    monkeypatch.setattr(SlaveApp, "python_executable", property(lambda _: Path(sys.executable)))
+    passing = SlaveApp("evaluation", "Evaluation", "app", tmp_path, job_mode="websocket",
+                      readiness_args=("-c", "raise SystemExit(0)"))
+    failing = SlaveApp("evaluation", "Evaluation", "app", tmp_path, job_mode="websocket",
+                      readiness_args=("-c", "raise SystemExit(1)"))
+    assert passing.executable_ready
+    assert not failing.executable_ready
+    manager = make_manager(tmp_path)
+    manager.registry = SlaveAppRegistry([failing])
+    assert launcher_hello_payload(manager.settings, manager.registry, manager, "session")["slave_app_ids"] == []

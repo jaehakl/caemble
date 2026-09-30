@@ -28,6 +28,13 @@ export const initialExperimentEditingState: ExperimentEditingState = Object.free
 })
 
 export type ExperimentEditingAction =
+  | Readonly<{
+      type: 'studyCandidateOpened'
+      document: ExperimentSourceDocument
+      record: SavedExperiment | null
+      name: string
+      vars: Readonly<Vars>
+    }>
   | Readonly<{ type: 'presentationUpdated'; presentation: import('@/contracts/viewerDefaults').ExperimentPresentation }>
   | Readonly<{ type: 'recordLoaded'; document: ExperimentSourceDocument; record: SavedExperiment }>
   | Readonly<{
@@ -80,6 +87,19 @@ export function experimentEditingReducer(
   action: ExperimentEditingAction,
 ): ExperimentEditingState {
   switch (action.type) {
+    case 'studyCandidateOpened':
+      return {
+        ...state,
+        document: action.document,
+        record: action.record,
+        calculations: [],
+        baselineBundle: action.document.sourceBundle,
+        name: action.record?.name ?? action.name,
+        description: action.record?.description ?? '',
+        candidateVars: action.vars,
+        candidateMaterialSnapshot: null,
+        workspaceSession: state.workspaceSession + 1,
+      }
     case 'presentationUpdated':
       return state.record?.id === action.presentation.id
         ? { ...state, record: { ...state.record, ...action.presentation } }

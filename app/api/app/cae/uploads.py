@@ -192,6 +192,33 @@ async def finalize_item(db: AsyncSession, batch_id: str, user_id: str, index: in
     return {"ok": True, "index": index, "input_hash": job.artifact_metadata["input_hash"]}
 
 
+def validate_measurement_registration(measurement_input, *, source_bundle, result_contracts, source_hash, catalog):
+    """The saved-definition boundary shared by user batches and Study stages."""
+    program = measurement_input["experiment"]["simulationProgram"]
+    if result_contracts is not None and program["resultContracts"] != result_contracts:
+        raise HTTPException(409, "Artifact result contracts differ from the saved Experiment.")
+    if program["pythonSource"] != source_bundle.get("files", {}).get("simulate.py"):
+        raise HTTPException(409, "Artifact Python program differs from the saved Experiment source.")
+    for name, task in program["tasks"].items():
+        try:
+            catalog.get_solver_manifest(task["kernel"]["name"], task["kernel"]["version"])
+        except CatalogNotFoundError as error:
+            raise HTTPException(409, f"Task {name} references a Solver unavailable in the current Catalog.") from error
+    try:
+        return validate_material_snapshot({
+            "experiment": measurement_input["materialSnapshot"],
+            "tasks": measurement_input["taskMaterialSnapshots"],
+            "modelDefinitions": measurement_input["modelDefinitions"],
+            "selections": measurement_input["materialSelections"],
+            "interactions": measurement_input.get("interactions", {}),
+            "interactionSelections": measurement_input.get("interactionSelections", {name: {} for name in measurement_input["taskMaterialSnapshots"]}),
+            "sourceHash": measurement_input["experiment"]["sourceHash"],
+            "varsHash": measurement_input["varsHash"],
+        }, source_hash=source_hash, variables=measurement_input["experiment"]["variables"], catalog=catalog)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog: Catalog) -> JobBatch:
     await serialize_events(db)
     batch = await require_batch(db, batch_id, user.id, lock=True)
@@ -229,30 +256,12 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
     try:
         async for job in jobs:
             measurement_input = job.input["measurement"]
-            program = measurement_input["experiment"]["simulationProgram"]
-            if experiment is not None and program["resultContracts"] != experiment.result_contracts:
-                raise HTTPException(409, "Artifact result contracts differ from the saved Experiment.")
-            if program["pythonSource"] != (experiment.source_bundle if experiment is not None else cae.spec["source_bundle"]).get("files", {}).get("simulate.py"):
-                raise HTTPException(409, "Artifact Python program differs from the saved Experiment source.")
-            for name, task in program["tasks"].items():
-                try:
-                    catalog.get_solver_manifest(task["kernel"]["name"], task["kernel"]["version"])
-                except CatalogNotFoundError as error:
-                    raise HTTPException(409, f"Task {name} references a Solver unavailable in the current Catalog.") from error
             variables = measurement_input["experiment"]["variables"]
-            try:
-                materials = validate_material_snapshot({
-                    "experiment": measurement_input["materialSnapshot"],
-                    "tasks": measurement_input["taskMaterialSnapshots"],
-                    "modelDefinitions": measurement_input["modelDefinitions"],
-                    "selections": measurement_input["materialSelections"],
-                    "interactions": measurement_input.get("interactions", {}),
-                    "interactionSelections": measurement_input.get("interactionSelections", {name: {} for name in measurement_input["taskMaterialSnapshots"]}),
-                    "sourceHash": measurement_input["experiment"]["sourceHash"],
-                    "varsHash": measurement_input["varsHash"],
-                }, source_hash=cae.spec["source_hash"], variables=variables, catalog=catalog)
-            except ValueError as error:
-                raise HTTPException(422, str(error)) from error
+            materials = validate_measurement_registration(
+                measurement_input, source_bundle=experiment.source_bundle if experiment is not None else cae.spec["source_bundle"],
+                result_contracts=experiment.result_contracts if experiment is not None else None,
+                source_hash=cae.spec["source_hash"], catalog=catalog,
+            )
             if cae.spec.get("preflight"):
                 from storage.service import bind_objects
                 await bind_objects(db, job.input, user_id=user.id, experiment_id=None, job_id=job.id)

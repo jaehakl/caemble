@@ -5,7 +5,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from app.kernel.transport.object_storage import externalize_record, read_object, upload_object
+from sdk.slave.object_storage import externalize_record, read_object, upload_object
 from app.kernel.transport.tensor import encode_recorded_data
 
 
@@ -50,7 +50,7 @@ async def test_large_binary_record_and_axis_values_bypass_control_connection():
     schema = {"dtype": "float64"}
     encoded, attachments, _ = encode_recorded_data("field", schema,
         {"value": values, "axes": [{"ticks": values.tolist()}]}, 1)
-    with patch("app.kernel.transport.object_storage.transfer_part", context.transfer):
+    with patch("sdk.slave.object_storage.transfer_part", context.transfer):
         stored = await externalize_record(context, encoded, {item.id: item.data for item in attachments})
     assert stored["storage"]["kind"] == "base64"
     ref = stored["storage"]["data"]
@@ -67,7 +67,7 @@ async def test_input_is_hash_checked_after_direct_download():
     context = Context()
     value = {"measurement": {"experiment": {"scene": {"data": [1, 2, 3]}}}}
     raw = json.dumps(value).encode()
-    with patch("app.kernel.transport.object_storage.transfer_part", context.transfer):
+    with patch("sdk.slave.object_storage.transfer_part", context.transfer):
         ref = await upload_object(context, raw, "json")
         assert await read_object(context, ref) == value
         context.parts[f"{ref['id']}/0"] = b"corrupt"

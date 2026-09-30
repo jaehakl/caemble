@@ -6,6 +6,7 @@ Commands and component-relative paths in this document are relative to `app/slav
 
 - `ai`: LLM/chat, embedding, image, tagging, and VOICEVOX handlers.
 - `cae`: trusted-payload CAE simulation and Solver implementations.
+- `evaluation`: Node Measurement builds and Calculation for saved optimization Studies.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.
@@ -26,6 +27,35 @@ Push-Location cae
 poetry install
 Pop-Location
 ```
+
+For optimization, install Node 24.14 or later and the evaluation application on
+at least one launcher. Build its runtime from the same checkout:
+
+```powershell
+Push-Location ../ui
+npm ci
+npm run build:evaluation
+Pop-Location
+Push-Location evaluation
+poetry install
+poetry run python -m app doctor
+Pop-Location
+```
+
+Alternatively extract `deployment/caemble-evaluation.tar.gz` into
+`app/slaves/evaluation/dist`. The bundle includes its TypeScript declarations
+and `build-info.json`; copying only `evaluation.cjs` is insufficient. The
+optional `evaluation/runtime.toml` sets an absolute `node` executable path.
+Doctor checks Node, required runtime assets and the build metadata version.
+The launcher advertises Evaluation only when this
+application-owned readiness check succeeds. Restart the launcher after installation.
+
+Evaluation receives stage inputs over the existing job WebSocket. Python owns
+object transfers and starts a disposable Node child with source/data only and
+a restricted environment. Cancellation and timeout reap that child; the
+launcher retains the reservation until the full attempt process tree exits.
+Build and Calculation jobs use CPU-only allocations and release them between
+stages. Solver jobs continue to use the existing CAE worker.
 
 Start the launcher from its own project after setting `CAEMBLE_API_URL` and a
 one-time-displayed `launcher` token in `app/launcher/.env`:

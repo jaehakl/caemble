@@ -59,6 +59,9 @@ const PredictionWorkspace = lazy(() =>
     default: module.PredictionWorkspace,
   })),
 )
+const OptimizationWorkspace = lazy(() =>
+  import('@/features/optimization/OptimizationWorkspace').then((module) => ({ default: module.OptimizationWorkspace })),
+)
 
 export function CaeWorkbenchRoute() {
   const location = useLocation()
@@ -166,6 +169,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     navigate('/settings')
   }, [inspectedBatchId, navigate])
   const currentSection = page.activeSection
+  const requestedStudyId = new URLSearchParams(location.search).get('study')
+  const openedStudyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!page.initialized || !requestedStudyId || openedStudyRef.current === requestedStudyId) return
+    openedStudyRef.current = requestedStudyId
+    setLayout((current) => ({ ...current, activeSection: 'optimization' }))
+  }, [page.initialized, requestedStudyId, setLayout])
   const guardReplacement = page.guardReplacement
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
@@ -574,6 +584,28 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 saveCommand={calculationSaveCommand}
                 selectedCalculationId={workbench.selectionContext.calculationId}
               />
+            ) : page.activeSection === 'optimization' ? (
+              <div className="flex h-full min-h-0 flex-col">
+                {menubar}
+                <div className="min-h-0 flex-1">
+                  <Suspense fallback={<PaneLoading label="최적화를 불러오는 중입니다." />}>
+                    <OptimizationWorkspace
+                      key={`${workbench.workspaceSession}:${requestedStudyId ?? ''}`}
+                      workbench={workbench}
+                      initialStudyId={requestedStudyId}
+                      onRequestLogin={requestAccount}
+                      onApplyBest={(study) =>
+                        page.guardReplacement(async () => {
+                          if (await workbench.openStudyCandidate(study)) {
+                            preflight.clear()
+                            page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
+                          }
+                        })
+                      }
+                    />
+                  </Suspense>
+                </div>
+              </div>
             ) : isPrediction ? null : (
               <WorkbenchShellContainer
                 className="h-full min-h-0"

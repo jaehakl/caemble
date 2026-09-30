@@ -42,6 +42,12 @@
     "aliases": []
   },
   {
+    "id": "workbench-optimization",
+    "section": "workbench",
+    "anchor": "workbench-optimization",
+    "aliases": []
+  },
+  {
     "id": "workbench-admin-demo-curation",
     "section": "workbench",
     "anchor": "workbench-admin-demo-curation",

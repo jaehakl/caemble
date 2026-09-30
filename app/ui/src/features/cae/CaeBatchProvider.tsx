@@ -5,6 +5,7 @@ import type { CaeBatchSummary, CaeEvent } from '@/contracts/api/cae'
 import { useAuth } from '@/features/auth/use-auth'
 import { createBatchObservation } from './batchObservation'
 import { invalidateMeasurementMutation } from '@/features/measurement/queryInvalidation'
+import { optimizationQueryKeys } from '@/features/optimization/queryKeys'
 
 const CaeBatchContext = createContext<{
   batches: readonly CaeBatchSummary[]
@@ -99,6 +100,13 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
     const receive = (event: CaeEvent) => {
       if (!active || (cursor !== null && event.id <= cursor)) return
       cursor = event.id
+      if (event.study_id) {
+        if (event.type !== 'job.progress')
+          void queryClient.invalidateQueries({ queryKey: optimizationQueryKeys.all(auth.queryScope) })
+        if (event.type === 'job.succeeded' && event.measurement_id)
+          void invalidateMeasurementMutation(queryClient, auth.queryScope, null, [event.measurement_id])
+        return
+      }
       setEvents((current) => [...current, event].slice(-500))
       observation.applyEvent(event)
       if (event.type !== 'job.progress') {
@@ -119,11 +127,14 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       setConnected(false)
       setLoading(true)
       try {
-        const first = await caeBatches.list({}, { signal: controller.signal })
+        const first = await caeBatches.list({ excludeStudies: true }, { signal: controller.signal })
         const items = [...first.items]
         let firstCursor = first.cursor
         for (let offset = 0; ;) {
-          const page = await caeBatches.list({ offset, attentionOnly: true }, { signal: controller.signal })
+          const page = await caeBatches.list(
+            { offset, attentionOnly: true, excludeStudies: true },
+            { signal: controller.signal },
+          )
           firstCursor = Math.min(firstCursor, page.cursor)
           items.push(...page.items)
           offset += page.items.length
@@ -170,7 +181,7 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       const offset = historyOffset
       const revision = historyRevision
       try {
-        const page = await caeBatches.list({ offset }, { signal: controller.signal })
+        const page = await caeBatches.list({ offset, excludeStudies: true }, { signal: controller.signal })
         if (!active) return
         page.items.forEach(update)
         if (revision === historyRevision) {
