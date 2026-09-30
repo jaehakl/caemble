@@ -3,13 +3,12 @@ import {
   type RuntimeActivityCallback,
   type RuntimeActivityDraft,
 } from '@/features/runtime-console/types'
-import type { PredictionResult } from './knn'
-import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionExecutionResult, PredictionModelProfile } from './execution'
 
 export const PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT = 100
 
 export function predictionCohortDiagnosticActivities(
-  profile: PredictionWorkerModelProfile,
+  profile: PredictionModelProfile,
 ): readonly RuntimeActivityDraft[] {
   const directionLabel = profile.direction === 'forward' ? 'Forward' : 'Inverse'
   const activities: RuntimeActivityDraft[] = profile.diagnostics
@@ -49,7 +48,7 @@ export function predictionCohortDiagnosticActivities(
 }
 
 export function emitPredictionCohortDiagnostics(
-  profile: PredictionWorkerModelProfile,
+  profile: PredictionModelProfile,
   fingerprint: string,
   emittedFingerprints: Set<string>,
   onActivity: RuntimeActivityCallback | undefined,
@@ -63,7 +62,7 @@ export function emitPredictionCohortDiagnostics(
 }
 
 export function emitPredictionQueryDiagnostics(
-  result: PredictionResult,
+  result: PredictionExecutionResult,
   modelFingerprint: string,
   emittedFingerprints: Set<string>,
   onActivity: RuntimeActivityCallback | undefined,

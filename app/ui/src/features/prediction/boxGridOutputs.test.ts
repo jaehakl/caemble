@@ -8,7 +8,7 @@ import { assertCalculationInput } from '@/lib/calculation/validation'
 import { fieldScalar, fieldSlice, structuredField } from '@/features/viewer/viewer/structuredField'
 import { predictedRecordedData, predictionRecordedRowSample } from './data'
 import { buildPredictionKnnModel, predictWithKnn, selectPredictionCohort } from './knn'
-import { assertPredictionRecordedMemory } from './usePredictionModels'
+import { assertPredictionRecordedMemory } from './browserTrainingPolicy'
 
 function output(
   name: string,

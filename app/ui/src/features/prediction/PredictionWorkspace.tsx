@@ -27,7 +27,7 @@ import {
   type PredictionSetupBusyAction,
 } from './PredictionPanels'
 import type { PredictionCohortSummary, PredictionDirection } from './knn'
-import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionModelProfile } from './execution'
 import {
   loadPredictionContextData,
   loadPredictionContextFingerprint,
@@ -35,6 +35,7 @@ import {
   type PredictionContext,
 } from './predictionContextData'
 import type { PredictionSamplingRange } from './sampling'
+import { PredictionTrainingChangedError } from './trainingSnapshot'
 import { usePredictionController, type PredictionForwardRecordProfile } from './usePredictionController'
 import { initialPredictionResults, predictionResultsReducer, type ValidationRow } from './results'
 import {
@@ -98,18 +99,15 @@ function calculationPlaceholder(layout: CalculationOutputLayout): CalculationDat
   })
 }
 
-function cohortSummary(
-  profile: PredictionWorkerModelProfile | null,
-  totalRows: number,
-): PredictionCohortSummary | null {
-  if (!profile) return null
+function cohortSummary(profile: PredictionModelProfile | null, totalRows: number): PredictionCohortSummary | null {
+  if (!profile?.knn) return null
   return Object.freeze({
     totalRows,
     includedRows: profile.rowCount,
     includedMeasurementIds: profile.includedMeasurementIds,
     warningMeasurementIds: profile.warningMeasurementIds,
-    dominantShapeSignature: profile.dominantShapeSignature,
-    baselineMeasurementId: profile.baselineMeasurementId,
+    dominantShapeSignature: profile.knn.dominantShapeSignature,
+    baselineMeasurementId: profile.knn.baselineMeasurementId,
     diagnostics: profile.diagnostics,
     omittedDiagnosticGroups: profile.omittedDiagnosticGroups,
     excluded: profile.excluded,
@@ -386,7 +384,7 @@ export function PredictionWorkspace({
   }, [guideProgress])
 
   const rememberProfile = useCallback(
-    (next: PredictionWorkerModelProfile, fingerprint: string) => {
+    (next: PredictionModelProfile, fingerprint: string) => {
       dispatchResults({ type: 'profile-received', profile: next })
       emitPredictionCohortDiagnostics(next, fingerprint, runtime.emittedDiagnosticFingerprints, onActivity)
     },
@@ -462,14 +460,14 @@ export function PredictionWorkspace({
         runtime.invalidateTransaction()
         runtime.advancePrimaryRevision()
         runtime.abortCalculation()
-        runtime.resetWorker()
+        runtime.resetExecution()
         const { calculations, measurements } = nextContext
         const readyCalculations = calculations.filter(
           (row) => row.contract_status === 'ready' && row.output_layout && row.source_hash,
         )
         setContext(nextContext)
         clearModelCaches()
-        runtime.clearInverseRows()
+        runtime.clearTrainingSnapshots()
         setDataStale(false)
         setFreshnessPending(false)
         skipNextPredictionBusyCheckRef.current = true
@@ -506,9 +504,12 @@ export function PredictionWorkspace({
           return Object.freeze({
             ...current,
             calculationIds: Object.freeze(fallback),
-            calculationWeights: Object.freeze(
-              Object.fromEntries(fallback.map((id) => [id, current.calculationWeights[id] ?? 1])),
-            ),
+            algorithm: Object.freeze({
+              ...current.algorithm,
+              calculationWeights: Object.freeze(
+                Object.fromEntries(fallback.map((id) => [id, current.algorithm.calculationWeights[id] ?? 1])),
+              ),
+            }),
           })
         })
         setSetupDraft((current) => {
@@ -516,9 +517,12 @@ export function PredictionWorkspace({
           return Object.freeze({
             ...current,
             calculationIds: Object.freeze(valid),
-            calculationWeights: Object.freeze(
-              Object.fromEntries(valid.map((id) => [id, current.calculationWeights[id] ?? 1])),
-            ),
+            algorithm: Object.freeze({
+              ...current.algorithm,
+              calculationWeights: Object.freeze(
+                Object.fromEntries(valid.map((id) => [id, current.algorithm.calculationWeights[id] ?? 1])),
+              ),
+            }),
           })
         })
         setStatus(
@@ -560,9 +564,9 @@ export function PredictionWorkspace({
 
   useLayoutEffect(() => {
     runtime.invalidateValidation()
-    runtime.resetWorker()
+    runtime.resetExecution()
     clearModelCaches()
-    runtime.clearInverseRows()
+    runtime.clearTrainingSnapshots()
     setContext(null)
     validationRef.current = null
     dispatchResults({ type: 'experiment-changed' })
@@ -590,9 +594,9 @@ export function PredictionWorkspace({
     autoLoadAttemptRef.current = null
     runtime.invalidateLoad()
     cancelCurrent()
-    runtime.resetWorker()
+    runtime.resetExecution()
     clearModelCaches()
-    runtime.clearInverseRows()
+    runtime.clearTrainingSnapshots()
     setContext(null)
     calculationValuesRef.current = {}
     setCalculationValues({})
@@ -697,7 +701,19 @@ export function PredictionWorkspace({
     }
   }, [active, busy, checkDataFingerprint, workbench.calculationDataActions.busy, workbench.measurementActions.busy])
 
+  const checkTrainingFreshness = useCallback(
+    () =>
+      loadPredictionContextFingerprint({
+        experimentId: experimentId!,
+        queryClient,
+        queryScope,
+        signal: runtime.transactionSignal(),
+      }),
+    [experimentId, queryClient, queryScope, runtime],
+  )
+
   const { forwardOutputs, predictInverse } = usePredictionModels({
+    checkFreshness: checkTrainingFreshness,
     clearModelCaches,
     context,
     experimentId,
@@ -717,6 +733,14 @@ export function PredictionWorkspace({
   })
   const forwardOutputsRef = useRef(forwardOutputs)
   forwardOutputsRef.current = forwardOutputs
+
+  const reloadChangedTraining = useCallback(async () => {
+    setFreshnessPending(true)
+    runtime.clearTrainingSnapshots()
+    clearModelCaches()
+    dispatchResults({ type: 'predictions-invalidated' })
+    await reloadData({ automatic: true })
+  }, [clearModelCaches, reloadData, runtime, setFreshnessPending])
 
   const runForward = useCallback(
     async (vars: Readonly<Vars>) => {
@@ -781,6 +805,10 @@ export function PredictionWorkspace({
         setStatus('Forward 완료 · CalculationData가 최신입니다.')
       } catch (cause: unknown) {
         if (!runtime.transactionIsCurrent(transaction)) return
+        if (cause instanceof PredictionTrainingChangedError) {
+          await reloadChangedTraining()
+          return
+        }
         if ((cause as { name?: string })?.name === 'AbortError') {
           setStatus('현재 Vars의 Forward 갱신을 다시 예약하는 중…')
           return
@@ -805,6 +833,7 @@ export function PredictionWorkspace({
       forwardOutputs,
       receiveRecorded,
       rememberProfile,
+      reloadChangedTraining,
       runtime,
       setStatus,
       setup.calculationIds,
@@ -882,12 +911,20 @@ export function PredictionWorkspace({
           )
         } catch (cause: unknown) {
           if (!runtime.transactionIsCurrent(transaction)) return
+          if (cause instanceof PredictionTrainingChangedError) {
+            await reloadChangedTraining()
+            return
+          }
           clearModelCaches()
           dispatchResults({ type: 'surrogate-failed' })
           setStatus(`Inverse 완료 · surrogate unavailable: ${cause instanceof Error ? cause.message : String(cause)}`)
         }
       } catch (cause: unknown) {
         if (!runtime.transactionIsCurrent(transaction) || (cause as { name?: string })?.name === 'AbortError') return
+        if (cause instanceof PredictionTrainingChangedError) {
+          await reloadChangedTraining()
+          return
+        }
         clearModelCaches()
         const message = cause instanceof Error ? cause.message : String(cause)
         setStatus(message)
@@ -904,6 +941,7 @@ export function PredictionWorkspace({
       forwardOutputs,
       receiveRecorded,
       predictInverse,
+      reloadChangedTraining,
       rememberProfile,
       runtime,
       setStatus,
@@ -1096,7 +1134,7 @@ export function PredictionWorkspace({
         toast.error(samplingDisabledReason)
         return
       }
-      if (!Number.isSafeInteger(total) || total <= 0 || !runtime.workerAvailable || !context || !varsSchema) {
+      if (!Number.isSafeInteger(total) || total <= 0 || !runtime.executionAvailable || !context || !varsSchema) {
         toast.error('Sampling N은 양의 JavaScript safe integer여야 합니다.')
         return
       }
@@ -1123,7 +1161,7 @@ export function PredictionWorkspace({
       let stoppedReason: string | null = null
       let batchSummary = ''
       activeForwardVarsFingerprintRef.current = null
-      runtime.resetWorker()
+      runtime.resetExecution()
       clearModelCaches()
       dispatchResults({ type: 'sampling-started' })
       startOperation('sampling', 'Sampling 후보 안전 예산을 확인하는 중…', {
@@ -1371,12 +1409,12 @@ export function PredictionWorkspace({
       })
       const failed = rows.filter((row) => row.error || !row.metric?.compatible).length
       const aggregateError =
-        frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse'
+        frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
           ? inverseValidationAggregateErrorFromScales(
               rows,
-              frozenSetup.calculationWeights,
+              frozenSetup.algorithm.calculationWeights,
               frozenProfile.inputLayouts,
-              frozenProfile.inputScales,
+              frozenProfile.knn.inputScales,
             )
           : null
       const summary = `Measurement #${completion.measurementId} · ${frozenDirection} 검증 · ${rows.length - failed}/${rows.length}개 비교 완료${aggregateError === null ? '' : ` · Aggregate ${aggregateError.toPrecision(5)}`}`
@@ -1384,13 +1422,17 @@ export function PredictionWorkspace({
         aggregateError,
         calculationContractFingerprint: frozenCalculationContractFingerprint,
         candidateVarsFingerprint: currentCandidateFingerprint,
-        calculationWeights: frozenSetup.calculationWeights,
+        calculationWeights: frozenSetup.algorithm.calculationWeights,
         direction: frozenDirection,
         experimentId: experimentId!,
         inverseInputLayouts:
-          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' ? frozenProfile.inputLayouts : null,
+          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
+            ? frozenProfile.inputLayouts
+            : null,
         inverseInputScales:
-          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' ? frozenProfile.inputScales : null,
+          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
+            ? frozenProfile.knn.inputScales
+            : null,
         measurementId: completion.measurementId,
         primaryRevision: frozenPrimaryRevision,
         repredicted: frozenRepredicted,
@@ -1405,14 +1447,14 @@ export function PredictionWorkspace({
       validationRef.current = nextValidation
       dispatchResults({ type: 'validation-completed', validation: nextValidation })
       setStatus(summary)
-      runtime.resetWorker()
+      runtime.resetExecution()
       clearModelCaches()
       dispatchResults({ type: 'predictions-invalidated' })
       setFreshnessPending(true)
     } catch (cause: unknown) {
       if (!runtime.validationIsCurrent(validationRevision)) return
       if (datasetMutated) {
-        runtime.resetWorker()
+        runtime.resetExecution()
         clearModelCaches()
         dispatchResults({ type: 'predictions-invalidated' })
         setFreshnessPending(true)
@@ -1582,16 +1624,16 @@ export function PredictionWorkspace({
     ) {
       return '선택한 Calculation을 Calculation 탭에서 preflight 후 다시 저장하세요.'
     }
-    const weights = setupDraft.calculationIds.map((id) => setupDraft.calculationWeights[id] ?? 1)
+    const weights = setupDraft.calculationIds.map((id) => setupDraft.algorithm.calculationWeights[id] ?? 1)
     if (weights.some((weight) => !Number.isFinite(weight) || weight < 0)) {
       return 'Calculation weight는 유한한 0 이상의 수여야 합니다.'
     }
     if (!weights.some((weight) => weight > 0)) return 'Calculation weight 중 하나 이상은 양수여야 합니다.'
     if (
-      setupDraft.kMode === 'manual' &&
-      (!Number.isSafeInteger(setupDraft.manualK) ||
-        setupDraft.manualK < 1 ||
-        setupDraft.manualK > (context?.measurements.length ?? 0))
+      setupDraft.algorithm.kMode === 'manual' &&
+      (!Number.isSafeInteger(setupDraft.algorithm.manualK) ||
+        setupDraft.algorithm.manualK < 1 ||
+        setupDraft.algorithm.manualK > (context?.measurements.length ?? 0))
     ) {
       return `Manual k는 1..${(context?.measurements.length ?? 0).toLocaleString()} 범위의 정수여야 합니다.`
     }
@@ -1636,6 +1678,10 @@ export function PredictionWorkspace({
       else setStatus('일부 새 Calculation Target을 초기화하지 못했습니다. 해당 Calculation을 확인하세요.')
     } catch (cause: unknown) {
       if (!runtime.transactionIsCurrent(transaction) || (cause as { name?: string })?.name === 'AbortError') return
+      if (cause instanceof PredictionTrainingChangedError) {
+        await reloadChangedTraining()
+        return
+      }
       const message = cause instanceof Error ? cause.message : String(cause)
       dispatchResults({
         type: 'targets-initialized',
@@ -1652,6 +1698,7 @@ export function PredictionWorkspace({
     finishOperation,
     forwardOutputs,
     receiveRecorded,
+    reloadChangedTraining,
     runInverse,
     runtime,
     setStatus,
@@ -1666,13 +1713,12 @@ export function PredictionWorkspace({
       return
     }
     cancelCurrent()
-    runtime.resetWorker()
+    runtime.resetExecution()
     setSetup(setupDraft)
     setSetupOpen(false)
     validationRef.current = null
     dispatchResults({ type: 'setup-applied' })
     clearModelCaches()
-    runtime.clearInverseRows()
     activeForwardVarsFingerprintRef.current = null
     setSetupAppliedRevision((current) => current + 1)
   }, [cancelCurrent, clearModelCaches, lifecycleRef, runtime, setupDraft, setupDraftError])
@@ -1943,7 +1989,7 @@ export function PredictionWorkspace({
     if (profile && profile.rowCount < 3) {
       warnings.push(`신뢰도 경고: compatible Measurement가 ${profile.rowCount}개뿐입니다.`)
     }
-    if (profile?.activeInputBlockCount === 0) {
+    if (profile?.knn?.activeInputBlockCount === 0) {
       warnings.push('신뢰도 경고: 선택한 cohort의 모든 입력 component가 상수라 전체 cohort 평균을 사용합니다.')
     }
     if (lastResult?.extrapolatedInputKeys.length) {
@@ -2022,6 +2068,8 @@ export function PredictionWorkspace({
         onOutputChange={changeCalculationOutput}
       />
       <PredictionSetupDialog
+        algorithmLabel="kNN"
+        executionLabel={setupDraft.executionId === 'browser-knn' ? '브라우저' : setupDraft.executionId}
         applyDisabled={Boolean(setupDraftError) || dataStale || freshnessPending || validating}
         autoK={
           setupDraftApplied && profile?.rowCount
@@ -2073,17 +2121,21 @@ export function PredictionWorkspace({
               }))
             : []
         }
-        calculationWeights={setupDraft.calculationWeights}
+        calculationWeights={setupDraft.algorithm.calculationWeights}
         cohortSummaries={
           setupDraftApplied && contextExperimentMatches
             ? Object.freeze({
-                ...(profiles.forward ? { forward: cohortSummary(profiles.forward, context.measurements.length)! } : {}),
-                ...(profiles.inverse ? { inverse: cohortSummary(profiles.inverse, context.measurements.length)! } : {}),
+                ...(profiles.forward?.knn
+                  ? { forward: cohortSummary(profiles.forward, context.measurements.length)! }
+                  : {}),
+                ...(profiles.inverse?.knn
+                  ? { inverse: cohortSummary(profiles.inverse, context.measurements.length)! }
+                  : {}),
               })
             : {}
         }
-        kMode={setupDraft.kMode}
-        manualK={setupDraft.manualK}
+        kMode={setupDraft.algorithm.kMode}
+        manualK={setupDraft.algorithm.manualK}
         manualKMaximum={context?.measurements.length ?? 0}
         open={setupOpen}
         reloadDisabled={busy}
@@ -2091,7 +2143,7 @@ export function PredictionWorkspace({
         validationMessage={
           setupDraftError ?? (dataStale ? '새 Measurement를 반영하려면 Reload Data가 필요합니다.' : null)
         }
-        weighting={setupDraft.weighting}
+        weighting={setupDraft.algorithm.weighting}
         onApply={applySetup}
         onCalculateMissing={() => (authenticated ? void calculateMissing() : onRequestLogin())}
         onCalculationSelectedChange={(calculationId, selected) =>
@@ -2102,9 +2154,12 @@ export function PredictionWorkspace({
             return Object.freeze({
               ...current,
               calculationIds: Object.freeze([...new Set(calculationIds)]),
-              calculationWeights: Object.freeze({
-                ...current.calculationWeights,
-                [calculationId]: current.calculationWeights[calculationId] ?? 1,
+              algorithm: Object.freeze({
+                ...current.algorithm,
+                calculationWeights: Object.freeze({
+                  ...current.algorithm.calculationWeights,
+                  [calculationId]: current.algorithm.calculationWeights[calculationId] ?? 1,
+                }),
               }),
             })
           })
@@ -2113,16 +2168,31 @@ export function PredictionWorkspace({
           setSetupDraft((current) =>
             Object.freeze({
               ...current,
-              calculationWeights: Object.freeze({ ...current.calculationWeights, [calculationId]: weight }),
+              algorithm: Object.freeze({
+                ...current.algorithm,
+                calculationWeights: Object.freeze({ ...current.algorithm.calculationWeights, [calculationId]: weight }),
+              }),
             }),
           )
         }
         onCancel={() => setSetupOpen(false)}
-        onKModeChange={(kMode) => setSetupDraft((current) => Object.freeze({ ...current, kMode }))}
-        onManualKChange={(manualK) => setSetupDraft((current) => Object.freeze({ ...current, manualK }))}
+        onKModeChange={(kMode) =>
+          setSetupDraft((current) =>
+            Object.freeze({ ...current, algorithm: Object.freeze({ ...current.algorithm, kMode }) }),
+          )
+        }
+        onManualKChange={(manualK) =>
+          setSetupDraft((current) =>
+            Object.freeze({ ...current, algorithm: Object.freeze({ ...current.algorithm, manualK }) }),
+          )
+        }
         onOpenChange={setSetupOpen}
         onReload={() => void reloadFromSetup()}
-        onWeightingChange={(weighting) => setSetupDraft((current) => Object.freeze({ ...current, weighting }))}
+        onWeightingChange={(weighting) =>
+          setSetupDraft((current) =>
+            Object.freeze({ ...current, algorithm: Object.freeze({ ...current.algorithm, weighting }) }),
+          )
+        }
       />
       <PredictionDetailsDialog
         direction={detailsDirection}

@@ -1,7 +1,6 @@
-import { assertTrainingCellLimit, buildForwardModel, predictForwardRecorded } from './forwardModel'
-export { assertPredictionRecordedMemory } from './forwardModel'
+import { buildForwardModel, predictForwardRecorded } from './forwardModel'
 import { useCallback } from 'react'
-import { dbTables, getListRequest, type CalculationDataOutput, type CalculationDataRecord } from '@/api'
+import type { CalculationDataOutput } from '@/api'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { runCalculation } from '@/lib/calculation'
 import type { BoxGridData } from '@/contracts/boxGrid'
@@ -9,13 +8,11 @@ import type { RecordedResultContracts } from '@/contracts/results'
 import type { Vars, VarsSchemaEntry, RecordedData, RecordedDataRule } from '@/lib/cad/model'
 import type { RecordedDataSchemaTree } from '@/lib/cad/simulation'
 import { buildCalculationRecordedData } from '../calculation/calculationRecordedData'
-import { calculationOutputSample, inverseTrainingRows, predictionFingerprint, predictionVarsLayouts } from './data'
+import { predictionFingerprint } from './data'
 import { emitPredictionQueryDiagnostics } from './diagnostics'
-import { PREDICTION_NUMERIC_CELL_LIMIT } from './knn'
 import { calculationOutputContract } from './metrics'
-import type { PredictionNumericDtype, PredictionResult, PredictionWeighting } from './knn'
-import type { PredictionWorkerModelProfile } from './protocol'
-import type { PredictionKMode } from './PredictionPanels'
+import type { PredictionAlgorithm, PredictionExecutionResult, PredictionModelProfile } from './execution'
+import { loadTrainingSnapshot } from './trainingSnapshot'
 import type { PredictionContext, SavedPredictionCalculation } from './predictionContextData'
 import {
   type PredictionForwardModelBundle,
@@ -38,18 +35,20 @@ export type PredictionRecordedPreview = Readonly<{
 
 export type PredictionSetup = Readonly<{
   calculationIds: readonly number[]
-  calculationWeights: Readonly<Record<number, number>>
-  kMode: PredictionKMode
-  manualK: number
-  weighting: PredictionWeighting
+  algorithm: PredictionAlgorithm
+  executionId: string
 }>
 
 export const defaultPredictionSetup: PredictionSetup = Object.freeze({
   calculationIds: Object.freeze([]),
-  calculationWeights: Object.freeze({}),
-  kMode: 'auto',
-  manualK: 1,
-  weighting: 'distance',
+  algorithm: Object.freeze({
+    kind: 'knn',
+    calculationWeights: Object.freeze({}),
+    kMode: 'auto',
+    manualK: 1,
+    weighting: 'distance',
+  }),
+  executionId: 'browser-knn',
 })
 
 async function rowsInBatches<T>(items: readonly T[], size: number, run: (item: T) => Promise<void>) {
@@ -61,6 +60,7 @@ async function rowsInBatches<T>(items: readonly T[], size: number, run: (item: T
 export function usePredictionModels({
   clearModelCaches,
   context,
+  checkFreshness,
   experimentId,
   onActivity,
   onForwardRecordProfilesChange,
@@ -76,10 +76,11 @@ export function usePredictionModels({
 }: Readonly<{
   clearModelCaches: () => void
   context: PredictionContext | null
+  checkFreshness?: () => Promise<string>
   experimentId: number | null
   onActivity?: RuntimeActivityCallback
   onForwardRecordProfilesChange: (profiles: readonly PredictionForwardRecordProfile[]) => void
-  onProfile: (profile: PredictionWorkerModelProfile, fingerprint: string) => void
+  onProfile: (profile: PredictionModelProfile, fingerprint: string) => void
   recordedData: RecordedDataSchemaTree
   candidateBoxGrids?: Readonly<Record<string, BoxGridData>>
   candidateReady?: boolean
@@ -93,6 +94,7 @@ export function usePredictionModels({
     async (transaction: number): Promise<PredictionForwardModelBundle> => {
       return buildForwardModel({
         context,
+        checkFreshness,
         experimentId,
         requiredRecordIds: [
           ...new Set(selectedCalculations.flatMap((calculation) => calculation.experiment_record_ids)),
@@ -110,6 +112,7 @@ export function usePredictionModels({
     },
     [
       context,
+      checkFreshness,
       experimentId,
       onActivity,
       onForwardRecordProfilesChange,
@@ -123,134 +126,38 @@ export function usePredictionModels({
     ],
   )
 
-  const fetchSelectedCalculationData = useCallback(
-    async (transaction?: number) => {
-      if (!context || experimentId === null || context.experimentId !== experimentId)
-        throw new Error('CalculationData context가 없습니다.')
-      const signal = runtime.transactionSignal()
-      const ids = context.analysis.items
-        .filter((item) => setup.calculationIds.includes(item.calculation_id))
-        .map((item) => item.calculation_data_id)
-      const records: CalculationDataRecord[] = []
-      let numericCells = 0
-      for (let offset = 0; offset < ids.length; offset += 50) {
-        if (transaction !== undefined && !runtime.transactionIsCurrent(transaction))
-          throw new DOMException('Stale Prediction transaction', 'AbortError')
-        const selectedIds = ids.slice(offset, offset + 50)
-        if (!selectedIds.length) continue
-        const response = await dbTables.CalculationData.listRows(
-          {
-            ...getListRequest('visible', selectedIds),
-            experiment_id: experimentId,
-            limit: selectedIds.length,
-            sort: ['id', 'asc'],
-          },
-          { signal },
-        )
-        if (transaction !== undefined && !runtime.transactionIsCurrent(transaction))
-          throw new DOMException('Stale Prediction transaction', 'AbortError')
-        response.items.forEach((record) => {
-          numericCells += record.data.shape.length === 0 ? 1 : (record.data.data as readonly number[]).length
-        })
-        if (!Number.isSafeInteger(numericCells) || numericCells > PREDICTION_NUMERIC_CELL_LIMIT)
-          throw new Error(
-            `Prediction CalculationData contains more than ${PREDICTION_NUMERIC_CELL_LIMIT.toLocaleString()} numeric cells.`,
-          )
-        records.push(...response.items)
-      }
-      return Object.freeze(records)
-    },
-    [context, experimentId, runtime, setup.calculationIds],
-  )
-
   const ensureInverseModel = useCallback(
     async (transaction: number) => {
       if (!runtime.transactionIsCurrent(transaction))
         throw new DOMException('Stale Prediction transaction', 'AbortError')
-      if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.workerAvailable)
+      if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.executionAvailable)
         throw new Error('Inverse 모델 context가 준비되지 않았습니다.')
       if (!setup.calculationIds.length) throw new Error('Inverse에 사용할 Calculation을 선택하세요.')
-      const fingerprint = predictionFingerprint([
-        context.fingerprint,
+      const key = predictionFingerprint([context.fingerprint, setup.calculationIds, varsSchema])
+      const snapshot = await runtime.trainingSnapshot(
         'inverse',
-        setup.calculationIds,
-        setup.calculationWeights,
-        setup.kMode === 'manual' ? setup.manualK : 'auto',
-        setup.weighting,
-        predictionVarsLayouts(varsSchema),
-      ])
-      const cached = runtime.cachedModel('inverse')
-      if (cached?.fingerprint === fingerprint && cached.workerEpoch === runtime.workerEpoch) return cached
-      const rowsKey = predictionFingerprint([
-        context.fingerprint,
-        setup.calculationIds,
-        predictionVarsLayouts(varsSchema),
-      ])
-      let rows = runtime.cachedInverseRows(rowsKey)
-      if (!rows) {
-        const records = await fetchSelectedCalculationData(transaction)
-        rows = inverseTrainingRows(context.measurements, records, setup.calculationIds, varsSchema)
-        if (!runtime.transactionIsCurrent(transaction))
-          throw new DOMException('Stale Prediction transaction', 'AbortError')
-        runtime.cacheInverseRows(rowsKey, rows)
-      }
-      assertTrainingCellLimit(rows)
+        key,
+        () =>
+          loadTrainingSnapshot({
+            context,
+            experimentId,
+            direction: 'inverse',
+            varsSchema,
+            calculationIds: setup.calculationIds,
+            signal: runtime.transactionSignal(),
+            policy: runtime.trainingPolicy,
+            checkFreshness,
+          }),
+        transaction,
+      )
+      const model = await runtime.prepareModel(snapshot, setup.algorithm, transaction, setup.executionId)
       if (!runtime.transactionIsCurrent(transaction))
         throw new DOMException('Stale Prediction transaction', 'AbortError')
-      const generation = runtime.nextGeneration()
-      const inputBlockWeights = Object.freeze(
-        Object.fromEntries(setup.calculationIds.map((id) => [`calculation:${id}`, setup.calculationWeights[id] ?? 1])),
-      )
-      const fixedInputLayouts = Object.freeze(
-        setup.calculationIds.map((id) => {
-          const calculation = selectedCalculations.find((candidate) => candidate.id === id)
-          if (!calculation?.output_layout) throw new Error(`Calculation #${id}의 Output 계약이 없습니다.`)
-          return Object.freeze({
-            key: `calculation:${id}`,
-            dtype: calculation.output_layout.dtype as PredictionNumericDtype,
-            shape: Object.freeze([...calculation.output_layout.shape]),
-            axes: Object.freeze(
-              calculation.output_layout.axes.map((axis) =>
-                Object.freeze({
-                  name: axis.name,
-                  ticks: Object.freeze([...axis.ticks]),
-                  ...(axis.unit ? { unit: axis.unit } : {}),
-                }),
-              ),
-            ),
-          })
-        }),
-      )
-      const profile = await runtime
-        .buildModel('inverse', generation, fingerprint, {
-          direction: 'inverse',
-          fingerprint,
-          inputKeys: setup.calculationIds.map((id) => `calculation:${id}`),
-          outputKeys: predictionVarsLayouts(varsSchema).map((layout) => layout.key),
-          rows,
-          fixedInputLayouts,
-          fixedOutputLayouts: predictionVarsLayouts(varsSchema),
-          inputBlockWeights,
-          inputScaling: 'standard-deviation',
-          weighting: setup.weighting,
-          ...(setup.kMode === 'manual' ? { k: setup.manualK } : {}),
-        })
-        .finally(() => runtime.releaseInverseRows(rows))
-      if (!runtime.transactionIsCurrent(transaction))
-        throw new DOMException('Stale Prediction transaction', 'AbortError')
-      const next: PredictionModelCache = Object.freeze({
-        fingerprint,
-        generation,
-        profile,
-        workerEpoch: runtime.workerEpoch,
-      })
-      onProfile(profile, fingerprint)
-      runtime.cacheModel('inverse', next)
-      return next
+      onProfile(model.profile, model.fingerprint)
+      return model
     },
-    [context, experimentId, fetchSelectedCalculationData, onProfile, runtime, selectedCalculations, setup, varsSchema],
+    [context, experimentId, checkFreshness, onProfile, runtime, setup, varsSchema],
   )
-
   const executeCalculations = useCallback(
     async (input: NonNullable<ReturnType<typeof buildCalculationRecordedData>['input']>, transaction: number) => {
       const controller = runtime.beginCalculation()
@@ -309,7 +216,7 @@ export function usePredictionModels({
 
   const forwardOutputs = useCallback(
     (vars: Readonly<Vars>, transaction: number, onRecorded?: (preview: PredictionRecordedPreview) => void) =>
-      runtime.runWithWorkerRestartRetry(
+      runtime.runWithExecutionRetry(
         transaction,
         async () => {
           if (!candidateReady || !candidateBoxGrids)
@@ -322,7 +229,6 @@ export function usePredictionModels({
             runtime,
             transaction,
             vars,
-            varsSchema: varsSchema!,
             candidateBoxGrids,
             onActivity,
           })
@@ -345,20 +251,18 @@ export function usePredictionModels({
       resultContracts,
       onActivity,
       runtime,
-      varsSchema,
     ],
   )
 
   const predictInverse = useCallback(
     (targets: Readonly<Record<number, CalculationDataOutput>>, transaction: number) => {
-      const query = setup.calculationIds.map((id) => calculationOutputSample(id, targets[id]))
-      return runtime.runWithWorkerRestartRetry(
+      return runtime.runWithExecutionRetry(
         transaction,
-        async (): Promise<Readonly<{ model: PredictionModelCache; result: PredictionResult }>> => {
+        async (): Promise<Readonly<{ model: PredictionModelCache; result: PredictionExecutionResult }>> => {
           const model = await ensureInverseModel(transaction)
           if (!runtime.transactionIsCurrent(transaction))
             throw new DOMException('Stale Prediction transaction', 'AbortError')
-          const result = await runtime.predict('inverse', model.generation, model.fingerprint, query)
+          const result = await runtime.predict(model, { direction: 'inverse', targets }, transaction)
           if (!runtime.transactionIsCurrent(transaction))
             throw new DOMException('Stale Prediction transaction', 'AbortError')
           emitPredictionQueryDiagnostics(result, model.fingerprint, runtime.emittedDiagnosticFingerprints, onActivity)
@@ -367,7 +271,7 @@ export function usePredictionModels({
         clearModelCaches,
       )
     },
-    [clearModelCaches, ensureInverseModel, onActivity, runtime, setup.calculationIds],
+    [clearModelCaches, ensureInverseModel, onActivity, runtime],
   )
 
   return { forwardOutputs, predictInverse } as const

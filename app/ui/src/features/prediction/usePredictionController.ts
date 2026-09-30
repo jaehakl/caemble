@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ExperimentRecordedDataRecord } from '@/api'
-import type { recordedDataRules } from '../measurement/recordedData'
-import { PredictionWorkerClient, PredictionWorkerRestartError } from './client'
+import { BrowserPredictionExecution } from './browserExecution'
+import { BrowserPredictionSamplingService } from './browserSampling'
+import { predictionFingerprint } from './data'
+import {
+  PredictionInstanceInvalidatedError,
+  type PredictionAlgorithm,
+  type PredictionExecution,
+  type PredictionInput,
+  type PredictionModelDefinition,
+  type PredictionRecordProfile,
+  type PredictionRequest,
+  type PreparedPredictionModel,
+} from './execution'
+import type { TrainingSnapshot } from './trainingSnapshot'
 import {
   initialPredictionLifecycleState,
   predictionLifecycleReducer,
@@ -9,39 +20,12 @@ import {
   type PredictionOperation,
   type PredictionSamplingProgress,
 } from './lifecycle'
-import type { PredictionCohortOptions, PredictionDirection, PredictionTensorSample, PredictionTrainingRow } from './knn'
-import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionDirection, PredictionTensorSample } from './knn'
 import type { PredictionSamplingOptions } from './sampling'
 
-export type PredictionModelCache = Readonly<{
-  fingerprint: string
-  generation: number
-  profile: PredictionWorkerModelProfile
-  workerEpoch: number
-}>
-
-export type PredictionForwardModelEntry = PredictionModelCache &
-  Readonly<{
-    record: ExperimentRecordedDataRecord
-    rule: ReturnType<typeof recordedDataRules>[number]
-    records?: readonly ExperimentRecordedDataRecord[]
-    rules?: ReturnType<typeof recordedDataRules>
-  }>
-
-export type PredictionForwardModelBundle = Readonly<{
-  errors: Readonly<Record<number, string>>
-  fingerprint: string
-  models: readonly PredictionForwardModelEntry[]
-  profile: PredictionWorkerModelProfile
-  rules: ReturnType<typeof recordedDataRules>
-}>
-
-export type PredictionForwardRecordProfile = Readonly<{
-  error: string | null
-  name: string
-  profile: PredictionWorkerModelProfile | null
-  recordId: number
-}>
+export type PredictionModelCache = PreparedPredictionModel
+export type PredictionForwardModelBundle = PreparedPredictionModel
+export type PredictionForwardRecordProfile = PredictionRecordProfile
 
 type CancelResourcesOptions = Readonly<{
   cancelCalculationData: () => void
@@ -54,13 +38,15 @@ export class PredictionRuntimeController {
   private cancelSamplingCandidateWait: (() => void) | null = null
   private checkingFingerprint = 0
   private fingerprintAbort: AbortController | null = null
-  private client: PredictionWorkerClient | null = null
-  private forwardModelCache: PredictionForwardModelBundle | null = null
-  private generation = 0
-  private inverseRows: Readonly<{ key: string; rows: readonly PredictionTrainingRow[] }> | null = null
+  private execution: PredictionExecution | null = null
+  private readonly sampling = new BrowserPredictionSamplingService()
+  private readonly pending = new Map<string, () => void>()
+  private readonly modelOwners = new Map<PreparedPredictionModel, PredictionExecution>()
+  private snapshots: Partial<Record<PredictionDirection, Readonly<{ key: string; snapshot: TrainingSnapshot }>>> = {}
   private loadAbort: AbortController | null = null
   private loadRevision = 0
   private modelCache: Partial<Record<PredictionDirection, PredictionModelCache>> = {}
+  private modelRevision: Record<PredictionDirection, number> = { forward: 0, inverse: 0 }
   private ownedCalculationDataOperation = false
   private primaryRevision = 0
   private samplingRevision = 0
@@ -71,8 +57,10 @@ export class PredictionRuntimeController {
   private validationRevision = 0
   readonly emittedDiagnosticFingerprints = new Set<string>()
 
+  constructor(private createExecution: () => PredictionExecution = () => new BrowserPredictionExecution()) {}
+
   start() {
-    if (!this.client) this.client = new PredictionWorkerClient()
+    if (!this.execution) this.execution = this.createExecution()
   }
 
   dispose() {
@@ -84,65 +72,224 @@ export class PredictionRuntimeController {
     this.ownedCalculationDataOperation = false
     this.cancelCandidateWait()
     this.abortCalculation()
-    this.client?.dispose()
-    this.client = null
     this.clearModelCaches()
-    this.inverseRows = null
+    this.execution?.dispose()
+    this.execution = null
+    this.sampling.dispose()
+    this.snapshots = {}
+    this.emittedDiagnosticFingerprints.clear()
   }
 
-  get workerAvailable() {
-    return this.client !== null
+  get executionAvailable() {
+    return this.execution !== null
   }
 
-  get workerEpoch() {
-    return this.client?.epoch ?? 0
+  get trainingPolicy() {
+    return this.execution?.trainingPolicy
   }
 
-  buildModel(modelId: string, generation: number, fingerprint: string, options: PredictionCohortOptions) {
-    if (!this.client) return Promise.reject(new Error('Prediction Worker가 준비되지 않았습니다.'))
-    return this.client.build(modelId, generation, fingerprint, options)
+  setExecution(createExecution: () => PredictionExecution) {
+    this.invalidateTransaction()
+    this.clearModelCaches()
+    this.execution?.dispose()
+    this.createExecution = createExecution
+    this.execution = createExecution()
   }
 
-  predict(modelId: string, generation: number, fingerprint: string, query: readonly PredictionTensorSample[]) {
-    if (!this.client) return Promise.reject(new Error('Prediction Worker가 준비되지 않았습니다.'))
-    return this.client.predict(modelId, generation, fingerprint, query)
+  /** Settle cancellation even if an execution ignores its AbortSignal. */
+  private request<T>(
+    transaction: number,
+    run: (execution: PredictionExecution, request: PredictionRequest) => Promise<T>,
+    releaseLate?: (execution: PredictionExecution, value: T) => void,
+  ): Promise<T> {
+    const execution = this.execution
+    const signal = this.transactionAbort?.signal
+    if (!execution || !signal || !this.transactionIsCurrent(transaction))
+      return Promise.reject(new DOMException('Stale Prediction transaction', 'AbortError'))
+    const sessionId = execution.sessionId
+    const requestId = crypto.randomUUID()
+    return new Promise<T>((resolve, reject) => {
+      let settled = false
+      const finish = () => {
+        settled = true
+        signal.removeEventListener('abort', cancel)
+        this.pending.delete(requestId)
+      }
+      const cancel = () => {
+        if (settled) return
+        finish()
+        reject(new DOMException('Prediction 요청이 취소되었습니다.', 'AbortError'))
+        execution.cancel(requestId)
+      }
+      this.pending.set(requestId, cancel)
+      signal.addEventListener('abort', cancel, { once: true })
+      void Promise.resolve()
+        .then(() => {
+          if (settled) throw new DOMException('Prediction 요청이 취소되었습니다.', 'AbortError')
+          signal.throwIfAborted()
+          return run(execution, { requestId, signal })
+        })
+        .then(
+          (value) => {
+            if (
+              settled ||
+              !this.transactionIsCurrent(transaction) ||
+              this.execution !== execution ||
+              execution.sessionId !== sessionId
+            ) {
+              releaseLate?.(execution, value)
+              if (!settled) {
+                finish()
+                reject(new PredictionInstanceInvalidatedError('Prediction 실행 인스턴스가 변경되었습니다.'))
+              }
+              return
+            }
+            finish()
+            resolve(value)
+          },
+          (error: unknown) => {
+            if (settled) return
+            finish()
+            reject(error)
+          },
+        )
+    })
+  }
+
+  async prepareModel(
+    snapshot: TrainingSnapshot,
+    algorithm: PredictionAlgorithm,
+    transaction: number,
+    executionId: string,
+  ) {
+    const execution = this.execution
+    if (
+      !execution ||
+      execution.id !== executionId ||
+      !execution.algorithms.includes(algorithm.kind) ||
+      !execution.directions.includes(snapshot.direction)
+    )
+      throw new Error('선택한 알고리즘과 실행 위치의 조합을 지원하지 않습니다.')
+    if (!this.transactionIsCurrent(transaction)) throw new DOMException('Stale Prediction transaction', 'AbortError')
+    const meaning = {
+      snapshotFingerprint: snapshot.fingerprint,
+      algorithm: Object.freeze({
+        ...algorithm,
+        calculationWeights: Object.freeze({ ...algorithm.calculationWeights }),
+      }),
+      implementationId: execution.id,
+      implementationVersion: execution.implementationVersion,
+      preprocessingVersion: execution.preprocessingVersion,
+    }
+    const definition: PredictionModelDefinition = Object.freeze({
+      ...meaning,
+      fingerprint: predictionFingerprint([meaning]),
+    })
+    const cached = this.modelCache[snapshot.direction]
+    if (cached?.fingerprint === definition.fingerprint && this.modelIsCurrent(cached)) return cached
+    const revision = ++this.modelRevision[snapshot.direction]
+    if (cached) this.releaseModel(cached)
+    delete this.modelCache[snapshot.direction]
+    const model = await this.request(
+      transaction,
+      (owner, request) => owner.prepare(snapshot, definition, request),
+      (owner, late) => {
+        void owner.release(late.instance).catch(() => undefined)
+      },
+    )
+    if (
+      !this.transactionIsCurrent(transaction) ||
+      revision !== this.modelRevision[snapshot.direction] ||
+      this.execution !== execution ||
+      model.instance.sessionId !== execution.sessionId ||
+      model.instance.executionId !== execution.id ||
+      model.fingerprint !== definition.fingerprint
+    ) {
+      void execution.release(model.instance).catch(() => undefined)
+      throw new DOMException('Stale Prediction model', 'AbortError')
+    }
+    this.modelOwners.set(model, execution)
+    this.modelCache[snapshot.direction] = model
+    return model
+  }
+
+  modelIsCurrent(model: PreparedPredictionModel) {
+    const execution = this.execution
+    return (
+      execution !== null &&
+      this.modelOwners.get(model) === execution &&
+      model.instance.executionId === execution.id &&
+      model.instance.sessionId === execution.sessionId
+    )
+  }
+
+  async predict(model: PreparedPredictionModel, input: PredictionInput, transaction: number) {
+    if (!this.modelIsCurrent(model))
+      throw new PredictionInstanceInvalidatedError('Prediction 모델을 다시 준비해야 합니다.')
+    const capturedInput = structuredClone(input)
+    const result = await this.request(transaction, (execution, request) =>
+      execution.predict(model.instance, capturedInput, request),
+    )
+    if (!this.modelIsCurrent(model) || !this.transactionIsCurrent(transaction))
+      throw new DOMException('Stale Prediction result', 'AbortError')
+    if (result.fingerprint !== model.fingerprint || result.direction !== input.direction)
+      throw new Error('Prediction 결과가 요청한 모델과 일치하지 않습니다.')
+    return result
+  }
+
+  async trainingSnapshot(
+    direction: PredictionDirection,
+    key: string,
+    load: () => Promise<TrainingSnapshot>,
+    transaction: number,
+  ) {
+    if (!this.transactionIsCurrent(transaction)) throw new DOMException('Stale Prediction transaction', 'AbortError')
+    const cached = this.snapshots[direction]
+    if (cached?.key === key) return cached.snapshot
+    const snapshot = await load()
+    if (!this.transactionIsCurrent(transaction)) throw new DOMException('Stale Prediction snapshot', 'AbortError')
+    this.snapshots[direction] = { key, snapshot }
+    return snapshot
   }
 
   startSampling(sessionId: string, options: PredictionSamplingOptions) {
-    if (!this.client) return Promise.reject(new Error('Prediction Worker가 준비되지 않았습니다.'))
-    return this.client.startSampling(sessionId, options)
+    return this.sampling.startSampling(sessionId, options)
   }
 
   nextSample(sessionId: string, fingerprint: string, attempt: number) {
-    if (!this.client) return Promise.reject(new Error('Prediction Worker가 준비되지 않았습니다.'))
-    return this.client.nextSample(sessionId, fingerprint, attempt)
+    return this.sampling.nextSample(sessionId, fingerprint, attempt)
   }
 
   acceptSample(sessionId: string, fingerprint: string, sample: readonly PredictionTensorSample[]) {
-    if (!this.client) return Promise.reject(new Error('Prediction Worker가 준비되지 않았습니다.'))
-    return this.client.acceptSample(sessionId, fingerprint, sample)
+    return this.sampling.acceptSample(sessionId, fingerprint, sample)
   }
 
   dropSampling(sessionId: string) {
-    if (!this.client) return Promise.resolve()
-    return this.client.dropSampling(sessionId)
+    return this.sampling.dropSampling(sessionId)
   }
 
-  resetWorker() {
-    this.client?.reset()
+  resetExecution() {
+    this.invalidateTransaction()
+    this.cancelPendingPrediction()
+    this.clearModelCaches()
+    this.execution?.dispose()
+    this.execution = this.createExecution()
   }
 
   cancelPendingPrediction() {
-    return this.client?.cancelPending() ?? false
+    const hadPending = this.pending.size > 0
+    for (const cancel of [...this.pending.values()]) cancel()
+    return hadPending
   }
 
-  async runWithWorkerRestartRetry<T>(transaction: number, run: () => Promise<T>, onRestart: () => void) {
+  async runWithExecutionRetry<T>(transaction: number, run: () => Promise<T>, onRestart: () => void) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         return await run()
       } catch (cause: unknown) {
         if (
-          !(cause instanceof PredictionWorkerRestartError) ||
+          !(cause instanceof PredictionInstanceInvalidatedError) ||
+          !cause.retryable ||
           attempt > 0 ||
           !this.transactionIsCurrent(transaction)
         ) {
@@ -152,12 +299,7 @@ export class PredictionRuntimeController {
         onRestart()
       }
     }
-    throw new Error('Prediction Worker 재시도에 실패했습니다.')
-  }
-
-  nextGeneration() {
-    this.generation += 1
-    return this.generation
+    throw new Error('Prediction 실행 재시도에 실패했습니다.')
   }
 
   beginLoad() {
@@ -203,7 +345,7 @@ export class PredictionRuntimeController {
   }
 
   transactionIsCurrent(transaction: number) {
-    return transaction === this.transaction
+    return transaction === this.transaction && !this.transactionAbort?.signal.aborted
   }
 
   currentTransaction() {
@@ -317,44 +459,33 @@ export class PredictionRuntimeController {
   }
 
   cachedForwardModel() {
-    return this.forwardModelCache
-  }
-
-  cacheForwardModel(model: PredictionForwardModelBundle) {
-    this.forwardModelCache = model
+    return this.modelCache.forward
   }
 
   cachedModel(direction: PredictionDirection) {
     return this.modelCache[direction]
   }
 
-  cacheModel(direction: PredictionDirection, model: PredictionModelCache) {
-    this.modelCache = { ...this.modelCache, [direction]: model }
+  clearTrainingSnapshots() {
+    this.snapshots = {}
   }
 
-  cachedInverseRows(key: string) {
-    return this.inverseRows?.key === key ? this.inverseRows.rows : null
-  }
-
-  cacheInverseRows(key: string, rows: readonly PredictionTrainingRow[]) {
-    this.inverseRows = Object.freeze({ key, rows })
-  }
-
-  releaseInverseRows(rows: readonly PredictionTrainingRow[]) {
-    if (this.inverseRows?.rows === rows) this.inverseRows = null
-  }
-
-  clearInverseRows() {
-    this.inverseRows = null
+  private releaseModel(model: PreparedPredictionModel) {
+    const owner = this.modelOwners.get(model)
+    this.modelOwners.delete(model)
+    if (owner) void owner.release(model.instance).catch(() => undefined)
   }
 
   clearModelCaches() {
+    this.modelRevision.forward += 1
+    this.modelRevision.inverse += 1
+    for (const model of this.modelOwners.keys()) this.releaseModel(model)
     this.modelCache = {}
-    this.forwardModelCache = null
   }
 
   cancelCurrent({ cancelCalculationData, cancelMeasurement, samplingActive }: CancelResourcesOptions) {
     const validationActive = this.validationActive
+    const predictionCanceled = this.pending.size > 0
     this.invalidateLoad()
     this.invalidateTransaction()
     this.invalidateValidation()
@@ -365,10 +496,11 @@ export class PredictionRuntimeController {
     this.abortCalculation()
     if (this.ownedCalculationDataOperation) cancelCalculationData()
     this.ownedCalculationDataOperation = false
-    const predictionCanceled = this.cancelPendingPrediction()
+    this.cancelPendingPrediction()
+    this.sampling.reset()
     if (validationActive || samplingActive) {
       cancelMeasurement()
-      if (!predictionCanceled) this.resetWorker()
+      if (!predictionCanceled) this.resetExecution()
     }
     const modelsCleared = predictionCanceled || validationActive || samplingActive
     if (modelsCleared) this.clearModelCaches()

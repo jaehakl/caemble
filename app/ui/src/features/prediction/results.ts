@@ -1,7 +1,7 @@
 import type { CalculationDataOutput } from '@/api'
-import type { PredictionDirection, PredictionNeighbor, PredictionResult, PredictionTensorLayout } from './knn'
+import type { PredictionDirection, PredictionNeighbor, PredictionTensorLayout } from './knn'
 import type { PredictionValidationMetric } from './metrics'
-import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionExecutionResult, PredictionModelProfile } from './execution'
 import type { PredictionForwardRecordProfile } from './usePredictionController'
 
 type ForwardRefreshFailure = Readonly<{
@@ -46,9 +46,9 @@ export type PredictionResults = Readonly<{
   surrogateValues: Outputs
   surrogateErrors: Errors
   neighborsByDirection: Partial<Record<PredictionDirection, readonly PredictionNeighbor[]>>
-  profiles: Partial<Record<PredictionDirection, PredictionWorkerModelProfile>>
+  profiles: Partial<Record<PredictionDirection, PredictionModelProfile>>
   forwardRecordProfiles: readonly PredictionForwardRecordProfile[]
-  lastResult: PredictionResult | null
+  lastResult: PredictionExecutionResult | null
   forwardVarsFingerprint: string | null
   forwardFailure: ForwardRefreshFailure | null
   inverseVarsFingerprint: string | null
@@ -73,12 +73,18 @@ type PredictionResultsAction =
   | { type: 'experiment-changed' | 'access-lost' }
   | { type: 'context-reloaded'; validation: ValidationResult | null }
   | { type: 'model-caches-cleared' }
-  | { type: 'profile-received'; profile: PredictionWorkerModelProfile }
+  | { type: 'profile-received'; profile: PredictionModelProfile }
   | { type: 'record-profiles-received'; profiles: readonly PredictionForwardRecordProfile[] }
   | { type: 'forward-started' | 'inverse-started' | 'predictions-invalidated' }
-  | { type: 'forward-completed'; result: PredictionResult; errors: Errors; fingerprint: string; failure?: string }
+  | {
+      type: 'forward-completed'
+      result: PredictionExecutionResult
+      errors: Errors
+      fingerprint: string
+      failure?: string
+    }
   | { type: 'forward-failed'; fingerprint: string; message: string }
-  | { type: 'inverse-completed'; result: PredictionResult; fingerprint: string }
+  | { type: 'inverse-completed'; result: PredictionExecutionResult; fingerprint: string }
   | { type: 'surrogate-completed'; values: Outputs; errors: Errors }
   | { type: 'surrogate-failed' }
   | { type: 'candidate-edited'; direction: PredictionDirection }
@@ -116,7 +122,7 @@ export function predictionResultsReducer(state: PredictionResults, action: Predi
         calculationErrors: action.errors,
         surrogateValues: {},
         surrogateErrors: {},
-        neighborsByDirection: { ...state.neighborsByDirection, forward: action.result.neighbors },
+        neighborsByDirection: { ...state.neighborsByDirection, forward: action.result.knn?.neighbors ?? [] },
         lastResult: action.result,
         forwardVarsFingerprint: action.failure ? null : action.fingerprint,
         forwardFailure: action.failure ? { fingerprint: action.fingerprint, message: action.failure } : null,
@@ -129,7 +135,7 @@ export function predictionResultsReducer(state: PredictionResults, action: Predi
         ...state,
         inverseVarsFingerprint: action.fingerprint,
         forwardVarsFingerprint: null,
-        neighborsByDirection: { ...state.neighborsByDirection, inverse: action.result.neighbors },
+        neighborsByDirection: { ...state.neighborsByDirection, inverse: action.result.knn?.neighbors ?? [] },
         lastResult: action.result,
       }
     case 'surrogate-completed':

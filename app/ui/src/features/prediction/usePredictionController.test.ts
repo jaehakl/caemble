@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { PredictionWorkerRestartError } from './client'
+import { PredictionInstanceInvalidatedError } from './execution'
 import { PredictionRuntimeController, usePredictionController } from './usePredictionController'
 
 it('observes lifecycle transitions synchronously and blocks duplicate work before rendering', () => {
@@ -76,16 +76,16 @@ describe('PredictionRuntimeController', () => {
     expect(runtime.hasOwnedCalculationDataOperation()).toBe(false)
   })
 
-  it('retries a current transaction once after a Worker restart', async () => {
+  it('retries a current transaction once after a recoverable execution restart', async () => {
     const runtime = new PredictionRuntimeController()
     const transaction = runtime.beginTransaction()
     const onRestart = vi.fn()
     const run = vi
       .fn<() => Promise<string>>()
-      .mockRejectedValueOnce(new PredictionWorkerRestartError('restart'))
+      .mockRejectedValueOnce(new PredictionInstanceInvalidatedError('restart'))
       .mockResolvedValueOnce('completed')
 
-    await expect(runtime.runWithWorkerRestartRetry(transaction, run, onRestart)).resolves.toBe('completed')
+    await expect(runtime.runWithExecutionRetry(transaction, run, onRestart)).resolves.toBe('completed')
     expect(run).toHaveBeenCalledTimes(2)
     expect(onRestart).toHaveBeenCalledOnce()
   })
@@ -95,12 +95,12 @@ describe('PredictionRuntimeController', () => {
     const transaction = runtime.beginTransaction()
     runtime.invalidateTransaction()
     const onRestart = vi.fn()
-    const restart = new PredictionWorkerRestartError('restart')
+    const restart = new PredictionInstanceInvalidatedError('restart')
     const run = vi.fn(async () => {
       throw restart
     })
 
-    await expect(runtime.runWithWorkerRestartRetry(transaction, run, onRestart)).rejects.toBe(restart)
+    await expect(runtime.runWithExecutionRetry(transaction, run, onRestart)).rejects.toBe(restart)
     expect(run).toHaveBeenCalledOnce()
     expect(onRestart).not.toHaveBeenCalled()
   })

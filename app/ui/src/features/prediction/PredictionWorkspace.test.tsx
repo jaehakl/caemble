@@ -13,6 +13,7 @@ import {
   type PredictionWorkspaceChromeState,
 } from './PredictionWorkspace'
 import type { PredictionRecordedPreview } from './usePredictionModels'
+import { PredictionTrainingChangedError } from './trainingSnapshot'
 
 const mocks = vi.hoisted(() => ({
   manageable: true,
@@ -72,10 +73,14 @@ vi.mock('./predictionContextData', () => ({
 vi.mock('./usePredictionModels', () => ({
   defaultPredictionSetup: Object.freeze({
     calculationIds: Object.freeze([]),
-    calculationWeights: Object.freeze({}),
-    kMode: 'auto',
-    manualK: 1,
-    weighting: 'distance',
+    algorithm: Object.freeze({
+      kind: 'knn',
+      calculationWeights: Object.freeze({}),
+      kMode: 'auto',
+      manualK: 1,
+      weighting: 'distance',
+    }),
+    executionId: 'browser-knn',
   }),
   usePredictionModels: () => ({
     forwardOutputs: mocks.forwardOutputs,
@@ -154,13 +159,13 @@ function predictionResult(direction: 'forward' | 'inverse', value: number) {
       profile: {
         direction,
         inputLayouts: direction === 'inverse' ? [{ key: 'calculation:1', dtype: 'float64', shape: [] }] : [],
-        inputScales: direction === 'inverse' ? new Float64Array([1]) : new Float64Array(),
+        knn: { inputScales: direction === 'inverse' ? new Float64Array([1]) : new Float64Array() },
       },
     },
     result: {
       constantInputKeysChanged: [],
       extrapolatedInputKeys: [],
-      neighbors: [],
+      knn: { neighbors: [] },
       output: direction === 'inverse' ? [{ layout: { key: 'x', dtype: 'float64', shape: [] }, values: [3] }] : [],
       queryDiagnostics: [],
     },
@@ -303,6 +308,34 @@ beforeEach(() => {
   }))
   mocks.loadContextFingerprint.mockImplementation(async () => mocks.contextFingerprint)
 })
+
+it('reloads changed training inputs before retrying Forward', async () => {
+  mocks.forwardOutputs.mockRejectedValueOnce(new PredictionTrainingChangedError()).mockImplementation(async () => {
+    expect(mocks.loadContextData).toHaveBeenCalledTimes(2)
+    return predictionResult('forward', 12)
+  })
+  await renderWorkspace()
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '12'))
+  expect(mocks.forwardOutputs).toHaveBeenCalledTimes(2)
+})
+
+it.each(['inverse', 'surrogate'] as const)(
+  'reloads changed %s training inputs while preserving the user Target',
+  async (stage) => {
+    mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+    mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+    await renderWorkspace()
+    await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
+    const operation = stage === 'inverse' ? mocks.predictInverse : mocks.forwardOutputs
+    operation.mockRejectedValueOnce(new PredictionTrainingChangedError())
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+    await waitFor(() => expect(mocks.loadContextData).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted', '10'))
+    expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+    expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary-role', 'target')
+    expect(mocks.predictInverse).toHaveBeenCalledTimes(2)
+  },
+)
 
 describe('Prediction Save & Run snapshot display', () => {
   it('prepares three samples through one Batch action and refreshes context once after completion', async () => {

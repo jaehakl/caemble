@@ -2,7 +2,14 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { CalculationDataOutput } from '@/api'
 import { VarsPanel } from '../calculation/VarsPanel'
-import { PredictionVarsPane, PredictionCalculationPane, type PredictionCalculationPaneItem } from './PredictionPanels'
+import {
+  PredictionVarsPane,
+  PredictionCalculationPane,
+  PredictionDetailsDialog,
+  PredictionSetupDialog,
+  type PredictionCalculationPaneItem,
+} from './PredictionPanels'
+import type { PredictionModelProfile } from './execution'
 import { comparePredictionOutput } from './metrics'
 
 vi.mock('@/components/tensor-editor', () => ({
@@ -145,4 +152,96 @@ it('uses the shared Vars bars and removes Experiment and Sampling controls', () 
   expect(props.onVarsChange).toHaveBeenLastCalledWith({ width: 10 })
   rerender(<PredictionVarsPane {...props} candidateSessionKey="next" vars={{ width: 3 }} />)
   expect(screen.getByRole('slider', { name: 'width' })).toHaveAttribute('aria-valuenow', '3')
+})
+
+it('renders common model details without requiring kNN or browser resource details', () => {
+  const profile: PredictionModelProfile = {
+    direction: 'forward',
+    rowCount: 2,
+    inputLayouts: [],
+    inputSize: 1,
+    outputSize: 1,
+    includedMeasurementIds: [1, 2],
+    warningMeasurementIds: [],
+    diagnostics: [],
+    omittedDiagnosticGroups: 0,
+    excluded: {
+      'missing-block': 0,
+      'extra-block': 0,
+      'invalid-tensor': 0,
+      'fixed-layout-mismatch': 0,
+      'layout-mismatch': 0,
+    },
+  }
+  const props = {
+    direction: 'forward' as const,
+    neighbors: [],
+    open: true,
+    onDirectionChange: vi.fn(),
+    onOpenChange: vi.fn(),
+  }
+  const { rerender } = render(<PredictionDetailsDialog {...props} profiles={{ forward: profile }} />)
+  expect(screen.getByRole('region', { name: 'Prediction model profile' })).toBeInTheDocument()
+  expect(screen.getByText('Cohort')).toBeInTheDocument()
+  expect(screen.queryByText('Weighting')).not.toBeInTheDocument()
+  expect(screen.queryByText('Scaling')).not.toBeInTheDocument()
+  expect(screen.queryByText('Neighbors')).not.toBeInTheDocument()
+  expect(screen.queryByText('Persistent memory')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Shape baseline/)).not.toBeInTheDocument()
+
+  rerender(
+    <PredictionDetailsDialog
+      {...props}
+      profiles={{
+        forward: {
+          ...profile,
+          knn: {
+            dominantShapeSignature: 'scalar',
+            baselineMeasurementId: 1,
+            k: 2,
+            weighting: 'distance',
+            inputScaling: 'range',
+            inputScales: new Float64Array([1]),
+            inputBlockWeights: {},
+            activeInputBlockCount: 1,
+          },
+          resources: { persistentBytes: 64, workingSetBytes: 128 },
+        },
+      }}
+    />,
+  )
+  expect(screen.getByText('Cohort / k')).toBeInTheDocument()
+  expect(screen.getByText('Neighbors')).toBeInTheDocument()
+  expect(screen.getByText('64 B')).toBeInTheDocument()
+})
+
+it('shows the supported algorithm and execution location as separate read-only settings', () => {
+  render(
+    <PredictionSetupDialog
+      algorithmLabel="kNN"
+      executionLabel="브라우저"
+      calculationWeights={{}}
+      calculations={[]}
+      cohortSummaries={{}}
+      kMode="auto"
+      manualK={1}
+      open
+      selectedCalculationIds={[]}
+      weighting="distance"
+      onApply={vi.fn()}
+      onCalculateMissing={vi.fn()}
+      onCalculationSelectedChange={vi.fn()}
+      onCalculationWeightChange={vi.fn()}
+      onCancel={vi.fn()}
+      onKModeChange={vi.fn()}
+      onManualKChange={vi.fn()}
+      onOpenChange={vi.fn()}
+      onReload={vi.fn()}
+      onWeightingChange={vi.fn()}
+    />,
+  )
+  expect(screen.getByText('Algorithm').nextElementSibling).toHaveTextContent('kNN')
+  expect(screen.getByText('Execution').nextElementSibling).toHaveTextContent('브라우저')
+  expect(screen.queryByRole('combobox', { name: 'Algorithm' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Deep Learning')).not.toBeInTheDocument()
 })

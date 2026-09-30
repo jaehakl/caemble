@@ -25,7 +25,7 @@ import type {
   PredictionWeighting,
 } from './knn'
 import { comparePredictionOutput, predictionOutputRange, type PredictionValidationMetric } from './metrics'
-import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionModelProfile } from './execution'
 
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
@@ -398,6 +398,8 @@ export type PredictionSetupCalculation = Readonly<{
 }>
 
 export type PredictionSetupDialogProps = Readonly<{
+  algorithmLabel: string
+  executionLabel: string
   applyDisabled?: boolean
   autoK?: number | null
   busyAction?: PredictionSetupBusyAction
@@ -435,6 +437,8 @@ const exclusionLabels: Readonly<Record<PredictionCohortExclusionReason, string>>
 }
 
 export function PredictionSetupDialog({
+  algorithmLabel,
+  executionLabel,
   applyDisabled = false,
   autoK,
   busyAction = null,
@@ -474,6 +478,16 @@ export function PredictionSetupDialog({
         </DialogHeader>
 
         <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
+          <dl className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-sm">
+            <div>
+              <dt className="text-xs text-muted-foreground">Algorithm</dt>
+              <dd className="mt-1 font-medium">{algorithmLabel}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Execution</dt>
+              <dd className="mt-1 font-medium">{executionLabel}</dd>
+            </div>
+          </dl>
           <section className="space-y-3" aria-labelledby="prediction-calculations-heading">
             <div>
               <h3 className="text-sm font-semibold" id="prediction-calculations-heading">
@@ -730,11 +744,11 @@ export type PredictionDetailsDialogProps = Readonly<{
   exclusions?: Readonly<Record<string, number>>
   neighbors: readonly PredictionNeighbor[]
   open: boolean
-  profiles: Partial<Record<PredictionDirection, PredictionWorkerModelProfile>>
+  profiles: Partial<Record<PredictionDirection, PredictionModelProfile>>
   forwardRecordProfiles?: readonly Readonly<{
     error: string | null
     name: string
-    profile: PredictionWorkerModelProfile | null
+    profile: PredictionModelProfile | null
     recordId: number
   }>[]
   resultText?: string | null
@@ -886,9 +900,7 @@ export function PredictionDetailsDialog({
       <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(860px,calc(100vw-2rem))] max-w-none grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-none">
         <DialogHeader>
           <DialogTitle>Prediction 세부 정보</DialogTitle>
-          <DialogDescription>
-            방향별 모델 profile, 실제 사용한 이웃과 Record별 cohort shape 진단을 확인합니다.
-          </DialogDescription>
+          <DialogDescription>방향별 모델 profile과 선택한 알고리즘의 진단 정보를 확인합니다.</DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
@@ -914,8 +926,8 @@ export function PredictionDetailsDialog({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Record</TableHead>
-                      <TableHead>Cohort / k</TableHead>
-                      <TableHead>Dominant shape</TableHead>
+                      <TableHead>Cohort{profile?.knn ? ' / k' : ''}</TableHead>
+                      <TableHead>{profile?.knn ? 'Dominant shape' : '상태'}</TableHead>
                       <TableHead>제외</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -927,13 +939,17 @@ export function PredictionDetailsDialog({
                           <p className="text-[10px] text-muted-foreground">ExperimentRecord #{record.recordId}</p>
                         </TableCell>
                         <TableCell className="tabular-nums">
-                          {record.profile ? `${record.profile.rowCount} / ${record.profile.k}` : '—'}
+                          {record.profile
+                            ? `${record.profile.rowCount}${record.profile.knn ? ` / ${record.profile.knn.k}` : ''}`
+                            : '—'}
                         </TableCell>
                         <TableCell
                           className="max-w-64 truncate font-mono text-[10px]"
-                          title={record.error ?? record.profile?.dominantShapeSignature}
+                          title={record.error ?? record.profile?.knn?.dominantShapeSignature}
                         >
-                          {record.error ?? record.profile?.dominantShapeSignature ?? '모델 없음'}
+                          {record.error ??
+                            record.profile?.knn?.dominantShapeSignature ??
+                            (record.profile ? '준비됨' : '모델 없음')}
                         </TableCell>
                         <TableCell className="tabular-nums">
                           {record.profile
@@ -951,31 +967,39 @@ export function PredictionDetailsDialog({
           ) : null}
           {profile ? (
             <section className="space-y-2" aria-label="Prediction model profile">
-              <p
-                className="truncate rounded-md border bg-muted/20 px-3 py-2 font-mono text-xs text-muted-foreground"
-                title={profile.dominantShapeSignature}
-              >
-                Shape baseline · Measurement #{profile.baselineMeasurementId} · {profile.dominantShapeSignature}
-              </p>
+              {profile.knn ? (
+                <p
+                  className="truncate rounded-md border bg-muted/20 px-3 py-2 font-mono text-xs text-muted-foreground"
+                  title={profile.knn.dominantShapeSignature}
+                >
+                  Shape baseline · Measurement #{profile.knn.baselineMeasurementId} ·{' '}
+                  {profile.knn.dominantShapeSignature}
+                </p>
+              ) : null}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <div className="rounded-lg border bg-muted/20 p-3">
                   <p className="text-xs text-muted-foreground">Direction</p>
                   <p className="mt-1 font-semibold">{profile.direction === 'forward' ? 'Forward' : 'Inverse'}</p>
                 </div>
                 <div className="rounded-lg border bg-muted/20 p-3">
-                  <p className="text-xs text-muted-foreground">Cohort / k</p>
+                  <p className="text-xs text-muted-foreground">Cohort{profile.knn ? ' / k' : ''}</p>
                   <p className="mt-1 font-semibold tabular-nums">
-                    {profile.rowCount.toLocaleString()} / {profile.k.toLocaleString()}
+                    {profile.rowCount.toLocaleString()}
+                    {profile.knn ? ` / ${profile.knn.k.toLocaleString()}` : ''}
                   </p>
                 </div>
-                <div className="rounded-lg border bg-muted/20 p-3">
-                  <p className="text-xs text-muted-foreground">Weighting</p>
-                  <p className="mt-1 font-semibold capitalize">{profile.weighting}</p>
-                </div>
-                <div className="rounded-lg border bg-muted/20 p-3">
-                  <p className="text-xs text-muted-foreground">Scaling</p>
-                  <p className="mt-1 font-semibold">{profile.inputScaling}</p>
-                </div>
+                {profile.knn ? (
+                  <>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Weighting</p>
+                      <p className="mt-1 font-semibold capitalize">{profile.knn.weighting}</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Scaling</p>
+                      <p className="mt-1 font-semibold">{profile.knn.inputScaling}</p>
+                    </div>
+                  </>
+                ) : null}
                 <div className="rounded-lg border bg-muted/20 p-3">
                   <p className="text-xs text-muted-foreground">Input size</p>
                   <p className="mt-1 font-semibold tabular-nums">{profile.inputSize.toLocaleString()}</p>
@@ -984,14 +1008,22 @@ export function PredictionDetailsDialog({
                   <p className="text-xs text-muted-foreground">Output size</p>
                   <p className="mt-1 font-semibold tabular-nums">{profile.outputSize.toLocaleString()}</p>
                 </div>
-                <div className="rounded-lg border bg-muted/20 p-3">
-                  <p className="text-xs text-muted-foreground">Persistent memory</p>
-                  <p className="mt-1 font-semibold tabular-nums">{profile.persistentBytes.toLocaleString()} B</p>
-                </div>
-                <div className="rounded-lg border bg-muted/20 p-3">
-                  <p className="text-xs text-muted-foreground">Working set</p>
-                  <p className="mt-1 font-semibold tabular-nums">{profile.workingSetBytes.toLocaleString()} B</p>
-                </div>
+                {profile.resources ? (
+                  <>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Persistent memory</p>
+                      <p className="mt-1 font-semibold tabular-nums">
+                        {profile.resources.persistentBytes.toLocaleString()} B
+                      </p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Working set</p>
+                      <p className="mt-1 font-semibold tabular-nums">
+                        {profile.resources.workingSetBytes.toLocaleString()} B
+                      </p>
+                    </div>
+                  </>
+                ) : null}
               </div>
             </section>
           ) : (
@@ -1000,44 +1032,46 @@ export function PredictionDetailsDialog({
             </div>
           )}
 
-          <Card>
-            <CardHeader className="p-4 pb-3">
-              <CardTitle className="text-sm">Neighbors</CardTitle>
-              <CardDescription className="text-xs">
-                현재 예측에 실제 사용된 Measurement와 정규화 weight입니다.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              {neighbors.length ? (
-                <Table containerClassName="max-h-60 overflow-auto">
-                  <TableHeader className="sticky top-0 bg-background">
-                    <TableRow>
-                      <TableHead>Measurement</TableHead>
-                      <TableHead>Distance²</TableHead>
-                      <TableHead>Weight</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {neighbors.map((neighbor) => (
-                      <TableRow key={neighbor.measurementId}>
-                        <TableCell>#{neighbor.measurementId}</TableCell>
-                        <TableCell className="tabular-nums">{formatMetric(neighbor.distanceSquared)}</TableCell>
-                        <TableCell className="tabular-nums">{formatMetric(neighbor.weight)}</TableCell>
+          {profile?.knn || neighbors.length ? (
+            <Card>
+              <CardHeader className="p-4 pb-3">
+                <CardTitle className="text-sm">Neighbors</CardTitle>
+                <CardDescription className="text-xs">
+                  현재 예측에 실제 사용된 Measurement와 정규화 weight입니다.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                {neighbors.length ? (
+                  <Table containerClassName="max-h-60 overflow-auto">
+                    <TableHeader className="sticky top-0 bg-background">
+                      <TableRow>
+                        <TableHead>Measurement</TableHead>
+                        <TableHead>Distance²</TableHead>
+                        <TableHead>Weight</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              ) : (
-                <p className="py-6 text-center text-sm text-muted-foreground">표시할 neighbor가 없습니다.</p>
-              )}
-            </CardContent>
-          </Card>
+                    </TableHeader>
+                    <TableBody>
+                      {neighbors.map((neighbor) => (
+                        <TableRow key={neighbor.measurementId}>
+                          <TableCell>#{neighbor.measurementId}</TableCell>
+                          <TableCell className="tabular-nums">{formatMetric(neighbor.distanceSquared)}</TableCell>
+                          <TableCell className="tabular-nums">{formatMetric(neighbor.weight)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="py-6 text-center text-sm text-muted-foreground">표시할 neighbor가 없습니다.</p>
+                )}
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card>
             <CardHeader className="p-4 pb-3">
               <CardTitle className="text-sm">Cohort diagnostics</CardTitle>
               <CardDescription className="text-xs">
-                shape 불일치는 제외되며 metadata 불일치는 cell index 기준으로 포함됩니다.
+                선택한 알고리즘이 학습에 포함하거나 제외한 Measurement와 그 이유입니다.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 p-4 pt-0">

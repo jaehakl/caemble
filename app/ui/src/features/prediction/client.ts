@@ -34,6 +34,7 @@ export class PredictionWorkerClient {
   private readonly pending = new Map<string, PendingRequest>()
   private workerEpoch = 0
   private worker: Worker
+  private disposed = false
 
   constructor() {
     this.worker = this.createWorker()
@@ -43,7 +44,7 @@ export class PredictionWorkerClient {
     this.workerEpoch += 1
     const worker = new Worker(new URL('./prediction.worker.ts', import.meta.url), { type: 'module' })
     worker.onmessage = (event: MessageEvent<unknown>) => {
-      if (this.worker !== worker) return
+      if (this.disposed || this.worker !== worker) return
       const requestId = predictionWorkerMessageRequestId(event.data)
       if (requestId === null) {
         if (this.pending.size > 0) {
@@ -68,7 +69,7 @@ export class PredictionWorkerClient {
       } else pending.resolve(response)
     }
     worker.onerror = (event) => {
-      if (this.worker !== worker) return
+      if (this.disposed || this.worker !== worker) return
       const error = new PredictionWorkerRestartError(event.message || 'Prediction Worker가 중단되었습니다.')
       this.rejectPendingAndRestart(worker, error)
     }
@@ -76,7 +77,7 @@ export class PredictionWorkerClient {
   }
 
   private rejectPendingAndRestart(worker: Worker, error: PredictionWorkerRestartError) {
-    if (this.worker !== worker) return
+    if (this.disposed || this.worker !== worker) return
     this.pending.forEach(({ reject }) => reject(error))
     this.pending.clear()
     worker.terminate()
@@ -89,8 +90,17 @@ export class PredictionWorkerClient {
 
   private request(request: PredictionWorkerRequest) {
     return new Promise<PredictionWorkerResponse>((resolve, reject) => {
+      if (this.disposed) {
+        reject(new DOMException('Prediction Worker가 종료되었습니다.', 'AbortError'))
+        return
+      }
       this.pending.set(request.requestId, { request, reject, resolve })
-      this.worker.postMessage(request)
+      try {
+        this.worker.postMessage(request)
+      } catch (error) {
+        this.pending.delete(request.requestId)
+        reject(error)
+      }
     })
   }
 
@@ -136,6 +146,17 @@ export class PredictionWorkerClient {
     return response.profile
   }
 
+  async drop(modelId: string, generation: number, fingerprint: string) {
+    const response = await this.request({
+      type: 'drop-model',
+      requestId: crypto.randomUUID(),
+      modelId,
+      generation,
+      fingerprint,
+    })
+    if (response.type !== 'model-dropped') throw new Error('Prediction 모델 종료 응답이 올바르지 않습니다.')
+  }
+
   async nextSample(sessionId: string, fingerprint: string, attempt: number) {
     const response = await this.request({
       type: 'next-sample',
@@ -172,6 +193,7 @@ export class PredictionWorkerClient {
   }
 
   reset() {
+    if (this.disposed) return
     this.pending.forEach(({ reject }) => reject(new DOMException('Prediction 요청이 취소되었습니다.', 'AbortError')))
     this.pending.clear()
     this.worker.terminate()
@@ -179,8 +201,12 @@ export class PredictionWorkerClient {
   }
 
   dispose() {
+    if (this.disposed) return
+    this.disposed = true
     this.pending.forEach(({ reject }) => reject(new DOMException('Prediction Worker가 종료되었습니다.', 'AbortError')))
     this.pending.clear()
+    this.worker.onmessage = null
+    this.worker.onerror = null
     this.worker.terminate()
   }
 }

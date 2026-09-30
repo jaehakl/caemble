@@ -8,8 +8,6 @@ const mocks = vi.hoisted(() => ({ build: vi.fn(), predict: vi.fn(), calculate: v
 vi.mock('./forwardModel', () => ({
   buildForwardModel: mocks.build,
   predictForwardRecorded: mocks.predict,
-  assertTrainingCellLimit: vi.fn(),
-  assertPredictionRecordedMemory: vi.fn(),
 }))
 vi.mock('@/lib/calculation', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/calculation')>()),
@@ -44,7 +42,7 @@ function models() {
   let current = true
   const runtime = {
     transactionIsCurrent: () => current,
-    runWithWorkerRestartRetry: (_transaction: number, run: () => Promise<unknown>) => run(),
+    runWithExecutionRetry: (_transaction: number, run: () => Promise<unknown>) => run(),
     beginCalculation: () => new AbortController(),
   }
   const options = {

@@ -63,6 +63,8 @@ Calculation이 실패해도 성공한 Box Grid 예측은 남습니다. 예측이
 
 **Prediction Settings**에서 한 개 이상의 저장된 Calculation, 계산식별 거리 가중치, 사용할 이웃 수 k의 **Auto/Manual**, **Neighbor weighting**을 고른 뒤 **적용**합니다. 설정을 편집하는 동안에는 현재 모델이 바뀌지 않습니다. 출력 규격의 사전 검증이 없는 Calculation은 선택할 수 없으므로 Calculation 탭에서 검증해 다시 저장하세요.
 
+설정 상단의 **Algorithm**은 예측 방법, **Execution**은 계산 위치를 표시합니다. 현재 지원하는 조합은 **kNN · 브라우저**입니다.
+
 계산식을 선택하면 저장된 출력 규격으로 오른쪽 카드와 축을 먼저 준비합니다. 값이 도착하기 전에는 편집할 수 없는 **Updating…** 상태입니다. **새로고침**은 최신 Measurement와 CalculationData를 읽고, **누락 데이터 계산**은 선택한 Calculation의 빠진 결과를 계산한 뒤 다시 불러옵니다. 공개 Demo의 새로고침과 Model Details는 누구나 사용할 수 있지만, 누락 데이터 계산에는 관리자 권한이 필요합니다.
 
 **cohort**는 같은 모델에서 함께 학습할 수 있는 데이터 묶음입니다. Forward는 선택한 Calculation이 참조하는 Box Grid RecordedData만 읽습니다. 여러 계산식이 같은 Record를 쓰면 한 번만 다운로드하고 학습하며, 관련 없는 Record는 배열을 펼치거나 메모리 사용량을 계산할 때 포함하지 않습니다.
@@ -78,6 +80,8 @@ Calculation이 실패해도 성공한 Box Grid 예측은 남습니다. 예측이
 Console의 source를 **Prediction**으로 선택하면 shape 불일치로 제외된 Record와 모델 실패를 확인할 수 있습니다. 모델의 변경 식별값에는 ExperimentRecord 규격과 Calculation의 참조·소스·출력 규격이 포함됩니다. 이들이 바뀌면 이전 모델과 예측·검증 결과를 오래된 상태로 처리합니다.
 
 Measurement, RecordedData 또는 CalculationData가 바뀌면 학습 입력과 Worker의 모델 캐시를 자동으로 다시 만들고 현재 Forward 또는 Inverse 방향을 재계산합니다. 자동 갱신에 실패한 경우에는 갱신이 필요하다는 안내와 **새로고침**이 남습니다.
+
+모델 준비 시 학습 데이터·원본 참조·메타데이터를 하나의 snapshot으로 고정합니다. 학습 입력과 알고리즘 설정의 식별값은 실행 중인 모델 인스턴스와 별도로 관리하므로, Worker를 다시 시작하면 같은 입력으로 모델을 다시 준비합니다. 취소하거나 입력·설정을 바꾼 뒤 도착한 이전 응답은 현재 결과를 덮어쓰지 않습니다.
 
 **Auto k**는 학습 행 수 `n`에 대해 `round(sqrt(n))`을 사용하되 1~15와 실제 데이터 묶음 크기 안으로 제한합니다. **Manual k**는 1~`n`의 정수입니다. **Distance**는 가까운 이웃에 더 큰 가중치를 주고, **Uniform**은 선택된 이웃을 같은 비중으로 평균합니다. 거리는 Forward에서 varsSchema 범위로, Inverse에서 학습 데이터의 표준편차로 정규화합니다.
 
