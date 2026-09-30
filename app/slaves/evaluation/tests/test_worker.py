@@ -173,9 +173,10 @@ def test_doctor_requires_node_version_and_runtime_assets(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout='v24.14.0'))
     with pytest.raises(RuntimeError, match='bundle'):
         runtime.doctor(tmp_path)
-    directory = tmp_path / 'dist'
+    directory = tmp_path / 'runtime'
     directory.mkdir()
     (directory / 'build-info.json').write_text('{"version":"1","inputs":{}}')
-    for name in ('evaluation.cjs', 'caemble-core.d.ts', 'cad-jsx.d.ts', 'lib.es5.d.ts'):
+    for name in ('caemble.cjs', 'worker.cjs', 'caemble-core.d.ts', 'cad-jsx.d.ts', 'lib.es5.d.ts'):
         (directory / name).touch()
+    monkeypatch.setattr(runtime, 'current_runtime', lambda _: directory)
     assert runtime.doctor(tmp_path)['ready'] is True

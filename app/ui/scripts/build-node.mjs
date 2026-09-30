@@ -9,7 +9,7 @@ await mkdir(output, { recursive: true })
 const fingerprints = {}
 for (const [entry, name] of [
   ['src/cli/main.ts', 'caemble'],
-  ['src/cli/worker.ts', 'worker'],
+  ['src/platform/node/worker.ts', 'worker'],
 ]) {
   const result = await build({
     entryPoints: [entry],
@@ -28,7 +28,7 @@ for (const [entry, name] of [
   const forbidden = Object.keys(result.metafile.inputs).filter((file) =>
     /monaco|manifold|regl-renderer|react-dom/u.test(file),
   )
-  if (forbidden.length) throw new Error(`CLI imports browser runtime: ${forbidden.join(', ')}`)
+  if (forbidden.length) throw new Error(`Node bundle imports browser runtime: ${forbidden.join(', ')}`)
   for (const file of Object.keys(result.metafile.inputs).filter(
     (file) => !file.includes('node_modules') && !file.startsWith('<'),
   ))
@@ -46,7 +46,7 @@ for (const name of ['caemble-core.d.ts', 'cad-jsx.d.ts']) {
     .update(await readFile(file))
     .digest('hex')
 }
-for (const file of ['package.json', 'package-lock.json', 'scripts/build-cli.mjs'])
+for (const file of ['package.json', 'package-lock.json', 'scripts/build-node.mjs'])
   fingerprints[file] = createHash('sha256')
     .update(await readFile(file))
     .digest('hex')

@@ -49,7 +49,7 @@ it('submits every Tensor element and current Candidate with a saved unpreflighte
   await waitFor(() => expect(optimizationApi.create).toHaveBeenCalledOnce())
   const payload = vi.mocked(optimizationApi.create).mock.calls[0][0]
   expect(payload.initial_vars).toEqual(workbench.candidateVars)
-  expect(payload.axes.map(({ name, indices, fixed }) => [name, indices, fixed])).toEqual([
+  expect(payload.axes?.map(({ name, indices, fixed }) => [name, indices, fixed])).toEqual([
     ['width', [], false],
     ['matrix', [0, 0], false],
     ['matrix', [0, 1], false],

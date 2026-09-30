@@ -6,7 +6,7 @@ Solver는 Experiment에서 지정한 물리 문제를 수치적으로 풀고 기
 
 Solver를 변경하기 전에 `docs/development/solver-development.md`와 `app/slaves/cae/AGENTS.md`를 **끝까지 읽습니다.** 두 파일이 현재 개발 계약의 기준입니다. 이 안내는 작업 순서와 확인할 항목을 정리하며 별도의 ABI 정의나 Catalog를 만들지 않습니다.
 
-명령 예시는 Caemble 저장소 루트의 **PowerShell 7**을 기준으로 합니다. UI의 Node.js 의존성과 CAE의 Poetry 개발 환경을 준비합니다. 먼저 `.\caemble.cmd doctor`로 Python·모듈 경로와 Catalog revision이 현재 저장소를 가리키는지 확인합니다. CLI가 없거나 오래된 경우 `npm --prefix app/ui run build:cli`로 빌드하고 다시 확인합니다. POSIX에서는 `sh ./caemble`을 사용합니다.
+명령 예시는 Caemble 저장소 루트의 **PowerShell 7**을 기준으로 합니다. UI의 Node.js 의존성과 CAE의 Poetry 개발 환경을 준비합니다. 먼저 `.\caemble.cmd doctor`로 Python·모듈 경로와 Catalog revision이 현재 저장소를 가리키는지 확인합니다. 배포 CLI는 시작 시 번들을 자동 준비합니다. 소스를 수정한 개발 환경에서는 `npm --prefix app/ui run build:node` 후 `node app/ui/dist-cli/caemble.cjs doctor`로 확인하고 같은 진입점으로 명령을 실행합니다. POSIX에서는 `sh ./caemble`을 사용합니다.
 
 작업 전에는 기존 구현·수치법·테스트와 현재 Solver descriptor(설정, 입력·출력과 구현 위치를 담은 정의)를 함께 읽습니다. 풀려는 방정식, 단위, 영역, 경계조건, 기대 관측량과 수치 허용오차를 먼저 정하면 구현 후 무엇을 검증해야 하는지 명확해집니다.
 

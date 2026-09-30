@@ -51,6 +51,7 @@ async def run_slave_launcher(settings: LauncherSettings) -> None:
     attempt = 0
     try:
         await manager.initialize()
+        await asyncio.to_thread(manager.registry.prepare)
         while True:
             try:
                 await run_connection(settings, manager, connection,
@@ -84,9 +85,7 @@ async def run_connection(settings: LauncherSettings, manager: WorkerManager,
     headers = {"Authorization": f"Bearer {settings.access_token}"}
     session_id = str(uuid4())
     async with open_websocket(settings.control_websocket_url, headers) as websocket:
-        ready_ids = await asyncio.to_thread(
-            lambda: [app_id for app_id in manager.registry.ids() if manager.registry.require(app_id).executable_ready]
-        )
+        ready_ids = await asyncio.to_thread(manager.registry.ready_ids)
         await websocket.send(json.dumps(launcher_hello_payload(settings, manager.registry, manager, session_id, ready_ids), ensure_ascii=False))
         accepted = parse_server_message(json.loads(await websocket.recv()))
         if accepted.type != "launcher.accepted" or accepted.boot_id != manager.boot_id or accepted.session_id != session_id:
@@ -149,7 +148,7 @@ async def handle_server_message(manager: WorkerManager, value: Any) -> None:
 
 def launcher_hello_payload(settings: LauncherSettings, registry: SlaveAppRegistry,
                            manager: WorkerManager, session_id: str, ready_ids: list[str] | None = None) -> dict[str, Any]:
-    ids = ready_ids if ready_ids is not None else [app_id for app_id in registry.ids() if registry.require(app_id).executable_ready]
+    ids = ready_ids if ready_ids is not None else registry.ready_ids()
     return {"type": "launcher.hello", "execution_protocol": 2, "launcher_name": settings.launcher_name,
             "installation_id": manager.installation_id, "boot_id": manager.boot_id, "session_id": session_id,
             "slave_app_ids": ids, "job_modes": {app_id: registry.require(app_id).job_mode for app_id in ids},

@@ -38,7 +38,7 @@ npm run build
 ```
 
 `build` produces the server web assets in `dist` and the monorepo CLI in
-`dist-cli`. Use `npm run build-ui` or `npm run build:cli` for either target.
+`dist-cli`. Use `npm run build-ui` or `npm run build:node` for either target. The Node output includes the common CLI/evaluator worker; full `npm run build` packages both targets in `deployment/caemble.tar.gz`. Run development CLI output directly with `node dist-cli/caemble.cjs`.
 The CLI requires Node 24.14 or later and uses this checkout's CAE Poetry
 environment for Python checks and local simulations. Install its test tools
 with `poetry install --with dev` in `../slaves/cae`.

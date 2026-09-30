@@ -1,4 +1,4 @@
-import { chromium } from 'playwright'
+import { createRequire } from 'node:module'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -73,6 +73,9 @@ export async function pngCommand(command: string, context: CommandContext) {
     }
   } else throw new CliError('Use png geometry or png calculation.')
   const assets = path.join(environment.repo, 'app/ui/dist')
+  const { chromium } = createRequire(path.join(environment.repo, 'app/ui/package.json'))(
+    'playwright',
+  ) as typeof import('playwright')
   const browser = await chromium.launch({
     headless: true,
     executablePath: options['chromium-path'] as string | undefined,

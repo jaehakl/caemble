@@ -170,7 +170,7 @@ const references: readonly AuthoringReference[] = [
     content:
       'Read the original error message/code and stage first. A worker-request failure occurred before a valid authoring operation was identified; inspect the caller request and rebuild the CLI if its checkout inputs changed. An input failure can occur before Calculation compilation when reading or parsing a fixture; check its path and complete JSON map. A build failure can occur during evaluation or output writing after TypeScript checks. Keep the operation sourceHash when supplied, but location remains null unless a compiler or validator supplied a real position. Use doctor to verify the checkout/build and Python environment. Do not treat child interruption, timeout or a partial output file as successful execution.',
     sourcePaths: [
-      'app/ui/src/cli/worker.ts',
+      'app/ui/src/platform/node/worker.ts',
       'app/ui/src/contracts/authoring.ts',
       'app/ui/src/platform/node/environment.ts',
     ],

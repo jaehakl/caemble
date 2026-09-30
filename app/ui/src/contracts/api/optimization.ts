@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { caeJobSchema } from './cae'
 
-export type OptimizationTensor = number | OptimizationTensor[]
+export type OptimizationTensor = number | readonly OptimizationTensor[]
 const tensorSchema: z.ZodType<OptimizationTensor> = z.lazy(() => z.union([z.number().finite(), z.array(tensorSchema)]))
 export const optimizationVarsSchema = z.record(z.string(), tensorSchema)
 export const optimizationVariableSchema = z.record(
@@ -140,12 +140,12 @@ export type StudyCreateRequest = Readonly<{
   request_id: string
   experiment_id: number
   source_hash: string
-  name: string
-  vars_schema: z.infer<typeof optimizationVariableSchema>
+  name?: string
+  vars_schema: Readonly<Record<string, Readonly<{ shape: readonly number[]; min: number; max: number }>>>
   initial_vars: Record<string, OptimizationTensor>
-  axes: OptimizationAxis[]
-  objective: { calculation_id: number; direction: 'minimize' | 'maximize' }
-  constraints: { calculation_id: number; minimum?: number; maximum?: number }[]
-  max_trials: number
-  max_parallel: number
+  axes?: Readonly<{ name: string; indices?: number[]; min?: number; max?: number; fixed?: boolean }>[]
+  objective: { calculation_id: number; direction?: 'minimize' | 'maximize' }
+  constraints?: { calculation_id: number; minimum?: number; maximum?: number }[]
+  max_trials?: number
+  max_parallel?: number
 }>

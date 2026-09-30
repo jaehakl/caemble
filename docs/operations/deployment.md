@@ -62,17 +62,30 @@ cd E:\caemble
 deployment\build-ui.bat
 ```
 
-이 명령은 JavaScript SDK, 웹 UI와 모노레포 Node CLI를 빌드한다. 웹 artifact와 관련 source는
-같은 release에 포함한다.
+이 명령은 JavaScript SDK, 웹 UI와 공통 Node runtime을 빌드한 뒤
+`deployment/caemble.tar.gz` 하나를 생성한다. 같은 release의 소스와 함께 배포한다.
 
-- `deployment/caemble-ui.tar.gz`: 웹 UI와 격리된 browser runner
-- `app/ui/dist-cli/caemble.cjs`: 해당 모노레포에서 사용하는 CLI. Node 24.14 이상과 CAE Poetry 환경을 사용한다.
-- `deployment/caemble-evaluation.tar.gz`: launcher 장비의 `app/slaves/evaluation/dist`에 설치하는 Node 평가 실행 파일과 선언 파일, build metadata.
+- `web/`: 웹 UI와 격리된 browser runner. 서버의 `update.sh`는 이 영역만 정적 루트에 설치한다.
+- `node/`: CLI, CLI·evaluation 공통 worker, 선언 파일과 build metadata.
 
-CLI나 인증정보를 웹 서버 정적 루트에 복사하지 않는다. 기존 CAE preparation artifact와
-`CAE_NODE_EXECUTABLE`, `CAE_PREPARATION_*` 설정은 사용하지 않는다.
-평가 runtime도 웹 정적 루트나 API 프로세스에 설치하지 않는다. Launcher 장비에서
-Node 24.14 이상과 evaluation Python 환경을 설치하고 `python -m app doctor`로 확인한다.
+배포 파일 경로를 지정할 때는 `CAEMBLE_ARTIFACT`를 사용한다. CLI·Node worker는 웹 공개
+디렉터리에 설치하지 않으며 API 서버에 Node를 설치할 필요도 없다.
+
+CLI wrapper와 launcher는 기존 Python 표준 라이브러리로 Node 영역을
+`.data/node-runtime/<runtime_id>`에 자동 준비한다. 같은 버전은 재설치하지 않고,
+새 버전 준비가 실패해도 기존 파일과 실행 중인 버전은 보존한다. 이전 버전은 자동 삭제하지 않는다.
+Launcher는 이전 실행 정리 후, 서버 연결 전에 한 번 준비하고 정상인 worker만 등록한다.
+재접속·개별 Job은 설치를 반복하지 않는다. 준비 실패 원인은 콘솔에 표시한다.
+
+CLI는 `CAEMBLE_PYTHON`, evaluation·CAE·launcher·저장소 루트의 기존 `.venv`, 시스템 Python
+순으로 Python 3.11 이상을 찾는다. Node 24.14 이상도 필요하다. CAE 관련 로컬 명령은 기존
+CAE Python 환경을 계속 사용한다. Launcher는 evaluation 가상환경을 사용한다.
+사용자가 npm 빌드나 압축 해제를 수행할 필요는 없다.
+
+`doctor` 자체는 상태만 확인한다. CLI wrapper의 준비는 명령을 시작하기 전에 수행한다.
+개발용 부분 빌드는 `npm run build:node`이며, `build:cli`와 `build:evaluation`도 같은 빌드를 호출한다.
+부분 빌드는 배포 압축 파일을 갱신하지 않는다. 개발 결과는 `app/ui`에서
+`node dist-cli/caemble.cjs`로 직접 실행한다. 배포 파일 갱신은 `npm run build` 또는 위 배치 파일로 한다.
 Study가 고정한 runtime metadata와 다른 bundle은 해당 평가를 실행하지 않는다.
 
 ## 클라이언트 빌드 전환
@@ -117,7 +130,7 @@ Launcher 제어 연결에는 기본 30초의 재접속 유예가 있으며 그�
 
 API 정지 후 고정한 commit으로 fast-forward하여 API와 Catalog를 함께 전환한다.
 dependency와 migration을 적용한 후 준비한 정적 release를 원자적으로 전환하고 API와 Nginx를 다시
-올린 뒤 신규 제출을 허용한다. schema reset은 사용하지 않는다. `UI_ARTIFACT` 또는
+올린 뒤 신규 제출을 허용한다. schema reset은 사용하지 않는다. `CAEMBLE_ARTIFACT` 또는
 `NGINX_CONFIG_SOURCE`를 지정하면 해당 파일을 임시 디렉터리에 복사하여 사용한다.
 
 migration은 chunk 저장소, Job artifact metadata, Calculation revision을 추가하고 내부 Agent

@@ -8,7 +8,7 @@ Experiment(실험 정의)는 형상, 재료, 해석 조건, 실행 순서와 기
 
 Caemble 저장소에서 작업하며 루트의 `AGENTS.md`를 먼저 읽습니다. 아래 명령은 저장소 루트의 **PowerShell 7**, Node.js 24.14 이상과 이 저장소의 CAE Python 환경을 기준으로 합니다. 출력 디렉터리는 비어 있어야 하며 명령 하나가 성공한 것을 확인한 뒤 다음 단계로 넘어갑니다.
 
-먼저 `.\caemble.cmd doctor`로 환경을 확인합니다. CLI가 없거나 오래된 경우 `npm --prefix app/ui run build:cli`를 실행하고 다시 확인합니다. POSIX에서는 `sh ./caemble`을 사용합니다. 정확한 옵션은 설치된 CLI의 도움말을 확인합니다.
+먼저 `.\caemble.cmd doctor`로 환경을 확인합니다. 배포 CLI는 시작 시 번들을 자동 준비합니다. 소스를 수정한 개발 환경에서는 `npm --prefix app/ui run build:node` 후 `node app/ui/dist-cli/caemble.cjs doctor`로 확인하고 같은 진입점으로 명령을 실행합니다. POSIX에서는 `sh ./caemble`을 사용합니다. 정확한 옵션은 설치된 CLI의 도움말을 확인합니다.
 
 서버 작업에는 `.env`의 `CAEMBLE_API_URL`과 `caemble` 범위의 `CAEMBLE_API_TOKEN`이 필요합니다. 외부 작성 에이전트의 모델 인증 정보는 에이전트가 관리합니다. 소스 묶음의 `{ files }`에는 `experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`, `tasks/<name>.tsx`만 허용합니다. Task 이름은 `[A-Za-z][A-Za-z0-9_-]*`이며 중첩 경로는 허용하지 않습니다. `object.ts`, `sensor.ts`, `lib/*.ts` 등은 미사용 파일이어도 check/build/push와 서버 저장·실행에서 거부합니다. CLI 메타데이터 `caemble.json`은 소스 묶음에 포함되지 않습니다. 검증 산출물은 소스 디렉터리 밖에 저장합니다.
 
@@ -178,3 +178,49 @@ MINI, 초탄성 동적·고유치 해석과 접촉·연결은 지원 범위에 �
 - [프로그램 구성](../manual/program/program-overview.md): 파일 사이의 관계와 작성 순서를 확인합니다.
 - [실행 순서 작성](../manual/program/program-simulate.md): 여러 Task의 실행, 기록과 자원 해제를 작성합니다.
 - [Calculation 작성하기](calculation.md): 기록된 수치에서 비교 지표를 만들고 결과를 검증합니다.
+
+
+## CLI에서 최적화 Study 실행
+
+저장된 Experiment ID와 기존 Build artifact를 재사용합니다. `study.json`에는 저장된
+Calculation ID와 탐색 설정을 적습니다. 목적 Calculation은 필수이며 나머지는 선택 사항입니다.
+
+```json
+{
+  "name": "반경 최적화",
+  "objective": { "calculation_id": 12, "direction": "maximize" },
+  "constraints": [{ "calculation_id": 13, "maximum": 10 }],
+  "axes": [{ "name": "raysPerSource", "indices": [], "fixed": true }],
+  "max_trials": 20,
+  "max_parallel": 2
+}
+```
+
+`axes`는 기본 탐색 설정에 대한 원소별 변경입니다. 생략한 스칼라·Tensor 원소는 모두 탐색에
+포함되고 schema 범위를 사용합니다. Tensor 원소는 `indices: [0, 1]`처럼 지정합니다.
+범위는 `min`, `max`, 고정은 `fixed`로 지정합니다. 예산 기본값은 20, 동시 진행은 2입니다.
+사전 검증 이력이 없는 Calculation도 선택할 수 있으며 첫 실제 Trial에서 스칼라 출력을 확인합니다.
+
+```powershell
+.\caemble.cmd study create .work/build --experiment 7 --config study.json
+.\caemble.cmd study list --experiment 7
+.\caemble.cmd study show <study-id>
+.\caemble.cmd study trials <study-id> --limit 50 --offset 0
+.\caemble.cmd study watch <study-id> --timeout 180
+.\caemble.cmd study stop <study-id>
+.\caemble.cmd study retry <study-id> --trial <trial-id>
+.\caemble.cmd study resume <study-id>
+.\caemble.cmd study delete <study-id>
+```
+
+Artifact에 여러 항목이 있으면 생성 시 `--item <index>`를 지정합니다. 생성은 소스 hash,
+Vars schema와 초기 Vars만 읽어서 제출하며 추가 Build·Solver 사전 실행을 하지 않습니다.
+`show`에는 최선 후보와 진행 상태, `trials`에는 단계·제출·Job·재시도 이력이 포함됩니다.
+`watch`는 2초 간격으로 관찰하며 Ctrl+C나 관찰 timeout으로 서버 실행이 중지되지 않습니다.
+완료는 종료 코드 0, 일시정지·실패는 1, 관찰 timeout은 5, Ctrl+C는 130입니다.
+
+생성 요청은 설정 파일 옆의 `.submission.json`, 재시도 요청은 저장소의
+`.data/cli/study-requests`에 요청 ID를 먼저 기록합니다. 응답을 확인하지 못하면 같은 ID로
+다시 전송합니다. 같은 설정으로 별도 Study를 만들려면 새 `--request-id <uuid>`를 지정합니다.
+재시도 응답을 확인한 뒤 다시 호출하면 새로운 명시적 재시도입니다. 토큰은 기록하지 않습니다.
+중지·재개·재시도·삭제 가능 여부는 기존 서버 상태와 cleanup 규칙을 따릅니다.

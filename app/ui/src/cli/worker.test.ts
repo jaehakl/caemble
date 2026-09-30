@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { build } from 'esbuild'
@@ -14,7 +14,7 @@ beforeAll(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'caemble-cli-worker-'))
   worker = path.join(directory, 'worker.cjs')
   await build({
-    entryPoints: [path.resolve('src/cli/worker.ts')],
+    entryPoints: [path.resolve('src/platform/node/worker.ts')],
     outfile: worker,
     bundle: true,
     platform: 'node',
@@ -39,7 +39,9 @@ it.each([
   ['😀', 3],
 ] as const)('preserves UTF-8 when worker stdin splits %s after byte %i', async (character, offset) => {
   const source = '// 균일 질량 밀도 😀\ninvalid syntax for a diagnostic'
-  const request = Buffer.from(JSON.stringify({ operation: 'calculation-check', source }), 'utf8')
+  const input_file = path.join(directory, `일😀-${offset}.json`)
+  await writeFile(input_file, JSON.stringify({ operation: 'calculation-check', source }), 'utf8')
+  const request = Buffer.from(JSON.stringify({ input_file, output_file: path.join(directory, 'result.json') }), 'utf8')
   const split = request.indexOf(Buffer.from(character, 'utf8')) + offset
   // Acknowledge consumption of the first chunk before sending the rest. This
   // forces a real pipe boundary without depending on timers or OS buffer sizes.

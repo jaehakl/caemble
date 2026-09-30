@@ -18,6 +18,7 @@ class SlaveApp:
     job_mode: str = "webrtc"
     storage_version: int | None = None
     readiness_args: tuple[str, ...] = ()
+    prepare_args: tuple[str, ...] = ()
 
     @property
     def python_executable(self) -> Path:
@@ -27,18 +28,27 @@ class SlaveApp:
 
     @property
     def executable_ready(self) -> bool:
+        try:
+            self.check_ready()
+            return True
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            return False
+
+    def check_ready(self) -> None:
+        self.run_command(self.readiness_args, timeout=15)
+
+    def run_command(self, args: tuple[str, ...], *, timeout: float) -> str:
         executable = self.python_executable
         if not executable.is_file() or (os.name != "nt" and not os.access(executable, os.X_OK)):
-            return False
-        if self.readiness_args:
-            try:
-                probe = subprocess.run([str(executable), *self.readiness_args], cwd=self.project_dir,
-                    capture_output=True, timeout=15,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-                return probe.returncode == 0
-            except (OSError, subprocess.TimeoutExpired):
-                return False
-        return True
+            raise RuntimeError(f"Python environment unavailable: {executable}; {self.install_hint}")
+        if not args:
+            return ""
+        probe = subprocess.run([str(executable), *args], cwd=self.project_dir,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        if probe.returncode != 0:
+            raise RuntimeError(probe.stderr.strip() or probe.stdout.strip() or f"Command exited with code {probe.returncode}.")
+        return probe.stdout.strip()
 
     @property
     def install_hint(self) -> str:
@@ -48,6 +58,38 @@ class SlaveApp:
 class SlaveAppRegistry:
     def __init__(self, apps: list[SlaveApp]) -> None:
         self.apps = {app.id: app for app in apps}
+        self.preparation_errors: dict[str, str] = {}
+        self.reported_errors: dict[str, str] = {}
+
+    def prepare(self) -> None:
+        """Run once after recovery, before connecting or accepting any Jobs."""
+        for app in self.apps.values():
+            if not app.prepare_args:
+                continue
+            try:
+                output = app.run_command(app.prepare_args, timeout=app.startup_timeout_seconds or 60)
+                print(f"[{app.id}] Prepared: {output}", flush=True)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                self.preparation_errors[app.id] = str(error)
+                self.reported_errors[app.id] = str(error)
+                print(f"[{app.id}] Preparation failed: {error}", flush=True)
+
+    def ready_ids(self) -> list[str]:
+        ready = []
+        for app_id in self.ids():
+            if app_id in self.preparation_errors:
+                continue  # A working old bundle must not hide a failed update.
+            try:
+                self.require(app_id).check_ready()
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                message = str(error)
+                if self.reported_errors.get(app_id) != message:
+                    print(f"[{app_id}] Unavailable: {message}", flush=True)
+                self.reported_errors[app_id] = message
+            else:
+                self.reported_errors.pop(app_id, None)
+                ready.append(app_id)
+        return ready
 
     def ids(self) -> list[str]:
         return sorted(self.apps)
@@ -103,6 +145,7 @@ def load_manifest(manifest_path: Path) -> SlaveApp:
         job_mode=job_mode,
         storage_version=payload.get("storage_version"),
         readiness_args=tuple(payload.get("readiness_args", ())),
+        prepare_args=tuple(payload.get("prepare_args", ())),
         startup_timeout_seconds=(
             float(payload["startup_timeout_seconds"])
             if payload.get("startup_timeout_seconds") is not None

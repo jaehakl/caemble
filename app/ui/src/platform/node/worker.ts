@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { evaluateRequest } from './evaluation'
 import { prepareCaeMeasurement } from '@/platform/node/build'
 import { compileNodeCalculation, runNodeCalculation } from '@/platform/node/calculation'
 import type { AuthoringDiagnostic, AuthoringErrorMetadata } from '@/contracts/authoring'
@@ -19,7 +20,8 @@ async function main() {
   process.stdin.setEncoding('utf8')
   let input = ''
   for await (const chunk of process.stdin) input += String(chunk)
-  const request = JSON.parse(input)
+  const envelope = JSON.parse(input)
+  const request = JSON.parse(await readFile(envelope.input_file, 'utf8'))
   if (request?.operation === 'build') {
     requestContext = {
       stage: 'build',
@@ -51,8 +53,10 @@ async function main() {
     const calculationInput = request.input ?? JSON.parse(await readFile(request.inputFile, 'utf8'))
     requestContext.stage = 'execution'
     result = await runNodeCalculation(request.source, calculationInput)
-  } else throw new Error('Unknown isolated operation.')
-  stdout(`${JSON.stringify(result)}\n`)
+  } else if (request.operation === 'evaluate') result = await evaluateRequest(request.evaluation, __dirname)
+  else throw new Error('Unknown isolated operation.')
+  await writeFile(envelope.output_file, JSON.stringify(result), { encoding: 'utf8', flag: 'wx' })
+  stdout(`${JSON.stringify({ ok: true })}\n`)
 }
 void main().catch((error: unknown) => {
   // VM errors can come from another realm and fail instanceof Error while retaining their native code/message.

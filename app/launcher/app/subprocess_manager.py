@@ -159,8 +159,7 @@ class WorkerManager:
     async def launch_worker(self, worker: ManagedWorker, assignment: dict[str, Any]) -> None:
         try:
             app = self.registry.require(worker.slave_app_id)
-            if not await asyncio.to_thread(lambda: app.executable_ready):
-                raise RuntimeError(f"slave environment is missing; run `{app.install_hint}`")
+            await asyncio.to_thread(app.check_ready)
             worker.container = self.container_factory()
             worker.process = await worker.container.start(
                 [str(app.python_executable), "-m", "sdk.slave.bootstrap", "--module", app.module, "--worker"],

@@ -7,14 +7,15 @@ import { fetchCalculationInput } from '@/api/calculationInput'
 import type { CalculationInput, NormalizedCalculationOutput } from '@/lib/calculation/types'
 import { assertCalculationInput } from '@/lib/calculation/validation'
 import { analyzeCalculationDependencies } from '@/lib/calculation/dependencies'
-import { commandJson, CliError } from '@/platform/node/environment'
+import { CliError } from '@/platform/node/environment'
+import { workerRequest } from '@/platform/node/workerRequest'
 import { createLocalCalculationInput, inspectLocalResult } from '@/platform/node/localResult'
 import type { CommandContext } from './types'
 
 async function execute(context: CommandContext, source: string, input: CalculationInput) {
   assertCalculationInput(input)
   analyzeCalculationDependencies(source, Object.keys(input))
-  const result = (await commandJson(process.execPath, [context.environment.worker], {
+  const result = (await workerRequest(context.environment.worker, {
     cwd: context.environment.cae,
     signal: context.signal,
     timeoutMs: Number(context.options.timeout ?? 30) * 1000,
@@ -176,7 +177,7 @@ export async function calculationCommand(group: string, command: string, context
   const sourcePath = location.endsWith('.js') ? location : path.join(location, 'calculation.js')
   const source = await readFile(sourcePath, 'utf8')
   if (command === 'check') {
-    const compiled = (await commandJson(process.execPath, [environment.worker], {
+    const compiled = (await workerRequest(environment.worker, {
       cwd: environment.cae,
       signal,
       input: { operation: 'calculation-check', source },

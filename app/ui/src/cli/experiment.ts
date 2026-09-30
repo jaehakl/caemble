@@ -14,6 +14,7 @@ import { parseArtifactInput } from '@/lib/cae/artifact'
 import { catalogCommand, commandJson, CliError, verifyPython } from '@/platform/node/environment'
 import { readSourceBundle, openArtifact, writeSourceBundle } from '@/platform/node/artifact'
 import type { CommandContext } from './types'
+import { workerRequest } from '@/platform/node/workerRequest'
 
 export async function buildExperiment(context: CommandContext, output: string) {
   const { environment, options, signal } = context
@@ -59,7 +60,7 @@ export async function buildExperiment(context: CommandContext, output: string) {
     const file = `items/${index}.json`
     const target = path.join(output, file)
     process.stderr.write(`Building ${index}/${count}\n`)
-    const built = await commandJson(process.execPath, [environment.worker], {
+    const built = await workerRequest(environment.worker, {
       cwd: environment.cae,
       signal,
       input: {

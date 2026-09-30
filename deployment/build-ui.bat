@@ -4,43 +4,29 @@ setlocal EnableExtensions
 for %%I in ("%~dp0..") do set "APP_DIR=%%~fI"
 set "SDK_DIR=%APP_DIR%\app\sdk\master\js"
 set "UI_DIR=%APP_DIR%\app\ui"
-set "ARTIFACT_PATH=%~dp0caemble-ui.tar.gz"
-set "EVALUATION_ARTIFACT_PATH=%~dp0caemble-evaluation.tar.gz"
-
-if exist "%ARTIFACT_PATH%" del /f /q "%ARTIFACT_PATH%"
-if exist "%EVALUATION_ARTIFACT_PATH%" del /f /q "%EVALUATION_ARTIFACT_PATH%"
+set "ARTIFACT_PATH=%~dp0caemble.tar.gz"
 
 pushd "%APP_DIR%"
 if errorlevel 1 exit /b 1
 
-echo [1/6] Installing JavaScript SDK dependencies
+echo [1/3] Installing JavaScript SDK dependencies
 cd /d "%SDK_DIR%"
 call npm ci --no-fund || goto :fail
 
-echo [2/6] Building JavaScript SDK
-call npm run build || goto :fail
-
-echo [3/6] Installing UI dependencies
+echo [2/3] Installing UI dependencies
 cd /d "%UI_DIR%"
 call npm ci --no-fund || goto :fail
 
-echo [4/6] Building production UI
+echo [3/3] Building production UI, CLI, and evaluation runtime
 set "VITE_API_BASE_URL=/api"
 set "VITE_CAEMBLE_HOST_ORIGIN=https://www.caemble.com"
 set "VITE_CAEMBLE_RUNNER_ORIGIN=https://code-to-cad.caemble.com"
 call npm run build || goto :fail
 
-echo [5/6] Packaging the evaluation worker runtime
-tar -C "%APP_DIR%\app\slaves\evaluation\dist" -czf "%EVALUATION_ARTIFACT_PATH%" . || goto :fail
-
-echo [6/6] Creating UI deployment artifact
-tar -C "%UI_DIR%\dist" -czf "%ARTIFACT_PATH%" . || goto :fail
-
 echo.
 echo Build complete.
-echo UI artifact: %ARTIFACT_PATH%
+echo Unified release: %ARTIFACT_PATH%
 echo Local CLI: %UI_DIR%\dist-cli\caemble.cjs
-echo Evaluation runtime: %EVALUATION_ARTIFACT_PATH%
 
 popd
 exit /b 0
@@ -48,8 +34,6 @@ exit /b 0
 :fail
 set "BUILD_EXIT_CODE=%ERRORLEVEL%"
 if "%BUILD_EXIT_CODE%"=="0" set "BUILD_EXIT_CODE=1"
-if exist "%ARTIFACT_PATH%" del /f /q "%ARTIFACT_PATH%"
-if exist "%EVALUATION_ARTIFACT_PATH%" del /f /q "%EVALUATION_ARTIFACT_PATH%"
 echo.
 echo Build failed.
 popd

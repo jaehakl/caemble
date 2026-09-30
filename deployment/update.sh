@@ -37,7 +37,7 @@ cleanup() {
     if [[ "$gate_owned" == true ]]; then
         sudo rm -f /run/caemble-draining || true
     fi
-    rm -f "$staging_dir/render-storage-csp.py" "$staging_dir/api-stop.conf" "$staging_dir/app.conf" "$staging_dir/caemble-ui.tar.gz" || true
+    rm -f "$staging_dir/render-storage-csp.py" "$staging_dir/api-stop.conf" "$staging_dir/app.conf" "$staging_dir/caemble.tar.gz" || true
     sudo rm -f "$staging_dir/previous-app.conf" || true
     rmdir "$staging_dir" || true
     exit "$status"
@@ -51,12 +51,12 @@ else
 fi
 git show "$incoming_commit:deployment/render-storage-csp.py" > "$staging_dir/render-storage-csp.py"
 (cd "$API_DIR" && poetry run python "$staging_dir/render-storage-csp.py" "$staging_dir/app.conf" "$API_DIR/.env")
-if [[ -n "${UI_ARTIFACT:-}" ]]; then
-    cp "$UI_ARTIFACT" "$staging_dir/caemble-ui.tar.gz"
+if [[ -n "${CAEMBLE_ARTIFACT:-}" ]]; then
+    cp "$CAEMBLE_ARTIFACT" "$staging_dir/caemble.tar.gz"
 else
-    git show "$incoming_commit:deployment/caemble-ui.tar.gz" > "$staging_dir/caemble-ui.tar.gz"
+    git show "$incoming_commit:deployment/caemble.tar.gz" > "$staging_dir/caemble.tar.gz"
 fi
-tar -tzf "$staging_dir/caemble-ui.tar.gz" >/dev/null
+tar -tzf "$staging_dir/caemble.tar.gz" web/index.html node/build-info.json >/dev/null
 
 if sudo test -e /run/caemble-draining; then
     echo "A deployment admission gate already exists. Resolve the existing deployment before retrying." >&2
@@ -107,7 +107,7 @@ release_dir="$releases_dir/$release_name"
 next_link="$WEB_ROOT/.current-$release_name"
 
 sudo mkdir -p "$release_dir"
-sudo tar --no-same-owner -xzf "$staging_dir/caemble-ui.tar.gz" -C "$release_dir"
+sudo tar --no-same-owner -xzf "$staging_dir/caemble.tar.gz" -C "$release_dir" --strip-components=1 web
 sudo chown -R root:www-data "$release_dir"
 sudo find "$release_dir" -type d -exec chmod 755 {} \;
 sudo find "$release_dir" -type f -exec chmod 644 {} \;

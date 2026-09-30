@@ -29,26 +29,31 @@ Pop-Location
 ```
 
 For optimization, install Node 24.14 or later and the evaluation application on
-at least one launcher. Build its runtime from the same checkout:
+at least one launcher:
 
 ```powershell
-Push-Location ../ui
-npm ci
-npm run build:evaluation
-Pop-Location
 Push-Location evaluation
 poetry install
-poetry run python -m app doctor
 Pop-Location
 ```
 
-Alternatively extract `deployment/caemble-evaluation.tar.gz` into
-`app/slaves/evaluation/dist`. The bundle includes its TypeScript declarations
-and `build-info.json`; copying only `evaluation.cjs` is insufficient. The
-optional `evaluation/runtime.toml` sets an absolute `node` executable path.
-Doctor checks Node, required runtime assets and the build metadata version.
-The launcher advertises Evaluation only when this
-application-owned readiness check succeeds. Restart the launcher after installation.
+On startup, after recovering previous executions and before connecting to the
+server, the launcher runs the application's `prepare_args` once. Evaluation
+prepares the `node/` subtree of `deployment/caemble.tar.gz` in the checkout's
+`.data/node-runtime/<runtime_id>`, using the same installer and Node worker as the CLI. Matching build metadata and required
+files are left untouched. A failed update preserves the previous bundle and
+excludes Evaluation for this launcher run, with the cause printed to its console.
+Reconnections and individual Jobs only check readiness; they do not install files.
+
+No npm installation, build, or manual extraction is needed on the launcher machine.
+Developers run `npm run build` in `app/ui` to build the web and shared Node runtime
+and package the release. Ship that archive with the checkout. `build:node`,
+`build:cli`, and `build:evaluation` only build the development runtime in `dist-cli`.
+Each running process keeps its selected version; an update leaves earlier versions intact.
+The optional `evaluation/runtime.toml` sets an absolute `node` executable path.
+`poetry run python -m app doctor` from `evaluation` remains a read-only check of
+Node, required runtime assets and build metadata. Restart the launcher after
+updating it; only prepared, ready applications are advertised to the server.
 
 Evaluation receives stage inputs over the existing job WebSocket. Python owns
 object transfers and starts a disposable Node child with source/data only and

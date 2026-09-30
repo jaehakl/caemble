@@ -161,6 +161,10 @@ export async function resolveEnvironment(
     })
   }
   python = python ? await realpath(path.resolve(python)) : ''
+  const runtimeDirectory =
+    path.basename(process.argv[1] ?? '') === 'caemble.cjs'
+      ? path.dirname(await realpath(process.argv[1]))
+      : path.join(repo, 'app/ui/dist-cli')
   return {
     repo,
     cae,
@@ -168,8 +172,8 @@ export async function resolveEnvironment(
     envPath,
     apiUrl: env.CAEMBLE_API_URL,
     token: env.CAEMBLE_API_TOKEN,
-    cli: path.join(repo, 'app/ui/dist-cli/caemble.cjs'),
-    worker: path.join(repo, 'app/ui/dist-cli/worker.cjs'),
+    cli: path.join(runtimeDirectory, 'caemble.cjs'),
+    worker: path.join(runtimeDirectory, 'worker.cjs'),
   }
 }
 export type CliEnvironment = Awaited<ReturnType<typeof resolveEnvironment>>

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
+import sys
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +20,15 @@ def child_environment() -> dict[str, str]:
                "home", "userprofile", "appdata", "localappdata", "lang", "lc_all",
                "omp_num_threads", "openblas_num_threads", "mkl_num_threads"}
     return {key: value for key, value in os.environ.items() if key.lower() in allowed}
+
+
+# The checkout-owned installer is shared with the CLI bootstrap.
+sys.path.insert(0, str(PROJECT.parents[2] / "app/ui/scripts"))
+from node_runtime import bundle_metadata, current_runtime, prepare_runtime
+
+
+def prepare(project: Path = PROJECT) -> dict:
+    return prepare_runtime(project.parents[2])
 
 
 def doctor(project: Path = PROJECT) -> dict:
@@ -32,20 +42,10 @@ def doctor(project: Path = PROJECT) -> dict:
                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0).stdout.strip()
     if tuple(int(part) for part in version.removeprefix("v").split(".")[:2]) < (24, 14):
         raise RuntimeError(f"Node 24.14+ is required; found {version}.")
-    directory = project / "dist"
-    metadata_path = directory / "build-info.json"
-    try:
-        raw = metadata_path.read_bytes()
-        metadata = json.loads(raw)
-        if metadata["version"] != "1":
-            raise ValueError("unsupported build metadata version")
-        for name in ("evaluation.cjs", "caemble-core.d.ts", "cad-jsx.d.ts", "lib.es5.d.ts"):
-            if not (directory / name).is_file():
-                raise ValueError(f"missing runtime asset: {name}")
-    except (OSError, ValueError, KeyError) as error:
-        raise RuntimeError(f"Evaluation bundle is missing or stale; run npm run build:evaluation in app/ui ({error}).") from error
+    directory = current_runtime(project.parents[2])
+    raw = bundle_metadata(directory)
     return {"ready": True, "node": node, "node_version": version,
-            "worker": str(directory / "evaluation.cjs"), "runtime_id": hashlib.sha256(raw).hexdigest()}
+            "worker": str(directory / "worker.cjs"), "runtime_id": hashlib.sha256(raw).hexdigest()}
 
 
 class EvaluationError(RuntimeError):
@@ -59,7 +59,7 @@ async def run_node(request: dict, runtime: dict, *, timeout: float = 120) -> dic
     with tempfile.TemporaryDirectory(prefix="caemble-evaluation-") as directory:
         folder = Path(directory)
         input_path, output_path = folder / "input.json", folder / "output.json"
-        input_path.write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+        input_path.write_text(json.dumps({"operation": "evaluate", "evaluation": request}, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         child = await asyncio.create_subprocess_exec(
             runtime["node"], runtime["worker"], cwd=folder, env=child_environment(),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, cpSync, existsSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -19,15 +19,25 @@ assert.ok(meta.experimentCount > 0, 'The Catalog must contain executable Example
 assert.equal(examples.length, meta.experimentCount, 'The client build must cover every Catalog Example.')
 assert.equal(new Set(examples.map((example) => example.coordinate)).size, meta.experimentCount)
 assert.equal(catalog.catalogRevision, meta.catalogRevision)
+const keyIndex = process.argv.indexOf('--key')
+const selected = keyIndex < 0 ? examples : examples.filter((example) => example.key === process.argv[keyIndex + 1])
+assert.ok(selected.length, 'The requested parity fixture must exist.')
 const declarations = path.resolve('src/lib/cad/api')
 const temporary = mkdtempSync(path.join(os.tmpdir(), 'caemble-client-build-'))
 cpSync('dist-cli', temporary, { recursive: true })
 const executable = path.join(temporary, 'worker.cjs')
+let operationIndex = 0
+function envelope(request: unknown) {
+  const input_file = path.join(temporary, `request-${++operationIndex}.json`)
+  const output_file = path.join(temporary, `response-${operationIndex}.json`)
+  writeFileSync(input_file, JSON.stringify(request))
+  return JSON.stringify({ input_file, output_file })
+}
 
 try {
   assert.ok(existsSync(executable))
   assert.ok(existsSync(path.join(temporary, 'caemble-core.d.ts')))
-  for (const example of examples) {
+  for (const example of selected) {
     installCatalogRuntimeSlice(catalog)
     const compiled = compileCatalogExample(example, catalog)
     const { varsSchema } = inspectCompiledDocument(compiled)
@@ -65,7 +75,7 @@ try {
     const output = path.join(temporary, `${example.key}.json`)
     execFileSync(process.execPath, [executable], {
       cwd: temporary,
-      input: JSON.stringify({ operation: 'build', build: request, output }),
+      input: envelope({ operation: 'build', build: request, output }),
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024,
     })
@@ -83,6 +93,17 @@ try {
         `${example.key}/${taskName}: default build must preserve authored Geometry resolution`,
       )
     assert.deepEqual(actual.measurement.experiment.variables, vars)
+    if (keyIndex >= 0) {
+      const evaluationEnvelope = JSON.parse(
+        envelope({ operation: 'evaluate', evaluation: { stage: 'build', build: request } }),
+      )
+      execFileSync(process.execPath, [executable], {
+        cwd: temporary,
+        input: JSON.stringify(evaluationEnvelope),
+        encoding: 'utf8',
+      })
+      assert.deepEqual(JSON.parse(readFileSync(evaluationEnvelope.output_file, 'utf8')), actual)
+    }
     assert.deepEqual(
       measurementMaterialSnapshot(actual.measurement),
       JSON.parse(JSON.stringify(request.material_snapshot)),
@@ -90,7 +111,7 @@ try {
     assert.equal('renderScene' in actual.measurement.experiment, false)
     console.log(`${example.key}: isolated artifact matches canonical browser input`)
   }
-  console.log(`All ${meta.experimentCount} Catalog Examples passed isolated build parity at ${meta.catalogRevision}`)
+  console.log(`${selected.length} Catalog Examples passed isolated build parity at ${meta.catalogRevision}`)
 
   const fdtd = examples.find((example) => example.key === 'fdtd-drude-slab')!
   const trcBundle = fdtd.sourceBundle
@@ -220,7 +241,7 @@ try {
 
   const invalid = spawnSync(process.execPath, [executable], {
     cwd: temporary,
-    input: JSON.stringify({
+    input: envelope({
       operation: 'build',
       build: { ...request, mode: 'measurement' },
       output: path.join(temporary, 'invalid.json'),
@@ -235,7 +256,7 @@ try {
   }
   const rejected = spawnSync(process.execPath, [executable], {
     cwd: temporary,
-    input: JSON.stringify({
+    input: envelope({
       operation: 'build',
       build: { ...request, source_bundle: forbidden },
       output: path.join(temporary, 'forbidden.json'),
@@ -255,7 +276,7 @@ try {
   }
   const timedOut = spawnSync(process.execPath, [executable], {
     cwd: temporary,
-    input: JSON.stringify({
+    input: envelope({
       operation: 'build',
       build: { ...request, source_bundle: looping, evaluation_timeout_ms: 10 },
       output: path.join(temporary, 'loop.json'),

@@ -4,7 +4,7 @@ Calculation(후처리 계산)은 실험에서 기록한 수치 데이터를 읽�
 
 ## 시작 전에 준비할 것
 
-아래 명령은 Caemble 저장소 루트의 **PowerShell 7**을 기준으로 합니다. 먼저 `.\caemble.cmd doctor`를 실행합니다. CLI가 없거나 오래된 경우 `npm --prefix app/ui run build:cli`로 빌드하고 다시 확인합니다. POSIX에서는 `sh ./caemble`을 사용합니다. 소스는 **BOM 없는 UTF-8**로 저장하며, 예제의 `.work/calculation`은 비어 있는 디렉터리를 사용합니다.
+아래 명령은 Caemble 저장소 루트의 **PowerShell 7**을 기준으로 합니다. 먼저 `.\caemble.cmd doctor`를 실행합니다. 배포 CLI는 시작 시 번들을 자동 준비합니다. 소스를 수정한 개발 환경에서는 `npm --prefix app/ui run build:node` 후 `node app/ui/dist-cli/caemble.cjs doctor`로 확인하고 같은 진입점으로 명령을 실행합니다. POSIX에서는 `sh ./caemble`을 사용합니다. 소스는 **BOM 없는 UTF-8**로 저장하며, 예제의 `.work/calculation`은 비어 있는 디렉터리를 사용합니다.
 
 코드를 쓰기 전에 대상 ExperimentRecord(기록 이름과 데이터 형식), 기록이 저장된 Measurement, 실제로 사용할 수 있는 Output을 확인합니다. 기존 Calculation을 수정한다면 현재 소스와 원본 해시도 확인합니다. 기록 형식이 정의되어 있어도 모든 Measurement에 해당 데이터가 있다는 뜻은 아닙니다.
 

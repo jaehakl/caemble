@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import sys
 
-from app.runtime import doctor
+from app.runtime import doctor, prepare
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["doctor"]:
+    if sys.argv[1:] in (["doctor"], ["prepare"]):
         try:
-            print(json.dumps(doctor(), ensure_ascii=False))
+            result = prepare() if sys.argv[1] == "prepare" else doctor()
+            print(json.dumps(result, ensure_ascii=False))
         except Exception as error:
             print(json.dumps({"ready": False, "error": str(error)}, ensure_ascii=False))
             raise SystemExit(1) from None
