@@ -169,13 +169,23 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     navigate('/settings')
   }, [inspectedBatchId, navigate])
   const currentSection = page.activeSection
-  const requestedStudyId = new URLSearchParams(location.search).get('study')
-  const openedStudyRef = useRef<string | null>(null)
+  const requestedOptimizationId = new URLSearchParams(location.search).get('optimization')
+  const openedOptimizationRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!page.initialized || !requestedStudyId || openedStudyRef.current === requestedStudyId) return
-    openedStudyRef.current = requestedStudyId
-    setLayout((current) => ({ ...current, activeSection: 'optimization' }))
-  }, [page.initialized, requestedStudyId, setLayout])
+    if (!page.initialized || openedOptimizationRef.current === requestedOptimizationId) return
+    openedOptimizationRef.current = requestedOptimizationId
+    if (requestedOptimizationId) setLayout((current) => ({ ...current, activeSection: 'optimization' }))
+  }, [page.initialized, requestedOptimizationId, setLayout])
+  const selectOptimization = useCallback(
+    (id: string | null) => {
+      const params = new URLSearchParams(location.search)
+      if (id) params.set('optimization', id)
+      else params.delete('optimization')
+      if (params.toString() === new URLSearchParams(location.search).toString()) return
+      navigate({ pathname: location.pathname, search: params.toString() })
+    },
+    [location.pathname, location.search, navigate],
+  )
   const guardReplacement = page.guardReplacement
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
@@ -590,13 +600,14 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 <div className="min-h-0 flex-1">
                   <Suspense fallback={<PaneLoading label="최적화를 불러오는 중입니다." />}>
                     <OptimizationWorkspace
-                      key={`${workbench.workspaceSession}:${requestedStudyId ?? ''}`}
+                      key={`${auth.queryScope}:${workbench.experimentId ?? 'local'}`}
                       workbench={workbench}
-                      initialStudyId={requestedStudyId}
+                      requestedOptimizationId={requestedOptimizationId}
+                      onSelectOptimization={selectOptimization}
                       onRequestLogin={requestAccount}
-                      onApplyBest={(study) =>
+                      onApplyBest={(optimization) =>
                         page.guardReplacement(async () => {
-                          if (await workbench.openStudyCandidate(study)) {
+                          if (await workbench.openOptimizationCandidate(optimization)) {
                             preflight.clear()
                             page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
                           }

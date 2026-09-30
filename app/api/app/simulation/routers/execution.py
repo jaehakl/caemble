@@ -63,7 +63,7 @@ async def read_preflight_result(
 async def batches(
     experiment_id: int | None = None,
     attention_only: bool = False,
-    exclude_studies: bool = False,
+    exclude_optimizations: bool = False,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -72,7 +72,7 @@ async def batches(
     return await list_batches(
         db, user.id, experiment_id=experiment_id, limit=limit, offset=offset,
         attention_only=attention_only,
-        exclude_studies=exclude_studies,
+        exclude_optimizations=exclude_optimizations,
     )
 
 

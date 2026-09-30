@@ -15,7 +15,7 @@ import {
 } from '@/platform/node/environment'
 import { experimentCommand } from './experiment'
 import { batchCommand } from './batch'
-import { studyCommand } from './study'
+import { optimizationCommand } from './optimization'
 import { calculationCommand } from './calculation'
 import { dataCommand } from './data'
 import {
@@ -35,9 +35,9 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   experiment test <artifact> --out <results> [--timeout seconds]
   batch submit <artifact> --experiment <id> | list | show <id> | watch <id> | cancel <id> | retry <id>
     submit resources: --cpu-cores N --startup-ram-mib N --gpu-count N --gpu-memory-mib N
-  study create <artifact> --experiment <id> --config <study.json> [--item N] [--request-id UUID]
-  study list [--experiment <id>] | show <id> | trials <id> | watch <id> [--timeout seconds]
-  study stop <id> | resume <id> | retry <id> --trial <trial-id> [--request-id UUID] | delete <id>
+  optimization create <artifact> --experiment <id> --config <optimization.json> [--item N] [--request-id UUID]
+  optimization list [--experiment <id>] | show <id> | trials <id> | watch <id> [--timeout seconds]
+  optimization stop <id> | resume <id> | retry <id> --trial <trial-id> [--request-id UUID] | delete <id>
   calculation init <dir> | list --experiment <id> | pull <id> --out <dir> | check <source.js>
   calculation run <source.js> --fixture <input.json> | --result <local-run> | --measurement <id>
   calculation push <dir> --experiment <id> --measurement <id>
@@ -192,7 +192,7 @@ async function main() {
         )
     } else if (group === 'experiment') result = await experimentCommand(command, context)
     else if (group === 'batch') result = await batchCommand(command, context)
-    else if (group === 'study') result = await studyCommand(command, context)
+    else if (group === 'optimization') result = await optimizationCommand(command, context)
     else if (group === 'calculation' || group === 'calculation-data')
       result = await calculationCommand(group, command, context)
     else if (group === 'measurement' || group === 'data') result = await dataCommand(group, command, context)

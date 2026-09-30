@@ -192,7 +192,7 @@ async def measurement_execution(db: AsyncSession, measurement_id: int, user_id: 
 async def list_batches(
     db: AsyncSession, user_id: str, *, experiment_id: int | None, limit: int, offset: int,
     attention_only: bool = False,
-    exclude_studies: bool = False,
+    exclude_optimizations: bool = False,
 ) -> dict:
     cursor = await event_cursor(db, user_id)
     query = (
@@ -202,7 +202,7 @@ async def list_batches(
     )
     if experiment_id is not None:
         query = query.where(CaeBatch.experiment_id == experiment_id)
-    if exclude_studies:
+    if exclude_optimizations:
         from optimization.guards import unmanaged_execution_clause
         query = query.where(unmanaged_execution_clause(batch_id=JobBatch.id))
     if attention_only:

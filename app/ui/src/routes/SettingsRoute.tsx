@@ -4,7 +4,7 @@ import { useAuth } from '@/features/auth/use-auth'
 import { CaeBatchPanel } from '@/features/cae/CaeBatchPanel'
 import { JobsWorkspace } from '@/features/jobs/JobsPage'
 import { LaunchersWorkspace } from '@/features/launchers/LaunchersPage'
-import { StudyManagement } from '@/features/optimization/StudyManagement'
+import { OptimizationManagement } from '@/features/optimization/OptimizationManagement'
 
 export function SettingsPage() {
   const auth = useAuth()
@@ -40,7 +40,7 @@ export function SettingsPage() {
         </section>
         <section className="min-h-[32rem] space-y-3 overflow-auto rounded-lg border bg-background xl:min-h-0">
           <div className="border-b p-3">
-            <StudyManagement key={auth.queryScope} compact />
+            <OptimizationManagement key={auth.queryScope} compact />
           </div>
           <CaeBatchPanel compact />
         </section>

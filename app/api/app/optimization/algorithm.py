@@ -97,7 +97,7 @@ def evaluate_metrics(calculations: list[dict], settings: dict) -> dict:
     values = {item["key"]: item["value"] for item in calculations}
     expected = {"objective", *(constraint["key"] for constraint in settings["constraints"])}
     if set(values) != expected or len(values) != len(calculations):
-        raise ValueError("Evaluation metrics differ from the frozen Study definition.")
+        raise ValueError("Evaluation metrics differ from the frozen Optimization definition.")
     if any(type(value) not in (int, float) or not math.isfinite(value) for value in values.values()):
         raise ValueError("An evaluation metric must be a finite scalar.")
     constraints, violation = [], 0.0

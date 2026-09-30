@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CaeWorkbenchRoute } from './CaeWorkbenchRoute'
 import type { AnalysisWorkspaceProps } from '@/features/analysis/AnalysisPage'
@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   clearMeasurement: vi.fn(),
   setCandidateVariables: vi.fn(),
   varsProps: {} as Record<string, unknown>,
+  optimizationMounts: 0,
 }))
 
 vi.mock('@/features/auth/use-auth', () => ({
@@ -288,6 +289,36 @@ vi.mock('@/features/launchers/LaunchersPage', () => ({ LaunchersWorkspace: () =>
 vi.mock('@/features/cae-workbench/CaeWorkbenchDialogs', () => ({ CaeWorkbenchDialogs: () => null }))
 vi.mock('@/features/cae-workbench/AdminWorkspace', () => ({ AdminWorkspace: () => null }))
 vi.mock('@/features/cae-workbench/WorkbenchDetails', () => ({ ExperimentDetail: () => null }))
+vi.mock('@/features/optimization/OptimizationWorkspace', () => ({
+  OptimizationWorkspace: ({
+    requestedOptimizationId,
+    onSelectOptimization,
+  }: {
+    requestedOptimizationId: string | null
+    onSelectOptimization: (id: string | null) => void
+  }) => {
+    const [mount] = useState(() => ++mocks.optimizationMounts)
+    return (
+      <section aria-label="Optimization test workspace" data-mount={mount}>
+        <output aria-label="Selected Optimization">{requestedOptimizationId ?? 'none'}</output>
+        <button onClick={() => onSelectOptimization('optimization-2')}>Select next Optimization</button>
+        <button onClick={() => onSelectOptimization(null)}>Clear Optimization</button>
+      </section>
+    )
+  },
+}))
+
+function OptimizationHistoryControls() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  return (
+    <>
+      <output aria-label="Current search">{location.search}</output>
+      <button onClick={() => navigate(-1)}>Previous URL</button>
+      <button onClick={() => navigate(1)}>Next URL</button>
+    </>
+  )
+}
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -311,10 +342,34 @@ beforeEach(() => {
   mocks.preflightBusy = false
   mocks.authenticated = false
   mocks.sessionBusy = false
+  mocks.optimizationMounts = 0
   mocks.loadMeasurement.mockReset()
 })
 
 describe('Workbench section navigation', () => {
+  it('synchronizes Optimization selection with browser history without remounting its setup', async () => {
+    const client = new QueryClient()
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/workbench?experiment=7&optimization=optimization-1']}>
+          <OptimizationHistoryControls />
+          <CaeWorkbenchRoute />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByLabelText('Selected Optimization')).toHaveTextContent('optimization-1')
+    fireEvent.click(screen.getByText('Select next Optimization'))
+    expect(screen.getByLabelText('Selected Optimization')).toHaveTextContent('optimization-2')
+    expect(screen.getByLabelText('Current search')).toHaveTextContent('optimization=optimization-2')
+    fireEvent.click(screen.getByText('Previous URL'))
+    await waitFor(() => expect(screen.getByLabelText('Selected Optimization')).toHaveTextContent('optimization-1'))
+    fireEvent.click(screen.getByText('Next URL'))
+    await waitFor(() => expect(screen.getByLabelText('Selected Optimization')).toHaveTextContent('optimization-2'))
+    fireEvent.click(screen.getByText('Clear Optimization'))
+    expect(screen.getByLabelText('Selected Optimization')).toHaveTextContent('none')
+    expect(screen.getByLabelText('Current search')).not.toHaveTextContent('optimization=')
+    expect(mocks.optimizationMounts).toBe(1)
+  })
   it('offers only batch generation and disables it during another run', () => {
     mocks.authenticated = true
     mocks.manageable = true

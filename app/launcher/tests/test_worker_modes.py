@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -110,6 +110,55 @@ async def test_failed_cleanup_quarantines_reservation(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_repeated_cancel_retries_failed_cleanup_without_releasing_early(tmp_path):
+    manager = make_manager(tmp_path)
+    value = offer(manager, 1)
+    await manager.reserve_job(value)
+    worker = manager.instances[value["instance_id"]]
+    worker.container = SimpleNamespace(stop=AsyncMock(side_effect=[RuntimeError("temporary process query failure"), None]))
+    await manager.cancel_job(value)
+    await worker.cleanup_task
+    previous_cleanup = worker.cleanup_task
+    assert worker.status == "cleanup_failed"
+    assert value["instance_id"] in manager.ledger.reservations
+
+    await manager.cancel_job(value)
+    await worker.cleanup_task
+    assert worker.cleanup_task is not previous_cleanup
+    assert worker.container.stop.await_count == 2
+    assert not manager.instances and not manager.ledger.reservations
+    assert manager.receipts[value["instance_id"]]["terminal"]["type"] == "job.cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_readiness_does_not_start_a_worker(tmp_path, monkeypatch):
+    import threading
+
+    manager = make_manager(tmp_path)
+    checking, proceed = threading.Event(), threading.Event()
+
+    def check_ready(_):
+        checking.set()
+        assert proceed.wait(5)
+
+    monkeypatch.setattr(SlaveApp, "check_ready", check_ready)
+    manager.container_factory = Mock()
+    value = offer(manager, 1)
+    await manager.reserve_job(value)
+    worker = manager.instances[value["instance_id"]]
+    try:
+        await manager.start_job({**value, "type": "job.start", "allocation": worker.allocation})
+        assert await asyncio.to_thread(checking.wait, 2)
+        await manager.cancel_job(value)
+    finally:
+        proceed.set()
+        await manager.close()
+    manager.container_factory.assert_not_called()
+    assert not manager.instances and not manager.ledger.reservations
+    assert manager.receipts[value["instance_id"]]["terminal"]["type"] == "job.cancelled"
+
+
+@pytest.mark.asyncio
 async def test_journal_receipts_survive_reconnect_and_only_matching_ack_removes(tmp_path):
     journal = LauncherJournal(tmp_path / "state")
     manager = make_manager(tmp_path, journal=journal)
@@ -188,7 +237,8 @@ async def test_real_bootstrapped_instances_overlap_and_keep_attempt_results(tmp_
         starts = [stamp for stamp, message in events if message["type"] == "job.running"]
         results = [(stamp, message) for stamp, message in events if message["type"] == "job.result"]
         assert len(starts) == len(results) == 2, events
-        assert max(starts) < min(stamp for stamp, _ in results)
+        assert max(index for index, (_, message) in enumerate(events) if message["type"] == "job.running") < min(
+            index for index, (_, message) in enumerate(events) if message["type"] == "job.result")
         assert {message["attempt_id"] for _, message in results} == {"attempt-1", "attempt-2"}
         assert not ledger.reservations
     finally:

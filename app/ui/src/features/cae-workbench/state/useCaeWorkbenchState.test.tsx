@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { dbTables, type UserData } from '@/api'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
-import { studyFixture } from '@/features/optimization/fixtures.test-support'
+import { optimizationFixture } from '@/features/optimization/fixtures.test-support'
 
 const mocks = vi.hoisted(() => ({
   editableVars: false,
@@ -159,7 +159,7 @@ beforeEach(() => {
   mocks.workspaceOptions.mockClear()
 })
 
-it('opens frozen Study source and best Candidate atomically and ignores an older Measurement lookup', async () => {
+it('opens frozen Optimization source and best Candidate atomically and ignores an older Measurement lookup', async () => {
   mocks.editableVars = true
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: PropsWithChildren) => (
@@ -180,12 +180,12 @@ it('opens frozen Study source and best Candidate atomically and ignores an older
   })
   await waitFor(() => expect(finish).toBeDefined())
   await act(async () => {
-    expect(await result.current.openStudyCandidate(studyFixture)).toBe(true)
+    expect(await result.current.openOptimizationCandidate(optimizationFixture)).toBe(true)
   })
   expect(result.current.candidateVars).toEqual({ width: 3 })
   expect(result.current.candidateMaterialSnapshot).toBeNull()
   expect(result.current.selectionContext.measurementId).toBeNull()
-  expect(result.current.experiment?.sourceBundle).toEqual(studyFixture.definition.source_bundle)
+  expect(result.current.experiment?.sourceBundle).toEqual(optimizationFixture.definition.source_bundle)
   await act(async () => {
     finish({ items: [mocks.measurement], total: 1 })
     await loading

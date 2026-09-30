@@ -146,6 +146,45 @@ async def test_child_never_inherits_credentials_or_injection_options(tmp_path, m
     assert not any(name in result for name in ('CAEMBLE_API_TOKEN', 'OPENAI_API_KEY', 'NODE_OPTIONS', 'PYTHONPATH', 'CAEMBLE_EXECUTION_JSON'))
 
 
+async def test_child_crash_preserves_bounded_stderr_instead_of_json_parse_error(tmp_path):
+    script = tmp_path / 'crash.cjs'
+    script.write_text("process.stderr.write('x'.repeat(6000) + ' 메모리 부족'); process.exit(7);", encoding='utf-8')
+    with pytest.raises(runtime.EvaluationError, match='code 7') as raised:
+        await runtime.run_node({}, {'node': runtime.shutil.which('node'), 'worker': str(script)})
+    assert raised.value.code == 'child_exit'
+    assert str(raised.value).endswith('메모리 부족')
+    assert len(str(raised.value)) < 4200
+
+
+@pytest.mark.parametrize('reply, result, expected_code', [
+    ('[]', '{}', 'invalid_response'),
+    ('{"ok":false}', '{}', 'invalid_response'),
+    ('not json', '{}', 'invalid_response'),
+    ('{"ok":true}', None, 'invalid_result'),
+    ('{"ok":true}', 'not json', 'invalid_result'),
+    ('{"ok":true}', '[]', 'invalid_result'),
+])
+async def test_child_malformed_protocol_is_reported_as_evaluation_error(tmp_path, reply, result, expected_code):
+    script = tmp_path / 'malformed.cjs'
+    script.write_text("let raw=''; process.stdin.on('data', chunk=>raw+=chunk); process.stdin.on('end',()=>{"
+        + (f"require('fs').writeFileSync(JSON.parse(raw).output_file,{json.dumps(result)});" if result is not None else '')
+        + f"process.stdout.write({json.dumps(reply)});" + "});", encoding='utf-8')
+    with pytest.raises(runtime.EvaluationError) as raised:
+        await runtime.run_node({}, {'node': runtime.shutil.which('node'), 'worker': str(script)})
+    assert raised.value.code == expected_code
+
+
+async def test_child_authored_error_keeps_code_and_diagnostics(tmp_path):
+    script = tmp_path / 'error.cjs'
+    error = {'message': 'Calculation objective must return one finite scalar.', 'code': 'calculation-output',
+             'diagnostics': [{'message': 'finite scalar required', 'stage': 'execution'}]}
+    script.write_text(f"process.stdout.write({json.dumps(json.dumps({'error': error}))}); process.exitCode=1;", encoding='utf-8')
+    with pytest.raises(runtime.EvaluationError, match='finite scalar') as raised:
+        await runtime.run_node({}, {'node': runtime.shutil.which('node'), 'worker': str(script)})
+    assert raised.value.code == error['code']
+    assert raised.value.diagnostics == error['diagnostics']
+
+
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_timeout_or_cancel_reaps_node(tmp_path, cancel):
     pid_file = tmp_path / 'pid'

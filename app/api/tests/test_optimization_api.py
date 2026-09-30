@@ -1,4 +1,4 @@
-"""Study persistence and public execution boundaries; no Solver execution."""
+"""Optimization persistence and public execution boundaries; no Solver execution."""
 from __future__ import annotations
 
 import asyncio
@@ -21,12 +21,12 @@ from caemble_catalog import Catalog
 from simulation.services import recording
 from simulation.services.batches import list_batches
 from simulation.db import CaeBatch
-from optimization.db import StageSubmission, Study, Trial
-from optimization.schemas import StudyCreateRequest
+from optimization.db import StageSubmission, Optimization, Trial
+from optimization.schemas import OptimizationCreateRequest
 from optimization import evaluation, integration
 from optimization.service import (
-    create_study, delete_study, list_studies, list_trials, require_study,
-    resume_study,
+    create_optimization, delete_optimization, list_optimizations, list_trials, require_optimization,
+    resume_optimization,
 )
 from optimization.guards import require_unmanaged_execution, require_unreferenced_experiments, require_unreferenced_measurements
 from calculation.db import Calculation, CalculationSource
@@ -39,7 +39,7 @@ from user_auth.schemas import RoleEnum, UserData
 from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
 
 
-class StudyRequestTests(unittest.TestCase):
+class OptimizationRequestTests(unittest.TestCase):
     def request(self, **overrides):
         return {"request_id": str(uuid.uuid4()), "experiment_id": 1, "source_hash": "a" * 64,
                 "vars_schema": {}, "initial_vars": {}, "objective": {"calculation_id": 1}, **overrides}
@@ -51,11 +51,11 @@ class StudyRequestTests(unittest.TestCase):
                       {"constraints": [{"calculation_id": 2, "minimum": float("inf")}]},
                       {"axes": [{"name": "x", "min": 2, "max": 1}]}):
             with self.subTest(value=value), self.assertRaises(ValidationError):
-                StudyCreateRequest.model_validate(self.request(**value))
+                OptimizationCreateRequest.model_validate(self.request(**value))
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
-class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
+class OptimizationPersistenceTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.database = f"caemble_calculation_test_{uuid.uuid4().hex}"
@@ -87,7 +87,7 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.other = UserData(id=self.other_id, roles=[RoleEnum.user])
         self.admin = UserData(id=self.other_id, roles=[RoleEnum.admin])
         async with self.sessions() as db:
-            for model in (Study, Measurement, JobBatch, Job, Calculation, CalculationSource):
+            for model in (Optimization, Measurement, JobBatch, Job, Calculation, CalculationSource):
                 await db.execute(delete(model))
             experiment = await db.get(Experiment, self.experiment_id)
             experiment.source_bundle = self.example["sourceBundle"]
@@ -108,35 +108,35 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     def request(self, **overrides):
-        return StudyCreateRequest.model_validate({"request_id": str(uuid.uuid4()), "experiment_id": self.experiment_id,
+        return OptimizationCreateRequest.model_validate({"request_id": str(uuid.uuid4()), "experiment_id": self.experiment_id,
             "source_hash": self.example["bundleHash"], "vars_schema": {"x": {"shape": [2], "min": 0, "max": 10}},
             "initial_vars": {"x": [4, 5]}, "objective": {"calculation_id": self.calculation_id}, **overrides})
 
     async def test_create_is_idempotent_and_sources_are_owned_frozen_snapshots(self):
         request = self.request()
         async with self.sessions() as db:
-            study = await create_study(db, request, self.owner, self.catalog)
-            self.assertEqual(len(study.settings["axes"]), 2)
-            duplicate = await create_study(db, request, self.owner, self.catalog)
-            self.assertEqual(duplicate.id, study.id)
-            study_id = study.id
+            optimization = await create_optimization(db, request, self.owner, self.catalog)
+            self.assertEqual(len(optimization.settings["axes"]), 2)
+            duplicate = await create_optimization(db, request, self.owner, self.catalog)
+            self.assertEqual(duplicate.id, optimization.id)
+            optimization_id = optimization.id
             with self.assertRaises(HTTPException) as changed:
-                await create_study(db, request.model_copy(update={"max_trials": 3}), self.owner, self.catalog)
+                await create_optimization(db, request.model_copy(update={"max_trials": 3}), self.owner, self.catalog)
             self.assertEqual(changed.exception.status_code, 409)
             await db.rollback()
             source = await db.get(CalculationSource, self.source_id)
             source.source_code, source.source_hash, source.revision = "changed", hashlib.sha256(b"changed").hexdigest(), 2
             await db.commit()
-            frozen = await db.get(Study, study_id)
+            frozen = await db.get(Optimization, optimization_id)
             self.assertEqual(frozen.definition["calculations"][0]["source"], "export default () => 1")
             self.assertEqual(frozen.definition["calculations"][0]["source_revision"], 1)
             with self.assertRaises(HTTPException):
-                await require_study(db, study_id, self.other)
-            self.assertEqual((await require_study(db, study_id, self.admin)).id, study_id)
-            self.assertEqual((await list_studies(db, self.other, experiment_id=None, limit=20, offset=0))["total"], 0)
-            self.assertEqual((await list_studies(db, self.admin, experiment_id=None, limit=20, offset=0))["total"], 1)
+                await require_optimization(db, optimization_id, self.other)
+            self.assertEqual((await require_optimization(db, optimization_id, self.admin)).id, optimization_id)
+            self.assertEqual((await list_optimizations(db, self.other, experiment_id=None, limit=20, offset=0))["total"], 0)
+            self.assertEqual((await list_optimizations(db, self.admin, experiment_id=None, limit=20, offset=0))["total"], 1)
 
-    async def stage(self, db, study):
+    async def stage(self, db, optimization):
         batch = JobBatch(user_id=self.owner_id, request_id=str(uuid.uuid4()), request_hash="stage", total=1,
                          created_count=1, uploaded_count=1, state="queued", generation_stopped=True)
         db.add(batch)
@@ -149,7 +149,7 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
         measurement = Measurement(user_id=self.owner_id, experiment_id=self.experiment_id, vars={"x": [4, 5]}, material_snapshot={})
         db.add(measurement)
         await db.flush()
-        trial = Trial(study_id=study.id, ordinal=1, round_index=0, variables=measurement.vars, fingerprint="candidate",
+        trial = Trial(optimization_id=optimization.id, ordinal=1, round_index=0, variables=measurement.vars, fingerprint="candidate",
                       measurement_id=measurement.id, state="running")
         db.add(trial)
         await db.flush()
@@ -159,38 +159,38 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_children_are_filtered_before_pagination_and_reject_public_mutation(self):
         async with self.sessions() as db:
-            study = await create_study(db, self.request(), self.owner, self.catalog)
-            trial, job, batch = await self.stage(db, study)
+            optimization = await create_optimization(db, self.request(), self.owner, self.catalog)
+            trial, job, batch = await self.stage(db, optimization)
             self.assertEqual(len(await JobService.list_job_summaries(db, user_id=self.owner_id, active_only=False, limit=1)), 1)
-            study_child = select(StageSubmission.id).where(StageSubmission.job_id == Job.id).exists()
-            self.assertEqual(await JobService.list_job_summaries(db, user_id=None, active_only=False, limit=1, predicate=~study_child), [])
-            self.assertEqual((await list_batches(db, self.owner_id, experiment_id=None, limit=1, offset=0, exclude_studies=True))["total"], 0)
+            optimization_child = select(StageSubmission.id).where(StageSubmission.job_id == Job.id).exists()
+            self.assertEqual(await JobService.list_job_summaries(db, user_id=None, active_only=False, limit=1, predicate=~optimization_child), [])
+            self.assertEqual((await list_batches(db, self.owner_id, experiment_id=None, limit=1, offset=0, exclude_optimizations=True))["total"], 0)
             for identity in ({"job_id": job.id}, {"batch_id": batch.id}):
                 with self.assertRaises(HTTPException) as caught:
                     await require_unmanaged_execution(db, **identity, user_id=self.owner_id)
-                self.assertEqual(caught.exception.detail["study_id"], study.id)
-            page = await list_trials(db, study, limit=1, offset=0)
+                self.assertEqual(caught.exception.detail["optimization_id"], optimization.id)
+            page = await list_trials(db, optimization, limit=1, offset=0)
             self.assertEqual(page["items"][0]["stages"][0]["job"]["id"], job.id)
-            self.assertEqual((await list_trials(db, study, limit=1, offset=1))["items"], [])
-            item = (await list_studies(db, self.owner, experiment_id=None, limit=1, offset=0))["items"][0]
+            self.assertEqual((await list_trials(db, optimization, limit=1, offset=1))["items"], [])
+            item = (await list_optimizations(db, self.owner, experiment_id=None, limit=1, offset=0))["items"][0]
             self.assertEqual(item["executions_active"], 1)
             self.assertFalse(item["cleanup_pending"])
             self.assertFalse(item["manual_retry_pending"])
 
     async def test_retained_history_protects_inputs_and_deletion_preserves_measurements(self):
         async with self.sessions() as db:
-            study = await create_study(db, self.request(), self.owner, self.catalog)
-            trial, job, batch = await self.stage(db, study)
+            optimization = await create_optimization(db, self.request(), self.owner, self.catalog)
+            trial, job, batch = await self.stage(db, optimization)
             for operation in (require_unreferenced_experiments(db, [self.experiment_id]),
                               require_unreferenced_measurements(db, [trial.measurement_id])):
                 with self.assertRaises(HTTPException):
                     await operation
-            study.state = "paused"
+            optimization.state = "paused"
             with self.assertRaises(HTTPException):
-                await delete_study(db, study)
+                await delete_optimization(db, optimization)
             job.state = "cancelled"
             await db.flush()
-            await delete_study(db, study)
+            await delete_optimization(db, optimization)
             await db.commit()
             self.assertIsNotNone(await db.get(Measurement, trial.measurement_id))
             self.assertIsNotNone(await db.get(Job, job.id))
@@ -199,53 +199,53 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_resume_rejects_unresolved_failures_and_active_manual_retry(self):
         async with self.sessions() as db:
-            study = await create_study(db, self.request(), self.owner, self.catalog)
-            trial, job, _ = await self.stage(db, study)
-            study.state, trial.state = "paused", "failed"
+            optimization = await create_optimization(db, self.request(), self.owner, self.catalog)
+            trial, job, _ = await self.stage(db, optimization)
+            optimization.state, trial.state = "paused", "failed"
             await db.flush()
             with self.assertRaises(HTTPException):
-                await resume_study(db, study)
+                await resume_optimization(db, optimization)
             trial.state, trial.manual_retry_requested = "running", True
             await db.flush()
             with self.assertRaises(HTTPException):
-                await resume_study(db, study)
+                await resume_optimization(db, optimization)
             trial.state, trial.manual_retry_requested = "succeeded", False
             await db.flush()
             with self.assertRaises(HTTPException):
-                await resume_study(db, study)
+                await resume_optimization(db, optimization)
             job.state = "succeeded"
             await db.flush()
-            await resume_study(db, study)
-            self.assertEqual(study.state, "running")
+            await resume_optimization(db, optimization)
+            self.assertEqual(optimization.state, "running")
 
     async def test_saved_calculation_can_validate_on_first_trial_and_fixed_axis_uses_schema_bounds(self):
         async with self.sessions() as db:
             calculation = await db.get(Calculation, self.calculation_id)
             calculation.contract_status, calculation.output_layout, calculation.validated_source_revision = "needs_preflight", None, None
             await db.commit()
-            study = await create_study(db, self.request(axes=[{"name": "x", "indices": [0], "fixed": True}]), self.owner, self.catalog)
-            self.assertIsNone(study.definition["calculations"][0]["output_layout"])
-            self.assertTrue(study.settings["axes"][0]["fixed"])
-            self.assertEqual((study.settings["axes"][0]["min"], study.settings["axes"][0]["max"]), (0, 10))
+            optimization = await create_optimization(db, self.request(axes=[{"name": "x", "indices": [0], "fixed": True}]), self.owner, self.catalog)
+            self.assertIsNone(optimization.definition["calculations"][0]["output_layout"])
+            self.assertTrue(optimization.settings["axes"][0]["fixed"])
+            self.assertEqual((optimization.settings["axes"][0]["min"], optimization.settings["axes"][0]["max"]), (0, 10))
 
-    async def test_concurrent_create_reuses_one_study_and_rejects_nonfinite_nested_vars(self):
+    async def test_concurrent_create_reuses_one_optimization_and_rejects_nonfinite_nested_vars(self):
         request = self.request()
 
         async def create():
             async with self.sessions() as db:
-                return (await create_study(db, request, self.owner, self.catalog)).id
+                return (await create_optimization(db, request, self.owner, self.catalog)).id
 
         first, second = await asyncio.gather(create(), create())
         self.assertEqual(first, second)
         async with self.sessions() as db:
             with self.assertRaises(HTTPException) as caught:
-                await create_study(db, self.request(initial_vars={"x": [float("nan"), 5]}), self.owner, self.catalog)
+                await create_optimization(db, self.request(initial_vars={"x": [float("nan"), 5]}), self.owner, self.catalog)
             self.assertEqual(caught.exception.status_code, 422)
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
-class StudyMigrationTests(unittest.TestCase):
-    def test_revision_20_adds_tables_to_revision_19_without_replacing_experiments(self):
+class OptimizationMigrationTests(unittest.TestCase):
+    def test_optimization_tables_upgrade_from_revision_19_without_replacing_experiments(self):
         from alembic import command
         from alembic.config import Config
         from settings import settings
@@ -261,9 +261,9 @@ class StudyMigrationTests(unittest.TestCase):
             finally:
                 settings.db_url = ORIGINAL_DB_URL
             _, _, experiment_id, _ = asyncio.run(_seed_owners(database))
-            self.assertNotIn("cae_studies", asyncio.run(_table_names(database)))
+            self.assertNotIn("cae_optimizations", asyncio.run(_table_names(database)))
             _upgrade(database, "head")
-            self.assertTrue({"cae_studies", "cae_trials", "cae_stage_submissions"}.issubset(asyncio.run(_table_names(database))))
+            self.assertTrue({"cae_optimizations", "cae_trials", "cae_stage_submissions"}.issubset(asyncio.run(_table_names(database))))
 
             async def retained():
                 engine = create_async_engine(make_async_db_url(_database_url(database)))

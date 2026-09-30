@@ -8,7 +8,7 @@ from optimization.controller import on_job_finished
 
 
 async def event_context(db: AsyncSession, job: Job) -> dict:
-    keys = ("study_id", "trial_id", "stage")
+    keys = ("optimization_id", "trial_id", "stage")
     if "artifact_metadata" in job.__dict__:
         metadata = job.artifact_metadata or {}
         return {key: metadata[key] for key in keys if key in metadata}
@@ -20,7 +20,7 @@ async def event_context(db: AsyncSession, job: Job) -> dict:
 
 
 async def on_finished(db: AsyncSession, job: Job, result: dict | None) -> None:
-    if not (await event_context(db, job)).get("study_id"):
+    if not (await event_context(db, job)).get("optimization_id"):
         return
     if "artifact_metadata" not in job.__dict__:
         await db.refresh(job, ["artifact_metadata"])

@@ -54,6 +54,7 @@ it('retains arrow-key tab navigation in the compact menubar', () => {
     '후처리',
     '통계',
     '예측',
+    '최적화',
   ])
   fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '시뮬레이션' }), { key: 'ArrowRight' })
   expect(change).toHaveBeenCalledWith('calculation')
@@ -61,4 +62,7 @@ it('retains arrow-key tab navigation in the compact menubar', () => {
   fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '후처리' }), { key: 'ArrowRight' })
   expect(change).toHaveBeenLastCalledWith('analysis')
   expect(screen.getByRole('menuitemradio', { name: '통계' })).toHaveFocus()
+  fireEvent.keyDown(screen.getByRole('menuitemradio', { name: '예측' }), { key: 'ArrowRight' })
+  expect(change).toHaveBeenLastCalledWith('optimization')
+  expect(screen.getByRole('menuitemradio', { name: '최적화' })).toHaveFocus()
 })

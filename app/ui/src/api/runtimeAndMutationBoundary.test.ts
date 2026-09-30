@@ -212,7 +212,7 @@ describe('API validator wiring', () => {
 
     await expect(dbTables.Job.list()).rejects.toMatchObject({
       name: 'ApiContractError',
-      path: '/web/jobs?active_only=true&limit=200',
+      path: '/web/jobs?active_only=true&limit=200&exclude_optimizations=true',
     })
   })
 

@@ -29,7 +29,7 @@ export const initialExperimentEditingState: ExperimentEditingState = Object.free
 
 export type ExperimentEditingAction =
   | Readonly<{
-      type: 'studyCandidateOpened'
+      type: 'optimizationCandidateOpened'
       document: ExperimentSourceDocument
       record: SavedExperiment | null
       name: string
@@ -87,7 +87,7 @@ export function experimentEditingReducer(
   action: ExperimentEditingAction,
 ): ExperimentEditingState {
   switch (action.type) {
-    case 'studyCandidateOpened':
+    case 'optimizationCandidateOpened':
       return {
         ...state,
         document: action.document,

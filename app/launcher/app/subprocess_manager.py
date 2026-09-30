@@ -160,6 +160,8 @@ class WorkerManager:
         try:
             app = self.registry.require(worker.slave_app_id)
             await asyncio.to_thread(app.check_ready)
+            if worker.status == "cleaning":
+                return
             worker.container = self.container_factory()
             worker.process = await worker.container.start(
                 [str(app.python_executable), "-m", "sdk.slave.bootstrap", "--module", app.module, "--worker"],
@@ -169,13 +171,15 @@ class WorkerManager:
             self.persist_worker(worker)
             worker.stdout_task = asyncio.create_task(self.read_worker_stdout(worker))
             worker.stderr_task = asyncio.create_task(self.read_worker_stderr(worker))
+            if worker.status == "cleaning":
+                return
             await self.write_worker(worker, {"type": "bootstrap.start"})
             timeout = max(self.settings.worker_ready_timeout_seconds, app.startup_timeout_seconds or 0)
             await asyncio.wait_for(worker.ready_event.wait(), timeout)
-            if not worker.ready:
-                raise RuntimeError("worker exited before becoming ready")
             if worker.status == "cleaning":
                 return
+            if not worker.ready:
+                raise RuntimeError("worker exited before becoming ready")
             worker.status = "started"
             await self.write_worker(worker, {key: value for key, value in assignment.items() if key != "session_id"})
         except asyncio.CancelledError:
@@ -248,7 +252,7 @@ class WorkerManager:
             await self.send_control(worker.terminal)
 
     def schedule_cleanup(self, worker: ManagedWorker, grace: float = 3.0) -> None:
-        if worker.cleanup_task is None:
+        if worker.cleanup_task is None or (worker.cleanup_task.done() and worker.status == "cleanup_failed"):
             worker.status = "cleaning"
             worker.ready_event.set()
             worker.cleanup_task = asyncio.create_task(self.cleanup_worker(worker, grace))

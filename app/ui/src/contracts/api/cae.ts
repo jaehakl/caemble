@@ -69,7 +69,7 @@ export const caeEventSchema = z.object({
   id: z.number().int(),
   type: z.string(),
   batch_id: z.string(),
-  study_id: z.string().nullable().optional(),
+  optimization_id: z.string().nullable().optional(),
   trial_id: z.string().nullable().optional(),
   stage: z.string().nullable().optional(),
   job_id: z.string().nullable().optional(),

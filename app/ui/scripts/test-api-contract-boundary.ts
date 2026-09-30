@@ -16,7 +16,7 @@ function jsonResponse(body: unknown, status = 200) {
 const tableSurface = {
   User: ['recordType', 'fetchMe', 'getAllUsersAdmin', 'deleteUserAdmin', 'getUserSummaryAdmin', 'getUserSummaryUser'],
   AccessKey: ['list', 'create', 'revoke'],
-  Launcher: ['list', 'runtime', 'reconcile', 'cancelCurrentJob', 'resetWorker'],
+  Launcher: ['list', 'runtime', 'reconcile', 'cancelInstance', 'resetInstance', 'stopAll'],
   Job: ['list', 'kill'],
   Experiment: [
     'updatePresentation',
@@ -142,7 +142,7 @@ assert(measurementCall?.csrf === null, 'Measurement create must retain its anony
 const experiments = await dbTables.Experiment.listRows()
 assert(experiments.total === 0, 'Experiment list must validate its list envelope')
 const experimentCall = calls.find((call) => call.path === '/api/experiment/list')
-assert(experimentCall?.csrf === 'contract-test-token', 'Experiment list must retain its CSRF policy')
+assert(experimentCall?.csrf === null, 'Experiment list must retain its anonymous-compatible CSRF policy')
 
 const upserts = parseUpsertResponseList([{ id: 1 }, { id: 2, created: true }])
 assert(upserts.length === 2 && upserts[1]?.id === 2, 'Upsert envelopes must validate every id')

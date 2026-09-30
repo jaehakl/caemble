@@ -21,7 +21,7 @@ v1_router = APIRouter(prefix="/v1")
 @web_router.get("/jobs", response_model=list[JobSummary], tags=["web-jobs"], name="list_jobs")
 async def web_list_jobs(
     active_only: bool = Query(default=False),
-    exclude_studies: bool = Query(default=False),
+    exclude_optimizations: bool = Query(default=False),
     limit: int = Query(default=100),
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
@@ -31,7 +31,7 @@ async def web_list_jobs(
         user_id=None if is_admin(current_user) else current_user.id,
         active_only=active_only,
         limit=limit,
-        predicate=unmanaged_execution_clause() if exclude_studies else None,
+        predicate=unmanaged_execution_clause() if exclude_optimizations else None,
     )
 
 
@@ -42,7 +42,7 @@ async def web_create_job(
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> JobCreateResult:
     if body.slave_app_id in {"cae", "evaluation"} or body.handler_type.startswith("cae."):
-        raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Study endpoints.")
+        raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Optimization endpoints.")
     job = await job_orchestrator.create_job(
         db,
         user_id=current_user.id,
@@ -85,7 +85,7 @@ async def v1_create_job(
     db: AsyncSession = Depends(get_db),
 ) -> JobCreateResult:
     if body.slave_app_id in {"cae", "evaluation"} or body.handler_type.startswith("cae."):
-        raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Study endpoints.")
+        raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Optimization endpoints.")
     job = await job_orchestrator.create_job(
         db,
         user_id=principal.user_id,

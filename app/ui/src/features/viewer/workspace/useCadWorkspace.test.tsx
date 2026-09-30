@@ -155,6 +155,110 @@ it('reports source errors once per location with technical details and keeps edi
 })
 
 describe('useCadWorkspace lifecycle boundary', () => {
+  it.each(['source', 'session'] as const)('hides the previous varsSchema during a %s change', async (change) => {
+    const schema = Object.freeze({ sizeX: { shape: [], min: 1, max: 10 } })
+    const observations: (typeof schema | null)[] = []
+    mocks.inspectDocument.mockResolvedValue({ varsSchema: schema })
+    mocks.evaluateDocument.mockResolvedValue({ ...evaluatedSnapshot('first'), varsSchema: schema })
+    const { result, rerender } = renderHook(
+      ({ experiment, resetKey }) => {
+        const workspace = useCadWorkspace(experiment, undefined, { resetKey })
+        observations.push(workspace.experimentDocument.varsSchema as typeof schema | null)
+        return workspace
+      },
+      { initialProps: { experiment: firstExperiment, resetKey: 1 } },
+    )
+    await waitFor(() => expect(result.current.experimentDocument.varsSchema).toEqual(schema))
+    await waitFor(() => expect(result.current.experimentDocument.status).toBe('Ready'))
+    mocks.inspectDocument.mockImplementation(() => new Promise(() => undefined))
+    observations.length = 0
+
+    rerender({
+      experiment: change === 'source' ? secondExperiment : firstExperiment,
+      resetKey: change === 'session' ? 2 : 1,
+    })
+
+    // Check every render, including the render before passive effects clear old state.
+    expect(observations.length).toBeGreaterThan(0)
+    expect(observations.every((value) => value === null)).toBe(true)
+    expect(result.current.experimentDocument.varsSchema).toBeNull()
+  })
+
+  it('evaluates the Candidate restored with a new workspace session without regenerating it', async () => {
+    mocks.evaluateDocument.mockImplementation(async ({ vars }) => ({
+      ...evaluatedSnapshot('restored'),
+      variables: vars,
+    }))
+    const { result, rerender } = renderHook(
+      ({ experiment, candidateVars, resetKey }) => useCadWorkspace(experiment, undefined, { candidateVars, resetKey }),
+      { initialProps: { experiment: firstExperiment, candidateVars: firstCandidateVars, resetKey: 1 } },
+    )
+    await waitFor(() => expect(result.current.experimentDocument.status).toBe('Ready'))
+    await waitFor(() => expect(result.current.experimentDocument.variables).toEqual(firstCandidateVars))
+
+    rerender({ experiment: secondExperiment, candidateVars: secondCandidateVars, resetKey: 2 })
+
+    await waitFor(() => expect(result.current.experimentDocument.resultSessionKey).toBe(2))
+    expect(mocks.evaluateDocument).toHaveBeenLastCalledWith(
+      { document: secondExperiment, vars: secondCandidateVars },
+      expect.anything(),
+    )
+    expect(result.current.experimentDocument.variables).toEqual(secondCandidateVars)
+  })
+
+  it('retains the saved material snapshot supplied with a restored Measurement session', async () => {
+    const materialSnapshot = {
+      experiment: { materials: {} },
+      tasks: {},
+      sourceHash: 'saved-source',
+      varsHash: 'saved-vars',
+      modelDefinitions: [],
+      selections: {},
+    }
+    const { result, rerender } = renderHook(
+      ({ resetKey }) =>
+        useCadWorkspace(firstExperiment, undefined, {
+          resetKey,
+          candidateVars: firstCandidateVars,
+          candidateProvenance: 'persisted-measurement',
+          persistedMaterialSnapshot: materialSnapshot,
+        }),
+      { initialProps: { resetKey: 1 } },
+    )
+    await waitFor(() => expect(result.current.experimentDocument.resultSessionKey).toBe(1))
+
+    rerender({ resetKey: 2 })
+
+    await waitFor(() => expect(result.current.experimentDocument.resultSessionKey).toBe(2))
+    expect(mocks.resolveDocumentMaterials).toHaveBeenLastCalledWith(
+      expect.anything(),
+      materialSnapshot,
+      expect.anything(),
+    )
+  })
+
+  it('waits for the requested Measurement instead of evaluating the retained draft Candidate', async () => {
+    const { result, rerender } = renderHook(
+      ({ pending, candidateVars }) =>
+        useCadWorkspace(firstExperiment, undefined, {
+          candidateVars,
+          candidateVarsPending: pending,
+          candidateProvenance: 'persisted-measurement',
+        }),
+      { initialProps: { pending: true, candidateVars: firstCandidateVars } },
+    )
+    await waitFor(() => expect(result.current.experimentDocument.varsSchema).not.toBeNull())
+    expect(mocks.evaluateDocument).not.toHaveBeenCalled()
+
+    rerender({ pending: false, candidateVars: secondCandidateVars })
+
+    await waitFor(() => expect(mocks.evaluateDocument).toHaveBeenCalledTimes(1))
+    expect(mocks.evaluateDocument).toHaveBeenLastCalledWith(
+      { document: firstExperiment, vars: secondCandidateVars },
+      expect.anything(),
+    )
+  })
+
   it('reuses the prepared document when only Candidate vars change', async () => {
     const { result, rerender } = renderHook(
       ({ candidateVars }) => useCadWorkspace(firstExperiment, undefined, { candidateVars }),

@@ -54,8 +54,8 @@ class RouterArchitectureTests(unittest.TestCase):
 
     def test_gpstation_has_no_product_imports_or_policies(self) -> None:
         forbidden_modules = {"cae", "simulation", "optimization", "catalog", "caemble_catalog", "storage", "service", "routers", "models"}
-        product_terms = re.compile(r"\b(?:cae|caemble|catalog|experiment|measurement|study|studies|trial|preflight)\b", re.IGNORECASE)
-        product_names = {"Study", "Trial", "StageSubmission", "study_context", "exclude_studies", "study_id", "trial_id"}
+        product_terms = re.compile(r"\b(?:cae|caemble|catalog|experiment|measurement|optimization|optimizations|trial|preflight)\b", re.IGNORECASE)
+        product_names = {"Optimization", "Trial", "StageSubmission", "optimization_context", "exclude_optimizations", "optimization_id", "trial_id"}
         violations: list[str] = []
         for path in sorted((APP_DIR / "gpstation").rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

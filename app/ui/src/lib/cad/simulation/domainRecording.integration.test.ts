@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+import { resolveEnvironment } from '@/platform/node/environment'
 import { installCatalogRuntimeSlice } from '../../catalog/runtime'
 import { canonicalRecordedDataTree } from './authoring'
 import { assertExperimentAuthoringSemantics } from './authoringSemantics'
@@ -9,10 +10,11 @@ import type { RecordedDataSpecNode } from './types'
 import { resolveRecordedOutputReferences, resolveRecordedResult } from './outputRecording'
 
 describe('Box Grid RecordedData', () => {
-  it('keeps numerical tensor schemas separate from generic mesh visualization schemas', () => {
+  it('keeps numerical tensor schemas separate from generic mesh visualization schemas', async () => {
+    const environment = await resolveEnvironment({ repo: path.resolve('../..') })
     const fixture = JSON.parse(
       execFileSync(
-        'python',
+        environment.python,
         [
           '-X',
           'utf8',
@@ -28,7 +30,7 @@ with open_catalog() as catalog:
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),
         ],
-        { encoding: 'utf8' },
+        { encoding: 'utf8', timeout: 20_000, windowsHide: true },
       ),
     ) as { catalog: CatalogRuntimeSlice; schema: RecordedDataSpecNode }
     installCatalogRuntimeSlice(fixture.catalog)
@@ -108,5 +110,5 @@ with open_catalog() as catalog:
     expect(() => canonicalRecordedDataTree({ mesh: { unit: { dtype: 'string' } } })).toThrow(
       'must not mix RecordedData descriptor fields',
     )
-  })
+  }, 30_000)
 })

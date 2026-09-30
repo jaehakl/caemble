@@ -122,9 +122,9 @@ class HandlerContractTests(unittest.IsolatedAsyncioTestCase):
 class OptimizationHandlerContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_deferred_metadata_reads_only_attribution(self):
         job = SimpleNamespace(id="job")
-        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(one=lambda: ("study", "trial", "solve"))))
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(one=lambda: ("optimization", "trial", "solve"))))
         context = await integration.event_context(db, job)
-        self.assertEqual(context, {"study_id": "study", "trial_id": "trial", "stage": "solve"})
+        self.assertEqual(context, {"optimization_id": "optimization", "trial_id": "trial", "stage": "solve"})
         statement = db.execute.call_args.args[0]
         self.assertEqual(len(statement.selected_columns), 3)
         self.assertNotIn("jobs.input", str(statement))
@@ -137,7 +137,7 @@ class OptimizationHandlerContractTests(unittest.IsolatedAsyncioTestCase):
             await integration.on_finished(db, job, None)
             db.refresh.assert_not_awaited()
             callback.assert_not_awaited()
-        with patch.object(integration, "event_context", AsyncMock(return_value={"study_id": "study"})), patch.object(integration, "on_job_finished", AsyncMock()) as callback:
+        with patch.object(integration, "event_context", AsyncMock(return_value={"optimization_id": "optimization"})), patch.object(integration, "on_job_finished", AsyncMock()) as callback:
             await integration.on_finished(db, job, {"answer": 42})
             db.refresh.assert_awaited_once_with(job, ["artifact_metadata"])
             callback.assert_awaited_once_with(db, job, {"answer": 42})

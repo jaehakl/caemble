@@ -42,7 +42,7 @@ async def stream_events(request: Request, user_id: str, after: int):
                 "attempt_id": event.payload.get("attempt_id"),
                 "instance_id": event.payload.get("instance_id"),
                 "measurement_id": event.payload.get("measurement_id"),
-                "study_id": event.payload.get("study_id"),
+                "optimization_id": event.payload.get("optimization_id"),
                 "trial_id": event.payload.get("trial_id"),
                 "stage": event.payload.get("stage"),
                 "payload": event.payload,

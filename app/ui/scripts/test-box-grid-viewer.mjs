@@ -73,14 +73,15 @@ const server = await createServer({
       };
       window.renderCalculation=()=>root.render(<CalculationOutputChart preview={{status:'success',output:normalizeCalculationOutput(boxGrid.project(window.leaf,{axes:['x','y','z'],component:'magnitude'}))}}/>);
       window.renderMesh=()=>root.render(<MeshFieldResult field={{label:'mesh',identity:'mesh',lengthUnit:'m',valueUnit:'m',quantity:'Displacement',valueKind:'displacement',location:'node',points:new Float64Array([0,0,0,1,0,0,0,1,0,0,0,1]),cells:new Uint32Array([0,1,2,3]),values:new Float64Array(12).fill(.01),componentCount:3,components:['x','y','z'],boundaryFaces:new Uint32Array([0,1,2,0,1,3,0,2,3,1,2,3]),boundaryCells:new Uint32Array([0,0,0,0]),cellRegions:new Uint32Array([0]),regionIds:['body'],supportNodes:new Uint32Array(),loadPoints:new Float64Array(),loadVectors:new Float64Array()}}/>);
-      window.renderWorkbench = (mismatch='',extra=true)=>root.render(<WorkbenchViewer
+      window.renderWorkbench = (mismatch='',extra=true)=>{window.workbenchDiagnostics=[];root.render(<WorkbenchViewer
         experiment={{kind:'experiment',sourceBundle:{files:{'simulate.py':'fixture'}}}}
         experimentDocument={{scene:layers[0],evaluatedSnapshot:{sourceHash:'source',variables:{}},handleRenderStart:noop,handleRenderEnd:noop,handleRenderError:message=>{throw new Error(message)}}}
         resultSourceHash={mismatch==='source'?'changed':'source'} resultVarsHash={mismatch==='vars'?'changed':materialVarsHash({})}
         resultContracts={{signal:{task:'solid',output:'signal',solver:{name:'fixture',version:'1'},catalogRevision:'frozen',artifactType:'fixture@1',schema:rule.result,visualization:{kind:'box-grid'}},...(extra?{summary:{task:'solid',output:'summary',solver:{name:'fixture',version:'1'},catalogRevision:'frozen',artifactType:'fixture@1',schema:rule.result,visualization:{kind:'tensor'}}}:{})}}
         recordedRules={extra?[rule,{...rule,label:'summary'}]:[rule]} recordedData={extra?{signal:tensor,summary:tensor}:{signal:tensor}} autoSelectResult
+        onActivity={event=>window.workbenchDiagnostics.push(event)}
         onFindSelectionSource={noop} onSelectionQueryChange={noop} onSelectionSourcePathsChange={noop} selectionQuery={null} selectionSourceStatus={{}}
-      />);
+      />);};
       window.renderBox();
       window.renderRecordedRays=async({input,packet})=>{
         const {parseResultPolylines}=await import('/src/features/viewer/viewer/resultPolylines.ts');
@@ -567,7 +568,9 @@ try {
   await page.getByLabel('frequency 적분 방법').selectOption('index')
   await setRange('frequency index', 1)
   await ready()
-  assert.ok((await page.getByLabel('차트 축 설정').innerText()).includes('f · 개별 index 1 · 10 Hz'))
+  assert.equal(await axisSettings.getByLabel('frequency 적분 방법').inputValue(), 'index')
+  assert.equal(await axisSettings.getByLabel('frequency index').inputValue(), '1')
+  assert.equal(await page.getByLabel('차트 축 설정').count(), 0)
   assert.equal(await outputMenu.count(), 1)
   await page.getByRole('menuitemradio', { name: 'summary', exact: true }).click()
   assert.equal(await page.getByRole('menu', { name: 'Output · summary', exact: true }).count(), 1)
@@ -577,13 +580,17 @@ try {
   await page.getByRole('menuitemradio', { name: 'signal', exact: true }).click()
   await ready()
   assert.equal(await page.getByRole('button', { name: 'y 주 축', exact: true }).getAttribute('aria-pressed'), 'true')
+  assert.equal(await axisSettings.getByLabel('frequency 적분 방법').inputValue(), 'index')
+  assert.equal(await axisSettings.getByLabel('frequency index').inputValue(), '1')
   await page.keyboard.press('Escape')
   assert.equal(await page.getByLabel('frequency 적분 방법').count(), 0)
-  assert.ok((await page.getByLabel('차트 축 설정').innerText()).includes('f · 개별 index 1 · 10 Hz'))
+  assert.equal(await page.getByLabel('차트 축 설정').count(), 0)
   assert.equal(await page.locator('[data-viewer-canvas]').count(), 1)
   await page.setViewportSize({ width: 480, height: 650 })
   await page.getByRole('button', { name: 'Output · signal', exact: true }).click()
   const narrowMenu = page.getByRole('menu', { name: 'Output · signal', exact: true })
+  assert.equal(await narrowMenu.getByLabel('frequency 적분 방법').inputValue(), 'index')
+  assert.equal(await narrowMenu.getByLabel('frequency index').inputValue(), '1')
   const narrowBounds = await narrowMenu.boundingBox()
   assert.ok(narrowBounds.x >= 0 && narrowBounds.x + narrowBounds.width <= 480)
   assert.ok(
@@ -599,12 +606,23 @@ try {
     await page.evaluate((value) => window.renderWorkbench(value, false), mismatch)
     await ready()
     assert.equal(await page.getByRole('button', { name: 'Geometry · 90%', exact: true }).isEnabled(), true)
-    const mismatchMessage = page.getByText(
-      mismatch === 'source' ? 'Geometry와 결과의 source가 다릅니다.' : 'Geometry와 결과의 Vars가 다릅니다.',
-      { exact: false },
+    const mismatchMessage =
+      mismatch === 'source' ? 'Geometry와 결과의 source가 다릅니다.' : 'Geometry와 결과의 Vars가 다릅니다.'
+    await page.waitForFunction(
+      (message) =>
+        window.workbenchDiagnostics.some(
+          (event) => event.source === 'viewer' && event.level === 'warning' && event.message.includes(message),
+        ),
+      mismatchMessage,
     )
-    await mismatchMessage.waitFor()
-    assert.equal(await mismatchMessage.count(), 1)
+    assert.equal(
+      await page.evaluate(
+        (message) => window.workbenchDiagnostics.filter((event) => event.message.includes(message)).length,
+        mismatchMessage,
+      ),
+      1,
+    )
+    assert.equal(await page.getByText(mismatchMessage, { exact: false }).count(), 0)
   }
   await page.evaluate(() => window.renderWorkbench())
   await page.getByRole('button', { name: 'Output · signal', exact: true }).waitFor()
@@ -646,8 +664,15 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Heatmap', exact: true }).getAttribute('aria-pressed'), 'true')
   await open('f 축 역할')
   assert.equal(await page.getByLabel('frequency 역할').inputValue(), 'index')
-  assert.ok((await page.locator('body').innerText()).includes('픽셀 적분 전력 [W]'))
+  await page.keyboard.press('Escape')
+  await page.getByRole('img', { name: 'heatmap 차트', exact: true }).hover()
+  await page
+    .locator('[data-result-visualization="heatmap"]')
+    .getByRole('status')
+    .filter({ hasText: / · [\d.]+ W$/ })
+    .waitFor()
   await page.screenshot({ path: 'node_modules/.tmp/viewer-qa/pixel-image.png' })
+  await open('f 축 역할')
   await setRange('frequency index', 1)
   await ready()
   await page.getByLabel('주파수 표시 단위').selectOption('Hz')

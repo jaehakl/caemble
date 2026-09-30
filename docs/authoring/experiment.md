@@ -180,9 +180,9 @@ MINI, 초탄성 동적·고유치 해석과 접촉·연결은 지원 범위에 �
 - [Calculation 작성하기](calculation.md): 기록된 수치에서 비교 지표를 만들고 결과를 검증합니다.
 
 
-## CLI에서 최적화 Study 실행
+## CLI에서 Optimization 실행
 
-저장된 Experiment ID와 기존 Build artifact를 재사용합니다. `study.json`에는 저장된
+저장된 Experiment ID와 기존 Build artifact를 재사용합니다. `optimization.json`에는 저장된
 Calculation ID와 탐색 설정을 적습니다. 목적 Calculation은 필수이며 나머지는 선택 사항입니다.
 
 ```json
@@ -202,25 +202,32 @@ Calculation ID와 탐색 설정을 적습니다. 목적 Calculation은 필수이
 사전 검증 이력이 없는 Calculation도 선택할 수 있으며 첫 실제 Trial에서 스칼라 출력을 확인합니다.
 
 ```powershell
-.\caemble.cmd study create .work/build --experiment 7 --config study.json
-.\caemble.cmd study list --experiment 7
-.\caemble.cmd study show <study-id>
-.\caemble.cmd study trials <study-id> --limit 50 --offset 0
-.\caemble.cmd study watch <study-id> --timeout 180
-.\caemble.cmd study stop <study-id>
-.\caemble.cmd study retry <study-id> --trial <trial-id>
-.\caemble.cmd study resume <study-id>
-.\caemble.cmd study delete <study-id>
+.\caemble.cmd optimization create .work/build --experiment 7 --config optimization.json
+.\caemble.cmd optimization list --experiment 7
+.\caemble.cmd optimization show <optimization-id>
+.\caemble.cmd optimization trials <optimization-id> --limit 50 --offset 0
+.\caemble.cmd optimization watch <optimization-id> --timeout 180
+.\caemble.cmd optimization stop <optimization-id>
+.\caemble.cmd optimization retry <optimization-id> --trial <trial-id>
+.\caemble.cmd optimization resume <optimization-id>
+.\caemble.cmd optimization delete <optimization-id>
 ```
 
 Artifact에 여러 항목이 있으면 생성 시 `--item <index>`를 지정합니다. 생성은 소스 hash,
 Vars schema와 초기 Vars만 읽어서 제출하며 추가 Build·Solver 사전 실행을 하지 않습니다.
 `show`에는 최선 후보와 진행 상태, `trials`에는 단계·제출·Job·재시도 이력이 포함됩니다.
-`watch`는 2초 간격으로 관찰하며 Ctrl+C나 관찰 timeout으로 서버 실행이 중지되지 않습니다.
+`watch`는 `{ "type": "snapshot", "optimization": ... }` 형식으로 2초 간격으로 관찰하며 Ctrl+C나 관찰 timeout으로 서버 실행이 중지되지 않습니다.
 완료는 종료 코드 0, 일시정지·실패는 1, 관찰 timeout은 5, Ctrl+C는 130입니다.
 
 생성 요청은 설정 파일 옆의 `.submission.json`, 재시도 요청은 저장소의
-`.data/cli/study-requests`에 요청 ID를 먼저 기록합니다. 응답을 확인하지 못하면 같은 ID로
-다시 전송합니다. 같은 설정으로 별도 Study를 만들려면 새 `--request-id <uuid>`를 지정합니다.
+`.data/cli/optimization-requests`에 요청 ID를 먼저 기록합니다. 응답을 확인하지 못하면 같은 ID로
+다시 전송합니다. 같은 설정으로 별도 Optimization을 만들려면 새 `--request-id <uuid>`를 지정합니다.
 재시도 응답을 확인한 뒤 다시 호출하면 새로운 명시적 재시도입니다. 토큰은 기록하지 않습니다.
 중지·재개·재시도·삭제 가능 여부는 기존 서버 상태와 cleanup 규칙을 따릅니다.
+
+설정 파일 이름은 자유롭게 정할 수 있으며 기존 파일을 이름 변경할 필요가 없습니다. 이전 CLI의
+생성·재시도 영수증은 요청 ID를 유지한 채 원자적으로 새 형식으로 옮깁니다. 새 영수증은
+`optimizationId`를 사용하며, 재시도 본문은 `{ "optimization": "<optimization-id>", "trial": "<trial-id>" }`입니다.
+응답을 잃은 요청은 같은 ID로 이어서 확인합니다. 서로 다른 요청 영수증이 충돌하거나 영수증이
+손상된 경우에는 새 요청을 자동 생성하지 않습니다. 두 파일과 요청 ID를 보존하고 서버의 접수
+상태를 확인한 뒤 복구하세요. 새 CLI는 `optimization` 명령만 제공합니다.

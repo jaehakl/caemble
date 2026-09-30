@@ -12,7 +12,7 @@ export function readWorkbenchUrlExperiment(searchParams: URLSearchParams) {
 
 export function writeWorkbenchUrlExperiment(current: URLSearchParams, experimentId: number | null) {
   const next = new URLSearchParams(current)
-  if (readWorkbenchUrlExperiment(current) !== experimentId) next.delete('study')
+  if (readWorkbenchUrlExperiment(current) !== experimentId) next.delete('optimization')
   if (experimentId === null) next.delete('experiment')
   else next.set('experiment', String(experimentId))
   ;['section', 'measurement', 'calculation', 'structure', 'sample', 'setup', 'help', 'item', 'anchor'].forEach((key) =>

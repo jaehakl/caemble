@@ -1,4 +1,4 @@
-"""Opt-in two-candidate Study through real launcher, Node and CAE children."""
+"""Opt-in two-candidate Optimization through real launcher, Node and CAE children."""
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +30,7 @@ import uvicorn
 
 from simulation.services import recording
 from optimization import controller, evaluation, integration
-from optimization.db import StageSubmission, Study, Trial
+from optimization.db import StageSubmission, Optimization, Trial
 from optimization.router import authenticated, router
 from calculation.db import Calculation, CalculationSource
 from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
@@ -49,8 +49,8 @@ from db import get_db
 from user_auth.utils.auth_utils import hash_token
 
 
-@unittest.skipUnless(os.getenv("RUN_STUDY_E2E") == "1", "Set RUN_STUDY_E2E=1 for the small real Solver Study demo.")
-class StudyEndToEndTests(unittest.TestCase):
+@unittest.skipUnless(os.getenv("RUN_OPTIMIZATION_E2E") == "1", "Set RUN_OPTIMIZATION_E2E=1 for the small real Solver Optimization demo.")
+class OptimizationEndToEndTests(unittest.TestCase):
     def test_fiber_bundle_improves_without_browser_and_reconnects_to_saved_history(self):
         self.test_started = time.monotonic()
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
@@ -120,27 +120,27 @@ class StudyEndToEndTests(unittest.TestCase):
         server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
         catalog = Catalog.open_readonly()
         app.state.catalog = catalog
-        temporary_directory = tempfile.TemporaryDirectory(prefix="caemble-study-")
+        temporary_directory = tempfile.TemporaryDirectory(prefix="caemble-optimization-")
         patches = ExitStack()
         process = log_task = server_task = None
-        study_id = None
+        optimization_id = None
         started = None
         launcher_ids = set()
         logs = []
         report_dir = repo / ".work"
         report_dir.mkdir(exist_ok=True)
-        log_file = (report_dir / "study-demo-launcher.log").open("w", encoding="utf-8")
+        log_file = (report_dir / "optimization-demo-launcher.log").open("w", encoding="utf-8")
 
         async def execution_report(status):
             async with sessions() as db:
-                study = await db.get(Study, study_id)
+                optimization = await db.get(Optimization, optimization_id)
                 rows = (await db.execute(select(Trial, StageSubmission, Job)
                     .outerjoin(StageSubmission, StageSubmission.trial_id == Trial.id)
-                    .outerjoin(Job, Job.id == StageSubmission.job_id).where(Trial.study_id == study_id)
+                    .outerjoin(Job, Job.id == StageSubmission.job_id).where(Trial.optimization_id == optimization_id)
                     .order_by(Trial.ordinal, StageSubmission.created_at))).all()
-                return {"status": status, "study_id": study_id, "state": study.state,
-                    "pause_reason": study.pause_reason, "settings": study.settings,
-                    "runtime_id": study.optimizer_state.get("runtime_id"),
+                return {"status": status, "optimization_id": optimization_id, "state": optimization.state,
+                    "pause_reason": optimization.pause_reason, "settings": optimization.settings,
+                    "runtime_id": optimization.optimizer_state.get("runtime_id"),
                     "elapsed_seconds": asyncio.get_running_loop().time() - started,
                     "budget_seconds": 180, "launcher_cpu_cores": 4, "cae_cpu_cores": 4,
                     "stages": [{"ordinal": trial.ordinal, "variables": trial.variables, "trial_state": trial.state,
@@ -169,7 +169,7 @@ class StudyEndToEndTests(unittest.TestCase):
             built = artifact["measurement"]["experiment"]
             program = built["simulationProgram"]
             source = "export default function calculate(input) { return { dtype: 'float64', data: input.totalCurrent.data[0] }; }"
-            token = f"study-demo-{uuid.uuid4().hex}"
+            token = f"optimization-demo-{uuid.uuid4().hex}"
             async with sessions() as db:
                 role = await db.scalar(select(Role).where(Role.name == "user"))
                 db.add(UserRole(user_id=owner, role_id=role.id))
@@ -179,14 +179,14 @@ class StudyEndToEndTests(unittest.TestCase):
                 for name, schema in program["recordedData"].items():
                     db.add(ExperimentRecord(experiment_id=experiment_id, name=name, dtype=schema["dtype"],
                         tensor_order=schema.get("tensorOrder", 0), quantity_kind=schema.get("quantityKind"),
-                        data_schema=schema, contract_hash=f"study-demo-{name}"))
+                        data_schema=schema, contract_hash=f"optimization-demo-{name}"))
                 calculation_source = CalculationSource(source_code=source, source_hash=hashlib.sha256(source.encode()).hexdigest(),
                                                        name="Total current", owner_id=owner, revision=1)
                 db.add(calculation_source)
                 await db.flush()
                 calculation = Calculation(experiment_id=experiment_id, source_id=calculation_source.id, contract_status="needs_preflight")
                 db.add(calculation)
-                db.add(APIKey(user_id=owner, name="study-demo", key_prefix=uuid.uuid4().hex, key_hash=hash_token(token), scopes=["launcher"]))
+                db.add(APIKey(user_id=owner, name="optimization-demo", key_prefix=uuid.uuid4().hex, key_hash=hash_token(token), scopes=["launcher"]))
                 await db.commit()
                 calculation_id = calculation.id
             for module in (launcher_connection, worker_connection, orchestrator_module, controller):
@@ -206,7 +206,7 @@ class StudyEndToEndTests(unittest.TestCase):
             resources = temporary / "resources.toml"
             resources.write_text('cpu_cores = 4\n[defaults.cae]\ncpu_cores = 4\ngpu_count = 0\n[defaults.evaluation]\ncpu_cores = 1\ngpu_count = 0\n', encoding="utf-8")
             environment = {**os.environ, "CAEMBLE_API_URL": base_url, "CAEMBLE_ACCESS_TOKEN": token,
-                "CAEMBLE_LAUNCHER_NAME": "study-acceptance", "CAEMBLE_RESOURCES_FILE": str(resources),
+                "CAEMBLE_LAUNCHER_NAME": "optimization-acceptance", "CAEMBLE_RESOURCES_FILE": str(resources),
                 "CAEMBLE_LAUNCHER_STATE_DIR": str(temporary / "launcher-state"), "CAEMBLE_HEARTBEAT_INTERVAL_SECONDS": "0.2",
                 "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
             environment.pop("PYTHONPATH", None)
@@ -225,23 +225,23 @@ class StudyEndToEndTests(unittest.TestCase):
             axes = [{"name": name, "indices": [], "fixed": name != "fiberRadius"} for name in built["varsSchema"]]
             started = asyncio.get_running_loop().time()
             async with httpx.AsyncClient(base_url=base_url, timeout=30) as browser:
-                response = await browser.post("/cae/studies", json={"request_id": str(uuid.uuid4()),
+                response = await browser.post("/cae/optimizations", json={"request_id": str(uuid.uuid4()),
                     "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
                     "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "maximize"},
                     "max_trials": 2, "max_parallel": 2, "name": "Fiber radius optimization acceptance"})
                 self.assertEqual(response.status_code, 200, response.text)
-                study_id = response.json()["id"]
+                optimization_id = response.json()["id"]
             # No observer or client connection is retained while the server selects
             # candidates and schedules all three real execution stages.
             async with asyncio.timeout(180 - (asyncio.get_running_loop().time() - started)):
                 while True:
                     async with sessions() as db:
-                        study = await db.get(Study, study_id)
-                        self.assertNotIn(study.state, {"paused", "pausing"}, f"{study.pause_reason}\n{''.join(logs)[-6000:]}")
-                        if study.state == "completed":
-                            trials = list((await db.scalars(select(Trial).where(Trial.study_id == study_id).order_by(Trial.ordinal))).all())
+                        optimization = await db.get(Optimization, optimization_id)
+                        self.assertNotIn(optimization.state, {"paused", "pausing"}, f"{optimization.pause_reason}\n{''.join(logs)[-6000:]}")
+                        if optimization.state == "completed":
+                            trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == optimization_id).order_by(Trial.ordinal))).all())
                             jobs = list((await db.scalars(select(Job).join(StageSubmission, StageSubmission.job_id == Job.id)
-                                                         .join(Trial, Trial.id == StageSubmission.trial_id).where(Trial.study_id == study_id))).all())
+                                                         .join(Trial, Trial.id == StageSubmission.trial_id).where(Trial.optimization_id == optimization_id))).all())
                             launcher_ids.update(job.launcher_id for job in jobs if job.launcher_id)
                             break
                     self.assertIsNone(process.returncode, "Launcher exited.\n" + "".join(logs)[-6000:])
@@ -253,30 +253,30 @@ class StudyEndToEndTests(unittest.TestCase):
             self.assertTrue(all(job.state == "succeeded" and job.cleaned_at is not None for job in jobs))
             self.assertEqual(len({job.attempt_id for job in jobs}), 6)
             baseline = trials[0].result["objective"]
-            best = next(trial for trial in trials if trial.id == study.best_trial_id)
+            best = next(trial for trial in trials if trial.id == optimization.best_trial_id)
             self.assertGreater(best.result["objective"], baseline)
             self.assertLess(elapsed, 180)
             async with httpx.AsyncClient(base_url=base_url) as browser:
-                restored = (await browser.get(f"/cae/studies/{study_id}")).json()
-                history = (await browser.get(f"/cae/studies/{study_id}/trials")).json()
+                restored = (await browser.get(f"/cae/optimizations/{optimization_id}")).json()
+                history = (await browser.get(f"/cae/optimizations/{optimization_id}/trials")).json()
                 self.assertEqual(restored["best_trial"]["id"], best.id)
                 self.assertEqual(history["total"], 2)
                 self.assertTrue(all(len(item["stages"]) == 3 for item in history["items"]))
             async with sessions() as db:
                 self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 2)
                 self.assertEqual(await db.scalar(select(func.count()).select_from(RecordedData)), 4)
-            report = {"example": example["coordinate"], "study_id": study_id, "trials": len(trials), "jobs": len(jobs),
+            report = {"example": example["coordinate"], "optimization_id": optimization_id, "trials": len(trials), "jobs": len(jobs),
                 "elapsed_seconds": elapsed, "baseline_objective": baseline, "best_objective": best.result["objective"],
                 "best_vars": best.variables, "browser_disconnected_during_execution": True, "reconnected_history_verified": True,
                 "cleanup_verified": True, "object_storage": "local HTTP bucket with real hash/size validation"}
             report.update(await execution_report("passed"))
-            self.report_path = report_dir / "study-demo-acceptance.json"
+            self.report_path = report_dir / "optimization-demo-acceptance.json"
             self.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
             print(json.dumps(report), flush=True)
         except BaseException as error:
-            if study_id is not None:
+            if optimization_id is not None:
                 report = await execution_report(type(error).__name__)
-                self.report_path = report_dir / "study-demo-last-failure.json"
+                self.report_path = report_dir / "optimization-demo-last-failure.json"
                 self.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report), flush=True)
             raise

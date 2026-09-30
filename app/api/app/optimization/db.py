@@ -11,9 +11,9 @@ from db import Base
 from user_auth.db import TimestampMixin
 
 
-class Study(TimestampMixin, Base):
-    __tablename__ = "cae_studies"
-    __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_cae_studies_request"),)
+class Optimization(TimestampMixin, Base):
+    __tablename__ = "cae_optimizations"
+    __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_cae_optimizations_request"),)
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -33,12 +33,12 @@ class Study(TimestampMixin, Base):
 class Trial(TimestampMixin, Base):
     __tablename__ = "cae_trials"
     __table_args__ = (
-        UniqueConstraint("study_id", "ordinal", name="uq_cae_trials_ordinal"),
-        UniqueConstraint("study_id", "fingerprint", name="uq_cae_trials_fingerprint"),
+        UniqueConstraint("optimization_id", "ordinal", name="uq_cae_trials_ordinal"),
+        UniqueConstraint("optimization_id", "fingerprint", name="uq_cae_trials_fingerprint"),
     )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    study_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("cae_studies.id", ondelete="CASCADE"), index=True)
+    optimization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("cae_optimizations.id", ondelete="CASCADE"), index=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     round_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     variables: Mapped[dict] = mapped_column(JSONB, nullable=False)

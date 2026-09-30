@@ -100,7 +100,11 @@ function timeoutPromise<Response, Result>(
       settled = true
       if (timeout !== null) window.clearTimeout(timeout)
       options.signal?.removeEventListener('abort', abort)
-      callback()
+      try {
+        callback()
+      } catch (error) {
+        reject(error)
+      }
     }
     const abort = () =>
       finish(() => {
@@ -108,25 +112,31 @@ function timeoutPromise<Response, Result>(
         reject(new DOMException('The CAD operation was aborted.', 'AbortError'))
       })
     options.signal?.addEventListener('abort', abort, { once: true })
-    cancel = run({
-      onFailure(message) {
-        finish(() => reject(new CadDocumentEvaluationError(message)))
-      },
-      onStart() {
-        if (settled) return
-        timeout = window.setTimeout(
-          () =>
-            finish(() => {
-              cancel()
-              reject(new CadDocumentEvaluationError(`CAD operation timed out after ${timeoutMs / 1000} seconds.`))
-            }),
-          timeoutMs,
-        )
-      },
-      onResponse(response) {
-        finish(() => settle(response, resolve, reject))
-      },
-    })
+    try {
+      cancel = run({
+        onFailure(message) {
+          finish(() => reject(new CadDocumentEvaluationError(message)))
+        },
+        onStart() {
+          if (settled || timeout !== null) return
+          timeout = window.setTimeout(
+            () =>
+              finish(() => {
+                cancel()
+                reject(new CadDocumentEvaluationError(`CAD operation timed out after ${timeoutMs / 1000} seconds.`))
+              }),
+            timeoutMs,
+          )
+        },
+        onResponse(response) {
+          finish(() => settle(response, resolve, reject))
+        },
+      })
+      // Cancellation can arrive before the runner returns its cancellation function.
+      if (options.signal?.aborted) cancel()
+    } catch (error) {
+      finish(() => reject(error))
+    }
   })
 }
 

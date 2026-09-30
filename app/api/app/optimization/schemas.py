@@ -4,7 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
-class StudyAxis(BaseModel):
+class OptimizationAxis(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     name: str = Field(min_length=1)
     indices: list[StrictInt] = Field(default_factory=list)
@@ -20,13 +20,13 @@ class StudyAxis(BaseModel):
         return self
 
 
-class StudyObjective(BaseModel):
+class OptimizationObjective(BaseModel):
     model_config = ConfigDict(extra="forbid")
     calculation_id: int = Field(strict=True, gt=0)
     direction: Literal["minimize", "maximize"] = "minimize"
 
 
-class StudyConstraint(BaseModel):
+class OptimizationConstraint(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     calculation_id: int = Field(strict=True, gt=0)
     minimum: float | None = Field(default=None, strict=True)
@@ -41,21 +41,21 @@ class StudyConstraint(BaseModel):
         return self
 
 
-class StudyCreateRequest(BaseModel):
+class OptimizationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     request_id: UUID
     experiment_id: int = Field(strict=True, gt=0)
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     vars_schema: dict[str, Any]
     initial_vars: dict[str, Any]
-    axes: list[StudyAxis] | None = None
-    objective: StudyObjective
-    constraints: list[StudyConstraint] = Field(default_factory=list)
+    axes: list[OptimizationAxis] | None = None
+    objective: OptimizationObjective
+    constraints: list[OptimizationConstraint] = Field(default_factory=list)
     max_trials: int = Field(default=20, strict=True, ge=1)
     max_parallel: int = Field(default=2, strict=True, ge=1)
     name: str | None = Field(default=None, min_length=1)
 
 
-class StudyRetryRequest(BaseModel):
+class OptimizationRetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID

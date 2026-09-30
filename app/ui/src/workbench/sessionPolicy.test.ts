@@ -19,9 +19,9 @@ describe('Workbench session policy', () => {
 
     expect(next.toString()).toBe('keep=yes&experiment=7')
     expect(writeWorkbenchUrlExperiment(next, null).toString()).toBe('keep=yes')
-    const linkedStudy = new URLSearchParams('experiment=7&study=study-1')
-    expect(writeWorkbenchUrlExperiment(linkedStudy, 7).get('study')).toBe('study-1')
-    expect(writeWorkbenchUrlExperiment(linkedStudy, 8).has('study')).toBe(false)
+    const linkedOptimization = new URLSearchParams('experiment=7&optimization=optimization-1')
+    expect(writeWorkbenchUrlExperiment(linkedOptimization, 7).get('optimization')).toBe('optimization-1')
+    expect(writeWorkbenchUrlExperiment(linkedOptimization, 8).has('optimization')).toBe(false)
   })
 
   it('gives pending persistence and active work priority over dirty confirmation', () => {

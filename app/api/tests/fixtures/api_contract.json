@@ -235,13 +235,13 @@
               }
             },
             {
-              "name": "exclude_studies",
+              "name": "exclude_optimizations",
               "in": "query",
               "required": false,
               "schema": {
                 "type": "boolean",
                 "default": false,
-                "title": "Exclude Studies"
+                "title": "Exclude Optimizations"
               }
             },
             {
@@ -918,19 +918,19 @@
           }
         }
       },
-      "/cae/studies": {
+      "/cae/optimizations": {
         "post": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Create",
-          "operationId": "create_cae_studies_post",
+          "operationId": "create_cae_optimizations_post",
           "requestBody": {
             "required": true,
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StudyCreateRequest"
+                  "$ref": "#/components/schemas/OptimizationCreateRequest"
                 }
               }
             }
@@ -958,10 +958,10 @@
         },
         "get": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Listing",
-          "operationId": "listing_cae_studies_get",
+          "operationId": "listing_cae_optimizations_get",
           "parameters": [
             {
               "name": "experiment_id",
@@ -1025,22 +1025,22 @@
           }
         }
       },
-      "/cae/studies/{study_id}": {
+      "/cae/optimizations/{optimization_id}": {
         "get": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Detail",
-          "operationId": "detail_cae_studies__study_id__get",
+          "operationId": "detail_cae_optimizations__optimization_id__get",
           "parameters": [
             {
-              "name": "study_id",
+              "name": "optimization_id",
               "in": "path",
               "required": true,
               "schema": {
                 "type": "string",
                 "format": "uuid",
-                "title": "Study Id"
+                "title": "Optimization Id"
               }
             }
           ],
@@ -1067,19 +1067,19 @@
         },
         "delete": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Remove",
-          "operationId": "remove_cae_studies__study_id__delete",
+          "operationId": "remove_cae_optimizations__optimization_id__delete",
           "parameters": [
             {
-              "name": "study_id",
+              "name": "optimization_id",
               "in": "path",
               "required": true,
               "schema": {
                 "type": "string",
                 "format": "uuid",
-                "title": "Study Id"
+                "title": "Optimization Id"
               }
             }
           ],
@@ -1105,22 +1105,22 @@
           }
         }
       },
-      "/cae/studies/{study_id}/trials": {
+      "/cae/optimizations/{optimization_id}/trials": {
         "get": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Trials",
-          "operationId": "trials_cae_studies__study_id__trials_get",
+          "operationId": "trials_cae_optimizations__optimization_id__trials_get",
           "parameters": [
             {
-              "name": "study_id",
+              "name": "optimization_id",
               "in": "path",
               "required": true,
               "schema": {
                 "type": "string",
                 "format": "uuid",
-                "title": "Study Id"
+                "title": "Optimization Id"
               }
             },
             {
@@ -1169,22 +1169,22 @@
           }
         }
       },
-      "/cae/studies/{study_id}/stop": {
+      "/cae/optimizations/{optimization_id}/stop": {
         "post": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Stop",
-          "operationId": "stop_cae_studies__study_id__stop_post",
+          "operationId": "stop_cae_optimizations__optimization_id__stop_post",
           "parameters": [
             {
-              "name": "study_id",
+              "name": "optimization_id",
               "in": "path",
               "required": true,
               "schema": {
                 "type": "string",
                 "format": "uuid",
-                "title": "Study Id"
+                "title": "Optimization Id"
               }
             }
           ],
@@ -1210,22 +1210,22 @@
           }
         }
       },
-      "/cae/studies/{study_id}/resume": {
+      "/cae/optimizations/{optimization_id}/resume": {
         "post": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Resume",
-          "operationId": "resume_cae_studies__study_id__resume_post",
+          "operationId": "resume_cae_optimizations__optimization_id__resume_post",
           "parameters": [
             {
-              "name": "study_id",
+              "name": "optimization_id",
               "in": "path",
               "required": true,
               "schema": {
                 "type": "string",
                 "format": "uuid",
-                "title": "Study Id"
+                "title": "Optimization Id"
               }
             }
           ],
@@ -1251,22 +1251,22 @@
           }
         }
       },
-      "/cae/studies/{study_id}/trials/{trial_id}/retry": {
+      "/cae/optimizations/{optimization_id}/trials/{trial_id}/retry": {
         "post": {
           "tags": [
-            "cae-studies"
+            "cae-optimizations"
           ],
           "summary": "Retry",
-          "operationId": "retry_cae_studies__study_id__trials__trial_id__retry_post",
+          "operationId": "retry_cae_optimizations__optimization_id__trials__trial_id__retry_post",
           "parameters": [
             {
-              "name": "study_id",
+              "name": "optimization_id",
               "in": "path",
               "required": true,
               "schema": {
                 "type": "string",
                 "format": "uuid",
-                "title": "Study Id"
+                "title": "Optimization Id"
               }
             },
             {
@@ -1285,7 +1285,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StudyRetryRequest"
+                  "$ref": "#/components/schemas/OptimizationRetryRequest"
                 }
               }
             }
@@ -3816,13 +3816,13 @@
               }
             },
             {
-              "name": "exclude_studies",
+              "name": "exclude_optimizations",
               "in": "query",
               "required": false,
               "schema": {
                 "type": "boolean",
                 "default": false,
-                "title": "Exclude Studies"
+                "title": "Exclude Optimizations"
               }
             },
             {
@@ -9728,7 +9728,7 @@
           ],
           "title": "SolverSummary"
         },
-        "StudyAxis": {
+        "OptimizationAxis": {
           "properties": {
             "name": {
               "type": "string",
@@ -9775,9 +9775,9 @@
           "required": [
             "name"
           ],
-          "title": "StudyAxis"
+          "title": "OptimizationAxis"
         },
-        "StudyConstraint": {
+        "OptimizationConstraint": {
           "properties": {
             "calculation_id": {
               "type": "integer",
@@ -9812,9 +9812,9 @@
           "required": [
             "calculation_id"
           ],
-          "title": "StudyConstraint"
+          "title": "OptimizationConstraint"
         },
-        "StudyCreateRequest": {
+        "OptimizationCreateRequest": {
           "properties": {
             "request_id": {
               "type": "string",
@@ -9845,7 +9845,7 @@
               "anyOf": [
                 {
                   "items": {
-                    "$ref": "#/components/schemas/StudyAxis"
+                    "$ref": "#/components/schemas/OptimizationAxis"
                   },
                   "type": "array"
                 },
@@ -9856,11 +9856,11 @@
               "title": "Axes"
             },
             "objective": {
-              "$ref": "#/components/schemas/StudyObjective"
+              "$ref": "#/components/schemas/OptimizationObjective"
             },
             "constraints": {
               "items": {
-                "$ref": "#/components/schemas/StudyConstraint"
+                "$ref": "#/components/schemas/OptimizationConstraint"
               },
               "type": "array",
               "title": "Constraints"
@@ -9900,9 +9900,9 @@
             "initial_vars",
             "objective"
           ],
-          "title": "StudyCreateRequest"
+          "title": "OptimizationCreateRequest"
         },
-        "StudyObjective": {
+        "OptimizationObjective": {
           "properties": {
             "calculation_id": {
               "type": "integer",
@@ -9924,9 +9924,9 @@
           "required": [
             "calculation_id"
           ],
-          "title": "StudyObjective"
+          "title": "OptimizationObjective"
         },
-        "StudyRetryRequest": {
+        "OptimizationRetryRequest": {
           "properties": {
             "request_id": {
               "type": "string",
@@ -9939,7 +9939,7 @@
           "required": [
             "request_id"
           ],
-          "title": "StudyRetryRequest"
+          "title": "OptimizationRetryRequest"
         },
         "UserData": {
           "properties": {
@@ -10248,56 +10248,56 @@
       "execution"
     ],
     [
-      "/cae/studies",
+      "/cae/optimizations",
       [
         "POST"
       ],
       "create"
     ],
     [
-      "/cae/studies",
+      "/cae/optimizations",
       [
         "GET"
       ],
       "listing"
     ],
     [
-      "/cae/studies/{study_id}",
+      "/cae/optimizations/{optimization_id}",
       [
         "GET"
       ],
       "detail"
     ],
     [
-      "/cae/studies/{study_id}/trials",
+      "/cae/optimizations/{optimization_id}/trials",
       [
         "GET"
       ],
       "trials"
     ],
     [
-      "/cae/studies/{study_id}/stop",
+      "/cae/optimizations/{optimization_id}/stop",
       [
         "POST"
       ],
       "stop"
     ],
     [
-      "/cae/studies/{study_id}/resume",
+      "/cae/optimizations/{optimization_id}/resume",
       [
         "POST"
       ],
       "resume"
     ],
     [
-      "/cae/studies/{study_id}/trials/{trial_id}/retry",
+      "/cae/optimizations/{optimization_id}/trials/{trial_id}/retry",
       [
         "POST"
       ],
       "retry"
     ],
     [
-      "/cae/studies/{study_id}",
+      "/cae/optimizations/{optimization_id}",
       [
         "DELETE"
       ],
@@ -10856,7 +10856,7 @@
     "experiments": "\nCREATE TABLE experiments (\n\tid SERIAL NOT NULL, \n\tuser_id UUID NOT NULL, \n\tnamespace TEXT NOT NULL, \n\trepository_slug TEXT NOT NULL, \n\texperiment_key TEXT NOT NULL, \n\tversion_major INTEGER NOT NULL, \n\tversion_minor INTEGER NOT NULL, \n\tversion_patch INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdescription TEXT, \n\tsource_bundle JSONB NOT NULL, \n\tresult_contracts JSONB, \n\tthumbnail_url TEXT, \n\tinitial_measurement_id INTEGER, \n\tviewer_defaults JSONB, \n\tsource_hash TEXT NOT NULL, \n\tcode_embedding VECTOR(768), \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_experiments PRIMARY KEY (id), \n\tCONSTRAINT uq_experiments_coordinate_semver UNIQUE (namespace, repository_slug, experiment_key, version_major, version_minor, version_patch), \n\tCONSTRAINT fk_experiments_namespace_user_id_experiment_namespaces FOREIGN KEY(namespace, user_id) REFERENCES experiment_namespaces (namespace, user_id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_experiments_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
     "jobs": "\nCREATE TABLE jobs (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tlauncher_id UUID, \n\thandler_type TEXT NOT NULL, \n\tslave_app_id TEXT NOT NULL, \n\tjob_mode TEXT DEFAULT 'webrtc' NOT NULL, \n\tbatch_id UUID, \n\titem_index BIGINT, \n\tinput JSONB, \n\tartifact_metadata JSONB, \n\tworker_token_hash TEXT, \n\tattempt_id UUID, \n\tinstance_id TEXT, \n\treservation_id TEXT, \n\tboot_id TEXT, \n\tresources JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tallocation JSONB, \n\texecution_phase TEXT, \n\tcleanup_state TEXT, \n\twaiting_reason TEXT, \n\tcleaned_at TIMESTAMP WITH TIME ZONE, \n\toffer JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tanswer JSONB, \n\tprogress JSONB DEFAULT '[]'::jsonb NOT NULL, \n\tstate TEXT DEFAULT 'queued' NOT NULL, \n\tassigned_at TIMESTAMP WITH TIME ZONE, \n\tanswer_ready_at TIMESTAMP WITH TIME ZONE, \n\tstarted_at TIMESTAMP WITH TIME ZONE, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcancel_requested_at TIMESTAMP WITH TIME ZONE, \n\tlast_error TEXT, \n\tattempt_count INTEGER DEFAULT 0 NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_jobs PRIMARY KEY (id), \n\tCONSTRAINT uq_jobs_batch_item UNIQUE (batch_id, item_index), \n\tCONSTRAINT fk_jobs_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_jobs_launcher_id_launchers FOREIGN KEY(launcher_id) REFERENCES launchers (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_jobs_batch_id_job_batches FOREIGN KEY(batch_id) REFERENCES job_batches (id) ON DELETE CASCADE\n)\n\n",
     "cae_batches": "\nCREATE TABLE cae_batches (\n\tbatch_id UUID NOT NULL, \n\texperiment_id INTEGER, \n\tspec JSONB NOT NULL, \n\tCONSTRAINT pk_cae_batches PRIMARY KEY (batch_id), \n\tCONSTRAINT fk_cae_batches_batch_id_job_batches FOREIGN KEY(batch_id) REFERENCES job_batches (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_batches_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE CASCADE\n)\n\n",
-    "cae_studies": "\nCREATE TABLE cae_studies (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tstate TEXT DEFAULT 'running' NOT NULL, \n\tpause_reason TEXT, \n\tdefinition JSONB NOT NULL, \n\tsettings JSONB NOT NULL, \n\toptimizer_state JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tbest_trial_id UUID, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_cae_studies PRIMARY KEY (id), \n\tCONSTRAINT uq_cae_studies_request UNIQUE (user_id, request_id), \n\tCONSTRAINT fk_cae_studies_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_studies_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE RESTRICT\n)\n\n",
+    "cae_optimizations": "\nCREATE TABLE cae_optimizations (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tstate TEXT DEFAULT 'running' NOT NULL, \n\tpause_reason TEXT, \n\tdefinition JSONB NOT NULL, \n\tsettings JSONB NOT NULL, \n\toptimizer_state JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tbest_trial_id UUID, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_cae_optimizations PRIMARY KEY (id), \n\tCONSTRAINT uq_cae_optimizations_request UNIQUE (user_id, request_id), \n\tCONSTRAINT fk_cae_optimizations_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_optimizations_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE RESTRICT\n)\n\n",
     "cae_upload_chunks": "\nCREATE TABLE cae_upload_chunks (\n\tjob_id UUID NOT NULL, \n\tchunk_index INTEGER NOT NULL, \n\tsha256 TEXT NOT NULL, \n\tdata BYTEA NOT NULL, \n\tCONSTRAINT pk_cae_upload_chunks PRIMARY KEY (job_id, chunk_index), \n\tCONSTRAINT fk_cae_upload_chunks_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n",
     "execution_attempts": "\nCREATE TABLE execution_attempts (\n\tid UUID NOT NULL, \n\tjob_id UUID NOT NULL, \n\tattempt_count INTEGER NOT NULL, \n\tlauncher_id UUID, \n\tboot_id TEXT, \n\tinstance_id TEXT, \n\treservation_id TEXT, \n\tstate TEXT NOT NULL, \n\tresult_state TEXT, \n\tcleanup_state TEXT, \n\tresources JSONB NOT NULL, \n\tallocation JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcleaned_at TIMESTAMP WITH TIME ZONE, \n\tCONSTRAINT pk_execution_attempts PRIMARY KEY (id), \n\tCONSTRAINT uq_execution_attempt_job_count UNIQUE (job_id, attempt_count), \n\tCONSTRAINT fk_execution_attempts_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_execution_attempts_launcher_id_launchers FOREIGN KEY(launcher_id) REFERENCES launchers (id) ON DELETE SET NULL\n)\n\n",
     "experiment_demos": "\nCREATE TABLE experiment_demos (\n\texperiment_id INTEGER NOT NULL, \n\tdisplay_order INTEGER NOT NULL, \n\tis_default BOOLEAN DEFAULT false NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_experiment_demos PRIMARY KEY (experiment_id), \n\tCONSTRAINT ck_experiment_demos_display_order_nonnegative CHECK (display_order >= 0), \n\tCONSTRAINT uq_experiment_demos_display_order UNIQUE (display_order), \n\tCONSTRAINT fk_experiment_demos_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE CASCADE\n)\n\n",
@@ -10866,7 +10866,7 @@
     "job_records": "\nCREATE TABLE job_records (\n\tjob_id UUID NOT NULL, \n\tattempt_count INTEGER NOT NULL, \n\tsequence INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tpayload JSONB NOT NULL, \n\tCONSTRAINT pk_job_records PRIMARY KEY (job_id, attempt_count, sequence), \n\tCONSTRAINT uq_job_records_name UNIQUE (job_id, attempt_count, name), \n\tCONSTRAINT fk_job_records_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n",
     "job_visualizations": "\nCREATE TABLE job_visualizations (\n\tjob_id UUID NOT NULL, \n\tattempt_count INTEGER NOT NULL, \n\tsequence INTEGER NOT NULL, \n\ttask TEXT NOT NULL, \n\tpayload JSONB NOT NULL, \n\tCONSTRAINT pk_job_visualizations PRIMARY KEY (job_id, attempt_count, sequence), \n\tCONSTRAINT uq_job_visualizations_task UNIQUE (job_id, attempt_count, task), \n\tCONSTRAINT fk_job_visualizations_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n",
     "measurements": "\nCREATE TABLE measurements (\n\tid SERIAL NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tvars JSONB NOT NULL, \n\tmaterial_snapshot JSONB NOT NULL, \n\trecorded_at TIMESTAMP WITH TIME ZONE, \n\tjob_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_measurements PRIMARY KEY (id), \n\tCONSTRAINT fk_measurements_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_measurements_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE CASCADE, \n\tCONSTRAINT uq_measurements_job_id UNIQUE (job_id), \n\tCONSTRAINT fk_measurements_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE SET NULL\n)\n\n",
-    "cae_trials": "\nCREATE TABLE cae_trials (\n\tid UUID NOT NULL, \n\tstudy_id UUID NOT NULL, \n\tordinal INTEGER NOT NULL, \n\tround_index INTEGER NOT NULL, \n\tvariables JSONB NOT NULL, \n\tfingerprint TEXT NOT NULL, \n\tstate TEXT DEFAULT 'pending' NOT NULL, \n\tnext_stage TEXT DEFAULT 'build' NOT NULL, \n\tmeasurement_id INTEGER, \n\tresult JSONB, \n\terror JSONB, \n\tmanual_retry_requested BOOLEAN DEFAULT false NOT NULL, \n\tretry_request_id UUID, \n\tretry_requests JSONB DEFAULT '[]'::jsonb NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_cae_trials PRIMARY KEY (id), \n\tCONSTRAINT uq_cae_trials_ordinal UNIQUE (study_id, ordinal), \n\tCONSTRAINT uq_cae_trials_fingerprint UNIQUE (study_id, fingerprint), \n\tCONSTRAINT fk_cae_trials_study_id_cae_studies FOREIGN KEY(study_id) REFERENCES cae_studies (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_trials_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE RESTRICT\n)\n\n",
+    "cae_trials": "\nCREATE TABLE cae_trials (\n\tid UUID NOT NULL, \n\toptimization_id UUID NOT NULL, \n\tordinal INTEGER NOT NULL, \n\tround_index INTEGER NOT NULL, \n\tvariables JSONB NOT NULL, \n\tfingerprint TEXT NOT NULL, \n\tstate TEXT DEFAULT 'pending' NOT NULL, \n\tnext_stage TEXT DEFAULT 'build' NOT NULL, \n\tmeasurement_id INTEGER, \n\tresult JSONB, \n\terror JSONB, \n\tmanual_retry_requested BOOLEAN DEFAULT false NOT NULL, \n\tretry_request_id UUID, \n\tretry_requests JSONB DEFAULT '[]'::jsonb NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_cae_trials PRIMARY KEY (id), \n\tCONSTRAINT uq_cae_trials_ordinal UNIQUE (optimization_id, ordinal), \n\tCONSTRAINT uq_cae_trials_fingerprint UNIQUE (optimization_id, fingerprint), \n\tCONSTRAINT fk_cae_trials_optimization_id_cae_optimizations FOREIGN KEY(optimization_id) REFERENCES cae_optimizations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_trials_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE RESTRICT\n)\n\n",
     "calculations": "\nCREATE TABLE calculations (\n\trevision INTEGER DEFAULT '1' NOT NULL, \n\tid SERIAL NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tvalidated_source_revision INTEGER, \n\tsource_id INTEGER NOT NULL, \n\toutput_layout JSONB, \n\tpreflight_measurement_id INTEGER, \n\tcontract_status TEXT DEFAULT 'needs_preflight' NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_calculations PRIMARY KEY (id), \n\tCONSTRAINT fk_calculations_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_calculations_source_id_calculation_sources FOREIGN KEY(source_id) REFERENCES calculation_sources (id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_calculations_preflight_measurement_id_measurements FOREIGN KEY(preflight_measurement_id) REFERENCES measurements (id) ON DELETE SET NULL\n)\n\n",
     "measurement_snapshots": "\nCREATE TABLE measurement_snapshots (\n\tmeasurement_id INTEGER NOT NULL, \n\tartifact JSONB NOT NULL, \n\tmetadata_json JSONB NOT NULL, \n\texecution_trace JSONB NOT NULL, \n\tCONSTRAINT pk_measurement_snapshots PRIMARY KEY (measurement_id), \n\tCONSTRAINT fk_measurement_snapshots_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE CASCADE\n)\n\n",
     "measurement_visualizations": "\nCREATE TABLE measurement_visualizations (\n\tmeasurement_id INTEGER NOT NULL, \n\ttask TEXT NOT NULL, \n\tdata JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_measurement_visualizations PRIMARY KEY (measurement_id, task), \n\tCONSTRAINT fk_measurement_visualizations_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE CASCADE\n)\n\n",
@@ -10884,11 +10884,11 @@
     "CREATE INDEX idx_oauth_states_created_at ON oauth_states (created_at)",
     "CREATE INDEX idx_sessions_user_id ON sessions (user_id)",
     "CREATE INDEX ix_cae_batches_experiment_id ON cae_batches (experiment_id)",
+    "CREATE INDEX ix_cae_optimizations_experiment_id ON cae_optimizations (experiment_id)",
+    "CREATE INDEX ix_cae_optimizations_user_id ON cae_optimizations (user_id)",
     "CREATE INDEX ix_cae_stage_submissions_trial_id ON cae_stage_submissions (trial_id)",
-    "CREATE INDEX ix_cae_studies_experiment_id ON cae_studies (experiment_id)",
-    "CREATE INDEX ix_cae_studies_user_id ON cae_studies (user_id)",
     "CREATE INDEX ix_cae_trials_measurement_id ON cae_trials (measurement_id)",
-    "CREATE INDEX ix_cae_trials_study_id ON cae_trials (study_id)",
+    "CREATE INDEX ix_cae_trials_optimization_id ON cae_trials (optimization_id)",
     "CREATE INDEX ix_calculation_data_measurement_id ON calculation_data (measurement_id)",
     "CREATE INDEX ix_calculations_experiment_id ON calculations (experiment_id)",
     "CREATE INDEX ix_calculations_source_id ON calculations (source_id)",

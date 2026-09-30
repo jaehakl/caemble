@@ -45,6 +45,8 @@ for (const document of documents) {
   )
 }
 assert.equal(run(['unknown'], 2).error.exitCode, 2)
+assert.match(run(['study', 'list'], 2).error.message, /Unknown command group: study/)
+assert.match(run(['optimization', 'create'], 2).error.message, /optimization create/)
 writeFileSync(path.join(output, 'manifest.json'), JSON.stringify({ kind: 'caemble.build', version: 2 }), 'utf8')
 assert.equal(run(['png', 'geometry', output, '--out', path.join(output, 'invalid.png')], 4).error.exitCode, 4)
 const forbiddenSource = path.join(output, 'forbidden-source')

@@ -127,6 +127,7 @@ const server = await createServer({
       import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { MeshFieldResult } from '/src/features/viewer/viewer/MeshFieldResult.tsx';
+      import { ViewerDiagnostics } from '/src/features/viewer/viewer/ViewerDiagnostics.tsx';
       import { MeshTransformResult } from '/src/features/viewer/viewer/MeshTransformResult.tsx';
       import { parseRecordedMeshTransforms } from '/src/features/viewer/viewer/meshTransforms.ts';
       import { parseRecordedParticleSets } from '/src/features/viewer/viewer/particleSets.ts';
@@ -151,7 +152,9 @@ const server = await createServer({
         return result;
       };
       window.meshRoot = createRoot(document.getElementById('fixture'));
-      window.renderMesh = (field, key = field.label + ':' + field.identity, displacementFields = []) => window.meshRoot.render(React.createElement(React.StrictMode, null, React.createElement(MeshFieldResult, {field: normalize(field), key, displacementFields: displacementFields.map(normalize)})));
+      window.meshDiagnostics = [];
+      const reportMeshActivity = event => window.meshDiagnostics.push(event);
+      window.renderMesh = (field, key = field.label + ':' + field.identity, displacementFields = []) => window.meshRoot.render(React.createElement(React.StrictMode, null, React.createElement(ViewerDiagnostics, {onActivity: reportMeshActivity}, React.createElement(MeshFieldResult, {field: normalize(field), key, displacementFields: displacementFields.map(normalize)}))));
       const picker = document.getElementById('fixture-mode');
       const replace = document.getElementById('replace-pressure');
       let recordedVisualizations;
@@ -477,7 +480,12 @@ try {
     await page.getByText('90 Hz · 90° · 순간값 Re(Q exp(iφ)) · peak phasor', { exact: true }).waitFor()
     await page.screenshot({ path: path.join(outputDirectory, 'mesh-viewer-harmonic-pressure.png') })
     await page.getByRole('button', { name: 'Replace pressure sweep with 61 Hz', exact: true }).click()
-    await page.getByRole('alert').filter({ hasText: '선택한 주파수 90 Hz' }).waitFor()
+    await page.waitForFunction(() =>
+      window.meshDiagnostics.some(
+        (event) =>
+          event.source === 'viewer' && event.level === 'warning' && event.message.includes('선택한 주파수 90 Hz'),
+      ),
+    )
     await openMeshSettings()
     assert.equal(await page.getByLabel('Harmonic pressure frequency').inputValue(), '90')
     assert.equal(await canvas.count(), 0, 'An unavailable frequency must not silently display another sample.')

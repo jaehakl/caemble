@@ -42,7 +42,7 @@ backup and the baseline does not provide downgrade recovery.
 
 - `app/simulation`: Experiments, Records, Measurements, recorded results,
   execution batches, upload/preflight lifecycle, and result publication.
-- `app/optimization`: Studies, Trials, stage submissions, the optimization
+- `app/optimization`: Optimizations, Trials, stage submissions, the optimization
   algorithm, and build/solve/calculate coordination using GPStation Jobs.
 - `app/calculation`: Calculation source, validated contracts, and CalculationData.
 - `app/catalog`: read-only Catalog queries and response schemas.
@@ -51,11 +51,11 @@ backup and the baseline does not provide downgrade recovery.
   issuance and scope policy.
 - `app/gpstation`: generic Jobs, Batches, execution attempts, ordered events,
   launcher connections, resource dispatch, and worker transport. It has no
-  Simulation, Study, Catalog, or storage policy imports.
+  Simulation, Optimization, Catalog, or storage policy imports.
 - `app/core`: shared schemas, time helpers, and CRUD mechanics. Domain packages
   supply visibility predicates and ownership rules.
 - `app/gpstation_adapter.py`: the Caemble policy for existing `/web` and `/v1`
-  job routes, including managed-job restrictions and Study filtering.
+  job routes, including managed-job restrictions and Optimization filtering.
 - `app/bootstrap.py`: application composition, handler registration, and the
   single owner of startup, background tasks, and shutdown. `app/main.py` remains
   the ASGI entry point.
@@ -81,19 +81,19 @@ in this README.
 `bootstrap.create_app()` registers ORM metadata and routes without opening a
 database connection or starting tasks. Its lifespan opens the Catalog and
 registers the Simulation and Optimization handlers before restart recovery.
-Recovery fails interrupted server Jobs, then reconciles Studies before the
-dispatcher and Study controller start. An initial upload-expiry sweep precedes
+Recovery fails interrupted server Jobs, then reconciles Optimizations before the
+dispatcher and Optimization controller start. An initial upload-expiry sweep precedes
 dispatch; a temporary sweep failure is logged and retried by Simulation's
 one-second maintenance loop. Preflight and object cleanup run in a separate
 minute loop.
 
-Shutdown stops cleanup, upload maintenance, the Study controller, and dispatch,
+Shutdown stops cleanup, upload maintenance, the Optimization controller, and dispatch,
 then closes launcher connections, the Catalog, and the engine. The same cleanup
 ownership applies when startup fails partway through. A second concurrent
 lifespan for the same app is rejected.
 
 GPStation's handler registry accepts optional `event_context` and `on_finished`
-callbacks. Optimization supplies Study event metadata and stage transitions
+callbacks. The optimization module supplies event metadata and stage transitions
 through these callbacks. A finish callback receives the existing database session
 after Job and Batch terminal events; it runs in the caller's transaction, may
 finish sibling Jobs, and must not commit. Callback failure rolls back domain
@@ -108,7 +108,7 @@ contract snapshot, lifecycle cleanup, and handler transaction behavior without
 running a Solver or requiring PostgreSQL:
 
 ```powershell
-Remove-Item Env:RUN_CAE_DB_TESTS, Env:RUN_CALCULATION_DB_TESTS, Env:RUN_PARTICLE_DB_TESTS, Env:RUN_STUDY_E2E -ErrorAction SilentlyContinue
+Remove-Item Env:RUN_CAE_DB_TESTS, Env:RUN_CALCULATION_DB_TESTS, Env:RUN_PARTICLE_DB_TESTS, Env:RUN_OPTIMIZATION_E2E -ErrorAction SilentlyContinue
 poetry run python -m pytest -q
 ```
 
@@ -121,13 +121,13 @@ without actual Solver execution, use a file allowlist:
 $env:DB_URL = "postgresql+asyncpg://postgres@127.0.0.1:5432/postgres"
 $env:RUN_CAE_DB_TESTS = "1"
 $env:RUN_CALCULATION_DB_TESTS = "1"
-Remove-Item Env:RUN_STUDY_E2E, Env:RUN_PARTICLE_DB_TESTS -ErrorAction SilentlyContinue
-poetry run python -m pytest -q tests/test_calculation_database.py tests/test_cae_batches.py tests/test_study_controller.py tests/test_parameter_study_api.py tests/test_gpstation_generic_runtime.py
+Remove-Item Env:RUN_OPTIMIZATION_E2E, Env:RUN_PARTICLE_DB_TESTS -ErrorAction SilentlyContinue
+poetry run python -m pytest -q tests/test_calculation_database.py tests/test_cae_batches.py tests/test_optimization_controller.py tests/test_optimization_api.py tests/test_gpstation_generic_runtime.py
 ```
 
 Keep the file selection explicit: `test_cae_end_to_end.py` also uses
-`RUN_CAE_DB_TESTS` and starts a real Solver. Study end-to-end execution has its own
-`RUN_STUDY_E2E` opt-in. Neither belongs in a package-structure verification run.
+`RUN_CAE_DB_TESTS` and starts a real Solver. Optimization end-to-end execution has its own
+`RUN_OPTIMIZATION_E2E` opt-in. Neither belongs in a package-structure verification run.
 
 ## Security and runtime boundaries
 

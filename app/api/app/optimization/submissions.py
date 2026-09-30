@@ -1,4 +1,4 @@
-"""Submit one immutable existing Batch/Job for one Study evaluation stage."""
+"""Submit one immutable existing Batch/Job for one Optimization evaluation stage."""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from gpstation.service.batches import add_event
 from simulation.services.measurements import recorded_data_for_measurement
 
 
-async def submit_stage(db, study, trial, catalog):
+async def submit_stage(db, optimization, trial, catalog):
     stage = trial.next_stage
-    definition = study.definition
+    definition = optimization.definition
     if definition["catalog_revision"] != catalog.meta()["catalogRevision"]:
-        raise HTTPException(409, "Study Catalog revision is unavailable. Restore its Catalog to resume.")
+        raise HTTPException(409, "Optimization Catalog revision is unavailable. Restore its Catalog to resume.")
     payload = {"stage": stage, "definition_hash": definition["hash"], "storage_version": 1}
-    runtime_id = study.optimizer_state.get("runtime_id")
+    runtime_id = optimization.optimizer_state.get("runtime_id")
     if runtime_id:
         payload["runtime_id"] = runtime_id
     materials = None
@@ -51,8 +51,8 @@ async def submit_stage(db, study, trial, catalog):
         if trial.measurement_id is None:
             raise ValueError("Calculation requires a recorded Measurement.")
         measurement = await db.get(Measurement, trial.measurement_id)
-        if measurement is None or measurement.user_id != study.user_id or measurement.experiment_id != study.experiment_id:
-            raise ValueError("Calculation requires the Measurement owned by this Study.")
+        if measurement is None or measurement.user_id != optimization.user_id or measurement.experiment_id != optimization.experiment_id:
+            raise ValueError("Calculation requires the Measurement owned by this Optimization.")
         # Creation already authorized the frozen Experiment. The controller has
         # no interactive user session (including an administrator's role set).
         recorded = await recorded_data_for_measurement(db, measurement)
@@ -64,14 +64,14 @@ async def submit_stage(db, study, trial, catalog):
         StageSubmission.trial_id == trial.id, StageSubmission.stage == stage,
     )))
     request_id = str(uuid.uuid5(uuid.UUID(trial.id), f"{stage}:{generation}"))
-    batch = JobBatch(user_id=study.user_id, request_id=request_id,
+    batch = JobBatch(user_id=optimization.user_id, request_id=request_id,
                      request_hash=hashlib.sha256(request_id.encode()).hexdigest(), total=1, created_count=1,
                      uploaded_count=1, succeeded=0, failed=0, cancelled=0, state="queued", generation_stopped=True,
                      last_event_id=0, read_event_id=0)
     db.add(batch)
     await db.flush()
     handler = "cae.simulation" if stage == "solve" else f"cae.evaluation.{stage}"
-    metadata = {"study_id": study.id, "trial_id": trial.id, "stage": stage, "generation": generation}
+    metadata = {"optimization_id": optimization.id, "trial_id": trial.id, "stage": stage, "generation": generation}
     if trial.manual_retry_requested:
         metadata["retry_request_id"] = trial.retry_request_id
     if stage == "solve":
@@ -80,20 +80,20 @@ async def submit_stage(db, study, trial, catalog):
                         byte_length=artifact.get("byteLength", len(raw)), index=1)
         if "presentation" in artifact:
             metadata["presentation"] = artifact["presentation"]
-    job = Job(user_id=study.user_id, batch_id=batch.id, item_index=1, handler_type=handler,
+    job = Job(user_id=optimization.user_id, batch_id=batch.id, item_index=1, handler_type=handler,
               slave_app_id="cae" if stage == "solve" else "evaluation", job_mode="websocket",
               state="queued", attempt_count=1, attempt_id=str(uuid.uuid4()), offer={}, progress=[], input=payload,
               resources={} if stage == "solve" else {"cpu_cores": 1, "gpu_count": 0}, artifact_metadata=metadata)
     db.add(job)
     await db.flush()
     if stage == "solve":
-        db.add(CaeBatch(batch_id=batch.id, experiment_id=study.experiment_id, spec={
+        db.add(CaeBatch(batch_id=batch.id, experiment_id=optimization.experiment_id, spec={
             "mode": "candidate", "source_hash": definition["source_hash"], "catalog_revision": definition["catalog_revision"],
-            "builder_version": "2", "storage_version": 1, "committed": True, "study_id": study.id,
+            "builder_version": "2", "storage_version": 1, "committed": True, "optimization_id": optimization.id,
         }))
         measurement = await db.get(Measurement, trial.measurement_id) if trial.measurement_id else None
         if measurement is None:
-            measurement = Measurement(user_id=study.user_id, experiment_id=study.experiment_id,
+            measurement = Measurement(user_id=optimization.user_id, experiment_id=optimization.experiment_id,
                                       vars=trial.variables, material_snapshot=materials, job_id=job.id)
             db.add(measurement)
             await db.flush()

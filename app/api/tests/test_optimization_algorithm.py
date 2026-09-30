@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from optimization.algorithm import coordinate_candidates, evaluate_metrics, next_round, prepare_axes, variables_fingerprint
 
 
-class StudyAlgorithmTests(unittest.TestCase):
+class OptimizationAlgorithmTests(unittest.TestCase):
     def test_all_tensor_elements_and_fixed_overrides(self):
         schema = {"matrix": {"shape": [2, 2], "min": 0, "max": 1}, "scalar": {"shape": [], "min": 0, "max": 2}}
         variables = {"matrix": [[0.5, 0.5], [0.5, 0.5]], "scalar": 1}

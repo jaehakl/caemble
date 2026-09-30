@@ -28,13 +28,14 @@ describe('bounded external agent context', () => {
   it('includes exact checkout Python and source content while excluding credentials', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'caemble-agent-context-'))
     directories.push(directory)
+    const sourceDirectory = path.join(directory, 'source')
     for (const [file, source] of Object.entries(starterExperimentSourceBundle.files)) {
-      await mkdir(path.dirname(path.join(directory, file)), { recursive: true })
-      await writeFile(path.join(directory, file), source, 'utf8')
+      await mkdir(path.dirname(path.join(sourceDirectory, file)), { recursive: true })
+      await writeFile(path.join(sourceDirectory, file), source, 'utf8')
     }
     await writeFile(path.join(directory, '.env'), 'PRIVATE_SECRET=do-not-include', 'utf8')
     await writeFile(
-      path.join(directory, 'caemble.json'),
+      path.join(sourceDirectory, 'caemble.json'),
       JSON.stringify({ kind: 'experiment', name: 'Local', apiKey: 'do-not-include' }),
       'utf8',
     )
@@ -49,7 +50,7 @@ describe('bounded external agent context', () => {
         cli: '',
         worker: '',
       },
-      options: { source: directory },
+      options: { source: sourceDirectory },
       args: [],
       signal: new AbortController().signal,
       client: () => {

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
@@ -5,7 +6,9 @@ import { optimizationApi } from '@/api/optimization'
 import { dbTables } from '@/api'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { OptimizationSetup } from './OptimizationSetup'
-import { studyFixture } from './fixtures.test-support'
+import { optimizationFixture } from './fixtures.test-support'
+import { createOptimizationDraft } from './optimizationDraft'
+import { useOptimizationCreation } from './useOptimizationData'
 
 vi.mock('@/features/auth/use-auth', () => ({ useAuth: () => ({ queryScope: 'user:first' }) }))
 vi.mock('@/api/optimization', () => ({ optimizationApi: { create: vi.fn() } }))
@@ -15,7 +18,7 @@ it('submits every Tensor element and current Candidate with a saved unpreflighte
     items: [{ id: 9, name: 'Objective', contract_status: 'needs_preflight', output_layout: null }],
     total: 1,
   } as Awaited<ReturnType<typeof dbTables.Calculation.listRows>>)
-  vi.mocked(optimizationApi.create).mockResolvedValue(studyFixture)
+  vi.mocked(optimizationApi.create).mockResolvedValue(optimizationFixture)
   const workbench = {
     experimentId: 7,
     experimentName: 'Demo',
@@ -39,9 +42,14 @@ it('submits every Tensor element and current Candidate with a saved unpreflighte
   } as unknown as CaeWorkbenchState
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const created = vi.fn()
+  function Setup() {
+    const [draft, setDraft] = useState(() => createOptimizationDraft(workbench))
+    const creation = useOptimizationCreation(created)
+    return <OptimizationSetup workbench={workbench} draft={draft} onDraftChange={setDraft} creation={creation} />
+  }
   render(
     <QueryClientProvider client={client}>
-      <OptimizationSetup workbench={workbench} onCreated={created} />
+      <Setup />
     </QueryClientProvider>,
   )
   await screen.findByText('Objective · 첫 평가에서 검증')
@@ -57,5 +65,5 @@ it('submits every Tensor element and current Candidate with a saved unpreflighte
     ['matrix', [1, 1], false],
   ])
   expect(payload.objective).toEqual({ calculation_id: 9, direction: 'minimize' })
-  await waitFor(() => expect(created).toHaveBeenCalledWith(studyFixture))
+  await waitFor(() => expect(created).toHaveBeenCalledWith(optimizationFixture))
 })

@@ -6,7 +6,7 @@ Commands and component-relative paths in this document are relative to `app/slav
 
 - `ai`: LLM/chat, embedding, image, tagging, and VOICEVOX handlers.
 - `cae`: trusted-payload CAE simulation and Solver implementations.
-- `evaluation`: Node Measurement builds and Calculation for saved optimization Studies.
+- `evaluation`: Node Measurement builds and Calculation for saved Optimizations.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.

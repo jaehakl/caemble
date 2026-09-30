@@ -36,7 +36,7 @@ export const optimizationResultSchema = z
     ),
   })
   .passthrough()
-const studyErrorSchema = z
+const optimizationErrorSchema = z
   .object({ message: z.string(), stage: z.string().optional(), code: z.string().optional() })
   .passthrough()
 const bestTrialSchema = z.object({
@@ -46,7 +46,7 @@ const bestTrialSchema = z.object({
   result: optimizationResultSchema,
   measurement_id: z.number().int().nullable(),
 })
-export const studySummarySchema = z.object({
+export const optimizationSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   experiment_id: z.number().int(),
@@ -68,7 +68,7 @@ export const studySummarySchema = z.object({
   manual_retry_pending: z.boolean(),
   best_trial: bestTrialSchema.nullable(),
 })
-export const studyDetailSchema = studySummarySchema.extend({
+export const optimizationDetailSchema = optimizationSummarySchema.extend({
   definition: z
     .object({
       source_bundle: z.object({ files: z.record(z.string(), z.string()) }),
@@ -99,9 +99,9 @@ export const studyDetailSchema = studySummarySchema.extend({
   }),
   optimizer_state: z.record(z.string(), z.unknown()),
 })
-export const studyTrialSchema = z.object({
+export const optimizationTrialSchema = z.object({
   id: z.string(),
-  study_id: z.string(),
+  optimization_id: z.string(),
   ordinal: z.number().int(),
   round_index: z.number().int(),
   variables: optimizationVarsSchema,
@@ -110,7 +110,7 @@ export const studyTrialSchema = z.object({
   next_stage: z.enum(['build', 'solve', 'calculate', 'complete']),
   measurement_id: z.number().int().nullable(),
   result: optimizationResultSchema.nullable(),
-  error: studyErrorSchema.nullable(),
+  error: optimizationErrorSchema.nullable(),
   manual_retry_requested: z.boolean(),
   retry_count: z.number().int().nonnegative(),
   created_at: z.string(),
@@ -125,18 +125,21 @@ export const studyTrialSchema = z.object({
         job_id: z.string().nullable(),
         state: z.string(),
         result: z.unknown().nullable(),
-        error: studyErrorSchema.nullable(),
+        error: optimizationErrorSchema.nullable(),
         job: caeJobSchema.nullable(),
       })
       .passthrough(),
   ),
 })
-export const studyListSchema = z.object({ items: z.array(studySummarySchema), total: z.number().int() })
-export const studyTrialListSchema = z.object({ items: z.array(studyTrialSchema), total: z.number().int() })
-export type OptimizationStudy = z.infer<typeof studyDetailSchema>
-export type OptimizationStudySummary = z.infer<typeof studySummarySchema>
-export type OptimizationTrial = z.infer<typeof studyTrialSchema>
-export type StudyCreateRequest = Readonly<{
+export const optimizationListSchema = z.object({ items: z.array(optimizationSummarySchema), total: z.number().int() })
+export const optimizationTrialListSchema = z.object({
+  items: z.array(optimizationTrialSchema),
+  total: z.number().int(),
+})
+export type Optimization = z.infer<typeof optimizationDetailSchema>
+export type OptimizationSummary = z.infer<typeof optimizationSummarySchema>
+export type OptimizationTrial = z.infer<typeof optimizationTrialSchema>
+export type OptimizationCreateRequest = Readonly<{
   request_id: string
   experiment_id: number
   source_hash: string

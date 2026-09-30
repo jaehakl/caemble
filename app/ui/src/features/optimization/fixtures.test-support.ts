@@ -1,7 +1,7 @@
-import type { OptimizationStudy, OptimizationTrial } from '@/contracts/api/optimization'
+import type { Optimization, OptimizationTrial } from '@/contracts/api/optimization'
 
-export const studyFixture: OptimizationStudy = {
-  id: 'study-1',
+export const optimizationFixture: Optimization = {
+  id: 'optimization-1',
   name: 'Design search',
   experiment_id: 7,
   state: 'paused',
@@ -51,7 +51,7 @@ export const studyFixture: OptimizationStudy = {
 }
 export const trialFixture: OptimizationTrial = {
   id: 'trial-2',
-  study_id: 'study-1',
+  optimization_id: 'optimization-1',
   ordinal: 2,
   round_index: 1,
   variables: { width: 4 },

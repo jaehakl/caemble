@@ -193,7 +193,7 @@ async def finalize_item(db: AsyncSession, batch_id: str, user_id: str, index: in
 
 
 def validate_measurement_registration(measurement_input, *, source_bundle, result_contracts, source_hash, catalog):
-    """The saved-definition boundary shared by user batches and Study stages."""
+    """The saved-definition boundary shared by user batches and Optimization stages."""
     program = measurement_input["experiment"]["simulationProgram"]
     if result_contracts is not None and program["resultContracts"] != result_contracts:
         raise HTTPException(409, "Artifact result contracts differ from the saved Experiment.")

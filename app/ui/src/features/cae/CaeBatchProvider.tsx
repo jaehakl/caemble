@@ -100,7 +100,7 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
     const receive = (event: CaeEvent) => {
       if (!active || (cursor !== null && event.id <= cursor)) return
       cursor = event.id
-      if (event.study_id) {
+      if (event.optimization_id) {
         if (event.type !== 'job.progress')
           void queryClient.invalidateQueries({ queryKey: optimizationQueryKeys.all(auth.queryScope) })
         if (event.type === 'job.succeeded' && event.measurement_id)
@@ -127,12 +127,12 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       setConnected(false)
       setLoading(true)
       try {
-        const first = await caeBatches.list({ excludeStudies: true }, { signal: controller.signal })
+        const first = await caeBatches.list({ excludeOptimizations: true }, { signal: controller.signal })
         const items = [...first.items]
         let firstCursor = first.cursor
         for (let offset = 0; ;) {
           const page = await caeBatches.list(
-            { offset, attentionOnly: true, excludeStudies: true },
+            { offset, attentionOnly: true, excludeOptimizations: true },
             { signal: controller.signal },
           )
           firstCursor = Math.min(firstCursor, page.cursor)
@@ -181,7 +181,7 @@ export function CaeBatchProvider({ children }: { children: ReactNode }) {
       const offset = historyOffset
       const revision = historyRevision
       try {
-        const page = await caeBatches.list({ offset, excludeStudies: true }, { signal: controller.signal })
+        const page = await caeBatches.list({ offset, excludeOptimizations: true }, { signal: controller.signal })
         if (!active) return
         page.items.forEach(update)
         if (revision === historyRevision) {

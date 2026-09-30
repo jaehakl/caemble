@@ -65,7 +65,7 @@ restores snapshots using an event cursor; closing the Workbench only stops that
 subscription. Completed selected Measurements are fetched again for visualization.
 Standalone CalculationData postprocessing runs explicitly in the browser or CLI;
 Prediction iteration remains browser work. These do not automatically resume on
-reconnect. Optimization Studies separately own their persisted build/solve/calculate
+reconnect. Optimizations separately own their persisted build/solve/calculate
 stages and continue server coordination after browser disconnects.
 Failed and cancelled runs require manual retry, which
 reuses the saved source, Vars, model definitions, selections and parameters.
@@ -252,13 +252,13 @@ govern admission with startup and growth allowances, not a hard memory ceiling;
 see [worker resource policy](../operations/workers.md#launcher-resource-policy).
 Budgets cover one launcher's process trees, without coordination between launchers.
 
-Optimization owns Study definitions, trial proposals, stage submissions, and
+The optimization module owns saved definitions, trial proposals, stage submissions, and
 reconciliation. Build, solve, and calculate stages use existing GPStation Jobs
 and resource dispatch; there is no second worker scheduler. Product handler
-callbacks attach Study event context and update stages in the same transaction
+callbacks attach Optimization event context and update stages in the same transaction
 as terminal Job events, including cancellation of queued siblings. A failed
-callback therefore cannot leave Job completion and Study persistence out of sync.
-The host adapter owns managed-job restrictions and Study list filtering, keeping
+callback therefore cannot leave Job completion and Optimization persistence out of sync.
+The host adapter owns managed-job restrictions and Optimization list filtering, keeping
 those decisions out of the generic execution service.
 
 Future Datasets and Models should connect through stable identifiers, revisions
@@ -272,7 +272,7 @@ Dataset/Model management, or a general workflow engine.
 - `app/ui/src/features/cae-workbench`: Measurement building and run UI.
 - `app/api/app/simulation`: Experiment and Measurement persistence, artifact
   uploads, Simulation batches, and result publication.
-- `app/api/app/optimization`: Studies, Trials, optimization decisions, and
+- `app/api/app/optimization`: Optimizations, Trials, optimization decisions, and
   persisted stage coordination.
 - `app/api/app/calculation`: Calculation source, contracts, and results.
 - `app/api/app/gpstation`: generic Job/Batch execution, events, and launchers.

@@ -41,14 +41,14 @@ export function createCaeBatches(client: CaembleClient) {
         offset?: number
         limit?: number
         attentionOnly?: boolean
-        excludeStudies?: boolean
+        excludeOptimizations?: boolean
       }> = {},
       context?: RequestContext,
     ) => {
       const params = new URLSearchParams({ limit: String(options.limit ?? 50), offset: String(options.offset ?? 0) })
       if (options.experimentId !== undefined) params.set('experiment_id', String(options.experimentId))
       if (options.attentionOnly) params.set('attention_only', 'true')
-      if (options.excludeStudies) params.set('exclude_studies', 'true')
+      if (options.excludeOptimizations) params.set('exclude_optimizations', 'true')
       return request('get', `/cae/batches?${params}`, undefined, {
         ...context,
         validate: (value) => caeBatchListSchema.parse(value),

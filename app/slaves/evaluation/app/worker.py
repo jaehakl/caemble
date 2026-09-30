@@ -16,7 +16,7 @@ async def evaluate(message: dict, attachments: list, context) -> dict:
         raise ValueError("Unknown evaluation stage.")
     runtime = await asyncio.to_thread(doctor)
     if message.get("runtime_id") and message["runtime_id"] != runtime["runtime_id"]:
-        raise ValueError("Evaluation runtime differs from the frozen Study runtime.")
+        raise ValueError("Evaluation runtime differs from the frozen Optimization runtime.")
     # The child receives only authored source/data; neither credentials nor job assignment.
     keys = ("build",) if stage == "build" else ("measurement_id", "recorded_data", "calculations")
     request = await resolve_input(context, {"stage": stage, **{key: message[key] for key in keys}})

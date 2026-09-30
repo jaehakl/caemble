@@ -70,11 +70,27 @@ async def run_node(request: dict, runtime: dict, *, timeout: float = 120) -> dic
             "input_file": str(input_path), "output_file": str(output_path),
         }).encode("utf-8")))
         try:
-            stdout, _stderr = await asyncio.wait_for(asyncio.shield(communication), timeout)
-            reply = json.loads(stdout.decode("utf-8"))
-            if child.returncode != 0 or "error" in reply:
-                raise EvaluationError(reply.get("error", {"message": f"Node exited with {child.returncode}."}))
-            return json.loads(output_path.read_text(encoding="utf-8"))
+            stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), timeout)
+            try:
+                reply = json.loads(stdout.decode("utf-8"))
+            except (UnicodeError, ValueError):
+                reply = None
+            if isinstance(reply, dict) and isinstance(reply.get("error"), dict):
+                raise EvaluationError(reply["error"])
+            if child.returncode != 0 or not isinstance(reply, dict) or reply.get("ok") is not True:
+                failed = child.returncode != 0
+                message = (f"Evaluation child exited with code {child.returncode}." if failed
+                           else "Evaluation child returned an invalid response.")
+                detail = stderr.decode("utf-8", errors="replace").strip()[-4096:]
+                raise EvaluationError({"code": "child_exit" if failed else "invalid_response",
+                                       "message": f"{message} {detail}" if detail else message})
+            try:
+                result = json.loads(output_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError) as error:
+                raise EvaluationError({"code": "invalid_result", "message": "Evaluation child did not write a valid result."}) from error
+            if not isinstance(result, dict):
+                raise EvaluationError({"code": "invalid_result", "message": "Evaluation result must be an object."})
+            return result
         except TimeoutError as error:
             raise EvaluationError({"code": "timeout", "message": "Evaluation child timed out."}) from error
         finally:

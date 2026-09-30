@@ -30,7 +30,7 @@ def test_release_bootstraps_cli_and_keeps_node_out_of_the_web_root(tmp_path):
     result = subprocess.run([*wrapper, "--help"], cwd=checkout, env=environment,
                             capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert result.returncode == 0, result.stderr
-    assert "study create" in result.stdout
+    assert "optimization create" in result.stdout
     selected = (checkout / ".data/node-runtime/current").read_text()
     runtime = checkout / ".data/node-runtime" / selected
     modified = (runtime / "worker.cjs").stat().st_mtime_ns
@@ -50,7 +50,7 @@ def test_release_bootstraps_cli_and_keeps_node_out_of_the_web_root(tmp_path):
         result = subprocess.run([str(bash), str(checkout / "caemble").replace("\\", "/"), "--help"],
                                 cwd=checkout, env=environment, capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 0, result.stderr
-        assert "study create" in result.stdout
+        assert "optimization create" in result.stdout
     public = tmp_path / "public"
     public.mkdir()
     archive = deployment / "caemble.tar.gz"

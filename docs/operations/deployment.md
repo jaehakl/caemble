@@ -23,6 +23,81 @@ cookie 설정을 운영값으로 설정한다. 인증 cookie가 runner origin으
 PostgreSQL에는 pgvector가 있어야 한다. baseline migration이 extension과 application
 table, 기본 user/admin role을 만든다.
 
+## Optimization 명칭과 실행 화면 전환
+
+이 전환은 API, UI, CLI, Launcher와 evaluation·CAE worker를 같은 release로 한 번에 바꾼다.
+API 경로는 `/cae/optimizations`, CLI 명령은 `optimization`, Workbench 직접 링크는
+`?optimization=<id>`를 사용한다. 이전 경로·명령·쿼리 이름을 위한 별칭은 제공하지 않는다.
+UI는 기존 최적화의 진행 상태를 먼저 보여 주며 새 생성 설정은 별도로 연다.
+
+1. 현재 배포의 admission gate로 신규 생성·재개·재시도·배치 제출을 먼저 차단한다.
+   조회·중지 요청은 열어 둔다. 이전 release에서 실행 중인 최적화를 중지하고 관련 Job의
+   종료와 `cleanup_pending=false`, `executions_active=0`을 확인한다. 일반 배치와 Launcher의
+   실행도 종료·정리한다.
+2. API, Launcher와 다른 DB writer를 중단한다. DB 전체 백업과 기존
+   release artifact를 보관한다. 이 전환에서 schema reset이나 이력 삭제를 사용하지 않는다.
+3. 새 release의 `app/api`에서 `poetry run alembic upgrade head`를 실행하고
+   `poetry run alembic current`로 결과를 확인한다. migration은 최적화 테이블·FK·index 등
+   명칭을 바꾸며 기존 Optimization, Trial, 단계 이력과 요청 ID, Measurement 연결을 보존한다.
+   전환 전후의 행 수와 대표 ID·관계를 비교한다. 고정된 `definition.hash`, `source_hash`,
+   요청 hash와 `runtime_id`는 새 release 값으로 덮어쓰지 않는다.
+4. 같은 release의 API, UI와 CLI·worker bundle을 배포하고 Launcher를 재연결한다.
+   목록·상세 조회, 기존 이력과 최선 후보, 새 경로를 확인한 뒤 신규 제출을 허용한다.
+   CLI 요청 영수증은 최초 사용 때 요청 ID를 유지해 새 형식으로 원자적으로 이전한다.
+
+종료하지 않은 실행을 새 release에서 이어서 재개하는 호환성은 이 전환의 범위에 포함하지 않는다.
+보존된 과거 이력의 조회와 미완료 실행의 재개를 구분한다. 과거 runtime에 고정된 미완료 항목은
+새 release에서 계속 실행할 수 있다고 가정하지 말고 필요한 경우 새 최적화를 만든다.
+문제가 생기면 신규 제출과 writer를 다시 중단하고 검증한 DB 백업과 이전 release를 함께 복원한다.
+개발 작업은 migration 코드·테스트·운영 절차를 준비하는 데까지이며, 실제 운영 배포와 운영 DB
+migration 실행은 별도의 배포 작업에서 수행한다.
+
+아래 명령은 운영자가 검토한 배포 창에서 실행할 단계별 확인 예시다. 현재 배포의 Nginx 설정에서
+admission gate가 적용되는 것을 먼저 확인한다. 일반 `deployment/update.sh`는 자체 gate를
+관리하고 활성 작업의 cleanup을 기다리지 않으므로, 이 단일 전환에서는 위 순서로 각 단계를
+수행하고 검증이 끝날 때까지 gate를 유지한다.
+
+```bash
+# 현재 release: 신규 제출을 막은 뒤 UI에서 실행을 중지하고 모든 cleanup 완료를 확인한다.
+sudo touch /run/caemble-draining
+sudo nginx -t
+sudo systemctl reload nginx
+# cleanup 확인 후 각 Launcher를 종료하고 API와 다른 DB writer를 중단한다.
+sudo systemctl stop caemble-api
+sudo systemctl is-active caemble-api  # inactive여야 한다.
+
+# PGSERVICE는 DBA가 확인한 대상 DB 접속 설정, BACKUP_FILE은 새 백업 파일 경로다.
+: "${PGSERVICE:?Set the reviewed maintenance database service}"
+: "${BACKUP_FILE:?Set a new backup file path}"
+test ! -e "$BACKUP_FILE"
+pg_dump --format=custom --file="$BACKUP_FILE"
+pg_restore --list "$BACKUP_FILE" > "$BACKUP_FILE.list"
+
+# 같은 release의 소스·web·node artifact를 준비한 뒤 새 API checkout에서 실행한다.
+cd /home/ubuntu/caemble/app/api
+poetry install --only main
+poetry run alembic upgrade head
+poetry run alembic current  # 000000000021 (head)
+poetry run alembic check
+sudo systemctl start caemble-api
+sudo systemctl is-active caemble-api
+curl --fail --silent --show-error http://127.0.0.1:8000/openapi.json > /dev/null
+
+# 새 web/ artifact 활성화와 Launcher 재연결 후, API 인증 환경이 설정된 checkout에서 확인한다.
+cd /home/ubuntu/caemble
+sh ./caemble doctor --api --json
+sh ./caemble optimization list --limit 1 --json
+# 대표 과거 항목의 상세·최선 후보·Measurement 관계를 UI 또는 optimization show로 확인한다.
+# 모든 검증이 성공한 뒤에만 신규 제출을 다시 연다.
+sudo rm /run/caemble-draining
+```
+
+검증이 실패하면 gate를 유지하고 API·Launcher를 중단한다. 새 형식으로 처리한 요청이 없는
+배포 검증 단계에서만 `app/api`의 `poetry run alembic downgrade 000000000020`으로 명칭을
+되돌린 뒤 이전 소스·web·node release를 함께 복원할 수 있다. 데이터 상태가 불확실하거나
+새 요청을 처리했다면 준비한 DB 백업을 별도 복구 DB에 복원해 검증한 후 이전 release와 함께
+전환한다. DB만 또는 실행 파일만 되돌린 혼합 상태로 writer를 시작하지 않는다.
+
 ## Calculation 공유 정의 전환 (revision 000000000016)
 
 이 migration은 `calculations`의 ID를 보존한 채 정확히 같은 UTF-8 코드를
@@ -86,7 +161,7 @@ CAE Python 환경을 계속 사용한다. Launcher는 evaluation 가상환경을
 개발용 부분 빌드는 `npm run build:node`이며, `build:cli`와 `build:evaluation`도 같은 빌드를 호출한다.
 부분 빌드는 배포 압축 파일을 갱신하지 않는다. 개발 결과는 `app/ui`에서
 `node dist-cli/caemble.cjs`로 직접 실행한다. 배포 파일 갱신은 `npm run build` 또는 위 배치 파일로 한다.
-Study가 고정한 runtime metadata와 다른 bundle은 해당 평가를 실행하지 않는다.
+Optimization이 고정한 runtime metadata와 다른 bundle은 해당 평가를 실행하지 않는다.
 
 ## 클라이언트 빌드 전환
 

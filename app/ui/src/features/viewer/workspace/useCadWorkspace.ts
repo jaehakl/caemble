@@ -177,7 +177,11 @@ export function useCadWorkspace(
   const [validatedRevision, setValidatedRevision] = useState(-1)
   const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
   const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
-  const [varsSchema, setVarsSchema] = useState<EvaluatedExperimentSnapshot['varsSchema'] | null>(null)
+  const [inspectedSchema, setInspectedSchema] = useState<{
+    document: ExperimentSourceDocument
+    resetKey: string | number
+    schema: EvaluatedExperimentSnapshot['varsSchema']
+  } | null>(null)
   const [resultSessionKey, setResultSessionKey] = useState<string | number | null>(null)
 
   const activeEvaluationRef = useRef<AbortController | null>(null)
@@ -266,8 +270,8 @@ export function useCadWorkspace(
     setDraftTaskNames([])
     const resetPreview = resetKeyRef.current !== resetKey
     resetKeyRef.current = resetKey
-    const sessionCandidateVars = resetPreview ? undefined : candidateVars
-    const sessionMaterialSnapshot = resetPreview ? null : persistedMaterialSnapshot
+    // The caller restores the source, Candidate and material snapshot together.
+    // Reset cached results without discarding the inputs for the new session.
     if (resetPreview) {
       candidateCacheRef.current = null
       editableMaterialEchoRef.current = null
@@ -296,7 +300,7 @@ export function useCadWorkspace(
       setResultSessionKey(null)
       setScene(null)
       setTaskScenes(Object.freeze({}))
-      setVarsSchema(null)
+      setInspectedSchema(null)
       statusRef.current = 'Ready'
       dispatchLifecycle({ type: 'sourceCleared' })
       return
@@ -361,7 +365,7 @@ export function useCadWorkspace(
     )
       .then(async ({ catalog, inspection }) => {
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
-        setVarsSchema(inspection.varsSchema)
+        setInspectedSchema({ document: evaluationDocument, resetKey, schema: inspection.varsSchema })
         const fingerprint = varsSchemaFingerprint(inspection.varsSchema)
         const schemaChanged =
           lastSchemaFingerprintRef.current !== null && lastSchemaFingerprintRef.current !== fingerprint
@@ -404,11 +408,7 @@ export function useCadWorkspace(
           return generated
         }
         let nextVars: Readonly<Vars>
-        if (
-          candidateProvenance === 'persisted-measurement' &&
-          candidateVarsPending &&
-          sessionCandidateVars === undefined
-        ) {
+        if (candidateProvenance === 'persisted-measurement' && candidateVarsPending) {
           statusRef.current = 'Checking'
           dispatchLifecycle({ type: 'candidatePending' })
           return
@@ -417,10 +417,9 @@ export function useCadWorkspace(
         } else if (candidateProvenance === 'persisted-measurement') {
           candidateCacheRef.current = null
           try {
-            if (sessionCandidateVars === undefined)
-              throw new Error('The saved Measurement does not contain Candidate vars.')
+            if (candidateVars === undefined) throw new Error('The saved Measurement does not contain Candidate vars.')
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
-            nextVars = normalizeVars(normalizedSchema, sessionCandidateVars, 'Measurement')
+            nextVars = normalizeVars(normalizedSchema, candidateVars, 'Measurement')
           } catch (cause: unknown) {
             const detail = cause instanceof Error ? cause.message : String(cause)
             throw new MeasurementVarsError(
@@ -431,12 +430,12 @@ export function useCadWorkspace(
           nextVars = generateCandidateVars('schema-changed')
         } else if (reusableCachedCandidate) {
           nextVars = reusableCachedCandidate
-        } else if (sessionCandidateVars === undefined) {
+        } else if (candidateVars === undefined) {
           nextVars = generateCandidateVars()
         } else {
           try {
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
-            nextVars = normalizeVars(normalizedSchema, sessionCandidateVars, 'Candidate')
+            nextVars = normalizeVars(normalizedSchema, candidateVars, 'Candidate')
             candidateCacheRef.current = null
           } catch {
             nextVars = generateCandidateVars('invalid-candidate')
@@ -464,7 +463,7 @@ export function useCadWorkspace(
           setPredictionCandidate(candidate)
           setResultSessionKey(resetKey)
           setVariables(candidate.variables)
-          setVarsSchema(candidate.varsSchema)
+          setInspectedSchema({ document: evaluationDocument, resetKey, schema: candidate.varsSchema })
           setSimulationProgram(candidate.simulationProgram)
           setDraftTaskNames(catalogDraftTaskNames(catalog, candidate.simulationProgram))
           if (explicitGeneration) {
@@ -531,7 +530,7 @@ export function useCadWorkspace(
         const resolution = await resolveDocumentMaterials(
           snapshot,
           candidateProvenance === 'persisted-measurement' && !explicitGeneration
-            ? readMeasurementMaterialSnapshot(sessionMaterialSnapshot)
+            ? readMeasurementMaterialSnapshot(persistedMaterialSnapshot)
             : null,
           catalog,
         )
@@ -584,7 +583,7 @@ export function useCadWorkspace(
           setResultSessionKey(resetKey)
           setDraftTaskNames(nextDraftTaskNames)
           setVariables(snapshot.variables)
-          setVarsSchema(snapshot.varsSchema)
+          setInspectedSchema({ document: evaluationDocument, resetKey, schema: snapshot.varsSchema })
           setScene(commonScene)
           setTaskScenes(nextTaskScenes)
           setSimulationProgram(null)
@@ -605,7 +604,7 @@ export function useCadWorkspace(
         setEvaluatedSnapshot(snapshot)
         setResultSessionKey(resetKey)
         setVariables(snapshot.variables)
-        setVarsSchema(snapshot.varsSchema)
+        setInspectedSchema({ document: evaluationDocument, resetKey, schema: snapshot.varsSchema })
         setScene(commonScene)
         setTaskScenes(nextTaskScenes)
         setSimulationProgram(snapshot.simulationProgram)
@@ -984,7 +983,10 @@ export function useCadWorkspace(
     taskScenes: ownsCurrentSession ? taskScenes : Object.freeze({}),
     validatedRevision: currentValidatedRevision,
     variables: ownsCurrentSession ? variables : null,
-    varsSchema,
+    varsSchema:
+      inspectedSchema?.document === experiment && inspectedSchema?.resetKey === resetKey
+        ? inspectedSchema.schema
+        : null,
   }
   return { experimentDocument }
 }
