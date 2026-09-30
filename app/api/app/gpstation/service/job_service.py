@@ -6,9 +6,9 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import and_, func, or_, select, update
-from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, load_only
+from sqlalchemy.sql.elements import ColumnElement
 
 from gpstation.db import Job, JobBatch, Launcher
 from gpstation.models import JobData, JobSummary
@@ -69,8 +69,6 @@ class JobService:
         offer: dict[str, Any],
         resources: dict | None = None,
     ) -> Job:
-        if slave_app_id in {"cae", "evaluation"} or handler_type.startswith("cae."):
-            raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Study endpoints.")
         job = Job(
             user_id=user_id,
             handler_type=handler_type,
@@ -119,7 +117,7 @@ class JobService:
         user_id: str | None,
         active_only: bool,
         limit: int,
-        exclude_studies: bool = False,
+        predicate: ColumnElement[bool] | None = None,
     ) -> list[JobSummary]:
         stmt = (
             select(
@@ -146,9 +144,8 @@ class JobService:
         )
         if user_id is not None:
             stmt = stmt.where(Job.user_id == user_id)
-        if exclude_studies:
-            from cae.studies.db import StageSubmission
-            stmt = stmt.where(~select(StageSubmission.id).where(StageSubmission.job_id == Job.id).exists())
+        if predicate is not None:
+            stmt = stmt.where(predicate)
         if active_only:
             stmt = stmt.where(
                 Job.state.in_(

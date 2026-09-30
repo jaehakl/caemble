@@ -8,6 +8,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -17,19 +18,24 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from caemble_catalog import Catalog
-from cae.batches import list_batches
-from cae.db import CaeBatch
-from cae.studies.db import StageSubmission, Study, Trial
-from cae.studies.models import StudyCreateRequest
-from cae.studies.service import (
+from simulation.services import recording
+from simulation.services.batches import list_batches
+from simulation.db import CaeBatch
+from optimization.db import StageSubmission, Study, Trial
+from optimization.schemas import StudyCreateRequest
+from optimization import evaluation, integration
+from optimization.service import (
     create_study, delete_study, list_studies, list_trials, require_study,
-    require_unmanaged_execution, require_unreferenced_experiments,
-    require_unreferenced_measurements, resume_study,
+    resume_study,
 )
-from db import Calculation, CalculationSource, Experiment, Measurement, make_async_db_url
+from optimization.guards import require_unmanaged_execution, require_unreferenced_experiments, require_unreferenced_measurements
+from calculation.db import Calculation, CalculationSource
+from simulation.db import Experiment, Measurement
+from db import make_async_db_url
 from gpstation.db import Job, JobBatch
 from gpstation.service.job_service import JobService
-from models import RoleEnum, UserData
+from gpstation.service.server_handlers import register_server_handler, server_handlers
+from user_auth.schemas import RoleEnum, UserData
 from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
 
 
@@ -70,6 +76,11 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
         asyncio.run(_drop_database(cls.database))
 
     async def asyncSetUp(self):
+        handlers = patch.dict(server_handlers, clear=True)
+        handlers.start()
+        self.addCleanup(handlers.stop)
+        for name, implementation in (("cae.simulation", recording), ("cae.evaluation.build", evaluation), ("cae.evaluation.calculate", evaluation)):
+            register_server_handler(name, implementation, event_context=integration.event_context, on_finished=integration.on_finished)
         self.engine = create_async_engine(make_async_db_url(_database_url(self.database)))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         self.owner = UserData(id=self.owner_id, roles=[RoleEnum.user])
@@ -151,7 +162,8 @@ class StudyPersistenceTests(unittest.IsolatedAsyncioTestCase):
             study = await create_study(db, self.request(), self.owner, self.catalog)
             trial, job, batch = await self.stage(db, study)
             self.assertEqual(len(await JobService.list_job_summaries(db, user_id=self.owner_id, active_only=False, limit=1)), 1)
-            self.assertEqual(await JobService.list_job_summaries(db, user_id=None, active_only=False, limit=1, exclude_studies=True), [])
+            study_child = select(StageSubmission.id).where(StageSubmission.job_id == Job.id).exists()
+            self.assertEqual(await JobService.list_job_summaries(db, user_id=None, active_only=False, limit=1, predicate=~study_child), [])
             self.assertEqual((await list_batches(db, self.owner_id, experiment_id=None, limit=1, offset=0, exclude_studies=True))["total"], 0)
             for identity in ({"job_id": job.id}, {"batch_id": batch.id}):
                 with self.assertRaises(HTTPException) as caught:

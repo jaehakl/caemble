@@ -5,11 +5,12 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from cae.batches import create_batch, retry_batch
-from cae.models import BatchCreateRequest
-from cae.uploads import commit_batch
-from models import ExperimentSourceBundle, SaveExperimentRequest
-from service.experiment import save_experiment
+from simulation.services.batches import create_batch, retry_batch
+from simulation.schemas import BatchCreateRequest
+from simulation.services.uploads import commit_batch
+from simulation.contracts import ExperimentSourceBundle
+from simulation.schemas import SaveExperimentRequest
+from simulation.services.save import save_experiment
 
 BAD = {"files": {"experiment.tsx": "export default null", "object.ts": "unused"}}
 
@@ -53,7 +54,7 @@ class SourcePathTests(unittest.IsolatedAsyncioTestCase):
                 experiment_id=None if preflight else 64, source_bundle=BAD if preflight else None,
                 items=[{"index": 1, "input_hash": "a" * 64, "byte_length": 100}])
             db = SimpleNamespace(scalar=AsyncMock(side_effect=[None, experiment]), add=Mock())
-            with patch("cae.batches.serialize_events", AsyncMock()), patch("cae.batches.is_admin_user", return_value=False):
+            with patch("simulation.services.batches.serialize_events", AsyncMock()), patch("simulation.services.batches.is_admin_user", return_value=False):
                 with self.assertRaises(HTTPException) as error:
                     await create_batch(db, request, user, catalog)
             self.assert_path_error(error)
@@ -66,7 +67,7 @@ class SourcePathTests(unittest.IsolatedAsyncioTestCase):
             cae = SimpleNamespace(experiment_id=64, spec={"preflight": preflight, "source_bundle": BAD,
                 "source_hash": "source", "catalog_revision": "catalog"})
             db = SimpleNamespace(get=AsyncMock(return_value=cae), scalar=AsyncMock(return_value=experiment), stream_scalars=AsyncMock())
-            with patch("cae.uploads.serialize_events", AsyncMock()), patch("cae.uploads.require_batch", AsyncMock(return_value=batch)), patch("cae.uploads.is_admin_user", return_value=False):
+            with patch("simulation.services.uploads.serialize_events", AsyncMock()), patch("simulation.services.uploads.require_batch", AsyncMock(return_value=batch)), patch("simulation.services.uploads.is_admin_user", return_value=False):
                 with self.assertRaises(HTTPException) as error:
                     await commit_batch(db, "batch", SimpleNamespace(id="owner"), SimpleNamespace(meta=lambda: {"catalogRevision": "catalog"}))
             self.assert_path_error(error)
@@ -79,7 +80,7 @@ class SourcePathTests(unittest.IsolatedAsyncioTestCase):
         experiment = SimpleNamespace(source_hash="source", source_bundle=BAD)
         db = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [job])),
             get=AsyncMock(return_value=cae), scalar=AsyncMock(return_value=experiment), commit=AsyncMock())
-        with patch("cae.batches.serialize_events", AsyncMock()), patch("cae.batches.require_batch", AsyncMock(return_value=batch)):
+        with patch("simulation.services.batches.serialize_events", AsyncMock()), patch("simulation.services.batches.require_batch", AsyncMock(return_value=batch)):
             with self.assertRaises(HTTPException) as error:
                 await retry_batch(db, "batch", "owner", None)
         self.assert_path_error(error)

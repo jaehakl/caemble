@@ -16,13 +16,16 @@ from test_calculation_database import (
     API_DIR, ORIGINAL_DB_URL, _connect_arguments, _create_database, _database_url,
     _drop_database, _ready_calculation, _seed_calculation_data, _upgrade, _check,
 )
-from db import Calculation, CalculationData, CalculationSource, make_async_db_url
-from models import CalculationDataOutput, CalculationListRequest, CalculationMetadataUpdate, RoleEnum, UserData
-from service.calculation import delete_calculations, list_calculations, upsert_calculations, update_calculation_metadata
-from service.calculation_data import save_calculation_data
-from service.calculation_library import library_detail
-from service.data_tools import VisibleDataError, VisibleDataReader
-from calculation_library_models import LibraryReference
+from calculation.db import Calculation, CalculationData, CalculationSource
+from db import make_async_db_url
+from calculation.schemas import CalculationDataOutput, CalculationListRequest, CalculationMetadataUpdate
+from user_auth.schemas import RoleEnum, UserData
+from calculation.services.calculations import delete_calculations, list_calculations, upsert_calculations, update_calculation_metadata
+from calculation.services.data import save_calculation_data
+from calculation.services.library import library_detail
+from core.data_tools import VisibleDataError
+from simulation.services.data_queries import SimulationDataReader
+from calculation.library_schemas import LibraryReference
 from caemble_catalog import Catalog
 from settings import settings
 

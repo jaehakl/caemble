@@ -18,14 +18,16 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
 import db  # noqa: E402
+from calculation.db import CalculationData
+from simulation.db import Measurement
 import gpstation.db  # noqa: E402, F401
 import user_auth.db  # noqa: E402, F401
-from models import GetListRequestBase  # noqa: E402
-from service.calculation_data import CALCULATION_DATA_CRUD_SPEC  # noqa: E402
-from service.measurement_service import MEASUREMENT_WRITE_CRUD_SPEC  # noqa: E402
-from utils.crud import CrudSpec, delete_items, get_list_response  # noqa: E402
-from utils.crud.common import build_scope_clause  # noqa: E402
-from utils.crud.list import serialize_list_entities  # noqa: E402
+from core.schemas import GetListRequestBase  # noqa: E402
+from calculation.services.data import CALCULATION_DATA_CRUD_SPEC  # noqa: E402
+from simulation.services.measurements import MEASUREMENT_WRITE_CRUD_SPEC  # noqa: E402
+from core.crud import CrudSpec, delete_items, get_list_response  # noqa: E402
+from core.crud.common import build_scope_clause  # noqa: E402
+from core.crud.list import serialize_list_entities  # noqa: E402
 
 
 class FixtureBase(DeclarativeBase):
@@ -228,13 +230,13 @@ class CrudTests(unittest.IsolatedAsyncioTestCase):
 
     def test_production_scope_keeps_demo_visibility_and_measurement_write_owner(self) -> None:
         clause = build_scope_clause(CALCULATION_DATA_CRUD_SPEC, None, write=False)
-        public_sql = str(select(db.CalculationData.id).where(clause).compile(dialect=postgresql.dialect()))
+        public_sql = str(select(CalculationData.id).where(clause).compile(dialect=postgresql.dialect()))
         self.assertIn("measurements", public_sql)
         self.assertIn("experiments", public_sql)
         self.assertIn("experiment_demos", public_sql)
         self.assertNotIn("user_id IS NULL", public_sql)
         clause = build_scope_clause(MEASUREMENT_WRITE_CRUD_SPEC, self.owner, write=True)
-        write_sql = str(select(db.Measurement.id).where(clause).compile(dialect=postgresql.dialect()))
+        write_sql = str(select(Measurement.id).where(clause).compile(dialect=postgresql.dialect()))
         self.assertIn("measurements.user_id =", write_sql)
         self.assertNotIn("experiments", write_sql)
         self.assertNotIn("experiment_demos", write_sql)

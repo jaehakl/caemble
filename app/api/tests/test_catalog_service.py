@@ -8,8 +8,8 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from catalog_models import CatalogRuntimeSliceRequest  # noqa: E402
-from service.catalog import (  # noqa: E402
+from catalog.schemas import CatalogRuntimeSliceRequest  # noqa: E402
+from catalog.service import (  # noqa: E402
     build_runtime_slice,
     get_quantity_kind,
     list_quantity_kinds,

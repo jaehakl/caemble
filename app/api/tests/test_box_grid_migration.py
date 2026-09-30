@@ -6,8 +6,15 @@ import unittest
 import uuid
 
 import asyncpg
+from alembic import command
+from alembic.config import Config
 
-from test_calculation_database import _connect_arguments, _create_database, _drop_database, _seed_owners, _upgrade
+from settings import settings
+from test_calculation_database import (
+    API_DIR, ORIGINAL_DB_URL, _connect_arguments, _create_database, _database_url,
+    _drop_database, _seed_owners, _upgrade,
+)
+from test_calculation_sources import downgrade
 
 
 @unittest.skipUnless(os.getenv("RUN_CALCULATION_DB_TESTS") == "1", "Requires disposable PostgreSQL databases")
@@ -18,7 +25,15 @@ class BoxGridMigrationTests(unittest.TestCase):
         try:
             asyncio.run(_create_database(database))
             created = True
-            _upgrade(database, "000000000011")
+            _upgrade(database, "head")
+            # Restore the inline Calculation source columns that existed when
+            # revision 12 ran; today's baseline already uses shared sources.
+            downgrade(database, "000000000015")
+            settings.db_url = _database_url(database)
+            try:
+                command.stamp(Config(str(API_DIR / "alembic.ini")), "000000000011")
+            finally:
+                settings.db_url = ORIGINAL_DB_URL
             owner, _, experiment, _ = asyncio.run(_seed_owners(database))
             async def seed():
                 connection = await asyncpg.connect(**_connect_arguments(database))
@@ -62,7 +77,7 @@ class BoxGridMigrationTests(unittest.TestCase):
                 finally:
                     await connection.close()
             source, measurement, calculation, jobs = asyncio.run(seed())
-            _upgrade(database, "head")
+            _upgrade(database, "000000000012")
             async def verify():
                 connection = await asyncpg.connect(**_connect_arguments(database))
                 try:

@@ -14,6 +14,7 @@ from test_calculation_database import (
     _database_url, _drop_database, _seed_owners, _upgrade,
 )
 from settings import settings
+from test_calculation_sources import downgrade
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL migration tests.")
@@ -24,6 +25,9 @@ class MaterialModelMigrationTests(unittest.TestCase):
             asyncio.run(_create_database(database))
             _upgrade(database, "head")
             _check(database)
+            # Revision 8 predates shared Calculation sources. Reconstruct its
+            # inline source layout before adding the retired Material tables.
+            downgrade(database, "000000000015")
             owner_id, _, experiment_id, _ = asyncio.run(_seed_owners(database))
             cae_job, ai_job = str(uuid.uuid4()), str(uuid.uuid4())
             upload_batch, ai_batch = uuid.uuid4(), uuid.uuid4()
@@ -78,7 +82,7 @@ class MaterialModelMigrationTests(unittest.TestCase):
             command.stamp(Config(str(API_DIR / "alembic.ini")), "000000000007")
             settings.db_url = ORIGINAL_DB_URL
             with self.assertRaisesRegex(RuntimeError, "Drain or cancel"):
-                _upgrade(database, "head")
+                _upgrade(database, "000000000008")
 
             async def drain_and_check_rollback():
                 connection = await asyncpg.connect(**_connect_arguments(database))
@@ -92,7 +96,7 @@ class MaterialModelMigrationTests(unittest.TestCase):
 
             asyncio.run(drain_and_check_rollback())
             with self.assertRaisesRegex(RuntimeError, "Drain or cancel"):
-                _upgrade(database, "head")
+                _upgrade(database, "000000000008")
 
             async def cancel_upload():
                 connection = await asyncpg.connect(**_connect_arguments(database))
@@ -103,8 +107,7 @@ class MaterialModelMigrationTests(unittest.TestCase):
                     await connection.close()
 
             asyncio.run(cancel_upload())
-            _upgrade(database, "head")
-            _check(database)
+            _upgrade(database, "000000000008")
 
             async def verify():
                 connection = await asyncpg.connect(**_connect_arguments(database))
@@ -126,6 +129,10 @@ class MaterialModelMigrationTests(unittest.TestCase):
                     await connection.close()
 
             asyncio.run(verify())
+            # Check the later migrations after asserting revision 8's account
+            # and unrelated-job retention against the historical schema.
+            _upgrade(database, "head")
+            _check(database)
         finally:
             settings.db_url = ORIGINAL_DB_URL
             asyncio.run(_drop_database(database))

@@ -11,12 +11,12 @@ from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
-from cae.db import CaeBatch
-from cae.preflight import preflight_result
-from cae.recording import complete_job, stage_visualization
+from simulation.db import CaeBatch
+from simulation.services.preflight import preflight_result
+from simulation.services.recording import complete_job, stage_visualization
 from gpstation.db import JobVisualization
 from gpstation.service.state import utcnow
-from service.measurement_service import get_visualizations
+from simulation.services.measurements import get_visualizations
 
 
 class ParticleVisualizationTests(unittest.IsolatedAsyncioTestCase):
@@ -69,7 +69,7 @@ class ParticleVisualizationTests(unittest.IsolatedAsyncioTestCase):
         job.artifact_metadata = json.loads(json.dumps(job.artifact_metadata))
         db.get.side_effect = [batch, job]
         db.scalar.return_value = job.id
-        with patch("cae.preflight.require_batch", AsyncMock(return_value=SimpleNamespace(id="batch"))):
+        with patch("simulation.services.preflight.require_batch", AsyncMock(return_value=SimpleNamespace(id="batch"))):
             fetched = await preflight_result(db, "batch", "owner")
         result = fetched["visualizations"]["fluid"]["particles"]
         self.assertEqual(result["contract"], contract)
@@ -86,7 +86,7 @@ class ParticleVisualizationTests(unittest.IsolatedAsyncioTestCase):
         db.get.return_value = SimpleNamespace(experiment_id=7)
         db.scalars.side_effect = None
         db.scalars.return_value = SimpleNamespace(all=lambda: [SimpleNamespace(task="fluid", data={"particles": result})])
-        with patch("service.measurement_service.require_experiment_read", AsyncMock()):
+        with patch("simulation.services.measurements.require_experiment_read", AsyncMock()):
             measured = await get_visualizations(db, 5, user=None)
         self.assertEqual(measured.visualizations, fetched["visualizations"])
         bad = copy.deepcopy(entry)

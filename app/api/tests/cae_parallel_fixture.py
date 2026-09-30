@@ -22,18 +22,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import uvicorn
 
-from cae import recording
-from cae.batches import create_batch
-from cae.models import BatchCreateRequest
-from cae.uploads import CHUNK_BYTES, commit_batch, finalize_item, upload_chunk
-from db import Experiment, ExperimentRecord, Measurement, RecordedData, make_async_db_url
+from simulation.services import recording
+from simulation.services.batches import create_batch
+from simulation.schemas import BatchCreateRequest
+from simulation.services.uploads import CHUNK_BYTES, commit_batch, finalize_item, upload_chunk
+from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
+from db import make_async_db_url
 from gpstation.db import APIKey, ExecutionAttempt, Job, JobBatch, JobRecord
 from gpstation.service import launcher_connection, worker_connection
 from gpstation.service.job_orchestrator import JobOrchestrator
 from gpstation.service.server_handlers import server_handlers
 from gpstation.service.state import runtime
-from models import RoleEnum, UserData
-from service.data_tools import slice_recorded_tensor
+from user_auth.schemas import RoleEnum, UserData
+from core.data_tools import slice_recorded_tensor
 from settings import settings
 from test_calculation_database import _database_url, _seed_owners
 from user_auth.utils.auth_utils import hash_token

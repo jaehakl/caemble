@@ -14,12 +14,12 @@ from sqlalchemy import delete, event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
-from cae.batches import list_batches
-from cae.db import CaeBatch
-from cae.router import authenticated, get_db, router
+from simulation.services.batches import list_batches
+from simulation.db import CaeBatch
+from simulation.routers.execution import authenticated, get_db, router
 from db import make_async_db_url
 from gpstation.db import Job, JobBatch, JobEvent
-from models import RoleEnum, UserData
+from user_auth.schemas import RoleEnum, UserData
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")

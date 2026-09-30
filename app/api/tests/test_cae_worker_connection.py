@@ -19,10 +19,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import uvicorn
 
-from cae import recording
-from cae.db import CaeBatch
-from cae.recording import persist_record
-from db import ExperimentRecord, Measurement, RecordedData, make_async_db_url
+from simulation.services import recording
+from simulation.db import CaeBatch
+from simulation.services.recording import persist_record
+from simulation.db import ExperimentRecord, Measurement, RecordedData
+from db import make_async_db_url
 from gpstation.db import Job, JobBatch, JobEvent, JobRecord, Launcher
 from gpstation.service import worker_connection
 from gpstation.service.server_handlers import server_handlers
@@ -45,7 +46,7 @@ from test_calculation_database import (
 
 class RecordPersistenceTests(unittest.TestCase):
     def test_cookie_batch_mutations_require_csrf(self):
-        from cae.router import router
+        from simulation.routers.execution import router
 
         app = FastAPI()
         app.include_router(router)

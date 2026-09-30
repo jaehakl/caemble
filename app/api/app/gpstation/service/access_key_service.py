@@ -6,17 +6,16 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gpstation.db import APIKey
-from gpstation.models import AccessKeyCreate, AccessKeyCreateResult, AccessKeyData
+from gpstation.models import AccessKeyCreateResult, AccessKeyData
 from gpstation.service.auth_audit_service import add_auth_audit
 from gpstation.service.state import runtime
-from user_auth.db import Role, User, UserRole
+from user_auth.key_policy import active_access_key_users
 from user_auth.utils.auth_utils import hash_token, random_urlsafe
 
 
 ACCESS_KEY_PREFIX = "csk_"
 ACCESS_KEY_TYPE = "user_api"
 ACCESS_KEY_DISPLAY_PREFIX_LENGTH = 16
-ALLOWED_ACCESS_KEY_SCOPES = {"client", "launcher", "caemble"}
 
 
 def access_key_to_data(access_key: APIKey) -> AccessKeyData:
@@ -46,17 +45,13 @@ class AccessKeyService:
         now = datetime.now(timezone.utc)
         rows = await db.scalars(
             select(APIKey.id)
-            .join(User, User.id == APIKey.user_id)
-            .join(UserRole, UserRole.user_id == User.id)
-            .join(Role, Role.id == UserRole.role_id)
             .where(
                 APIKey.id.in_(access_key_ids),
                 APIKey.status == "active",
                 APIKey.revoked_at.is_(None),
                 or_(APIKey.expires_at.is_(None), APIKey.expires_at > now),
                 APIKey.scopes.contains(["launcher"]),
-                User.is_active.is_(True),
-                Role.name.in_(("admin", "user")),
+                APIKey.user_id.in_(active_access_key_users()),
             )
         )
         return {str(key_id) for key_id in rows.all()}
@@ -70,17 +65,13 @@ class AccessKeyService:
         now = datetime.now(timezone.utc)
         stmt = (
             select(APIKey.id)
-            .join(User, User.id == APIKey.user_id)
-            .join(UserRole, UserRole.user_id == User.id)
-            .join(Role, Role.id == UserRole.role_id)
             .where(
                 APIKey.id == access_key_id,
                 APIKey.status == "active",
                 APIKey.revoked_at.is_(None),
                 or_(APIKey.expires_at.is_(None), APIKey.expires_at > now),
                 APIKey.scopes.contains(["launcher"]),
-                User.is_active.is_(True),
-                Role.name.in_(("admin", "user")),
+                APIKey.user_id.in_(active_access_key_users()),
             )
         )
         if user_id is not None:
@@ -88,30 +79,14 @@ class AccessKeyService:
         return await db.scalar(stmt) is not None
 
     @staticmethod
-    async def create_user_access_key(
+    async def create_access_key(
         db: AsyncSession,
         user_id: str,
-        payload: AccessKeyCreate,
+        *,
+        name: str,
+        scopes: list[str],
+        expires_at: datetime | None = None,
     ) -> AccessKeyCreateResult:
-        user = await db.get(User, user_id)
-        role = await db.scalar(
-            select(Role.id)
-            .join(UserRole, UserRole.role_id == Role.id)
-            .where(UserRole.user_id == user_id, Role.name.in_(("admin", "user")))
-            .limit(1)
-        )
-        if user is None:
-            raise ValueError("User not found")
-        if not user.is_active or role is None:
-            raise ValueError("Access Tokens require an active admin or user account")
-
-        name = payload.name.strip()
-        if not name:
-            raise ValueError("Access Token name is required")
-        scopes = list(dict.fromkeys(payload.scopes or []))
-        if not scopes or any(scope not in ALLOWED_ACCESS_KEY_SCOPES for scope in scopes):
-            raise ValueError("Invalid Access Token scope")
-
         secret = f"{ACCESS_KEY_PREFIX}{random_urlsafe(48)}"
         access_key = APIKey(
             user_id=user_id,
@@ -121,7 +96,7 @@ class AccessKeyService:
             key_hash=hash_token(secret),
             scopes=scopes,
             status="active",
-            expires_at=normalize_optional_datetime(payload.expires_at),
+            expires_at=normalize_optional_datetime(expires_at),
         )
         db.add(access_key)
         add_auth_audit(

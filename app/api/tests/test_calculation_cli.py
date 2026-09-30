@@ -19,15 +19,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_calculation_database import (
     API_DIR, _create_database, _database_url, _drop_database, _ready_calculation, declared_source, _seed_owners, _upgrade,
 )
-from db import CalculationData, Measurement, make_async_db_url
-from gpstation.models import AccessKeyCreate
-from gpstation.service.access_key_service import AccessKeyService
+from calculation.db import CalculationData
+from simulation.db import Measurement
+from db import make_async_db_url
+from user_auth.schemas import AccessKeyCreate
+from user_auth.access_keys import create_user_access_key
 from gpstation.service.state import utcnow
-from models import RoleEnum, UserData
-from routers import calculation, calculation_data, measurement
-from service.calculation import upsert_calculations
+from user_auth.schemas import RoleEnum, UserData
+from calculation.routers import calculation, data as calculation_data
+from simulation.routers import measurement
+from calculation.services.calculations import upsert_calculations
 from user_auth.db import Role, UserRole
-from user_auth.routes import get_db
+from db import get_db
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for public CLI/API checks.")
@@ -69,7 +72,7 @@ class CalculationCliTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([CalculationData(calculation_id=calculation_id, measurement_id=row.id,
                 data={"dtype": "float64", "shape": [], "axes": [], "data": 4}) for row in measurements[:-1]])
             await db.commit()
-            key = await AccessKeyService.create_user_access_key(db, self.owner,
+            key = await create_user_access_key(db, self.owner,
                 AccessKeyCreate(name="disposable CLI test", scopes=["caemble"]))
 
         app = FastAPI()

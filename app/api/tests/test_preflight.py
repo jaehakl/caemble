@@ -7,9 +7,9 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
-from cae.models import BatchCreateRequest
-from cae.preflight import expire_preflights, preflight_result, require_preflight_job
-from cae.recording import complete_job, persist_record, stage_record, storage_packet
+from simulation.schemas import BatchCreateRequest
+from simulation.services.preflight import expire_preflights, preflight_result, require_preflight_job
+from simulation.services.recording import complete_job, persist_record, stage_record, storage_packet
 from gpstation.service.state import utcnow
 from gpstation.service.batches import finish_job
 from storage.service import bind_objects
@@ -19,7 +19,8 @@ from box_grid_fixtures import box_schema, box_tensor
 class PreflightTests(unittest.IsolatedAsyncioTestCase):
     def job(self):
         return SimpleNamespace(id="11111111-1111-4111-8111-111111111111", user_id="owner", batch_id="batch",
-            state="succeeded", attempt_count=1, finished_at=utcnow(), artifact_metadata={}, progress=[],
+            state="succeeded", attempt_count=1, attempt_id=None, reservation_id=None, cleaned_at=None,
+            handler_type="cae.simulation", finished_at=utcnow(), artifact_metadata={}, progress=[],
             input={"preflight": True, "storage_version": 1,
                 "measurement": {"varsHash": "vars", "experiment": {"simulationProgram": {
                     "recordedData": {"field": box_schema()},
@@ -85,7 +86,7 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
         cae = SimpleNamespace(spec={"preflight": True, "source_hash": "source", "source_bundle": {"files": {}}})
         db.get.side_effect = [cae, job]
         db.scalar.return_value = job.id
-        with patch("cae.preflight.require_batch", AsyncMock(return_value=SimpleNamespace(id="batch"))):
+        with patch("simulation.services.preflight.require_batch", AsyncMock(return_value=SimpleNamespace(id="batch"))):
             result = await preflight_result(db, "batch", "owner")
         self.assertEqual(result["recorded_data"], expected)
         db.scalars.assert_not_awaited()  # Never read the now-deleted staging records.
@@ -96,7 +97,7 @@ class PreflightTests(unittest.IsolatedAsyncioTestCase):
         job = self.job()
         cae = SimpleNamespace(spec={"preflight": True})
         db = SimpleNamespace(get=AsyncMock(side_effect=[cae, job]), scalar=AsyncMock(return_value=job.id))
-        with patch("cae.preflight.require_batch", AsyncMock(return_value=SimpleNamespace(id="batch"))):
+        with patch("simulation.services.preflight.require_batch", AsyncMock(return_value=SimpleNamespace(id="batch"))):
             with self.assertRaises(HTTPException) as error:
                 await preflight_result(db, "batch", "owner")
         self.assertEqual(error.exception.status_code, 410)

@@ -14,8 +14,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from catalog_models import ExperimentDetail
-from routers.catalog import router
+from catalog.schemas import ExperimentDetail
+from catalog.router import router
 
 
 class CatalogExperimentResponseTests(unittest.TestCase):
@@ -35,9 +35,8 @@ class CatalogExperimentResponseTests(unittest.TestCase):
 
     def test_http_response_preserves_empty_and_multiple_calculations(self):
         with open_catalog() as catalog:
-            example = catalog.experiment(
-                "caemble:experiment/caemble/verified/czerny-turner-spectrometer@5.0.0"
-            )
+            current_examples, _ = catalog.list_experiments(limit=1)
+            example = catalog.experiment(current_examples[0]["coordinate"])
         definitions = [
             {"name": "평균", "description": "예제 계산", "source_code": "export default () => ({ dtype: 'float64', data: 1 })"},
             {"name": "Second", "description": None, "source_code": "export default () => ({ dtype: 'float64', data: 2 })"},
@@ -56,7 +55,7 @@ class CatalogExperimentResponseTests(unittest.TestCase):
                     with TestClient(app) as client:
                         response = client.get(
                             "/catalog/experiments/http-response-test",
-                            params={"namespace": "caemble", "repository": "verified", "version": example["version"]},
+                            params={"namespace": example["namespace"], "repository": example["repository"], "version": example["version"]},
                         )
                     self.assertEqual(response.status_code, 200, response.text)
                     payload = response.json()
@@ -66,9 +65,8 @@ class CatalogExperimentResponseTests(unittest.TestCase):
 
     def test_calculations_are_required_in_detail_contract(self):
         with open_catalog() as catalog:
-            example = catalog.experiment(
-                "caemble:experiment/caemble/verified/czerny-turner-spectrometer@5.0.0"
-            )
+            current_examples, _ = catalog.list_experiments(limit=1)
+            example = catalog.experiment(current_examples[0]["coordinate"])
         del example["calculations"]
         with self.assertRaises(ValidationError):
             ExperimentDetail.model_validate(example)

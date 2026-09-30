@@ -3,8 +3,9 @@ from typing import Callable, List, Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import UserData
-from user_auth.routes import check_user, get_db
+from user_auth.schemas import UserData
+from db import get_db
+from user_auth.session import check_user
 
 
 async def get_user_optional(

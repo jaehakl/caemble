@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
-from cae.studies.algorithm import coordinate_candidates, evaluate_metrics, next_round, prepare_axes, variables_fingerprint
+from optimization.algorithm import coordinate_candidates, evaluate_metrics, next_round, prepare_axes, variables_fingerprint
 
 
 class StudyAlgorithmTests(unittest.TestCase):

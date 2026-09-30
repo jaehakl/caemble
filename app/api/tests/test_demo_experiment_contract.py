@@ -20,15 +20,16 @@ import db  # noqa: E402
 import gpstation.db  # noqa: E402, F401
 import main  # noqa: E402
 import user_auth.db  # noqa: E402, F401
-from models import DemoExperimentUpdateRequest, GetListRequestBase  # noqa: E402
-from service.calculation import CALCULATION_CRUD_SPEC  # noqa: E402
-from service.calculation_data import CALCULATION_DATA_CRUD_SPEC  # noqa: E402
-from service.experiment import EXPERIMENT_CRUD_SPEC, EXPERIMENT_RECORD_CRUD_SPEC  # noqa: E402
-from service.measurement_service import MEASUREMENT_CRUD_SPEC  # noqa: E402
-from service.recorded_data import RECORDED_DATA_CRUD_SPEC  # noqa: E402
-from service.experiment_access import require_experiment_read, require_experiment_write  # noqa: E402
-from service.demo_experiment import replace_demo_experiments  # noqa: E402
-from utils.crud.common import build_scope_clause  # noqa: E402
+from simulation.schemas import DemoExperimentUpdateRequest
+from core.schemas import GetListRequestBase  # noqa: E402
+from calculation.services.calculations import CALCULATION_CRUD_SPEC  # noqa: E402
+from calculation.services.data import CALCULATION_DATA_CRUD_SPEC  # noqa: E402
+from simulation.services.experiments import EXPERIMENT_CRUD_SPEC, EXPERIMENT_RECORD_CRUD_SPEC  # noqa: E402
+from simulation.services.measurements import MEASUREMENT_CRUD_SPEC  # noqa: E402
+from simulation.services.results import RECORDED_DATA_CRUD_SPEC  # noqa: E402
+from simulation.services.access import require_experiment_read, require_experiment_write  # noqa: E402
+from simulation.services.demos import replace_demo_experiments  # noqa: E402
+from core.crud.common import build_scope_clause  # noqa: E402
 
 
 class DemoExperimentContractTests(unittest.TestCase):
@@ -143,7 +144,7 @@ class DemoExperimentContractTests(unittest.TestCase):
             )
             request = DemoExperimentUpdateRequest(experiment_ids=[2, 1], default_experiment_id=1)
             with patch(
-                "service.demo_experiment.available_experiments",
+                "simulation.services.demos.available_experiments",
                 new=AsyncMock(return_value={"mine": [], "demos": []}),
             ):
                 await replace_demo_experiments(

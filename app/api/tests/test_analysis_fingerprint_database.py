@@ -15,10 +15,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from db import CalculationData, Measurement, make_async_db_url
-from models import CalculationDataOutput, RoleEnum, UserData
-from service.calculation import upsert_calculations
-from service.calculation_data import analyze_calculation_data, calculation_data_analysis_status, save_calculation_data
+from calculation.db import CalculationData
+from simulation.db import Measurement
+from db import make_async_db_url
+from calculation.schemas import CalculationDataOutput
+from user_auth.schemas import RoleEnum, UserData
+from calculation.services.calculations import upsert_calculations
+from calculation.services.data import analyze_calculation_data, calculation_data_analysis_status, save_calculation_data
 from test_calculation_database import (
     _create_database,
     _database_url,
@@ -69,7 +72,8 @@ class AnalysisFingerprintDatabaseTests(unittest.TestCase):
                         _ready_calculation(experiment_id, "Stress", source, first_id)
                     ], user=owner)
                     calculation_id = created[0]["id"]
-                    await save_calculation_data(session, calculation_id, first_id, source_hash, output, user=owner)
+                    source_revision = created[0]["source_revision"]
+                    await save_calculation_data(session, calculation_id, first_id, source_hash, output, user=owner, source_revision=source_revision)
                 original = await read_status()
                 self.assertEqual(original["measurement_count"], 1)
 
@@ -94,7 +98,7 @@ class AnalysisFingerprintDatabaseTests(unittest.TestCase):
                 self.assertNotEqual(changed_result["fingerprint"], changed_input["fingerprint"])
 
                 async with sessions() as session:
-                    await save_calculation_data(session, calculation_id, second_id, source_hash, output, user=owner)
+                    await save_calculation_data(session, calculation_id, second_id, source_hash, output, user=owner, source_revision=source_revision)
                 added = await read_status()
                 self.assertNotEqual(added["fingerprint"], changed_result["fingerprint"])
                 self.assertEqual(added["measurement_count"], 2)

@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 import test_cae_batches as batch_tests
 from test_cae_batches import available
-from cae.batches import cancel_batch, create_batch, retry_batch
+from simulation.services.batches import cancel_batch, create_batch, retry_batch
 from gpstation.db import ExecutionAttempt, Job, JobBatch, JobEvent, Launcher
 from gpstation.service.batches import finish_job
 from gpstation.service.execution import execution_identity, resource_fits, sync_attempt

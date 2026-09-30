@@ -9,7 +9,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from db import ExperimentRecord, Measurement, RecordedData, make_async_db_url
+from simulation.db import ExperimentRecord, Measurement, RecordedData
+from db import make_async_db_url
 from gpstation.db import Job, JobBatch
 from gpstation.service.state import utcnow
 from settings import settings

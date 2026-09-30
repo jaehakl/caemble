@@ -13,8 +13,8 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gpstation.db import APIKey
-from user_auth.db import Role, User, UserRole
-from user_auth.routes import get_db
+from user_auth.key_policy import active_access_key_users
+from db import get_db
 from user_auth.utils.auth_utils import hash_token
 
 
@@ -60,17 +60,7 @@ async def authenticate_db_authorization(
     if access_key.expires_at is not None and normalize_utc(access_key.expires_at) <= datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Expired AccessKey")
 
-    user = await db.get(User, access_key.user_id)
-    authorized_role = await db.scalar(
-        select(Role.id)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(
-            UserRole.user_id == access_key.user_id,
-            Role.name.in_(("admin", "user")),
-        )
-        .limit(1)
-    )
-    if user is None or not user.is_active or authorized_role is None:
+    if await db.scalar(active_access_key_users(access_key.user_id)) is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="AccessKey user inactive")
 
     enforce_access_key_network_policy(access_key, client_ip=client_ip, origin=origin)

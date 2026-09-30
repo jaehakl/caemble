@@ -11,13 +11,13 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
-from cae.models import BatchCreateRequest
-from cae.recording import persist_record
-from cae.uploads import validate_artifact_item
+from simulation.schemas import BatchCreateRequest
+from simulation.services.recording import persist_record
+from simulation.services.uploads import validate_artifact_item
 from gpstation.service.auth_service import Principal
-from models import RoleEnum, UserData
-from service.client_auth import authenticate_caemble
-from service.data_tools import VisibleDataError, slice_recorded_tensor
+from user_auth.schemas import RoleEnum, UserData
+from user_auth.access_keys import authenticate_caemble
+from core.data_tools import VisibleDataError, slice_recorded_tensor
 
 
 class ClientContractTests(unittest.IsolatedAsyncioTestCase):
@@ -26,8 +26,8 @@ class ClientContractTests(unittest.IsolatedAsyncioTestCase):
         principal = Principal("key", "owner", frozenset({"caemble"}))
         user = UserData(id="owner", roles=[RoleEnum.admin])
         object_path = "/storage/objects/11111111-1111-4111-8111-111111111111"
-        with patch("service.client_auth.authenticate_db_authorization", AsyncMock(return_value=principal)), patch(
-            "service.client_auth.user_data", return_value=user
+        with patch("user_auth.access_keys.authenticate_db_authorization", AsyncMock(return_value=principal)), patch(
+            "user_auth.access_keys.user_data", return_value=user
         ):
             for path in (object_path, object_path + "/"):
                 actual = await authenticate_caemble(Request({"type": "http", "method": "GET", "path": path, "headers": []}), db, "Bearer csk_test")
@@ -43,7 +43,7 @@ class ClientContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_storage_download_requires_caemble_scope(self):
         for scope in ("client", "launcher"):
             with self.subTest(scope=scope), patch(
-                "service.client_auth.authenticate_db_authorization",
+                "user_auth.access_keys.authenticate_db_authorization",
                 AsyncMock(return_value=Principal("key", "owner", frozenset({scope}))),
             ), self.assertRaises(HTTPException) as failure:
                 await authenticate_caemble(Request({"type": "http", "method": "GET", "path": "/storage/objects/id", "headers": []}), AsyncMock(), "Bearer csk_test")
@@ -53,8 +53,8 @@ class ClientContractTests(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
         principal = Principal("key", "owner", frozenset({"caemble"}))
         user = UserData(id="owner", roles=[RoleEnum.admin])
-        with patch("service.client_auth.authenticate_db_authorization", AsyncMock(return_value=principal)), patch(
-            "service.client_auth.user_data", return_value=user
+        with patch("user_auth.access_keys.authenticate_db_authorization", AsyncMock(return_value=principal)), patch(
+            "user_auth.access_keys.user_data", return_value=user
         ):
             permitted = Request({"type": "http", "path": "/experiment/save", "headers": []})
             actual = await authenticate_caemble(permitted, db, "Bearer csk_test")
@@ -67,7 +67,7 @@ class ClientContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_and_launcher_keys_do_not_gain_authoring_scope(self):
         for scope in ("client", "launcher"):
             with self.subTest(scope=scope), patch(
-                "service.client_auth.authenticate_db_authorization",
+                "user_auth.access_keys.authenticate_db_authorization",
                 AsyncMock(return_value=Principal("key", "owner", frozenset({scope}))),
             ), self.assertRaises(HTTPException) as failure:
                 await authenticate_caemble(Request({"type": "http", "path": "/cae/batches", "headers": []}), AsyncMock(), "Bearer csk_test")

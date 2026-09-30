@@ -34,7 +34,6 @@ class JobOrchestrator:
         self.runtime = registry
         self._dispatch_wakeup = asyncio.Event()
         self._dispatcher_task = None
-        self._storage_cleanup_task = None
         self._assignment_lock = asyncio.Lock()
         self._launcher_send_locks: dict[str, asyncio.Lock] = {}
 
@@ -42,16 +41,15 @@ class JobOrchestrator:
         if self._dispatcher_task is not None and not self._dispatcher_task.done():
             return
         self._dispatcher_task = asyncio.create_task(self._dispatch_loop(), name="job-dispatcher")
-        self._storage_cleanup_task = asyncio.create_task(self._storage_cleanup_loop(), name="storage-cleanup")
         self.wake_dispatcher()
 
     async def stop_dispatcher(self) -> None:
-        for task in (self._dispatcher_task, self._storage_cleanup_task):
+        for task in (self._dispatcher_task,):
             if task is not None:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
-        self._dispatcher_task = self._storage_cleanup_task = None
+        self._dispatcher_task = None
 
     def wake_dispatcher(self) -> None:
         self._dispatch_wakeup.set()
@@ -410,10 +408,8 @@ class JobOrchestrator:
             await self.send_launcher_message(launcher_id, message)
 
     async def _expire_stale_jobs(self) -> None:
-        from cae.uploads import expire_uploads
         async with SessionLocal() as db:
             await self._expire_reconnect_grace(db)
-            await expire_uploads(db)
             jobs = await JobService.expire_stale_jobs(db)
         for job in jobs:
             await self.runtime.set_job_event(job.id)
@@ -467,22 +463,6 @@ class JobOrchestrator:
         if invalid_launcher_ids:
             self.wake_dispatcher()
         return len(invalid_launcher_ids)
-
-    async def _storage_cleanup_loop(self) -> None:
-        from storage.service import cleanup_objects
-        from cae.preflight import expire_preflights
-
-        while True:
-            try:
-                async with SessionLocal() as db:
-                    await expire_preflights(db)
-                    await cleanup_objects(db)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Avoid logging provider exceptions which may contain signed URLs.
-                print("object storage cleanup failed; retrying next sweep", flush=True)
-            await asyncio.sleep(60)
 
     async def _dispatch_loop(self) -> None:
         while True:

@@ -10,17 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gpstation.db import APIKey, Launcher, Job
 from gpstation.models import (
-    AccessKeyCreate,
-    AccessKeyCreateResult,
     CrudListRequest,
     CrudListResponse,
     LauncherRuntimeData,
 )
-from gpstation.service.access_key_service import AccessKeyService
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.state import runtime
 from gpstation.utils.csrf import make_csrf_token
-from models import UserData
+from user_auth.schemas import UserData
 from user_auth.db import User
 from user_auth.utils.jwt import verify_token
 
@@ -80,20 +77,6 @@ async def issue_csrf_token(
             detail="User inactive",
         )
     return {"csrf_token": make_csrf_token(refresh_token)}
-
-
-async def create_access_token(
-    db: AsyncSession,
-    user_id: str,
-    payload: AccessKeyCreate,
-) -> AccessKeyCreateResult:
-    try:
-        return await AccessKeyService.create_user_access_key(db, user_id, payload)
-    except ValueError as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(error),
-        ) from error
 
 
 async def list_launcher_runtime(

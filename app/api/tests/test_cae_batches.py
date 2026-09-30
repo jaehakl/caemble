@@ -24,26 +24,27 @@ from test_calculation_database import (
     API_DIR, ORIGINAL_DB_URL, _check, _create_database, _database_url, _drop_database,
     _seed_owners, _table_names, _upgrade,
 )
-from cae.batches import (
+from simulation.services.batches import (
     cancel_batch, create_batch, list_batches, require_batch,
     mark_batch_read, measurement_execution, require_no_active_batches, retry_batch,
 )
-from cae.db import CaeBatch
-from cae.events import stream_events
-from cae.models import BatchCreateRequest
-from cae.uploads import CHUNK_BYTES, commit_batch, expire_uploads, finalize_item, measurement_artifact_info, upload_chunk
-from cae.db import CaeUploadChunk
-from cae.recording import complete_job, stage_record
-from db import Experiment, ExperimentRecord, Measurement, RecordedData, make_async_db_url
+from simulation.db import CaeBatch
+from simulation.services.events import stream_events
+from simulation.schemas import BatchCreateRequest
+from simulation.services.uploads import CHUNK_BYTES, commit_batch, expire_uploads, finalize_item, measurement_artifact_info, upload_chunk
+from simulation.db import CaeUploadChunk
+from simulation.services.recording import complete_job, stage_record
+from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
+from db import make_async_db_url
 from gpstation.db import Job, JobBatch, JobEvent, JobRecord, Launcher
 from gpstation.service.batches import add_event, fail_server_jobs, finish_job, serialize_events
 from gpstation.service.job_service import JobService
 from gpstation.service.state import utcnow
 from gpstation.service.execution import execution_identity
 from gpstation.service.worker_connection import worker_cleaned
-from models import RoleEnum, UserData
-from service.measurement_service import delete_measurements
-from service.material_snapshot import material_vars_hash
+from user_auth.schemas import RoleEnum, UserData
+from simulation.services.measurements import delete_measurements
+from simulation.services.material_snapshot import material_vars_hash
 from settings import settings
 
 
@@ -134,7 +135,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         import base64
         from storage.db import StorageObject
         from storage.service import prepare_upload, finish_upload, owned_object, cleanup_objects
-        from cae.uploads import finalize_stored_item
+        from simulation.services.uploads import finalize_stored_item
         from datetime import timedelta
         value = self.item()
         value["measurement"]["experiment"]["scene"] = {"mesh": [0.125] * 20000}
@@ -195,10 +196,10 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(persisted, tensor)
                 self.assertEqual(persisted["storage"]["data"], record_ticket["reference"])
                 self.assertLess(len(json.dumps(persisted)), 4096)
-                from db import Calculation, CalculationData, CalculationSource
-                from models import CalculationBase, CalculationDataOutput
-                from service.calculation import upsert_calculations
-                from service.calculation_data import save_calculation_data, analyze_calculation_data
+                from calculation.db import Calculation, CalculationData, CalculationSource
+                from calculation.schemas import CalculationBase, CalculationDataOutput
+                from calculation.services.calculations import upsert_calculations
+                from calculation.services.data import save_calculation_data, analyze_calculation_data
                 source_hash = hashlib.sha256(b"0").hexdigest()
                 source = CalculationSource(source_code="0", source_hash=source_hash, name="s3-test", owner_id=self.owner_id)
                 calculation = Calculation(experiment_id=self.experiment_id, source=source, validated_source_revision=1,
@@ -342,18 +343,79 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(JobBatch, expired.id)).state, "cancelled")
             self.assertEqual((await db.get(JobBatch, fresh.id)).state, "uploading")
 
+    async def test_commit_expiry_race_rechecks_state_under_the_shared_lock(self):
+        from datetime import timedelta
+
+        for winner in ("commit", "expiry"):
+            with self.subTest(winner=winner):
+                batch, _ = await self.create()
+                raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
+                async with self.sessions() as db:
+                    await upload_chunk(db, batch.id, self.owner_id, 1, 0, hashlib.sha256(raw).hexdigest(), raw)
+                    await finalize_item(db, batch.id, self.owner_id, 1)
+                    await db.execute(update(JobBatch).where(JobBatch.id == batch.id).values(
+                        updated_at=utcnow() - timedelta(hours=25)))
+                    await db.commit()
+
+                waiting = asyncio.Event()
+                completed = asyncio.Event()
+                async with self.sessions() as commit_db, self.sessions() as expiry_db:
+                    losing_session = expiry_db if winner == "commit" else commit_db
+
+                    async def ordered_lock(db):
+                        if db is losing_session:
+                            waiting.set()
+                            await completed.wait()
+                        await serialize_events(db)
+
+                    async def commit():
+                        if winner == "commit":
+                            await waiting.wait()
+                        try:
+                            await commit_batch(commit_db, batch.id, self.owner, self.catalog)
+                            return "committed"
+                        except HTTPException as error:
+                            return error.status_code
+                        finally:
+                            if winner == "commit":
+                                completed.set()
+
+                    async def expire():
+                        if winner == "expiry":
+                            await waiting.wait()
+                        try:
+                            return await expire_uploads(expiry_db)
+                        finally:
+                            if winner == "expiry":
+                                completed.set()
+
+                    with patch("simulation.services.uploads.serialize_events", new=ordered_lock):
+                        outcome, expired = await asyncio.wait_for(asyncio.gather(commit(), expire()), 5)
+
+                async with self.sessions() as db:
+                    current = await db.get(JobBatch, batch.id)
+                    job = await db.scalar(select(Job).where(Job.batch_id == batch.id))
+                    measurements = await db.scalar(select(func.count()).select_from(Measurement).where(
+                        Measurement.job_id == job.id))
+                    if winner == "commit":
+                        self.assertEqual((outcome, expired, current.state, job.state, measurements),
+                                         ("committed", 0, "queued", "queued", 1))
+                    else:
+                        self.assertEqual((outcome, expired, current.state, job.state, measurements),
+                                         (409, 1, "cancelled", "cancelled", 0))
+
     async def test_caemble_key_auth_uses_account_status_scope_and_revocation(self):
         from fastapi import Request
-        from gpstation.models import AccessKeyCreate
+        from user_auth.schemas import AccessKeyCreate
         from gpstation.service.access_key_service import AccessKeyService
-        from service.client_auth import authenticate_caemble
+        from user_auth.access_keys import authenticate_caemble, create_user_access_key
         from user_auth.db import Role, User, UserRole
         request = Request({"type": "http", "path": "/client/capabilities", "headers": []})
         async with self.sessions() as db:
             role_id = await db.scalar(select(Role.id).where(Role.name == "admin"))
             db.add(UserRole(user_id=self.owner_id, role_id=role_id))
             await db.commit()
-            key = await AccessKeyService.create_user_access_key(db, self.owner_id,
+            key = await create_user_access_key(db, self.owner_id,
                 AccessKeyCreate(name="disposable-test", scopes=["caemble"]))
             token = "Bearer " + key.secret
             user = await authenticate_caemble(request, db, token)
@@ -367,8 +429,8 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
 
     async def test_calculation_revision_rejects_stale_concurrent_updates(self):
-        from db import Calculation
-        from service.calculation import upsert_calculations
+        from calculation.db import Calculation
+        from calculation.services.calculations import upsert_calculations
         from test_calculation_database import _ready_calculation, declared_source
         source = declared_source("export default () => ({ dtype: 'float64', data: 1 })")
         async with self.sessions() as db:
@@ -464,7 +526,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             nonlocal peak_loaded_jobs
             peak_loaded_jobs = max(peak_loaded_jobs, sum(isinstance(value, Job) for value in db.identity_map.values()))
             return await add_event(db, batch, kind, **kwargs)
-        with patch("cae.uploads.add_event", new=count_live_inputs):
+        with patch("simulation.services.uploads.add_event", new=count_live_inputs):
             async with self.sessions() as db:
                 with self.assertRaises(HTTPException) as rejected:
                     await commit_batch(db, batch.id, self.owner, self.catalog)
@@ -686,7 +748,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_execution_and_selected_cancel_http_routes(self):
         import httpx
         from fastapi import FastAPI
-        from cae.router import router, authenticated, get_db
+        from simulation.routers.execution import router, authenticated, get_db
         batch, _ = await self.create(count=2)
         selected = await self.ready_job(batch.id)
         sibling = await self.ready_job(batch.id, index=2)
@@ -834,7 +896,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             progress_id, finished_id = progress.id, finished.id
         request = SimpleNamespace(headers={}, is_disconnected=AsyncMock(return_value=False))
-        with patch("cae.events.SessionLocal", self.sessions):
+        with patch("simulation.services.events.SessionLocal", self.sessions):
             stream = stream_events(request, self.owner_id, cursor)
             try:
                 frames = [await asyncio.wait_for(anext(stream), 2), await asyncio.wait_for(anext(stream), 2)]

@@ -40,20 +40,94 @@ backup and the baseline does not provide downgrade recovery.
 
 ## Ownership
 
-- `app/user_auth`: Google OAuth, cookies/JWT, CSRF, users, and access tokens.
-- `app/gpstation`: `/v1` models, services, job dispatch, launcher WebSocket, and
-  compatibility security utilities.
-- `app/routers`: cookie-authenticated `/web` and domain endpoints.
-- `app/service`: domain operations and transaction boundaries. Material CRUD
-  belongs in `service/material` and its routes in `routers/material.py`.
-- `app/cae`: staged artifact uploads, commit, batch events and result persistence.
-- `app/utils/crud`: shared owned/public CRUD mechanics.
+- `app/simulation`: Experiments, Records, Measurements, recorded results,
+  execution batches, upload/preflight lifecycle, and result publication.
+- `app/optimization`: Studies, Trials, stage submissions, the optimization
+  algorithm, and build/solve/calculate coordination using GPStation Jobs.
+- `app/calculation`: Calculation source, validated contracts, and CalculationData.
+- `app/catalog`: read-only Catalog queries and response schemas.
+- `app/storage`: object upload, ownership, binding, and cleanup.
+- `app/user_auth`: Google OAuth, cookies/JWT, CSRF, users, and Caemble access-key
+  issuance and scope policy.
+- `app/gpstation`: generic Jobs, Batches, execution attempts, ordered events,
+  launcher connections, resource dispatch, and worker transport. It has no
+  Simulation, Study, Catalog, or storage policy imports.
+- `app/core`: shared schemas, time helpers, and CRUD mechanics. Domain packages
+  supply visibility predicates and ownership rules.
+- `app/gpstation_adapter.py`: the Caemble policy for existing `/web` and `/v1`
+  job routes, including managed-job restrictions and Study filtering.
+- `app/bootstrap.py`: application composition, handler registration, and the
+  single owner of startup, background tasks, and shutdown. `app/main.py` remains
+  the ASGI entry point.
+- `app/db.py`: the shared SQLAlchemy Base, engine, sessions, and request database
+  dependency. `app/model_registry.py` explicitly registers all domain models for
+  application startup, Alembic, and schema reset.
 - `alembic`: the current destructive baseline and subsequent migrations.
+
+Within a domain, `db.py` contains ORM entities, `schemas.py` contains HTTP data
+models, and `contracts.py` contains shared persisted artifact contracts where
+needed. Routers translate HTTP inputs and delegate to services; services own SQL,
+authorization decisions, and transaction boundaries. There is no parallel client
+package or root model/service/route collection. Public endpoint paths and schema
+names remain independent of the Python package layout.
 
 The [architecture guide](architecture.md) is the concise source for
 UI/API/worker responsibility. Endpoint request and
 response detail belongs in Pydantic/OpenAPI definitions, not a duplicated list
 in this README.
+
+## Application lifecycle
+
+`bootstrap.create_app()` registers ORM metadata and routes without opening a
+database connection or starting tasks. Its lifespan opens the Catalog and
+registers the Simulation and Optimization handlers before restart recovery.
+Recovery fails interrupted server Jobs, then reconciles Studies before the
+dispatcher and Study controller start. An initial upload-expiry sweep precedes
+dispatch; a temporary sweep failure is logged and retried by Simulation's
+one-second maintenance loop. Preflight and object cleanup run in a separate
+minute loop.
+
+Shutdown stops cleanup, upload maintenance, the Study controller, and dispatch,
+then closes launcher connections, the Catalog, and the engine. The same cleanup
+ownership applies when startup fails partway through. A second concurrent
+lifespan for the same app is rejected.
+
+GPStation's handler registry accepts optional `event_context` and `on_finished`
+callbacks. Optimization supplies Study event metadata and stage transitions
+through these callbacks. A finish callback receives the existing database session
+after Job and Batch terminal events; it runs in the caller's transaction, may
+finish sibling Jobs, and must not commit. Callback failure rolls back domain
+changes, Job state, staging cleanup, and events together. Repeated terminal
+messages do not invoke it again. GPStation remains usable with generic handlers,
+while this application continues to share its database and authentication models.
+
+## Verification
+
+The default suite checks package boundaries, the complete HTTP/OpenAPI and ORM
+contract snapshot, lifecycle cleanup, and handler transaction behavior without
+running a Solver or requiring PostgreSQL:
+
+```powershell
+Remove-Item Env:RUN_CAE_DB_TESTS, Env:RUN_CALCULATION_DB_TESTS, Env:RUN_PARTICLE_DB_TESTS, Env:RUN_STUDY_E2E -ErrorAction SilentlyContinue
+poetry run python -m pytest -q
+```
+
+Database tests create and drop uniquely named disposable databases. Explicitly
+select a local PostgreSQL installation with `vector`; the shared test helper
+rejects non-loopback hosts before connecting. For database lifecycle tests
+without actual Solver execution, use a file allowlist:
+
+```powershell
+$env:DB_URL = "postgresql+asyncpg://postgres@127.0.0.1:5432/postgres"
+$env:RUN_CAE_DB_TESTS = "1"
+$env:RUN_CALCULATION_DB_TESTS = "1"
+Remove-Item Env:RUN_STUDY_E2E, Env:RUN_PARTICLE_DB_TESTS -ErrorAction SilentlyContinue
+poetry run python -m pytest -q tests/test_calculation_database.py tests/test_cae_batches.py tests/test_study_controller.py tests/test_parameter_study_api.py tests/test_gpstation_generic_runtime.py
+```
+
+Keep the file selection explicit: `test_cae_end_to_end.py` also uses
+`RUN_CAE_DB_TESTS` and starts a real Solver. Study end-to-end execution has its own
+`RUN_STUDY_E2E` opt-in. Neither belongs in a package-structure verification run.
 
 ## Security and runtime boundaries
 

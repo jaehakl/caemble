@@ -1,1 +1,1 @@
-"""GPStation-compatible job runtime for Caemble."""
+"""GPStation job runtime, launcher coordination, and transport services."""

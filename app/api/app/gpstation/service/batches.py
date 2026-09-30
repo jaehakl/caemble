@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gpstation.db import Job, JobBatch, JobEvent, JobRecord, JobVisualization
 from gpstation.service.state import utcnow
+from gpstation.service.server_handlers import server_handlers
 
 SERVER_ACTIVE_STATES = {"staged", "queued", "assigned", "running", "finalizing"}
 SERVER_ASSIGNED_STATES = {"assigned", "running", "finalizing"}
@@ -17,17 +18,11 @@ async def serialize_events(db: AsyncSession) -> None:
     await db.execute(text("SELECT pg_advisory_xact_lock(1128351042)"))
 
 
-async def study_context(db: AsyncSession, job: Job | None) -> dict:
+async def event_context(db: AsyncSession, job: Job | None) -> dict:
     if job is None:
         return {}
-    keys = ("study_id", "trial_id", "stage")
-    if "artifact_metadata" in job.__dict__:
-        metadata = job.artifact_metadata or {}
-        return {key: metadata[key] for key in keys if key in metadata}
-    # Claims defer potentially large artifact metadata. Read only attribution,
-    # without implicit async lazy loading or hydrating geometry presentation.
-    row = (await db.execute(select(*(Job.artifact_metadata[key].astext for key in keys)).where(Job.id == job.id))).one()
-    return {key: value for key, value in zip(keys, row) if value is not None}
+    callback = getattr(server_handlers.get(job.handler_type), "event_context", None)
+    return await callback(db, job) if callback is not None else {}
 
 
 async def add_event(
@@ -49,7 +44,7 @@ async def add_event(
         # Snapshot identity now: looking up Job while replaying would label an
         # earlier event with the current retry's instance and reservation.
         payload={**(payload or {}), **(execution_identity(job) if job is not None else {}),
-                 **(await study_context(db, job))},
+                 **(await event_context(db, job))},
     )
     db.add(event)
     await db.flush()
@@ -90,37 +85,34 @@ async def finish_job(
     await db.execute(delete(JobVisualization).where(
         JobVisualization.job_id == job.id, JobVisualization.attempt_count == job.attempt_count,
     ))
-    if job.batch_id is None:
-        return True
-    batch = await db.scalar(select(JobBatch).where(JobBatch.id == job.batch_id).with_for_update())
-    if batch is None:
-        return True
-    field = "cancelled" if state == "killed" else state
-    setattr(batch, field, getattr(batch, field) + 1)
-    attribution = await study_context(db, job)
-    await add_event(
-        db, batch, f"job.{state}", job=job, payload={"last_error": detail, **(result or {})}
-    )
-    if batch.succeeded + batch.failed + batch.cancelled == batch.total:
-        batch.state = "cancelled" if batch.state == "cancelled" else "completed"
-        batch.finished_at = utcnow()
+    batch = None
+    if job.batch_id is not None:
+        batch = await db.scalar(select(JobBatch).where(JobBatch.id == job.batch_id).with_for_update())
+    if batch is not None:
+        field = "cancelled" if state == "killed" else state
+        setattr(batch, field, getattr(batch, field) + 1)
+        attribution = await event_context(db, job)
         await add_event(
-            db,
-            batch,
-            f"batch.{batch.state}",
-            payload={
-                **attribution,
-                "total": batch.total,
-                "succeeded": batch.succeeded,
-                "failed": batch.failed,
-                "cancelled": batch.cancelled,
-            },
+            db, batch, f"job.{state}", job=job, payload={"last_error": detail, **(result or {})}
         )
-    if attribution.get("study_id"):
-        if "artifact_metadata" not in job.__dict__:
-            await db.refresh(job, ["artifact_metadata"])
-        from cae.studies.controller import on_job_finished
-        await on_job_finished(db, job, result)
+        if batch.succeeded + batch.failed + batch.cancelled == batch.total:
+            batch.state = "cancelled" if batch.state == "cancelled" else "completed"
+            batch.finished_at = utcnow()
+            await add_event(
+                db,
+                batch,
+                f"batch.{batch.state}",
+                payload={
+                    **attribution,
+                    "total": batch.total,
+                    "succeeded": batch.succeeded,
+                    "failed": batch.failed,
+                    "cancelled": batch.cancelled,
+                },
+            )
+    callback = getattr(server_handlers.get(job.handler_type), "on_finished", None)
+    if callback is not None:
+        await callback(db, job, result)
     return True
 
 

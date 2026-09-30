@@ -63,8 +63,11 @@ Batch definitions, prepared inputs, progress messages, terminal events and read
 state survive a browser disconnect. The browser subscribes to server events and
 restores snapshots using an event cursor; closing the Workbench only stops that
 subscription. Completed selected Measurements are fetched again for visualization.
-CalculationData postprocessing runs explicitly in the browser or CLI; Prediction iteration remains browser work. Both
-do not automatically resume on reconnect. Failed and cancelled runs require manual retry, which
+Standalone CalculationData postprocessing runs explicitly in the browser or CLI;
+Prediction iteration remains browser work. These do not automatically resume on
+reconnect. Optimization Studies separately own their persisted build/solve/calculate
+stages and continue server coordination after browser disconnects.
+Failed and cancelled runs require manual retry, which
 reuses the saved source, Vars, model definitions, selections and parameters.
 Selected Measurement execution first queries its owner-scoped
 `GET /cae/measurements/{id}/execution` link, independently of cached batch pages.
@@ -91,10 +94,11 @@ Reconnect resumes from the last event cursor and backs off at 5, 10 and 30
 seconds; a healthy SSE connection does not cause periodic detail requests.
 
 GPStation owns `job_batches`, numbered `jobs`, `execution_attempts`, execution-scoped `job_records`
-staging and ordered `job_events`. CAE owns `cae_batches`, frozen Experiment inputs,
+staging and ordered `job_events`. The API's Simulation domain owns `cae_batches`, frozen Experiment inputs,
 Measurement links and the conversion to RecordedData. The dispatcher rotates among
 compatible batches using their last assignment time, then item order, with owner
-and execution-mode capability checks and row locks. CAE owns temporary upload chunks.
+and execution-mode capability checks and row locks. Simulation owns temporary
+upload chunks and their expiry loop; the table and public `/cae` names remain stable.
 
 Batch upload is `uploading`; its numbered Jobs remain `staged`. After commit Jobs
 follow `queued -> assigned -> running -> finalizing -> succeeded/failed/cancelled`.
@@ -248,16 +252,36 @@ govern admission with startup and growth allowances, not a hard memory ceiling;
 see [worker resource policy](../operations/workers.md#launcher-resource-policy).
 Budgets cover one launcher's process trees, without coordination between launchers.
 
-Future evaluations, Datasets and Models should connect through stable identifiers,
-revisions and artifact references, never through a running process or a machine-local
-path. This execution boundary does not add an Optimization algorithm, Predictor
-training/inference, Dataset/Model management, or a general workflow engine.
+Optimization owns Study definitions, trial proposals, stage submissions, and
+reconciliation. Build, solve, and calculate stages use existing GPStation Jobs
+and resource dispatch; there is no second worker scheduler. Product handler
+callbacks attach Study event context and update stages in the same transaction
+as terminal Job events, including cancellation of queued siblings. A failed
+callback therefore cannot leave Job completion and Study persistence out of sync.
+The host adapter owns managed-job restrictions and Study list filtering, keeping
+those decisions out of the generic execution service.
+
+Future Datasets and Models should connect through stable identifiers, revisions
+and artifact references, never through a running process or a machine-local
+path. The execution boundary does not introduce Predictor training/inference,
+Dataset/Model management, or a general workflow engine.
 
 ## Implementation map
 
 - `app/ui/src/lib/cad`: CAD execution, canonical Geometry, and render products.
 - `app/ui/src/features/cae-workbench`: Measurement building and run UI.
-- `app/api/app`: authentication, persistence, catalog routes, and orchestration.
+- `app/api/app/simulation`: Experiment and Measurement persistence, artifact
+  uploads, Simulation batches, and result publication.
+- `app/api/app/optimization`: Studies, Trials, optimization decisions, and
+  persisted stage coordination.
+- `app/api/app/calculation`: Calculation source, contracts, and results.
+- `app/api/app/gpstation`: generic Job/Batch execution, events, and launchers.
+- `app/api/app/gpstation_adapter.py`: Caemble policy on the public job APIs.
+- `app/api/app/bootstrap.py`: model and router composition, handler registration,
+  restart recovery, and background task ownership. Domain `db.py` and `schemas.py`
+  files own ORM and HTTP types; `model_registry.py` collects the shared metadata.
+- `app/api/app/catalog`, `storage`, and `user_auth`: Catalog reads, object storage,
+  and authentication. See the [API guide](api.md) for dependency and lifecycle rules.
 - `app/catalog`: canonical Catalog and `catalogctl` Draft workflow.
 - `app/ui/src/cli`: monorepo Node commands and local/remote execution adapters.
 - `app/launcher`: per-user executable lifecycle and transport capability registration.

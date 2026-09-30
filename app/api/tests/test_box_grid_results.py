@@ -11,15 +11,16 @@ from fastapi import HTTPException
 from caemble_catalog import open_catalog
 
 from box_grid_fixtures import box_schema, box_tensor
-from cae.db import CaeBatch
-from cae.recording import complete_job, persist_record, stage_record, stage_visualization
-from db import Experiment, ExperimentRecord, MeasurementVisualization
+from simulation.db import CaeBatch
+from simulation.services.recording import complete_job, persist_record, stage_record, stage_visualization
+from simulation.db import Experiment, ExperimentRecord, MeasurementVisualization
 from gpstation.db import JobRecord, JobVisualization
-from models import CalculationBase, RoleEnum, UserData
-from service.box_grid import validate_box_grid_schema, validate_box_grid_tensor
-from service.calculation import upsert_calculations
-from service.data_tools import VisibleDataReader
-from service.measurement_service import get_recorded_data, get_visualizations
+from calculation.schemas import CalculationBase
+from user_auth.schemas import RoleEnum, UserData
+from simulation.services.result_validation import validate_box_grid_schema, validate_box_grid_tensor
+from calculation.services.calculations import upsert_calculations
+from simulation.services.data_queries import SimulationDataReader
+from simulation.services.measurements import get_recorded_data, get_visualizations
 
 
 class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
@@ -61,14 +62,14 @@ class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
                 saved = persist_record(schema, tensor, {"values": raw})
                 validate_box_grid_tensor(schema, saved)
                 record = ExperimentRecord(id=2, name="load", quantity_kind="Dimensionless", tensor_order=0, dtype="float64", data_schema=schema)
-                db = SimpleNamespace(get=AsyncMock(side_effect=[SimpleNamespace(experiment_id=7), SimpleNamespace(result_contracts={})]),
+                db = SimpleNamespace(get=AsyncMock(side_effect=[SimpleNamespace(id=1, experiment_id=7), SimpleNamespace(result_contracts={})]),
                     execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [(SimpleNamespace(data=saved), record)])))
-                with patch("service.measurement_service.require_experiment_read", AsyncMock()):
+                with patch("simulation.services.measurements.require_experiment_read", AsyncMock()):
                     response = await get_recorded_data(db, 1, user=None)
                 leaf = response.model_dump()["recorded_data"]["load"]
                 self.assertEqual(leaf["data"]["metadata"], tensor["metadata"])
                 self.assertEqual(leaf["data_schema"]["metadata"], metadata_schema)
-                reader = VisibleDataReader(AsyncMock(), "owner")
+                reader = SimulationDataReader(AsyncMock(), "owner")
                 with patch.object(reader, "_recorded_row", AsyncMock(return_value={
                     "id": 2, "name": "load", "dtype": "float64", "quantity_kind": "Dimensionless",
                     "data_schema": schema, "data": saved,
@@ -236,10 +237,10 @@ class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
     async def test_visualization_read_has_experiment_visibility(self):
         db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(experiment_id=7)),
             scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [MeasurementVisualization(measurement_id=1, task="solver", data={"mesh": {"data": {}}})])))
-        with patch("service.measurement_service.require_experiment_read", AsyncMock()):
+        with patch("simulation.services.measurements.require_experiment_read", AsyncMock()):
             response = await get_visualizations(db, 1, user=None)
         self.assertEqual(response.visualizations, {"solver": {"mesh": {"data": {}}}})
-        with patch("service.measurement_service.require_experiment_read", AsyncMock(side_effect=HTTPException(403))):
+        with patch("simulation.services.measurements.require_experiment_read", AsyncMock(side_effect=HTTPException(403))):
             with self.assertRaises(LookupError):
                 await get_visualizations(db, 1, user=None)
 
@@ -249,9 +250,9 @@ class BoxGridResultTests(unittest.IsolatedAsyncioTestCase):
             metadata.update(configuration="current", weighting="material-volume")
         self.assertEqual(persist_record(schema, tensor, {}), tensor)
         record = ExperimentRecord(id=2, name="field", quantity_kind="Dimensionless", tensor_order=0, dtype="float64", data_schema=schema)
-        db = SimpleNamespace(get=AsyncMock(side_effect=[SimpleNamespace(experiment_id=7), SimpleNamespace(result_contracts={})]),
+        db = SimpleNamespace(get=AsyncMock(side_effect=[SimpleNamespace(id=1, experiment_id=7), SimpleNamespace(result_contracts={})]),
             execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [(SimpleNamespace(data=tensor), record)])))
-        with patch("service.measurement_service.require_experiment_read", AsyncMock()):
+        with patch("simulation.services.measurements.require_experiment_read", AsyncMock()):
             response = await get_recorded_data(db, 1, user=None)
         leaf = response.model_dump()["recorded_data"]["field"]
         self.assertEqual(leaf["data_schema"]["boxGrid"], schema["boxGrid"])

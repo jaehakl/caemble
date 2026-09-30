@@ -1,37 +1,3 @@
-from cae.router import router as cae_router
-from cae.studies.router import router as studies_router
-from gpstation.routers import v1 as gpstation_v1
-from gpstation.routers import web as gpstation_web
-from initserver import server
-from storage.router import router as storage_router
-from routers import (
-    calculation,
-    calculation_data,
-    catalog,
-    client,
-    demo_experiment,
-    experiment,
-    experiment_record,
-    measurement,
-    recorded_data,
-    users,
-)
+from bootstrap import create_app
 
-
-app = server()
-
-app.include_router(cae_router)
-app.include_router(studies_router)
-app.include_router(storage_router)
-app.include_router(client.router)
-app.include_router(catalog.router)
-app.include_router(experiment.router)
-app.include_router(experiment_record.router)
-app.include_router(measurement.router)
-app.include_router(recorded_data.router)
-app.include_router(calculation.router)
-app.include_router(calculation_data.router)
-app.include_router(demo_experiment.router)
-app.include_router(users.router)
-app.include_router(gpstation_web.router)
-app.include_router(gpstation_v1.router)
+app = create_app()

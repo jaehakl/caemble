@@ -17,21 +17,21 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
 import db  # noqa: E402
+from calculation.db import CalculationData
+from simulation.db import Measurement
 import gpstation.db  # noqa: E402, F401
 import main  # noqa: E402
-import models as api_models  # noqa: E402
+from calculation import schemas as api_models
+from simulation import schemas as simulation_schemas  # noqa: E402
 import user_auth.db  # noqa: E402, F401
-from service.data_tools import VisibleDataError, VisibleDataReader  # noqa: E402
-from model_validators import validate_calculation_data_selectors  # noqa: E402
-from models import (  # noqa: E402
-    CalculationDataListRequest,
-    CalculationDataOutput,
-    MeasurementBase,
-    RoleEnum,
-    UserData,
-)
+from core.data_tools import VisibleDataError
+from simulation.services.data_queries import SimulationDataReader  # noqa: E402
+from calculation.validation import validate_calculation_data_selectors  # noqa: E402
+from calculation.schemas import CalculationDataListRequest, CalculationDataOutput
+from simulation.schemas import MeasurementBase
+from user_auth.schemas import RoleEnum, UserData
 from pydantic import BaseModel, ValidationError  # noqa: E402
-from service.calculation_data import (  # noqa: E402
+from calculation.services.data import (  # noqa: E402
     CALCULATION_DATA_CRUD_SPEC,
     list_calculation_data,
 )
@@ -43,7 +43,7 @@ class CalculationBackendContractTests(unittest.TestCase):
         configure_mappers()
 
     def test_calculation_list_counts_are_batched_and_experiment_scoped(self) -> None:
-        from service.calculation import list_calculations
+        from calculation.services.calculations import list_calculations
 
         engine = create_engine("sqlite://")
         with engine.begin() as connection:
@@ -71,7 +71,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             session = AsyncMock()
             session.execute.side_effect = connection.execute
             user = UserData(id="owner", roles=[RoleEnum.user])
-            with patch("service.calculation.get_list_response", new_callable=AsyncMock) as listing:
+            with patch("calculation.services.calculations.get_list_response", new_callable=AsyncMock) as listing:
                 listing.return_value = {"total": 4, "items": items}
                 result = asyncio.run(list_calculations(
                     session, api_models.CalculationListRequest(experiment_id=7), user=user,
@@ -246,7 +246,7 @@ class CalculationBackendContractTests(unittest.TestCase):
                 CalculationDataOutput.model_validate(payload)
 
     def test_rank_three_output_layout_and_storage_round_trip(self) -> None:
-        from service.calculation_data import _tensor_summary
+        from calculation.services.data import _tensor_summary
 
         payload = {
             "dtype": "float64", "shape": [2, 1, 2], "data": [1, 2, 3, 4],
@@ -302,7 +302,7 @@ class CalculationBackendContractTests(unittest.TestCase):
 
         async def run() -> str:
             with patch(
-                "service.calculation_data.get_list_response",
+                "calculation.services.data.get_list_response",
                 new=get_list_response,
             ):
                 await list_calculation_data(object(), request, user=user)  # type: ignore[arg-type]
@@ -310,7 +310,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             self.assertIs(call.args[1], request)
             self.assertIs(call.args[2], CALCULATION_DATA_CRUD_SPEC)
             self.assertEqual(CALCULATION_DATA_CRUD_SPEC.scope_path, ("measurement", "experiment"))
-            statement = select(db.CalculationData.id).where(call.args[3])
+            statement = select(CalculationData.id).where(call.args[3])
             return str(
                 statement.compile(
                     dialect=postgresql.dialect(),
@@ -336,9 +336,9 @@ class CalculationBackendContractTests(unittest.TestCase):
     def test_models_module_keeps_only_required_pydantic_models(self) -> None:
         model_names = {
             name
-            for name, value in vars(api_models).items()
+            for name, value in vars(simulation_schemas).items()
             if inspect.isclass(value)
-            and value.__module__ == "models"
+            and value.__module__ == "simulation.schemas"
             and issubclass(value, BaseModel)
         }
         self.assertTrue({"MeasurementBase", "MeasurementCreateRequest", "ExperimentBase"}.issubset(model_names))
@@ -360,7 +360,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             validate_calculation_data_selectors(1, 2)
 
     def test_legacy_models_are_not_ai_visible_resources(self) -> None:
-        reader = VisibleDataReader(None, "user-id")  # type: ignore[arg-type]
+        reader = SimulationDataReader(None, "user-id")  # type: ignore[arg-type]
         for resource in ("designer_model", "predictor_model"):
             with self.subTest(resource=resource), self.assertRaises(VisibleDataError):
                 reader._simple_search_spec(resource)

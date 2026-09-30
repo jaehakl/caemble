@@ -28,35 +28,26 @@ API_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = API_DIR / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from db import (  # noqa: E402
-    Calculation,
-    CalculationData,
-    CalculationSource,
-    Experiment,
-    ExperimentDemo,
-    ExperimentRecord,
-    Measurement,
-    RecordedData,
-    make_async_db_url,
-)
-from models import (  # noqa: E402
+from calculation.db import Calculation, CalculationData, CalculationSource
+from simulation.db import Experiment, ExperimentDemo, ExperimentRecord, Measurement, RecordedData
+from db import make_async_db_url
+from calculation.schemas import (
     CalculationBase,
     CalculationDataListRequest,
     CalculationDataOutput,
     CalculationListRequest,
     CalculationOutputLayout,
-    ExperimentSourceBundle,
-    GetListRequestBase,
-    RoleEnum,
-    SaveExperimentRequest,
-    UserData,
 )
-from service.calculation import (  # noqa: E402
+from simulation.contracts import ExperimentSourceBundle
+from core.schemas import GetListRequestBase
+from user_auth.schemas import RoleEnum, UserData
+from simulation.schemas import SaveExperimentRequest
+from calculation.services.calculations import (  # noqa: E402
     delete_calculations,
     list_calculations,
     upsert_calculations,
 )
-from service.calculation_data import (  # noqa: E402
+from calculation.services.data import (  # noqa: E402
     analyze_calculation_data,
     calculation_data_analysis_status,
     list_calculation_data,
@@ -64,25 +55,32 @@ from service.calculation_data import (  # noqa: E402
     missing_calculation_data,
     save_calculation_data,
 )
-from service.experiment import (  # noqa: E402
-    _derived_counts,
+from simulation.services.experiments import (  # noqa: E402
+    derived_counts,
     delete_experiment_versions,
     experiment_usage,
-    save_experiment,
 )
-from service.measurement_service import list_measurements  # noqa: E402
+from simulation.services.measurements import list_measurements  # noqa: E402
+from simulation.services.save import save_experiment
 from settings import settings  # noqa: E402
 
 
 ORIGINAL_DB_URL = settings.db_url
 
 
+def _local_database_url():
+    url = make_url(ORIGINAL_DB_URL)
+    if url.host not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError("Database tests require an explicitly selected loopback DB_URL; remote servers are forbidden.")
+    return url
+
+
 def _database_url(database: str) -> str:
-    return make_url(ORIGINAL_DB_URL).set(database=database).render_as_string(hide_password=False)
+    return _local_database_url().set(database=database).render_as_string(hide_password=False)
 
 
 def _connect_arguments(database: str) -> dict[str, object]:
-    url = make_url(ORIGINAL_DB_URL)
+    url = _local_database_url()
     return {
         "user": url.username,
         "password": url.password,
@@ -531,7 +529,7 @@ async def _verify_crud_contract(database: str) -> None:
             await delete_calculations(session, [duplicate[0]["id"]], user=owner)
 
         async with sessions() as session:
-            counts = (await _derived_counts(session, [experiment_id]))[experiment_id]
+            counts = (await derived_counts(session, [experiment_id]))[experiment_id]
             assert counts["calculations"] == 1
             usage = await experiment_usage(session, [experiment_id], user=owner)
             assert usage["items"][0]["sourceLocked"] is True

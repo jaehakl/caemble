@@ -14,14 +14,14 @@ sys.path.insert(0, str(APP_DIR))
 import db  # noqa: E402, F401
 import gpstation.db  # noqa: E402, F401
 import user_auth.db  # noqa: E402, F401
-from models import RecordedDataListRequest  # noqa: E402
-from service.recorded_data import list_recorded_data  # noqa: E402
+from simulation.schemas import RecordedDataListRequest  # noqa: E402
+from simulation.services.results import list_recorded_data  # noqa: E402
 
 
 class RecordedDataServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_result_names_are_not_filtered(self) -> None:
         with patch(
-            "service.recorded_data.get_list_response",
+            "simulation.services.results.get_list_response",
             new=AsyncMock(return_value={"total": 0, "items": []}),
         ) as get_list:
             await list_recorded_data(
@@ -41,7 +41,7 @@ class RecordedDataServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_prediction_filters_are_combined(self) -> None:
         with patch(
-            "service.recorded_data.get_list_response",
+            "simulation.services.results.get_list_response",
             new=AsyncMock(return_value={"total": 0, "items": []}),
         ) as get_list:
             await list_recorded_data(
@@ -59,7 +59,7 @@ class RecordedDataServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_each_supported_filter_builds_a_clause(self) -> None:
         with patch(
-            "service.recorded_data.get_list_response",
+            "simulation.services.results.get_list_response",
             new=AsyncMock(return_value={"total": 0, "items": []}),
         ) as get_list:
             for request in (

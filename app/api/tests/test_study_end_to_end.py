@@ -28,22 +28,24 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import uvicorn
 
-from cae import recording
-from cae.studies import controller, evaluation
-from cae.studies.db import StageSubmission, Study, Trial
-from cae.studies.router import authenticated, router
-from db import Calculation, CalculationSource, Experiment, ExperimentRecord, Measurement, RecordedData, make_async_db_url
+from simulation.services import recording
+from optimization import controller, evaluation, integration
+from optimization.db import StageSubmission, Study, Trial
+from optimization.router import authenticated, router
+from calculation.db import Calculation, CalculationSource
+from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
+from db import make_async_db_url
 from gpstation.db import APIKey, Job
 from gpstation.service import launcher_connection, worker_connection
 from gpstation.service.job_orchestrator import JobOrchestrator
-from gpstation.service.server_handlers import server_handlers
+from gpstation.service.server_handlers import register_server_handler, server_handlers
 from gpstation.service.state import runtime
 from gpstation.utils.csrf import require_web_csrf
-from models import RoleEnum, UserData
+from user_auth.schemas import RoleEnum, UserData
 from settings import settings
 from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
 from user_auth.db import Role, UserRole
-from user_auth.routes import get_db
+from db import get_db
 from user_auth.utils.auth_utils import hash_token
 
 
@@ -193,8 +195,9 @@ class StudyEndToEndTests(unittest.TestCase):
                 patches.enter_context(patch.object(module, "job_orchestrator", orchestrator))
             patches.enter_context(patch.object(settings, "public_api_base_url", base_url))
             patches.enter_context(patch("storage.service.bucket_client", return_value=bucket))
-            patches.enter_context(patch.dict(server_handlers, {"cae.simulation": recording,
-                "cae.evaluation.build": evaluation, "cae.evaluation.calculate": evaluation}))
+            patches.enter_context(patch.dict(server_handlers, clear=True))
+            for name, implementation in (("cae.simulation", recording), ("cae.evaluation.build", evaluation), ("cae.evaluation.calculate", evaluation)):
+                register_server_handler(name, implementation, event_context=integration.event_context, on_finished=integration.on_finished)
             server_task = asyncio.create_task(server.serve(sockets=[listener]))
             while not server.started:
                 await asyncio.sleep(0.01)

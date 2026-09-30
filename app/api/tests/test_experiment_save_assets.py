@@ -1,4 +1,4 @@
-﻿"""Exercise the new save transaction against a disposable PostgreSQL database."""
+"""Exercise the new save transaction against a disposable PostgreSQL database."""
 import asyncio
 import base64
 import io
@@ -16,16 +16,19 @@ from PIL import Image
 from fastapi import HTTPException
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from db import Experiment, ExperimentThumbnail, Measurement, MeasurementSnapshot, RecordedData, make_async_db_url
-from cae.db import CaeBatch
-from cae.preflight import expire_preflights
-from cae.uploads import measurement_artifact
+from simulation.db import Experiment, ExperimentThumbnail, Measurement, MeasurementSnapshot, RecordedData
+from db import make_async_db_url
+from simulation.db import CaeBatch
+from simulation.services.preflight import expire_preflights
+from simulation.services.uploads import measurement_artifact
 from gpstation.db import Job, JobBatch
 from gpstation.service.state import utcnow
-from models import SaveExperimentRequest, UserData, RoleEnum
-from service.experiment import save_experiment, _bundle_hash
-from service.experiment_save_assets import thumbnail_bytes
-from routers.experiment import read_thumbnail
+from simulation.schemas import SaveExperimentRequest
+from user_auth.schemas import UserData, RoleEnum
+from simulation.services.save import save_experiment
+from simulation.services.source_bundle import bundle_hash
+from simulation.services.assets import thumbnail_bytes
+from simulation.routers.experiment import read_thumbnail
 from storage.db import StorageObject
 from storage.service import reference
 from box_grid_fixtures import box_schema, box_tensor
@@ -71,7 +74,7 @@ class ExperimentSaveAssetsDatabaseTests(unittest.TestCase):
                     batch = JobBatch(user_id=owner_id, request_id=str(uuid.uuid4()), request_hash="fixture", total=1)
                     db.add(batch)
                     await db.flush()
-                    source_hash = _bundle_hash(CREATE["sourceBundle"])
+                    source_hash = bundle_hash(CREATE["sourceBundle"])
                     spec = {"preflight": True, "source_bundle": CREATE["sourceBundle"], "source_hash": source_hash}
                     db.add(CaeBatch(batch_id=batch.id, spec=spec))
                     frozen = {"experiment": {"sourceHash": source_hash, "variables": {"length": 4},
@@ -91,7 +94,7 @@ class ExperimentSaveAssetsDatabaseTests(unittest.TestCase):
                     batch_id, job_id, source_id = batch.id, job.id, source.id
                     request = SaveExperimentRequest(**CREATE, requestId=str(uuid.uuid4()), preflightBatchId=batch_id, thumbnail=image_url())
                     client = Mock()
-                    with patch("service.experiment_save_assets.bucket_client", return_value=client):
+                    with patch("simulation.services.assets.bucket_client", return_value=client):
                         result = await save_experiment(db, request, user=owner)
                         replay = await save_experiment(db, request, user=owner)
                     self.assertEqual(result, replay)
@@ -113,7 +116,7 @@ class ExperimentSaveAssetsDatabaseTests(unittest.TestCase):
                     self.assertEqual((await db.get(Measurement, result["measurementId"])).vars, {"length": 4})
                     await db.commit()
 
-                    with patch("service.experiment_save_assets.bucket_client", return_value=client):
+                    with patch("simulation.services.assets.bucket_client", return_value=client):
                         second_copy = await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "independent"},
                             preflightBatchId=batch_id, requestId=str(uuid.uuid4())), user=owner)
                     second_ref = await measurement_artifact(db, second_copy["measurementId"], owner_id)
@@ -134,7 +137,7 @@ class ExperimentSaveAssetsDatabaseTests(unittest.TestCase):
                     await rejected({"key": "forbidden", "namespace": "calc-other", "preflightBatchId": batch_id}, 404, other)
                     await rejected({"mode": "overwrite", "experimentId": result["id"], "baseBundleHash": result["bundleHash"]}, 409)
 
-                    with patch("service.experiment_save_assets.bucket_client", return_value=Mock(copy_object=Mock(side_effect=RuntimeError("copy failed")))):
+                    with patch("simulation.services.assets.bucket_client", return_value=Mock(copy_object=Mock(side_effect=RuntimeError("copy failed")))):
                         with self.assertRaisesRegex(RuntimeError, "copy failed"):
                             await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "rollback"}, preflightBatchId=batch_id, requestId=str(uuid.uuid4()), thumbnail=image_url()), user=owner)
                     self.assertIsNone(await db.scalar(select(Experiment.id).where(Experiment.experiment_key == "rollback")))

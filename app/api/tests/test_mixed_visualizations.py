@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from cae.recording import stage_visualization
-from cae.db import CaeBatch
-from service.measurement_service import get_visualizations
+from simulation.services.recording import stage_visualization
+from simulation.db import CaeBatch
+from simulation.services.measurements import get_visualizations
 
 
 class MixedVisualizationTests(unittest.IsolatedAsyncioTestCase):
@@ -41,7 +41,7 @@ class MixedVisualizationTests(unittest.IsolatedAsyncioTestCase):
                 db.get.side_effect = None
                 db.get.return_value = SimpleNamespace(experiment_id=7)
                 db.scalars = AsyncMock(return_value=SimpleNamespace(all=lambda: [SimpleNamespace(task="solid", data=saved)]))
-                with patch("service.measurement_service.require_experiment_read", AsyncMock()):
+                with patch("simulation.services.measurements.require_experiment_read", AsyncMock()):
                     fetched = await get_visualizations(db, 5, user=None)
                 result = fetched.visualizations["solid"]["meanPressure"]
                 self.assertEqual(result["contract"], contract)

@@ -15,9 +15,9 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 import main  # noqa: E402, F401
 from caemble_catalog import Catalog  # noqa: E402
-from calculation_library_models import LibraryQuery, LibraryReference  # noqa: E402
-from models import UserData, RoleEnum  # noqa: E402
-from service.calculation_library import list_library, library_detail  # noqa: E402
+from calculation.library_schemas import LibraryQuery, LibraryReference  # noqa: E402
+from user_auth.schemas import UserData, RoleEnum  # noqa: E402
+from calculation.services.library import list_library, library_detail  # noqa: E402
 
 
 OWNER = "00000000-0000-0000-0000-000000000001"

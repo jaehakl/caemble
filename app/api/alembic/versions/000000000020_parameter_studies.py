@@ -9,7 +9,7 @@ depends_on = None
 
 
 def upgrade():
-    from cae.studies.db import StageSubmission, Study, Trial
+    from optimization.db import StageSubmission, Study, Trial
     for table in (Study.__table__, Trial.__table__, StageSubmission.__table__):
         table.create(op.get_bind(), checkfirst=True)
 

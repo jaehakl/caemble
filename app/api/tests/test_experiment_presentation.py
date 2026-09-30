@@ -15,13 +15,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from db import Experiment, ExperimentDemo, ExperimentThumbnail, Measurement, make_async_db_url
-from models import UserData, RoleEnum
+from simulation.db import Experiment, ExperimentDemo, ExperimentThumbnail, Measurement
+from db import make_async_db_url
+from user_auth.schemas import UserData, RoleEnum
 from gpstation.service.state import utcnow
-from service.experiment_presentation import PresentationUpdateRequest, update_presentation
-from service.experiment import list_experiments, experiment_versions
-from service.demo_experiment import available_experiments
-from models import GetListRequestBase
+from simulation.services.presentation import PresentationUpdateRequest, update_presentation
+from simulation.services.experiments import list_experiments, experiment_versions
+from simulation.services.demos import available_experiments
+from core.schemas import GetListRequestBase
 from test_experiment_save_assets import image_url
 from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
 
@@ -93,7 +94,7 @@ class PresentationServiceTests(unittest.IsolatedAsyncioTestCase):
         row = Experiment(id=1, thumbnail_url="existing")
         db = SimpleNamespace(scalar=AsyncMock(side_effect=[row, SimpleNamespace(experiment_id=1, recorded_at=utcnow())]),
                              commit=AsyncMock(), flush=AsyncMock())
-        with patch("service.experiment_presentation.require_experiment_write", AsyncMock()), patch("service.experiment_presentation.experiment_is_demo", AsyncMock(return_value=False)):
+        with patch("simulation.services.presentation.require_experiment_write", AsyncMock()), patch("simulation.services.presentation.experiment_is_demo", AsyncMock(return_value=False)):
             result = await update_presentation(db, 1, PresentationUpdateRequest(initialView=initial), user=UserData(id="owner", roles=[RoleEnum.user]))
         defaults = {key: value for key, value in initial.items() if key != "measurementId"}
         self.assertEqual(row.viewer_defaults, defaults)
@@ -106,7 +107,7 @@ class PresentationServiceTests(unittest.IsolatedAsyncioTestCase):
         row = Experiment(id=1, initial_measurement_id=9, viewer_defaults=DEFAULTS, thumbnail_url="old")
         db = SimpleNamespace(scalar=AsyncMock(side_effect=[row, SimpleNamespace(experiment_id=2, recorded_at=utcnow())]),
                              commit=AsyncMock(), flush=AsyncMock())
-        with patch("service.experiment_presentation.require_experiment_write", AsyncMock()), patch("service.experiment_presentation.experiment_is_demo", AsyncMock(return_value=False)):
+        with patch("simulation.services.presentation.require_experiment_write", AsyncMock()), patch("simulation.services.presentation.experiment_is_demo", AsyncMock(return_value=False)):
             with self.assertRaises(HTTPException):
                 await update_presentation(db, 1, PresentationUpdateRequest(initialView={**DEFAULTS, "measurementId": 2}), user=UserData(id="owner", roles=[RoleEnum.user]))
             self.assertEqual(row.initial_measurement_id, 9)

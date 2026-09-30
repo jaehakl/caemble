@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
-from cae.batches import create_batch
-from cae.models import BatchCreateRequest
-from models import RoleEnum, UserData
+from simulation.services.batches import create_batch
+from simulation.schemas import BatchCreateRequest
+from user_auth.schemas import RoleEnum, UserData
 
 
 class BatchCandidateContractTests(unittest.TestCase):
@@ -55,9 +55,9 @@ class BatchCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
                 catalog = SimpleNamespace(meta=lambda: {"catalogRevision": "catalog"})
                 user = UserData(id="owner", roles=[RoleEnum.user])
 
-                with patch("cae.batches.serialize_events", AsyncMock()), patch(
-                    "cae.batches.add_event", AsyncMock()
-                ), patch("cae.batches.require_experiment_source_bundle"):
+                with patch("simulation.services.batches.serialize_events", AsyncMock()), patch(
+                    "simulation.services.batches.add_event", AsyncMock()
+                ), patch("simulation.services.batches.require_experiment_source_bundle"):
 
                     batch = await create_batch(db, request, user, catalog)
 

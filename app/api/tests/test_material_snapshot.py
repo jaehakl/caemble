@@ -12,12 +12,14 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
-from cae.models import BatchCreateRequest
-from cae.uploads import validate_artifact_item
-from db import Base, Measurement
-from models import MeasurementCreateRequest, RoleEnum, UserData
-from service.material_snapshot import material_vars_hash, validate_material_snapshot
-from service.measurement_service import create_measurement
+from simulation.schemas import BatchCreateRequest
+from simulation.services.uploads import validate_artifact_item
+from db import Base
+from simulation.db import Measurement
+from simulation.schemas import MeasurementCreateRequest
+from user_auth.schemas import RoleEnum, UserData
+from simulation.services.material_snapshot import material_vars_hash, validate_material_snapshot
+from simulation.services.measurements import create_measurement
 
 
 class MaterialSnapshotTests(unittest.IsolatedAsyncioTestCase):

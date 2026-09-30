@@ -8,17 +8,17 @@ from unittest.mock import patch
 
 import test_parameter_study_api as persistence_fixture
 
-from cae import recording
-from cae.studies import evaluation
-from cae.studies.controller import cancel_study, reconcile_study, request_retry
-from cae.studies.db import StageSubmission, Study, Trial
-from cae.studies.service import create_study, list_trials, resume_study, study_detail
-from cae.studies.submissions import submit_stage
-from db import Measurement
-from gpstation.db import Job, JobBatch, JobEvent
+from simulation.services import recording
+from optimization import evaluation, integration
+from optimization.controller import cancel_study, reconcile_study, request_retry
+from optimization.db import StageSubmission, Study, Trial
+from optimization.service import create_study, list_trials, resume_study, study_detail
+from optimization.submissions import submit_stage
+from simulation.db import Measurement
+from gpstation.db import Job, JobBatch, JobEvent, JobRecord
 from gpstation.service.batches import fail_server_jobs, finish_job, serialize_events
-from service.material_snapshot import material_vars_hash
-from service.measurement_service import get_recorded_data
+from simulation.services.material_snapshot import material_vars_hash
+from simulation.services.measurements import get_recorded_data
 from sqlalchemy import func, select
 
 
@@ -169,8 +169,66 @@ class StudyControllerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(Job, queued[1].id)).state, "cancelled")
             self.assertEqual((await db.get(Job, first.id)).state, "cancelled")
             self.assertEqual((await db.get(Study, study_id)).state, "pausing")
+            terminal_events = list((await db.scalars(select(JobEvent).where(
+                JobEvent.batch_id.in_([job.batch_id for job in queued]),
+                JobEvent.type.in_(["job.failed", "job.cancelled", "batch.completed"]),
+            ).order_by(JobEvent.id))).all())
+            self.assertEqual([(event.type, event.batch_id) for event in terminal_events], [
+                ("job.failed", queued[0].batch_id), ("batch.completed", queued[0].batch_id),
+                ("job.cancelled", queued[1].batch_id), ("batch.completed", queued[1].batch_id),
+            ])
+            self.assertTrue(all(event.payload["study_id"] == study_id for event in terminal_events))
         await self.advance(study_id)
         self.assertFalse(any(job.state == "queued" for job in await self.jobs(study_id)))
+
+    async def test_finish_callback_failure_rolls_back_nested_cancellation_and_events(self):
+        study_id = await self.create(max_trials=3)
+        for _ in range(3):
+            await self.advance(study_id)
+            current = [job for job in await self.jobs(study_id) if job.state == "queued"][0]
+            await self.complete(current.id)
+        await self.advance(study_id)
+        queued = [job for job in await self.jobs(study_id) if job.state == "queued"]
+        self.assertEqual(len(queued), 2)
+        job_ids = [job.id for job in queued]
+        async with self.sessions() as db:
+            for job in queued:
+                db.add(JobRecord(job_id=job.id, attempt_count=job.attempt_count, sequence=1, name="staged", payload={"retained": True}))
+            await db.commit()
+            event_count = await db.scalar(select(func.count()).select_from(JobEvent))
+            study_state = (await db.get(Study, study_id)).state
+            submissions = list((await db.scalars(select(StageSubmission).where(StageSubmission.job_id.in_(job_ids)))).all())
+            original_submissions = {row.id: (row.state, row.error) for row in submissions}
+            trials = [await db.get(Trial, row.trial_id) for row in submissions]
+            original_trials = {row.id: (row.state, row.next_stage, row.error) for row in trials}
+        original_callback = integration.on_job_finished
+
+        async def fail_after_nested_transition(db, job, result):
+            await original_callback(db, job, result)
+            if job.id == queued[0].id:
+                raise RuntimeError("terminal application persistence failed")
+
+        async with self.sessions() as db:
+            await serialize_events(db)
+            job = await db.scalar(select(Job).where(Job.id == queued[0].id).with_for_update())
+            with patch.object(integration, "on_job_finished", side_effect=fail_after_nested_transition):
+                with self.assertRaisesRegex(RuntimeError, "terminal application persistence failed"):
+                    await finish_job(db, job, "failed", "build failed")
+            await db.rollback()
+        async with self.sessions() as db:
+            self.assertEqual(set((await db.scalars(select(Job.state).where(Job.id.in_(job_ids)))).all()), {"queued"})
+            self.assertEqual((await db.get(Study, study_id)).state, study_state)
+            for identity, state in original_submissions.items():
+                row = await db.get(StageSubmission, identity)
+                self.assertEqual((row.state, row.error), state)
+            for identity, state in original_trials.items():
+                row = await db.get(Trial, identity)
+                self.assertEqual((row.state, row.next_stage, row.error), state)
+            for pending in queued:
+                batch = await db.get(JobBatch, pending.batch_id)
+                self.assertEqual((batch.state, batch.failed, batch.cancelled), ("queued", 0, 0))
+            self.assertEqual(await db.scalar(select(func.count()).select_from(JobRecord).where(JobRecord.job_id.in_(job_ids))), 2)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent)), event_count)
 
     async def test_restart_marks_interrupted_stage_failed_without_replaying_it(self):
         study_id = await self.create(max_trials=1)
@@ -223,7 +281,7 @@ class StudyControllerTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("submission interrupted")
 
         retry_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
-        with patch("cae.studies.controller.submit_stage", side_effect=fail_after_creating_job):
+        with patch("optimization.controller.submit_stage", side_effect=fail_after_creating_job):
             await self.advance(study_id)
             await self.advance(study_id)
             for request_id in retry_ids:

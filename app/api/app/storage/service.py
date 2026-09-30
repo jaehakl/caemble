@@ -13,7 +13,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from db import Calculation, Measurement
+from calculation.db import Calculation
+from simulation.db import Measurement
 from gpstation.db import Job
 from gpstation.service.state import utcnow
 from settings import settings
@@ -214,7 +215,7 @@ async def cleanup_objects(db):
             alive = alive and any(ref.get("id") == row.id for ref in object_refs(job.input if job else None))
         if row.experiment_id is None and row.job_id and not row.deleting:
             job = await db.get(Job, row.job_id)
-            from cae.db import CaeBatch
+            from simulation.db import CaeBatch
             cae = await db.get(CaeBatch, job.batch_id) if job else None
             if cae and cae.spec.get("preflight"):
                 alive = row.user_id is not None and (job.finished_at is None or job.finished_at > cutoff)

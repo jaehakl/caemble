@@ -1,13 +1,12 @@
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
-from models import BaseModel
+from pydantic import BaseModel
 from sdk.protocol.execution import ResourceRequest
 
 
-AccessKeyScope = Literal["client", "launcher", "caemble"]
 JobState = str
 
 
@@ -119,12 +118,6 @@ class AccessKeyData(BaseModel):
     expires_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     revoked_at: Optional[datetime] = None
-
-
-class AccessKeyCreate(BaseModel):
-    name: str
-    scopes: List[AccessKeyScope]
-    expires_at: Optional[datetime] = None
 
 
 class AccessKeyCreateResult(BaseModel):
