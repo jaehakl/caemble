@@ -1,6 +1,6 @@
 # Caemble worker applications
 
-`ai` and `cae` are independent launcher-discovered applications. Install only
+`ai`, `cae`, `evaluation`, and `tts` are independent launcher-discovered applications. Install only
 needed workers using their Poetry projects. Launcher manifests describe
 executables and remain beside each application.
 

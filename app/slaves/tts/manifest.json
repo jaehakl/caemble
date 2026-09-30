@@ -1,0 +1,7 @@
+{
+  "id": "tts",
+  "name": "English TTS (Kokoro CPU)",
+  "module": "app",
+  "startup_timeout_seconds": 180,
+  "readiness_args": ["-m", "app", "doctor"]
+}

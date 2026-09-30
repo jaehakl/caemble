@@ -7,6 +7,7 @@ Commands and component-relative paths in this document are relative to `app/slav
 - `ai`: LLM/chat, embedding, image, tagging, and VOICEVOX handlers.
 - `cae`: trusted-payload CAE simulation and Solver implementations.
 - `evaluation`: Node Measurement builds and Calculation for saved Optimizations.
+- `tts`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.
@@ -211,6 +212,34 @@ Push-Location ai
 poetry run python scripts/install_voicevox.py
 Pop-Location
 ```
+
+## English TTS configuration
+
+The `tts` worker uses its own Python 3.12 environment and exposes
+`ai.kokoro.synthesis`. Install and prepare it explicitly before restarting the
+launcher:
+
+```powershell
+Push-Location tts
+poetry env use 3.12
+poetry install
+poetry run python -m app prepare
+poetry run python -m app doctor
+poetry run python -m app smoke
+Pop-Location
+```
+
+Preparation downloads the pinned Kokoro model and US `af_heart` voice into
+`tts/.models/kokoro-v1.0`, plus the English G2P package. `doctor` checks local
+readiness; `smoke` performs actual CPU synthesis and creates
+`tts/.data/kokoro-smoke.wav` for listening. No model download occurs during
+worker initialization or synthesis. A missing asset excludes TTS from launcher
+advertisements with a preparation error.
+
+Use `slaveAppId: "tts"` with CPU-only resources (`gpu_count = 0`) in a separate
+GPStation job. SDXL continues to use the `ai` worker and its own GPU allocation.
+See the [TTS worker contract](../../app/slaves/tts/README.md) for payload,
+preprocessing metadata, offline regression tests and local model configuration.
 
 ## Runtime ownership
 
