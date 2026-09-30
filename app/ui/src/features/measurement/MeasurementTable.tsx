@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getListRequest } from '@/api'
+import { getListRequest, type PersistedMeasurementRecord } from '@/api'
+import { LoaderCircle, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { measurementsQueryOptions } from './queryOptions'
@@ -12,6 +13,9 @@ export function MeasurementTable({
   selectedId,
   loading,
   onSelect,
+  canDelete,
+  onDelete,
+  deletingIds,
 }: {
   experimentId: number | null
   active: boolean
@@ -19,6 +23,9 @@ export function MeasurementTable({
   selectedId: number | null
   loading: boolean
   onSelect: (id: number) => void
+  canDelete?: (row: PersistedMeasurementRecord) => boolean
+  onDelete?: (row: PersistedMeasurementRecord) => Promise<void>
+  deletingIds?: ReadonlySet<number>
 }) {
   const queryScope = usePrivateQueryScope()
   const [pagination, setPagination] = useState({ experimentId, queryScope, page: 0 })
@@ -77,6 +84,11 @@ export function MeasurementTable({
                 <tr>
                   <th className="p-2">ID</th>
                   <th className="p-2">Status</th>
+                  {onDelete ? (
+                    <th className="w-8">
+                      <span className="sr-only">삭제</span>
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
@@ -102,6 +114,32 @@ export function MeasurementTable({
                       </button>
                     </td>
                     <td className="p-2">{row.recorded_at ? 'Recorded' : 'Prepared'}</td>
+                    {onDelete ? (
+                      <td className="p-1" onClick={(event) => event.stopPropagation()}>
+                        {canDelete?.(row) ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-muted-foreground hover:text-destructive"
+                            aria-label={`Measurement #${row.id} 삭제`}
+                            aria-busy={deletingIds?.has(row.id) ?? false}
+                            title={`Measurement #${row.id} 삭제`}
+                            disabled={deletingIds?.has(row.id)}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void onDelete(row)
+                            }}
+                          >
+                            {deletingIds?.has(row.id) ? (
+                              <LoaderCircle className="size-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-3.5" />
+                            )}
+                          </Button>
+                        ) : null}
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>

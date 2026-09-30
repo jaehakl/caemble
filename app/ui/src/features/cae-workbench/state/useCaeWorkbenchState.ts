@@ -111,6 +111,7 @@ export function useCaeWorkbenchState(
   const baseSelection = useCaeDataSelection(experimentId, 'visible')
   const {
     clearMeasurement: clearBaseMeasurement,
+    forgetMeasurement: forgetBaseMeasurement,
     flatRecordedData,
     loadMeasurement: loadBaseMeasurement,
     loading: measurementLoading,
@@ -165,6 +166,27 @@ export function useCaeWorkbenchState(
       setStoredSelectionContext(next)
     },
     [clearBaseMeasurement],
+  )
+
+  const forgetMeasurement = useCallback(
+    (id: number) => {
+      const current = selectionContextRef.current
+      if (current.experimentId !== experimentId) return false
+      const cancelled = forgetBaseMeasurement(id)
+      if (cancelled) {
+        measurementRequestSequence.current += 1
+        setPreviewMeasurement(null)
+        setPendingMeasurementId(null)
+        setSelectionRestoreStatus('idle')
+      }
+      if (current.measurementId === id) {
+        const next = { ...current, measurementId: null }
+        selectionContextRef.current = next
+        setStoredSelectionContext(next)
+      }
+      return cancelled
+    },
+    [experimentId, forgetBaseMeasurement],
   )
 
   const loadMeasurement = useCallback(
@@ -244,6 +266,7 @@ export function useCaeWorkbenchState(
       downloadProgress: baseSelection.downloadProgress,
       clearAll: clearMeasurement,
       clearMeasurement,
+      forgetMeasurement,
       loadMeasurement,
     }),
     [
@@ -251,6 +274,7 @@ export function useCaeWorkbenchState(
       baseSelection.visualizations,
       baseSelection.resultErrors,
       clearMeasurement,
+      forgetMeasurement,
       flatRecordedData,
       loadMeasurement,
       materialSnapshot,

@@ -619,9 +619,11 @@ it.each([
 it('moves temporary result dismissal into the ribbon without status banners', () => {
   mocks.preview = true
   render(
-    <MemoryRouter>
-      <CaeWorkbenchRoute />
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter>
+        <CaeWorkbenchRoute />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
   expect(screen.queryByText('임시 결과 · 실행 당시 Geometry / Vars')).not.toBeInTheDocument()
   expect(screen.getByLabelText('Experiment source workspace').querySelector('[role="status"]')).toBeNull()

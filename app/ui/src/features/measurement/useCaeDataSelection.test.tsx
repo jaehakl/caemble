@@ -57,6 +57,64 @@ describe('useCaeDataSelection', () => {
     mocks.readResults.mockReset()
   })
 
+  it('clears a deleted selection and results but preserves a different committed selection', async () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    mocks.readResults.mockResolvedValue({ recorded_data: {}, result_contracts: {} })
+    const { result } = renderHook(() => useCaeDataSelection(10), { wrapper })
+    await act(async () => {
+      await result.current.loadMeasurement(measurement(1))
+    })
+    act(() => {
+      result.current.forgetMeasurement(2)
+    })
+    expect(result.current.measurement?.id).toBe(1)
+    act(() => {
+      result.current.forgetMeasurement(1)
+    })
+    expect(result.current.measurement).toBeNull()
+    expect(result.current.recordedData).toEqual({})
+    expect(result.current.resultContracts).toBeNull()
+    expect(result.current.visualizations).toEqual({})
+  })
+
+  it.each([1, 2])(
+    'deleting Measurement #%s during another selection download does not restore deleted data',
+    async (deletedId) => {
+      const wrapper = ({ children }: PropsWithChildren) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      )
+      mocks.readResults.mockResolvedValueOnce({ recorded_data: {}, result_contracts: {} })
+      const { result } = renderHook(() => useCaeDataSelection(10), { wrapper })
+      await act(async () => {
+        await result.current.loadMeasurement(measurement(1))
+      })
+      let finish!: (value: object) => void
+      mocks.readResults.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      let pending!: Promise<SavedMeasurement | null>
+      act(() => {
+        pending = result.current.loadMeasurement(measurement(2))
+      })
+      await waitFor(() => expect(mocks.readResults).toHaveBeenCalledTimes(2))
+      act(() => {
+        result.current.forgetMeasurement(deletedId)
+      })
+      if (deletedId === 1) expect(result.current.loading).toBe(true)
+      await act(async () => {
+        finish({ recorded_data: {}, result_contracts: {} })
+        await pending
+      })
+      expect(result.current.measurement?.id).toBe(deletedId === 1 ? 2 : 1)
+      expect(result.current.loading).toBe(false)
+    },
+  )
+
   it('retains the previous result when a batch download finishes after cancellation', async () => {
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>

@@ -96,3 +96,37 @@ it('offers retry on failure and shows an empty list after a successful retry', a
   fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
   expect(await screen.findByText('Measurement가 없습니다.')).toBeVisible()
 })
+
+it('shows small delete actions only for writable rows without selecting the row', async () => {
+  const onDelete = vi.fn().mockResolvedValue(undefined)
+  const props = { canDelete: (row: { id: number }) => row.id === 21, onDelete }
+  const { rerender } = setup(props)
+  const button = await screen.findByRole('button', { name: 'Measurement #21 삭제' })
+  expect(screen.queryByRole('button', { name: 'Measurement #20 삭제' })).not.toBeInTheDocument()
+  fireEvent.click(button)
+  expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 21 }))
+  expect(defaults.onSelect).not.toHaveBeenCalled()
+  rerender(<MeasurementTable {...defaults} {...props} deletingIds={new Set([21])} />)
+  expect(button).toBeDisabled()
+  fireEvent.click(button)
+  expect(onDelete).toHaveBeenCalledTimes(1)
+  expect(defaults.onSelect).not.toHaveBeenCalled()
+})
+
+it('returns to the previous page after its final row is deleted', async () => {
+  let total = 21
+  mocks.listRows.mockImplementation(async ({ offset }: { offset: number }) => ({
+    items: offset === 20 ? (total === 21 ? [{ id: 1, recorded_at: null }] : []) : [{ id: 21, recorded_at: null }],
+    total,
+  }))
+  const onDelete = vi.fn(async () => {
+    total = 20
+    await client.invalidateQueries({ queryKey: measurementQueryKeys.lists('public', 7) })
+  })
+  const { client } = setup({ canDelete: () => true, onDelete })
+  await screen.findByRole('button', { name: 'Measurement #21 삭제' })
+  fireEvent.click(screen.getByRole('button', { name: '다음' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Measurement #1 삭제' }))
+  await waitFor(() => expect(screen.getByText('1 / 1')).toBeVisible())
+  expect(await screen.findByRole('button', { name: 'Measurement #21 삭제' })).toBeVisible()
+})

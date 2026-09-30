@@ -24,6 +24,7 @@ import { useExperimentSaveWorkflow } from '@/features/experiment/useExperimentSa
 import { ExperimentWorkspace } from '@/features/cae-workbench/chrome/ExperimentWorkspace'
 import { ExperimentVarsPanel } from '@/features/cae-workbench/ExperimentVarsPanel'
 import { MeasurementTable } from '@/features/measurement/MeasurementTable'
+import { useMeasurementDeletion } from '@/features/measurement/useMeasurementDeletion'
 import { calculationAccessPolicy, type CalculationSaveState } from '@/features/calculation'
 import type {
   PredictionViewerState,
@@ -102,6 +103,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   )
   useExperimentWarnings(workbench.experimentDocument, runtimeConsole.append)
   const experimentDataReadable = auth.isAuthenticated || workbench.experimentIsDemo
+  const measurementDeletion = useMeasurementDeletion({
+    user: auth.user,
+    queryScope: auth.queryScope,
+    experimentId: workbench.experimentId,
+    workspaceSession: workbench.workspaceSession,
+    publicDataWarning: workbench.experimentIsDemo,
+    selection: workbench.selection,
+    onActivity: runtimeConsole.append,
+  })
   const calculationAccess = calculationAccessPolicy({
     dataReadable: experimentDataReadable,
     experimentIsDemo: workbench.experimentIsDemo,
@@ -496,6 +506,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 }
                 measurements={(active) => (
                   <MeasurementTable
+                    canDelete={measurementDeletion.canDelete}
+                    onDelete={measurementDeletion.deleteMeasurement}
+                    deletingIds={measurementDeletion.deletingIds}
                     active={active}
                     experimentId={workbench.experimentId}
                     dataReadable={experimentDataReadable}

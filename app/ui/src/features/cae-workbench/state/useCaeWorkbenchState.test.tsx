@@ -46,6 +46,14 @@ vi.mock('@/features/measurement/useCaeDataSelection', async () => {
         if (mocks.editableVars) setMeasurement(row)
         return row
       }, [])
+      const forgetMeasurement = useCallback(
+        (id: number) => {
+          if (measurement?.id !== id) return false
+          clearMeasurement()
+          return true
+        },
+        [measurement, clearMeasurement],
+      )
       return {
         measurement,
         recordedRows: measurement ? [{ id: 51 }] : [],
@@ -58,6 +66,7 @@ vi.mock('@/features/measurement/useCaeDataSelection', async () => {
         loading: false,
         clearAll: clearMeasurement,
         clearMeasurement,
+        forgetMeasurement,
         loadMeasurement,
       }
     },
@@ -176,6 +185,30 @@ it('turns a viewed Measurement into an editable Candidate and sends the new vars
 })
 
 describe('useCaeWorkbenchState draft restoration', () => {
+  it('removes a deleted Measurement from the persisted selection without losing Calculation selection', async () => {
+    mocks.editableVars = true
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper })
+    act(() => result.current.applyExperiment(savedExperiment(7)))
+    await act(async () => {
+      await result.current.selection.loadMeasurement(mocks.measurement)
+    })
+    act(() => result.current.selectCalculation({ experimentId: 7, calculationId: 9 }))
+    act(() => {
+      result.current.selection.forgetMeasurement(99)
+    })
+    expect(result.current.selectionContext.measurementId).toBe(41)
+    act(() => {
+      result.current.selection.forgetMeasurement(41)
+    })
+    expect(result.current.selectionContext).toEqual({ experimentId: 7, measurementId: null, calculationId: 9 })
+    expect(result.current.selection.measurement).toBeNull()
+    expect(result.current.selectionRestoring).toBe(false)
+    client.clear()
+  })
   it('clears the previous account Measurement and RecordedData before restoring a null selection', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const wrapper = ({ children }: PropsWithChildren) => (

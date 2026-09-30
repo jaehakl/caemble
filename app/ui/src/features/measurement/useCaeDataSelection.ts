@@ -21,6 +21,8 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   const requestSequence = useRef(0)
   const requestedMeasurementId = useRef<number | null>(null)
   const activeQueryKeys = useRef<QueryKey[]>([])
+  const committedMeasurement = useRef(measurement)
+  committedMeasurement.current = measurement
 
   const cancelActiveQueries = useCallback(() => {
     const keys = activeQueryKeys.current
@@ -28,18 +30,39 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     keys.forEach((queryKey) => void queryClient.cancelQueries({ queryKey, exact: true }))
   }, [queryClient])
 
+  const clearDisplayedMeasurement = useCallback(() => {
+    setMeasurement(null)
+    setRecordedDataTree({})
+    setResultContracts(null)
+    setVisualizations({})
+    setResultErrors({})
+  }, [])
+
   const clearMeasurement = useCallback(() => {
     requestedMeasurementId.current = null
     requestSequence.current += 1
     cancelActiveQueries()
     setLoading(false)
     setDownloadProgress(null)
-    setMeasurement(null)
-    setRecordedDataTree({})
-    setResultContracts(null)
-    setVisualizations({})
-    setResultErrors({})
-  }, [cancelActiveQueries])
+    clearDisplayedMeasurement()
+  }, [cancelActiveQueries, clearDisplayedMeasurement])
+
+  const forgetMeasurement = useCallback(
+    (id: number) => {
+      // A completed deletion must not cancel a newer selection's download.
+      const cancelled = requestedMeasurementId.current === id
+      if (cancelled) {
+        requestedMeasurementId.current = null
+        requestSequence.current += 1
+        cancelActiveQueries()
+        setLoading(false)
+        setDownloadProgress(null)
+      }
+      if (committedMeasurement.current?.id === id) clearDisplayedMeasurement()
+      return cancelled
+    },
+    [cancelActiveQueries, clearDisplayedMeasurement],
+  )
 
   useEffect(
     () => () => {
@@ -136,10 +159,12 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       downloadProgress,
       clearAll: clearMeasurement,
       clearMeasurement,
+      forgetMeasurement,
       loadMeasurement,
     }),
     [
       clearMeasurement,
+      forgetMeasurement,
       downloadProgress,
       loadMeasurement,
       loading,
