@@ -830,7 +830,8 @@ def _parse_job_descriptor(value: Any) -> JobDescriptor:
         attempt_count=value.get("attempt_count", 0),
         created_at=value.get("created_at"),
         updated_at=value.get("updated_at"),
-        execution=_parse_execution(value),
+        # JobData omits boot_id and reservation_id even after assignment.
+        # Bind the complete execution identity from wait-answer instead.
     )
 
 
@@ -841,7 +842,9 @@ def _parse_job_answer_wait_result(value: Any) -> JobAnswerWaitResult:
         state=value["state"],
         answer=_parse_signal_payload(answer) if answer is not None else None,
         last_error=value.get("last_error"),
-        execution=_parse_execution(value),
+        # Queued attempts already have an attempt_id, but no reservation yet.
+        # Require the complete identity only when binding a worker's answer.
+        execution=_parse_execution(value) if answer is not None else None,
     )
 
 
