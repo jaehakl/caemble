@@ -15,7 +15,8 @@ class DatasetSelection(RequestModel):
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     vars_schema: dict[str, Any]
     record_ids: list[int] = Field(default_factory=list)
-    calculation_ids: list[int] = Field(default_factory=list)
+    # Empty legacy field keeps existing Dataset clients compatible without training on Calculation outputs.
+    calculation_ids: list[int] = Field(default_factory=list, max_length=0)
     rules: list[dict[str, Any]] = Field(default_factory=list)
     result_contracts: dict[str, Any] = Field(default_factory=dict)
     expected_revision: int | None = Field(default=None, ge=1)
@@ -62,7 +63,7 @@ class ModelReserve(RequestModel):
     model_id: UUID | None = None
     expected_revision: int | None = Field(default=None, ge=0)
     name: str = Field(min_length=1, max_length=200)
-    direction: Literal["forward", "inverse"]
+    direction: Literal["forward"] = "forward"
     dataset_id: UUID
     dataset_revision: int = Field(ge=1)
     definition: dict[str, Any]

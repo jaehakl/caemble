@@ -30,14 +30,13 @@ import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 
 export type AnalysisRibbonCommand = 'reload'
-export type PredictionRibbonCommand = 'settings' | 'details' | 'validate' | 'sample' | 'cancel'
+export type PredictionRibbonCommand = 'settings' | 'details' | 'predict' | 'validate' | 'cancel'
 export type PredictionRibbonState = Readonly<{
   busy: boolean
-  canSample: boolean
+  canPredict: boolean
   canValidate: boolean
-  direction: 'forward' | 'inverse'
   status: string
-  sampleDisabledReason?: string
+  predictDisabledReason?: string
   validateDisabledReason?: string
 }>
 
@@ -74,7 +73,7 @@ export function useCaePageChrome({
   requestCalculationSave: () => void
   selectedCalculationId: number | null
   requestAccount: () => void
-  requestPredictionCommand: (command: PredictionRibbonCommand, sampleCount?: number) => void
+  requestPredictionCommand: (command: PredictionRibbonCommand) => void
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
   setActiveSection: (section: WorkbenchSectionId) => void
@@ -411,7 +410,7 @@ export function useCaePageChrome({
       },
       predictionSettings: {
         id: 'prediction-settings',
-        label: 'Prediction Settings',
+        label: '데이터·모델 관리',
         icon: <SlidersHorizontal />,
         disabled: !dataReadable || predictionState.busy,
         disabledReason: !dataReadable
@@ -547,9 +546,9 @@ export function useCaePageChrome({
           <WorkbenchRibbonGroup label="Prediction">
             <WorkbenchRibbonActions actions={[actions.predictionSettings, actions.predictionDetails]} />
           </WorkbenchRibbonGroup>
-          <WorkbenchRibbonGroup label="Direction">
+          <WorkbenchRibbonGroup label="원격 Forward">
             <div className="flex h-[72px] min-w-36 flex-col justify-center px-2 text-[10px] text-muted-foreground">
-              <span className="font-medium text-foreground capitalize">{predictionState.direction}</span>
+              <span className="font-medium text-foreground">Vars → BoxGrid</span>
               <span className="max-w-48 truncate" title={predictionState.status}>
                 {predictionState.status}
               </span>

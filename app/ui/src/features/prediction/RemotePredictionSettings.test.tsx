@@ -13,6 +13,7 @@ import type { PredictionSetup } from './usePredictionModels'
 import { RemotePredictionSettings } from './RemotePredictionSettings'
 import { PredictionAssetController } from './assetManagement'
 import { savedContractFromSource } from './savedModels'
+import { savedModelReference, setupUsingSavedModel } from './remoteAssets'
 
 const mocks = vi.hoisted(() => ({
   listLaunchers: vi.fn(),
@@ -107,9 +108,6 @@ const context = {
   experimentId: 1,
   experimentRecords: records,
   calculations,
-  measurements: [],
-  fingerprint: 'context',
-  analysis: { fingerprint: 'analysis', items: [] },
 } as unknown as PredictionContext
 
 function replica(backup = false): PredictionReplica {
@@ -181,21 +179,42 @@ function setup(): PredictionSetup {
   return {
     executionId: 'remote-knn',
     datasetId,
-    calculationIds: [4],
-    algorithm: { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance', calculationWeights: {} },
-    models: {
-      inverse: {
-        modelId: inverseId,
-        modelRevision: 1,
-        datasetId,
-        datasetRevision: 1,
-        direction: 'inverse',
-        fingerprint: 'inverse-fingerprint',
-      },
-    },
-    routes: { inverse: { replicaId: localReplicaId, storageId, launcherId } },
+    recordIds: [10],
+    calculationIds: [],
+    algorithm: { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' },
   }
 }
+
+describe('saved model output selection', () => {
+  it.each([
+    { name: 'first selection', previous: undefined, selected: [10], revision: 1, expected: [10, 11] },
+    { name: 'same revision', previous: forwardId, selected: [11], revision: 1, expected: [11] },
+    { name: 'new revision overlap', previous: forwardId, selected: [11, 12], revision: 2, expected: [11] },
+    { name: 'new revision without overlap', previous: forwardId, selected: [12], revision: 2, expected: [10, 11] },
+    { name: 'different model', previous: inverseId, selected: [10], revision: 1, expected: [10, 11] },
+  ])('keeps compatible output choices on $name', ({ previous, selected, revision, expected }) => {
+    const saved = model('forward')
+    saved.current_revision = revision
+    saved.revisions[0].revision = revision
+    saved.revisions[0].definition.contract = savedContractFromSource({
+      ...sourceContracts,
+      records: [...records, { id: 11, name: 'pressure', contract_hash: 'pressure-contract' }],
+    })
+    const initial: PredictionSetup = {
+      ...setup(),
+      recordIds: selected,
+      calculationIds: [4],
+      models: previous
+        ? { forward: { ...savedModelReference(saved), modelId: previous, modelRevision: 1 } }
+        : undefined,
+    }
+    const result = setupUsingSavedModel(initial, saved, revision, { storageId, launcherId })
+    expect(result.recordIds).toEqual(expected)
+    expect(result.calculationIds).toEqual([4])
+    expect(result.models?.forward?.modelRevision).toBe(revision)
+    expect(result.routes?.forward).toEqual({ storageId, launcherId })
+  })
+})
 
 async function show(initial = setup(), refresh = true) {
   const manager = new PredictionAssetController('owner:1', 1)
@@ -233,7 +252,7 @@ beforeEach(() => {
     { id: launcherId, launcher_name: 'Fixture launcher', status: 'online', slave_app_ids: ['predictor'] },
   ])
   mocks.datasets.mockResolvedValue([dataset()])
-  mocks.models.mockResolvedValue([model('inverse')])
+  mocks.models.mockResolvedValue([model('forward')])
   mocks.storages.mockResolvedValue([
     {
       storage_id: storageId,
@@ -265,8 +284,23 @@ beforeEach(() => {
 })
 
 describe('model-first Prediction management', () => {
+  it('keeps retired Inverse assets manageable while hiding execution and new-version actions', async () => {
+    mocks.models.mockResolvedValue([model('inverse')])
+    const { manager, onUse } = await show()
+    fireEvent.click(screen.getByRole('button', { name: /inverse saved/ }))
+    expect(screen.getByRole('status')).toHaveTextContent('지원 종료')
+    expect(screen.queryByRole('button', { name: '이 모델 사용' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '새 버전 만들기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '복원하고 사용' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '백업하기' }))
+    expect(mocks.startOperation).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({ kind: 'backup', asset_id: inverseId }),
+    )
+    expect(onUse).not.toHaveBeenCalled()
+  })
   it('shows the pending deletion reason and continues the existing operation instead of deleting again', async () => {
-    const saved = model('inverse')
+    const saved = model('forward')
     mocks.models.mockResolvedValue([
       {
         ...saved,
@@ -284,7 +318,7 @@ describe('model-first Prediction management', () => {
       },
     ])
     const { manager } = await show()
-    fireEvent.click(screen.getByRole('button', { name: /inverse saved/ }))
+    fireEvent.click(screen.getByRole('button', { name: /forward saved/ }))
     expect(screen.getByText('다른 세션에서 사용 중입니다.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '파일 확인' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '이 위치에서 제거' })).not.toBeInTheDocument()
@@ -404,11 +438,9 @@ describe('model-first Prediction management', () => {
 
   it('supports keyboard traversal across management tabs and a full long Korean model name', async () => {
     const longName = '한글모델이름과버전별예측결과'.repeat(30)
-    mocks.models.mockResolvedValue([{ ...model('inverse'), name: longName }])
+    mocks.models.mockResolvedValue([{ ...model('forward'), name: longName }])
     const user = userEvent.setup()
     await show()
-    await user.tab()
-    expect(screen.getByLabelText('Prediction 실행 위치')).toHaveFocus()
     await user.tab()
     expect(screen.getByRole('tab', { name: '모델' })).toHaveFocus()
     await user.tab()
@@ -440,7 +472,7 @@ describe('model-first Prediction management', () => {
     const { manager, onUse, onChange } = await show()
     const list = screen.getByLabelText('등록된 모델')
     expect(within(list).getAllByRole('button')).toHaveLength(1)
-    fireEvent.click(within(list).getByRole('button', { name: /inverse saved/ }))
+    fireEvent.click(within(list).getByRole('button', { name: /forward saved/ }))
     expect(screen.getAllByText('Local store').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Backup store').length).toBeGreaterThan(0)
     fireEvent.click(screen.getByText('저장된 설정·ID·checksum'))
@@ -454,9 +486,9 @@ describe('model-first Prediction management', () => {
     fireEvent.click(screen.getByRole('button', { name: '이 모델 사용' }))
     expect(onUse).toHaveBeenCalledWith(
       expect.objectContaining({
-        models: expect.objectContaining({ inverse: expect.objectContaining({ modelId: inverseId }) }),
+        models: expect.objectContaining({ forward: expect.objectContaining({ modelId: forwardId }) }),
       }),
-      'inverse',
+      'forward',
     )
     expect(onChange).not.toHaveBeenCalled()
   })
@@ -473,7 +505,7 @@ describe('model-first Prediction management', () => {
         expect.objectContaining({
           expected_revision: 1,
           record_ids: [10],
-          calculation_ids: [4],
+          calculation_ids: [],
           source_hash: 'b'.repeat(64),
         }),
         expect.any(Object),
@@ -495,13 +527,11 @@ describe('model-first Prediction management', () => {
     const [changed, direction] = onUse.mock.calls[0] as [PredictionSetup, string]
     expect(direction).toBe('forward')
     expect(changed.models?.forward?.modelId).toBe(forwardId)
-    expect(changed.models?.inverse).toEqual(initial.models?.inverse)
-    expect(changed.routes?.inverse).toEqual(initial.routes?.inverse)
     expect(mocks.reserve).toHaveBeenCalledWith(
       expect.objectContaining({
         direction: 'forward',
         dataset_id: datasetId,
-        definition: expect.objectContaining({ calculationIds: [4], requiredRecordIds: [10] }),
+        definition: expect.objectContaining({ requiredRecordIds: [10] }),
       }),
       expect.any(Object),
     )

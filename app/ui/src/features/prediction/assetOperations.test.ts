@@ -145,6 +145,16 @@ beforeEach(() => {
 })
 
 describe('Prediction management wire orchestration', () => {
+  it('rejects an unfinished legacy Inverse preparation without connecting or obtaining a new grant', async () => {
+    const owner = await manager()
+    mocks.operation.mockResolvedValue(
+      operation({ kind: 'prepare', state: 'interrupted', details: { direction: 'inverse' } }),
+    )
+    await retryPredictionAssetOperation(owner, operationId)
+    expect(owner.getSnapshot().tasks[0]).toMatchObject({ state: 'failed' })
+    expect(mocks.inspect).not.toHaveBeenCalled()
+    expect(mocks.retryOperation).not.toHaveBeenCalled()
+  })
   it('keeps child deletion grants and removes other copies even when a child response is lost', async () => {
     const childId = '55555555-5555-4555-8555-555555555555'
     const otherId = '66666666-6666-4666-8666-666666666666'

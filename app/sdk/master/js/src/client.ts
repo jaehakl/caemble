@@ -111,8 +111,8 @@ export class GpStationClient {
   }
 
   /** Cancel the execution through its owner; closing WebRTC alone is not cleanup proof. */
-  async cancelJob(jobId: string): Promise<void> {
-    await this.request<{ ok: boolean }>(`${this.jobApiPrefix}/${encodeURIComponent(jobId)}/kill`, { method: 'POST' });
+  async cancelJob(jobId: string, signal?: AbortSignal): Promise<void> {
+    await this.request<{ ok: boolean }>(`${this.jobApiPrefix}/${encodeURIComponent(jobId)}/kill`, { method: 'POST', signal });
   }
 
   prewarmJobConnection(options: JobConnectionPrewarmOptions = {}): void {
@@ -174,6 +174,7 @@ export class GpStationClient {
         attempt: 0,
       });
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
       const attemptError =
         error instanceof RunJobAttemptError
           ? error
@@ -221,6 +222,7 @@ export class GpStationClient {
     attempt: number;
   }): Promise<CallResult<TResult> | RunJobSessionResult<TResult>> {
     const { handlerType, input, options, status, diagnostic, timeoutMs, slaveAppId, rtcConfig, attempt } = params;
+    options.signal?.throwIfAborted();
     const autoFinish = options.autoFinish ?? true;
     const prepared = this.takePrewarmedJobConnection(slaveAppId, rtcConfig);
     const prewarmHit = prepared !== undefined;
@@ -232,6 +234,11 @@ export class GpStationClient {
     let inputSent = false;
     let finishStarted = false;
     const runStartedAt = Date.now();
+    const abort = () => {
+      jobPeer.close();
+      void this.killJobBestEffort(jobId);
+    };
+    options.signal?.addEventListener('abort', abort, { once: true });
     if (prepared) {
       registerPreparedJobConnectionDiagnostics(prepared, diagnostic);
     } else {
@@ -276,8 +283,10 @@ export class GpStationClient {
       });
 
       status('creating job');
+      options.signal?.throwIfAborted();
       const created = await this.request<JobCreateResult>(this.jobApiPrefix, {
         method: 'POST',
+        signal: options.signal,
         body: JSON.stringify({
           handler_type: handlerType,
           slave_app_id: slaveAppId,
@@ -291,10 +300,12 @@ export class GpStationClient {
       });
       jobId = created.job.id;
       options.onJobCreated?.(created.job);
+      if (options.signal?.aborted) void this.killJobBestEffort(jobId);
+      options.signal?.throwIfAborted();
 
       status('waiting for answer');
       const answerWaitStartedAt = Date.now();
-      const answer = await this.waitJobAnswer(created.job.id, timeoutMs);
+      const answer = await this.waitJobAnswer(created.job.id, timeoutMs, options.signal);
       const answerWaitMs = Date.now() - answerWaitStartedAt;
       if (!answer.answer || answer.answer.type !== 'answer' || !answer.answer.sdp) {
         throw new Error(answer.last_error || `job ${created.job.id} did not produce an answer (state=${answer.state})`);
@@ -336,6 +347,7 @@ export class GpStationClient {
       });
       inputSent = true;
       const firstResult = await firstResultPromise;
+      options.signal?.throwIfAborted();
       if (!autoFinish) {
         return { ...firstResult, session };
       }
@@ -360,6 +372,8 @@ export class GpStationClient {
       }
       const detail = error instanceof Error ? error.message : String(error);
       throw new RunJobAttemptError(jobId ? `job ${jobId} failed: ${detail}` : detail, jobId, inputSent);
+    } finally {
+      options.signal?.removeEventListener('abort', abort);
     }
   }
 
@@ -368,7 +382,7 @@ export class GpStationClient {
       return;
     }
     try {
-      await this.cancelJob(jobId);
+      await this.cancelJob(jobId, AbortSignal.timeout(10_000));
     } catch {
       // Best-effort cleanup only; the retry path should still surface its own result.
     }
@@ -399,6 +413,7 @@ export class GpStationClient {
     retryCsrf = true,
     retryAuth = true,
   ): Promise<T> {
+    init.signal?.throwIfAborted();
     const headers = new Headers(init.headers);
     if (!headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
@@ -408,7 +423,7 @@ export class GpStationClient {
     }
     const csrfRequired = this.usesCsrf(path, init.method);
     if (csrfRequired) {
-      headers.set('X-CSRF-Token', await this.ensureCsrfToken());
+      headers.set('X-CSRF-Token', await this.ensureCsrfToken(init.signal));
     }
     const response = await fetch(`${this.apiBaseUrl}${path}`, {
       ...init,
@@ -416,7 +431,7 @@ export class GpStationClient {
       headers,
     });
     if (this.authMode === 'cookie' && retryAuth && path !== '/auth/refresh' && response.status === 401) {
-      await this.refreshCookieAuth();
+      await this.refreshCookieAuth(init.signal);
       return await this.request<T>(path, init, retryCsrf, false);
     }
     if (csrfRequired && retryCsrf && response.status === 403) {
@@ -429,10 +444,11 @@ export class GpStationClient {
     return (await response.json()) as T;
   }
 
-  private async refreshCookieAuth(): Promise<void> {
+  private async refreshCookieAuth(signal?: AbortSignal | null): Promise<void> {
     if (!this.authRefreshPromise) {
       this.authRefreshPromise = (async () => {
         const response = await fetch(`${this.apiBaseUrl}/auth/refresh`, {
+          signal,
           credentials: 'include',
           headers: { Accept: 'application/json' },
         });
@@ -455,20 +471,21 @@ export class GpStationClient {
     );
   }
 
-  private async ensureCsrfToken(): Promise<string> {
+  private async ensureCsrfToken(signal?: AbortSignal | null): Promise<string> {
     if (this.csrfToken) {
       return this.csrfToken;
     }
     if (!this.csrfPromise) {
-      this.csrfPromise = this.fetchCsrfToken().finally(() => {
+      this.csrfPromise = this.fetchCsrfToken(signal).finally(() => {
         this.csrfPromise = undefined;
       });
     }
     return await this.csrfPromise;
   }
 
-  private async fetchCsrfToken(): Promise<string> {
+  private async fetchCsrfToken(signal?: AbortSignal | null): Promise<string> {
     const response = await fetch(`${this.apiBaseUrl}/web/auth/csrf`, {
+      signal,
       credentials: 'include',
       headers: { Accept: 'application/json' },
     });
@@ -483,9 +500,10 @@ export class GpStationClient {
     return payload.csrf_token;
   }
 
-  private async waitJobAnswer(jobId: string, timeoutMs: number): Promise<JobAnswerWaitResult> {
+  private async waitJobAnswer(jobId: string, timeoutMs: number, signal?: AbortSignal): Promise<JobAnswerWaitResult> {
     const startedAt = Date.now();
     while (true) {
+      signal?.throwIfAborted();
       const elapsed = Date.now() - startedAt;
       if (elapsed > timeoutMs) {
         throw new Error(`job answer timeout: ${jobId}`);
@@ -493,6 +511,7 @@ export class GpStationClient {
       const waitSeconds = Math.max(0, Math.min(30, Math.floor((timeoutMs - elapsed) / 1000)));
       const result = await this.request<JobAnswerWaitResult>(
         `${this.jobApiPrefix}/${encodeURIComponent(jobId)}/wait-answer?wait_seconds=${waitSeconds}`,
+        { signal },
       );
       if (result.answer || ['failed', 'cancelled', 'killed', 'succeeded'].includes(result.state)) {
         return result;

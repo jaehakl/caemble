@@ -114,11 +114,11 @@ it('retains the recorded snapshot through Vars edits, pending selection, failed 
   expect(mocks.cad).toHaveBeenLastCalledWith(source, expect.objectContaining({ resetKey: 1 }))
 })
 
-it('keeps a frozen prediction during refresh but never applies it to changed Vars or source', () => {
+it('clears an invalidated prediction even when Vars and source are unchanged', () => {
   const initial = state()
   const { rerender } = render(view(initial))
   rerender(view(initial, null))
-  expect(mocks.viewers.get('preview')?.recordedData).toEqual({ stress: 'predicted' })
+  expect(mocks.viewers.get('preview')?.recordedData).toBeUndefined()
   rerender(view(state(null, 0.9), null))
   expect(mocks.viewers.get('preview')?.recordedData).toBeUndefined()
   rerender(

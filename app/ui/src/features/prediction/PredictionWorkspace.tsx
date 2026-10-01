@@ -1,88 +1,62 @@
-import { BrowserPredictionExecution } from './browserExecution'
-import { RemotePredictionExecution } from './remoteExecution'
-import { usePredictionAssets } from './usePredictionAssets'
-import { PredictionModelSummary } from './PredictionModelSummary'
-import { RemotePredictionSettings } from './RemotePredictionSettings'
-import { reconcileRemoteAssets } from './remoteAssets'
-import { restorePredictionSetup, persistPredictionSetup } from './setupPersistence'
-import { recordedDataRules } from '@/features/measurement/recordedData'
-import { materialVarsHash } from '@/lib/material/resolution'
-import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { createPortal } from 'react-dom'
-import { toast } from 'sonner'
-import type { CalculationDataOutput, CalculationOutputLayout } from '@/api'
+import { useQueryClient } from '@tanstack/react-query'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
-import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
-import { calculationSourceHash } from '@/lib/calculation'
-import { varsFingerprint as candidateFingerprint, varsTensorFromFlat, type Vars } from '@/lib/cad/model'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import {
-  predictionFingerprint,
-  predictionForwardRefreshState,
-  predictionForwardResultIsCurrent,
-  predictionVarsLayouts,
-  predictionVarsSamples,
-  calculationOutputSample,
-} from './data'
-import { emitPredictionCohortDiagnostics } from './diagnostics'
-import {
-  calculationOutputContract,
-  comparePredictionOutput,
-  inverseValidationAggregateErrorFromScales,
-  predictionOutputRange,
-} from './metrics'
-import {
-  PredictionCalculationPane,
-  PredictionDetailsDialog,
-  PredictionSetupDialog,
-  PredictionVarsPane,
-  type PredictionCalculationPaneItem,
-  type PredictionSetupBusyAction,
-} from './PredictionPanels'
-import type { PredictionCohortSummary, PredictionDirection } from './knn'
-import type { PredictionModelProfile } from './execution'
+import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
+import { recordedDataRules } from '@/features/measurement/recordedData'
+import { varsFingerprint, type Vars } from '@/lib/cad/model'
+import { materialVarsHash } from '@/lib/material/resolution'
+import { calculationSourceHash } from '@/lib/calculation'
+import { predictionFingerprint } from './data'
+import { comparePredictionOutput } from './metrics'
+import { RemotePredictionExecution, type RemotePredictionState } from './remoteExecution'
+import { usePredictionAssets } from './usePredictionAssets'
+import { RemotePredictionSettings } from './RemotePredictionSettings'
+import { PredictionModelSummary } from './PredictionModelSummary'
+import { modelExecutionRoutes, preferredModelRoute, reconcileRemoteAssets, setupUsingSavedModel } from './remoteAssets'
+import { persistPredictionSetup, restorePredictionSetup } from './setupPersistence'
 import {
   loadPredictionContextData,
-  loadPredictionContextFingerprint,
+  loadPredictionCalculations,
   loadPredictionValidationData,
-  loadPredictionSelectedTargets,
-  loadPredictionSamplingMeasurements,
   type PredictionContext,
 } from './predictionContextData'
-import type { PredictionSamplingRange } from './sampling'
-import { PredictionTrainingChangedError } from './trainingSnapshot'
+import { usePredictionController } from './usePredictionController'
 import {
-  usePredictionController,
-  type PredictionExecutionBinding,
-  type PredictionForwardRecordProfile,
-} from './usePredictionController'
-import { initialPredictionResults, predictionResultsReducer, type ValidationRow } from './results'
-import {
-  defaultPredictionSetup as defaultSetup,
+  calculatePrediction,
+  defaultPredictionSetup,
+  predictCandidate,
   predictionSetupFingerprint,
-  usePredictionModels,
-  type PredictionSetup,
   type PredictionRecordedPreview,
-  type PredictionVarsSchema as VarsSchema,
+  type PredictionSetup,
 } from './usePredictionModels'
+import { PredictionCalculationPane, PredictionVarsPane } from './PredictionPanels'
+import { initialPredictionResults, predictionResultsReducer, type ValidationRow } from './results'
 
 export type PredictionWorkspaceCommand = Readonly<{
   id: number
-  type: 'settings' | 'details' | 'validate' | 'sample' | 'cancel'
-  sampleCount?: number
+  type: 'settings' | 'details' | 'predict' | 'validate' | 'cancel'
 }>
-
 export type PredictionWorkspaceChromeState = Readonly<{
   busy: boolean
-  canSample: boolean
+  canPredict: boolean
   canValidate: boolean
-  direction: PredictionDirection
   status: string
-  sampleDisabledReason?: string
+  predictDisabledReason?: string
   validateDisabledReason?: string
 }>
-
 export type PredictionViewerState = Readonly<{
   experimentId: number | null
   varsFingerprint: string
@@ -93,50 +67,6 @@ export type PredictionViewerState = Readonly<{
   preview: PredictionRecordedPreview
 }>
 
-const integerRanges: Readonly<Record<string, readonly [number, number]>> = Object.freeze({
-  int8: [-128, 127],
-  int16: [-32_768, 32_767],
-  int32: [-2_147_483_648, 2_147_483_647],
-  uint8: [0, 255],
-  uint16: [0, 65_535],
-  uint32: [0, 4_294_967_295],
-})
-
-const activationMessage = 'Prediction Settings에서 설정을 적용하세요.'
-
-function calculationPlaceholder(layout: CalculationOutputLayout): CalculationDataOutput {
-  const size = layout.shape.reduce((total, length) => total * length, 1)
-  return Object.freeze({
-    dtype: layout.dtype,
-    shape: Object.freeze([...layout.shape]),
-    data: layout.shape.length === 0 ? 0 : Object.freeze(Array.from({ length: size }, () => 0)),
-    axes: Object.freeze(
-      layout.axes.map((axis) =>
-        Object.freeze({
-          name: axis.name,
-          ticks: Object.freeze([...axis.ticks]),
-          ...(axis.unit ? { unit: axis.unit } : {}),
-        }),
-      ),
-    ),
-  })
-}
-
-function cohortSummary(profile: PredictionModelProfile | null, totalRows: number): PredictionCohortSummary | null {
-  if (!profile?.knn) return null
-  return Object.freeze({
-    totalRows,
-    includedRows: profile.rowCount,
-    includedMeasurementIds: profile.includedMeasurementIds,
-    warningMeasurementIds: profile.warningMeasurementIds,
-    dominantShapeSignature: profile.knn.dominantShapeSignature,
-    baselineMeasurementId: profile.knn.baselineMeasurementId,
-    diagnostics: profile.diagnostics,
-    omittedDiagnosticGroups: profile.omittedDiagnosticGroups,
-    excluded: profile.excluded,
-  })
-}
-
 export function PredictionWorkspace({
   active,
   authenticated,
@@ -146,8 +76,8 @@ export function PredictionWorkspace({
   onChromeStateChange,
   onViewerStateChange,
   onRequestLogin,
-  selectedCalculationId,
   varsContainer,
+  executionContainer = null,
   workbench,
 }: {
   active: boolean
@@ -155,2465 +85,787 @@ export function PredictionWorkspace({
   dataReadable: boolean
   command: PredictionWorkspaceCommand | null
   onActivity?: RuntimeActivityCallback
-  onViewerStateChange?: (state: PredictionViewerState | null) => void
   onChromeStateChange: (state: PredictionWorkspaceChromeState) => void
+  onViewerStateChange?: (state: PredictionViewerState | null) => void
   onRequestLogin: () => void
-  selectedCalculationId: number | null
+  selectedCalculationId?: number | null
   varsContainer: HTMLDivElement | null
+  executionContainer?: HTMLDivElement | null
   workbench: CaeWorkbenchState
 }) {
-  const [viewerState, setViewerState] = useState<PredictionViewerState | null>(null)
-  const [results, dispatchResults] = useReducer(predictionResultsReducer, initialPredictionResults)
-  const {
-    calculationErrors,
-    surrogateValues,
-    surrogateErrors,
-    provenanceByDirection,
-    neighborsByDirection,
-    profiles,
-    forwardRecordProfiles,
-    lastResult,
-    forwardVarsFingerprint,
-    forwardFailure,
-    inverseVarsFingerprint,
-    validation,
-  } = results
-  const {
-    busy,
-    cancelLifecycle,
-    finishOperation,
-    lifecycle,
-    lifecycleRef,
-    retryingValidation,
-    validating,
-    runtime,
-    setDataStale,
-    setDirection,
-    setFreshnessPending,
-    setSamplingProgress,
-    setStatus,
-    startOperation,
-  } = usePredictionController()
-  const { dataStale, direction, freshnessPending, samplingProgress, status } = lifecycle
-  const autoLoadAttemptRef = useRef<string | null>(null)
-  const previousActiveRef = useRef(active)
-  const previousPredictionBusyRef = useRef(false)
-  const skipNextPredictionBusyCheckRef = useRef(false)
-  const previousMutableDataBusyRef = useRef(workbench.measurementActions.busy || workbench.calculationDataActions.busy)
-  const suppressedCandidateRef = useRef<string | null>(null)
-  const activeForwardVarsFingerprintRef = useRef<string | null>(null)
-  const userChangedVarsRef = useRef(false)
-  const cancelMeasurementRef = useRef(workbench.measurementActions.cancel)
-  const cancelCalculationDataRef = useRef(workbench.calculationDataActions.cancel)
-  const clearModelCaches = useCallback(
-    (modelDirection?: PredictionDirection) => {
-      runtime.clearModelCaches(modelDirection)
-      if (modelDirection !== 'inverse') dispatchResults({ type: 'model-caches-cleared' })
-    },
-    [runtime],
-  )
-
-  const [context, setContext] = useState<PredictionContext | null>(null)
-  const contextRef = useRef(context)
-  const [setup, setSetup] = useState<PredictionSetup>(defaultSetup)
-  const [setupDraft, setSetupDraft] = useState<PredictionSetup>(defaultSetup)
-  const [browserActivation, setBrowserActivation] = useState<{
-    experimentId: number | null
-    queryScope: string
-  } | null>(null)
-  const [predictionRefreshRevision, setPredictionRefreshRevision] = useState(0)
-  const handledPredictionRefreshRevision = useRef(0)
-  const [setupOpen, setSetupOpen] = useState(false)
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const [detailsDirection, setDetailsDirection] = useState<PredictionDirection>('forward')
-  const [setupBusyAction, setSetupBusyAction] = useState<PredictionSetupBusyAction>(null)
-  const [guideProgress, setGuideProgress] = useState(() => {
-    try {
-      const complete = sessionStorage.getItem('caemble.prediction-guide-complete') === '1'
-      return { forward: complete, inverse: complete }
-    } catch {
-      return { forward: false, inverse: false }
-    }
-  })
-  const [calculationValues, setCalculationValues] = useState<Readonly<Record<number, CalculationDataOutput>>>({})
-  const [calculationPrimaryRevision, setCalculationPrimaryRevision] = useState(0)
-  const [samplingRanges, setSamplingRanges] = useState<Readonly<Record<string, PredictionSamplingRange>>>({})
-  const calculationValuesRef = useRef(calculationValues)
-  const validationRef = useRef(validation)
-  calculationValuesRef.current = calculationValues
-  validationRef.current = validation
-  cancelMeasurementRef.current = workbench.measurementActions.cancel
-  cancelCalculationDataRef.current = workbench.calculationDataActions.cancel
-
-  const experimentId = workbench.experimentId
-  const experimentIdRef = useRef(experimentId)
-  const queryScope = usePrivateQueryScope()
-  const assets = usePredictionAssets(authenticated ? queryScope : null, experimentId, onActivity)
-  const [deletionBlocks, setDeletionBlocks] = useState<Partial<Record<PredictionDirection, string>>>({})
-  const deletionBlocksRef = useRef(deletionBlocks)
-  deletionBlocksRef.current = deletionBlocks
-  const forwardDeletionBlocked =
-    deletionBlocks.forward === predictionFingerprint([setup.models?.forward, setup.routes?.forward])
-  const inverseDeletionBlocked =
-    deletionBlocks.inverse === predictionFingerprint([setup.models?.inverse, setup.routes?.inverse])
-  assets.currentSelectionKey = predictionFingerprint([setup, setupDraft, direction])
-  const selectionMeasurementRef = useRef(workbench.selectionContext?.measurementId ?? null)
-  selectionMeasurementRef.current = workbench.selectionContext?.measurementId ?? null
-  const configureExecutions = useCallback(
-    (next: PredictionSetup) => {
-      const bindings: Partial<Record<PredictionDirection, PredictionExecutionBinding>> = {}
-      for (const modelDirection of ['forward', 'inverse'] as const) {
-        if (next.executionId === 'browser-knn') {
-          bindings[modelDirection] = { key: 'browser-knn', create: () => new BrowserPredictionExecution() }
-          continue
-        }
-        const route = next.routes?.[modelDirection]
-        if (!route) continue
-        bindings[modelDirection] = {
-          key: `remote:${route.launcherId}:${route.storageId}`,
-          create: () =>
-            new RemotePredictionExecution(route.launcherId, {
-              storageId: route.storageId,
-              onHello: reconcileRemoteAssets,
-              onWarning: (message) =>
-                onActivity?.({ source: 'prediction', level: 'warning', phase: 'assets', message }),
-              onState: (state, message) => {
-                if (state === 'failed' && message)
-                  onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
-              },
-            }),
-        }
-      }
-      runtime.setExecutions(bindings)
-    },
-    [onActivity, runtime],
-  )
-  const predictionEnabled =
-    setup.executionId !== 'browser-knn' ||
-    (browserActivation?.experimentId === experimentId && browserActivation?.queryScope === queryScope)
-  const predictionStatus = predictionEnabled ? status : activationMessage
+  const runtime = usePredictionController()
   const queryClient = useQueryClient()
-  const contextExperimentMatches = context?.experimentId === experimentId
-  const varsSchema = workbench.experimentDocument.varsSchema as VarsSchema | null
+  const queryScope = usePrivateQueryScope()
+  const experimentId = workbench.experimentId
+  const setPredictionRecords = workbench.setPredictionRecords
+  const assets = usePredictionAssets(authenticated ? queryScope : null, experimentId, onActivity)
+  const assetState = useSyncExternalStore(assets.subscribe, assets.getSnapshot)
+  const [setup, setSetup] = useState<PredictionSetup>(defaultPredictionSetup)
+  const [draft, setDraft] = useState<PredictionSetup>(defaultPredictionSetup)
+  const [context, setContext] = useState<PredictionContext | null>(null)
+  const [contextError, setContextError] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [viewer, setViewer] = useState<PredictionViewerState | null>(null)
+  const [results, dispatchResults] = useReducer(predictionResultsReducer, initialPredictionResults)
+  const [predicting, setPredicting] = useState(false)
+  const [calculating, setCalculating] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [status, setStatus] = useState('모델과 예측할 BoxGrid를 선택하세요.')
+  const [remoteState, setRemoteState] = useState<RemotePredictionState>('disconnected')
+  const [remoteMessage, setRemoteMessage] = useState<string | null>(null)
+  const [retryRevision, setRetryRevision] = useState(0)
+  const [deletedRoute, setDeletedRoute] = useState<string | null>(null)
+  const attempted = useRef<string | null>(null)
+  const running = useRef<string | null>(null)
+  const cancelledCalculation = useRef<string | null>(null)
+  const validationAbort = useRef<AbortController | null>(null)
+
+  const reference = setup.models?.forward
+  const route = setup.routes?.forward
+  const routeKey = predictionFingerprint([route, queryScope])
+  const selectedModel = assetState.models.find((model) => model.id === reference?.modelId)
+  const selectedRevision = selectedModel?.revisions.find((revision) => revision.revision === reference?.modelRevision)
+  const routes = selectedModel ? modelExecutionRoutes(selectedModel, reference!.modelRevision, assetState.storages) : []
+  const selectedRoute = routes.find(
+    (value) => value.storageId === route?.storageId && value.launcherId === route.launcherId,
+  )
+  const availableModels = assetState.models.filter(
+    (model) =>
+      model.direction === 'forward' &&
+      model.state === 'active' &&
+      model.revisions.some((revision) => revision.state === 'ready'),
+  )
+  const document = workbench.experimentDocument
   const candidateVars = workbench.candidateVars
-  const currentCandidateFingerprint = candidateFingerprint(candidateVars)
+  const candidateFingerprint = varsFingerprint(candidateVars)
+  const sourceHash =
+    document.predictionCandidate?.sourceHash ??
+    document.evaluatedSnapshot?.sourceHash ??
+    workbench.experimentRecord?.source_hash ??
+    ''
+  const sourceIdentity = predictionFingerprint([experimentId, workbench.experiment?.sourceBundle.files])
+  const contextReady = context?.experimentId === experimentId
+  const selectedNames = useMemo(
+    () =>
+      contextReady
+        ? context.experimentRecords
+            .filter((record) => setup.recordIds.includes(record.id))
+            .map((record) => record.name)
+            .sort()
+        : [],
+    [context, contextReady, setup.recordIds],
+  )
+  const namesKey = JSON.stringify(selectedNames)
+  const candidateReady = Boolean(
+    candidateVars &&
+    document.variables &&
+    document.successfulRevision === document.revision &&
+    varsFingerprint(document.variables) === candidateFingerprint &&
+    (document.predictionCandidate
+      ? JSON.stringify([...document.predictionCandidate.records].sort()) === namesKey
+      : document.status === 'Ready') &&
+    selectedNames.every((name) => document.simulationProgram?.boxGrids?.[name]),
+  )
+  const predictionKey = predictionFingerprint([
+    sourceIdentity,
+    candidateFingerprint,
+    predictionSetupFingerprint(setup),
+    context?.fingerprint,
+  ])
+  const currentViewer = viewer?.contextKey === predictionKey && candidateReady ? viewer : null
   const selectedCalculations = useMemo(
     () =>
-      contextExperimentMatches
-        ? context.calculations.filter((calculation) => setup.calculationIds.includes(calculation.id))
-        : [],
-    [context, contextExperimentMatches, setup.calculationIds],
+      contextReady ? context.calculations.filter((calculation) => setup.calculationIds.includes(calculation.id)) : [],
+    [context, contextReady, setup.calculationIds],
   )
-  const requiredPredictionRecords = useMemo(() => {
-    const ids = new Set(selectedCalculations.flatMap((calculation) => calculation.experiment_record_ids))
-    return contextExperimentMatches
-      ? context.experimentRecords
-          .filter((record) => ids.has(record.id))
-          .map((record) => record.name)
-          .sort()
-      : []
-  }, [context, contextExperimentMatches, selectedCalculations])
-  const setPredictionRecords = workbench.setPredictionRecords
-  useEffect(() => {
-    if (active) setPredictionRecords?.(requiredPredictionRecords)
-  }, [active, requiredPredictionRecords, setPredictionRecords])
-  const candidateEvaluationReady = Boolean(
-    (workbench.experimentDocument.predictionCandidate === undefined ||
-      (workbench.experimentDocument.predictionCandidate &&
-        JSON.stringify(workbench.experimentDocument.predictionCandidate.records) ===
-          JSON.stringify(requiredPredictionRecords))) &&
-    (workbench.experimentDocument.predictionCandidate ? true : workbench.experimentDocument.status === 'Ready') &&
-    workbench.experimentDocument.successfulRevision === workbench.experimentDocument.revision &&
-    workbench.experimentDocument.variables &&
-    candidateFingerprint(workbench.experimentDocument.variables) === currentCandidateFingerprint,
-  )
-  const currentForwardFailure = forwardFailure?.fingerprint === currentCandidateFingerprint ? forwardFailure : null
-  const forwardRefreshState = predictionForwardRefreshState({
-    candidateReady: candidateEvaluationReady,
-    completedFingerprint: forwardVarsFingerprint,
-    currentFingerprint: currentCandidateFingerprint,
-    failureFingerprint: currentForwardFailure?.fingerprint ?? null,
-  })
-  const forwardRefreshing =
-    predictionEnabled &&
-    direction === 'forward' &&
-    active &&
-    contextExperimentMatches &&
-    !freshnessPending &&
-    !dataStale &&
-    candidateVars !== null &&
-    setup.calculationIds.length > 0 &&
-    (forwardRefreshState === 'waiting-candidate' || forwardRefreshState === 'updating')
-  const predictionUpdating = busy || forwardRefreshing
-  const profile = profiles[direction] ?? null
-  const candidateFingerprintRef = useRef(currentCandidateFingerprint)
-  const candidateVarsRef = useRef(candidateVars)
-  const experimentDocumentRef = useRef(workbench.experimentDocument)
-  const measurementActionsRef = useRef(workbench.measurementActions)
-  const setCandidateVariablesRef = useRef(workbench.setCandidateVariables)
-  const sourceIdentity = predictionFingerprint([
-    experimentId,
-    workbench.experiment?.sourceBundle.files ?? null,
-    workbench.experimentRecord?.source_hash ?? null,
+  const calculationKey = predictionFingerprint([
+    selectedCalculations.map((calculation) => [
+      calculation.id,
+      calculation.source_hash,
+      calculation.source_code,
+      calculation.output_layout,
+      calculation.experiment_record_ids,
+    ]),
+    currentViewer?.contextKey,
+    currentViewer?.transaction,
   ])
-  const sourceIdentityRef = useRef(sourceIdentity)
-  const selectedCalculationContractFingerprint = predictionFingerprint(
-    selectedCalculations.map((calculation) => [calculation.id, calculation.source_hash, calculation.output_layout]),
-  )
-  contextRef.current = context
-  experimentIdRef.current = experimentId
-  candidateFingerprintRef.current = currentCandidateFingerprint
-  candidateVarsRef.current = candidateVars
-  experimentDocumentRef.current = workbench.experimentDocument
-  measurementActionsRef.current = workbench.measurementActions
-  setCandidateVariablesRef.current = workbench.setCandidateVariables
-  sourceIdentityRef.current = sourceIdentity
+  const missingModelOutputs = selectedCalculations
+    .flatMap((calculation) => calculation.experiment_record_ids)
+    .filter((id) => !reference?.contract?.records[id])
+  const busy = predicting || calculating || validating
 
-  const viewerContextKey = predictionFingerprint([
-    sourceIdentity,
-    setup.executionId === 'remote-knn' ? selectedCalculationContractFingerprint : context?.fingerprint,
-    predictionSetupFingerprint(setup),
-    varsSchema,
-  ])
-  const viewerContextRef = useRef(viewerContextKey)
-  const viewerActiveRef = useRef(active)
-  viewerContextRef.current = viewerContextKey
-  viewerActiveRef.current = active
-  const receiveRecorded = useCallback(
-    (vars: Readonly<Vars>, transaction: number) => {
-      const expectedFingerprint = candidateFingerprint(vars)
-      const expectedContext = viewerContextRef.current
-      return (preview: PredictionRecordedPreview) => {
-        const document = experimentDocumentRef.current
-        if (
-          !viewerActiveRef.current ||
-          !runtime.transactionIsCurrent(transaction) ||
-          viewerContextRef.current !== expectedContext ||
-          candidateFingerprintRef.current !== expectedFingerprint ||
-          (!document.predictionCandidate && document.status !== 'Ready') ||
-          document.successfulRevision !== document.revision ||
-          candidateFingerprint(document.variables) !== expectedFingerprint
-        )
-          return
-        setViewerState({
-          experimentId: experimentIdRef.current,
-          varsFingerprint: expectedFingerprint,
-          contextKey: expectedContext,
-          transaction,
-          sourceHash: document.predictionCandidate?.sourceHash ?? document.evaluatedSnapshot?.sourceHash ?? null,
-          varsHash: materialVarsHash(vars),
-          preview,
-        })
-      }
-    },
-    [runtime],
-  )
-  useLayoutEffect(() => {
-    onViewerStateChange?.(
-      active &&
-        !dataStale &&
-        !freshnessPending &&
-        candidateEvaluationReady &&
-        viewerState?.contextKey === viewerContextKey &&
-        runtime.transactionIsCurrent(viewerState.transaction) &&
-        viewerState.varsFingerprint === currentCandidateFingerprint
-        ? viewerState
-        : null,
-    )
-  }, [
+  let unavailable: string | undefined
+  if (!authenticated) unavailable = '로그인 후 내 Launcher에서 예측할 수 있습니다.'
+  else if (!dataReadable || experimentId === null) unavailable = 'Prediction에 사용할 저장 Experiment를 여세요.'
+  else if (contextError) unavailable = contextError
+  else if (!contextReady) unavailable = 'Experiment 출력 계약을 불러오는 중입니다.'
+  else if (!reference) unavailable = '모델을 선택하거나 데이터·모델 관리에서 만드세요.'
+  else if (!route) unavailable = '접근 가능한 모델 복사본을 가진 Launcher를 선택하세요.'
+  else if (deletedRoute === routeKey) unavailable = '선택한 복사본을 해제했습니다. 다른 복사본을 선택하거나 복원하세요.'
+  else if (selectedRoute && !selectedRoute.connected) unavailable = 'Launcher 연결 끊김'
+  else if (selectedRevision && !selectedRoute) unavailable = '접근 가능한 모델 복사본 없음'
+  else if (selectedRoute && !['present', 'unverified'].includes(selectedRoute.state))
+    unavailable = '접근 가능한 모델 복사본 없음 · 복원 또는 파일 검증이 필요합니다.'
+  else if (!setup.recordIds.length) unavailable = '예측할 BoxGrid를 하나 이상 선택하세요.'
+  else if (!candidateReady)
+    unavailable =
+      document.status === 'Error'
+        ? 'Candidate BoxGrid 평가 실패 · Experiment 오류를 확인하세요.'
+        : '현재 Candidate의 BoxGrid를 준비하는 중입니다.'
+
+  const validationDisabledReason = !authenticated
+    ? '로그인 후 저장하고 실제 해석을 실행할 수 있습니다.'
+    : !workbench.experimentManageable
+      ? '이 Experiment의 데이터를 변경할 권한이 없습니다.'
+      : !workbench.experimentClean || experimentId === null
+        ? '저장되고 수정되지 않은 Experiment가 필요합니다.'
+        : busy || workbench.measurementActions.busy || workbench.calculationDataActions.busy
+          ? '진행 중인 작업이 있습니다.'
+          : !currentViewer
+            ? '현재 Candidate의 예측 결과가 필요합니다.'
+            : document.draftTaskNames.length
+              ? 'Solver가 선택되지 않은 Draft Task가 있습니다.'
+              : undefined
+
+  const latest = useRef({
     active,
-    dataStale,
-    freshnessPending,
-    candidateEvaluationReady,
-    viewerState,
-    runtime,
-    viewerContextKey,
-    currentCandidateFingerprint,
-    onViewerStateChange,
-  ])
+    setup,
+    context,
+    document,
+    candidateVars,
+    candidateReady,
+    predictionKey,
+    sourceHash,
+    experimentId,
+    onActivity,
+    unavailable,
+    remoteState,
+    currentViewer,
+    validationDisabledReason,
+    selectedCalculations,
+    calculationKey,
+    results,
+    workbench,
+  })
+  latest.current = {
+    active,
+    setup,
+    context,
+    document,
+    candidateVars,
+    candidateReady,
+    predictionKey,
+    sourceHash,
+    experimentId,
+    onActivity,
+    unavailable,
+    remoteState,
+    currentViewer,
+    validationDisabledReason,
+    selectedCalculations,
+    calculationKey,
+    results,
+    workbench,
+  }
+
+  useLayoutEffect(() => {
+    runtime.setExecution(null)
+    validationAbort.current?.abort()
+    const restored = authenticated && experimentId !== null ? restorePredictionSetup(queryScope, experimentId) : null
+    setSetup(restored ?? defaultPredictionSetup)
+    setDraft(restored ?? defaultPredictionSetup)
+    setContext(null)
+    setContextError(null)
+    setViewer(null)
+    dispatchResults({ type: 'cleared' })
+    attempted.current = null
+    running.current = null
+    setDeletedRoute(null)
+    setPredicting(false)
+    setCalculating(false)
+    setValidating(false)
+  }, [authenticated, experimentId, queryScope, runtime])
+
+  useEffect(() => {
+    if (!authenticated || !dataReadable || experimentId === null) return
+    const abort = new AbortController()
+    setContextError(null)
+    void loadPredictionContextData({ experimentId, queryClient, queryScope, signal: abort.signal }).then(
+      (loaded) => {
+        if (abort.signal.aborted) return
+        setContext(loaded)
+        void loadPredictionCalculations({ experimentId, queryClient, queryScope, signal: abort.signal }).then(
+          (calculations) => {
+            if (!abort.signal.aborted)
+              setContext((current) =>
+                current?.experimentId === experimentId
+                  ? { ...current, calculations, calculationError: undefined }
+                  : current,
+              )
+          },
+          () => {
+            if (!abort.signal.aborted)
+              setContext((current) =>
+                current?.experimentId === experimentId
+                  ? {
+                      ...current,
+                      calculationError: 'Calculation 목록을 불러오지 못했습니다. BoxGrid 예측은 사용할 수 있습니다.',
+                    }
+                  : current,
+              )
+          },
+        )
+      },
+      (error: unknown) => {
+        if (!abort.signal.aborted) setContextError(error instanceof Error ? error.message : String(error))
+      },
+    )
+    return () => abort.abort()
+  }, [authenticated, dataReadable, experimentId, queryClient, queryScope, reload])
+
+  useEffect(() => {
+    if (active) setPredictionRecords(selectedNames)
+  }, [active, selectedNames, setPredictionRecords])
+
+  useLayoutEffect(() => {
+    runtime.invalidateTransaction()
+    running.current = null
+    attempted.current = null
+    setPredicting(false)
+  }, [routeKey, runtime])
+
+  useEffect(() => {
+    if (!authenticated || !route) {
+      runtime.setExecution(null)
+      return
+    }
+    const binding = {
+      key: routeKey,
+      create: () =>
+        new RemotePredictionExecution(route.launcherId, {
+          storageId: route.storageId,
+          onState: (state, message) => {
+            setRemoteState(state)
+            setRemoteMessage(message ?? null)
+          },
+          onHello: reconcileRemoteAssets,
+          onWarning: (message) => onActivity?.({ source: 'prediction', level: 'warning', phase: 'remote', message }),
+        }),
+    }
+    runtime.setExecution(binding)
+  }, [authenticated, onActivity, route, routeKey, runtime])
+
+  useLayoutEffect(() => {
+    runtime.invalidateTransaction()
+    validationAbort.current?.abort()
+    running.current = null
+    attempted.current = null
+    setPredicting(false)
+    setCalculating(false)
+    setValidating(false)
+    dispatchResults({ type: 'cleared' })
+  }, [predictionKey, runtime])
+
+  useEffect(() => {
+    if (active) return
+    runtime.invalidateTransaction()
+    if (running.current) attempted.current = null
+    running.current = null
+    setPredicting(false)
+    setCalculating(false)
+  }, [active, runtime])
+
+  useEffect(() => {
+    onViewerStateChange?.(active && dataReadable ? currentViewer : null)
+  }, [active, currentViewer, dataReadable, onViewerStateChange])
   useEffect(() => () => onViewerStateChange?.(null), [onViewerStateChange])
 
-  const samplingRangeResetKey = predictionFingerprint([
-    experimentId,
-    Object.entries(varsSchema ?? {}).map(([key, entry]) => [key, entry.shape, entry.min, entry.max]),
-  ])
-  const defaultSamplingRanges = useMemo(
-    () =>
-      Object.freeze(
-        Object.fromEntries(
-          Object.entries(varsSchema ?? {}).map(([key, entry]) => [
-            key,
-            Object.freeze({ min: entry.min, max: entry.max }),
-          ]),
-        ),
-      ),
-    [samplingRangeResetKey],
-  )
-  useEffect(() => setSamplingRanges(defaultSamplingRanges), [defaultSamplingRanges, samplingRangeResetKey])
-  const effectiveSamplingRanges =
-    Object.keys(samplingRanges).length === Object.keys(defaultSamplingRanges).length
-      ? samplingRanges
-      : defaultSamplingRanges
-
-  useEffect(() => {
-    if (!guideProgress.forward || !guideProgress.inverse) return
-    try {
-      sessionStorage.setItem('caemble.prediction-guide-complete', '1')
-    } catch {
-      // Session storage can be unavailable in hardened browser contexts.
-    }
-  }, [guideProgress])
-
-  const rememberProfile = useCallback(
-    (next: PredictionModelProfile, fingerprint: string) => {
-      dispatchResults({ type: 'profile-received', profile: next })
-      emitPredictionCohortDiagnostics(next, fingerprint, runtime.emittedDiagnosticFingerprints, onActivity)
+  const applySetup = useCallback(
+    (next: PredictionSetup) => {
+      setSetup(next)
+      setDraft(next)
+      if (authenticated && experimentId !== null) persistPredictionSetup(queryScope, experimentId, next)
+      setSettingsOpen(false)
+      setDeletedRoute(null)
     },
-    [onActivity, runtime],
-  )
-  const receiveForwardRecordProfiles = useCallback((profiles: readonly PredictionForwardRecordProfile[]) => {
-    dispatchResults({ type: 'record-profiles-received', profiles })
-  }, [])
-
-  const cancelCurrent = useCallback(
-    (explicit = false) => {
-      setViewerState(null)
-      const samplingAtCancellation = lifecycleRef.current.samplingProgress
-      if (explicit && runtime.executionLocation === 'remote') runtime.resetExecution()
-      const outcome = runtime.cancelCurrent({
-        cancelCalculationData: cancelCalculationDataRef.current,
-        cancelMeasurement: explicit ? cancelMeasurementRef.current : () => measurementActionsRef.current.detach(),
-        samplingActive: samplingAtCancellation !== null,
-      })
-      activeForwardVarsFingerprintRef.current = null
-      if (outcome.modelsCleared) dispatchResults({ type: 'model-caches-cleared' })
-      if (outcome.validationActive) {
-        dispatchResults({ type: 'predictions-invalidated' })
-      }
-      cancelLifecycle({
-        dataStale: lifecycleRef.current.dataStale || outcome.validationActive,
-        freshnessPending: lifecycleRef.current.freshnessPending || Boolean(samplingAtCancellation?.recorded),
-      })
-    },
-    [cancelLifecycle, lifecycleRef, runtime],
+    [authenticated, experimentId, queryScope],
   )
 
-  useEffect(() => {
-    const wasActive = previousActiveRef.current
-    previousActiveRef.current = active
-    if (!active) {
-      if (runtime.executionLocation === 'remote') runtime.resetExecution()
-      autoLoadAttemptRef.current = null
-      runtime.invalidateFingerprintCheck()
-      skipNextPredictionBusyCheckRef.current = false
-      setFreshnessPending(true)
-    }
+  const runPrediction = useCallback(async () => {
+    const state = latest.current
     if (
-      wasActive &&
-      !active &&
-      (lifecycleRef.current.operation !== 'idle' || runtime.hasOwnedCalculationDataOperation())
-    )
-      cancelCurrent()
-  }, [active, lifecycleRef, cancelCurrent, runtime, setFreshnessPending])
-
-  const reloadData = useCallback(
-    async (options: Readonly<{ automatic?: boolean; preserveValidation?: boolean; savedModel?: boolean }> = {}) => {
-      if (!dataReadable || experimentId === null) {
-        setContext(null)
-        setStatus(
-          experimentId === null
-            ? 'Prediction 가능한 Experiment를 선택하세요.'
-            : '이 Experiment의 데이터를 읽을 수 없습니다.',
-        )
-        return
-      }
-      cancelCurrent()
-      const revision = runtime.beginLoad()
-      const signal = runtime.loadSignal()
-      setFreshnessPending(true)
-      startOperation('loading', 'Measurement와 CalculationData를 불러오는 중…')
-      try {
-        const nextContext = await loadPredictionContextData({
-          savedModel: options.savedModel ?? setup.executionId === 'remote-knn',
-          experimentId,
-          queryClient,
-          queryScope,
-          signal,
-        })
-        if (!runtime.loadIsCurrent(revision)) return
-        runtime.invalidateTransaction()
-        runtime.advancePrimaryRevision()
-        runtime.abortCalculation()
-        runtime.resetExecution()
-        const { calculations, measurements } = nextContext
-        const readyCalculations = calculations.filter(
-          (row) => row.contract_status === 'ready' && row.output_layout && row.source_hash,
-        )
-        setContext(nextContext)
-        clearModelCaches()
-        runtime.clearTrainingSnapshots()
-        setDataStale(false)
-        setFreshnessPending(false)
-        skipNextPredictionBusyCheckRef.current = true
-        let preservedValidation = options.preserveValidation ? validationRef.current : null
-        const nextCalculationContractFingerprint = preservedValidation
-          ? predictionFingerprint(
-              nextContext.calculations
-                .filter((calculation) => setup.calculationIds.includes(calculation.id))
-                .map((calculation) => [calculation.id, calculation.source_hash, calculation.output_layout]),
-            )
-          : null
-        if (
-          !preservedValidation ||
-          preservedValidation.direction !== direction ||
-          preservedValidation.experimentId !== experimentId ||
-          preservedValidation.setupFingerprint !== predictionSetupFingerprint(setup) ||
-          preservedValidation.sourceIdentity !== sourceIdentity ||
-          preservedValidation.calculationContractFingerprint !== nextCalculationContractFingerprint
-        ) {
-          preservedValidation = null
-        }
-        validationRef.current = preservedValidation
-        dispatchResults({ type: 'context-reloaded', validation: preservedValidation })
-        setSetup((current) => {
-          if (current.executionId === 'remote-knn') return current
-          const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
-          const fallback =
-            valid.length > 0
-              ? valid
-              : [
-                  selectedCalculationId && readyCalculations.some((row) => row.id === selectedCalculationId)
-                    ? selectedCalculationId
-                    : readyCalculations[0]?.id,
-                ].filter((id): id is number => typeof id === 'number')
-          return Object.freeze({
-            ...current,
-            calculationIds: Object.freeze(fallback),
-            algorithm: Object.freeze({
-              ...current.algorithm,
-              calculationWeights: Object.freeze(
-                Object.fromEntries(fallback.map((id) => [id, current.algorithm.calculationWeights[id] ?? 1])),
-              ),
-            }),
-          })
-        })
-        setSetupDraft((current) => {
-          if (current.executionId === 'remote-knn') return current
-          const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
-          return Object.freeze({
-            ...current,
-            calculationIds: Object.freeze(valid),
-            algorithm: Object.freeze({
-              ...current.algorithm,
-              calculationWeights: Object.freeze(
-                Object.fromEntries(valid.map((id) => [id, current.algorithm.calculationWeights[id] ?? 1])),
-              ),
-            }),
-          })
-        })
-        setStatus(
-          (options.savedModel ?? setup.executionId === 'remote-knn')
-            ? '저장 모델 계약 준비됨 · 원본 학습 데이터 없이 예측할 수 있습니다.'
-            : measurements.length
-              ? `${measurements.length.toLocaleString()}개 Measurement 준비됨`
-              : 'Recorded Measurement가 없습니다.',
-        )
-        setPredictionRefreshRevision((current) => current + 1)
-      } catch (cause: unknown) {
-        if (!runtime.loadIsCurrent(revision)) return
-        const message = cause instanceof Error ? cause.message : String(cause)
-        setStatus(message)
-        if (options.automatic) setDataStale(true)
-        setFreshnessPending(false)
-        toast.error(message)
-      } finally {
-        if (runtime.loadIsCurrent(revision)) finishOperation()
-      }
-    },
-    [
-      cancelCurrent,
-      clearModelCaches,
-      dataReadable,
-      experimentId,
-      finishOperation,
-      queryClient,
-      queryScope,
-      runtime,
-      selectedCalculationId,
-      direction,
-      setup,
-      sourceIdentity,
-      setDataStale,
-      setFreshnessPending,
-      setStatus,
-      startOperation,
-    ],
-  )
-
-  useLayoutEffect(() => {
-    runtime.invalidateValidation()
-    setBrowserActivation(null)
-    setPredictionRefreshRevision(0)
-    handledPredictionRefreshRevision.current = 0
-    const restored = authenticated && experimentId !== null ? restorePredictionSetup(queryScope, experimentId) : null
-    const nextSetup = restored ?? defaultSetup
-    setSetup(nextSetup)
-    setSetupDraft(nextSetup)
-    configureExecutions(nextSetup)
-    clearModelCaches()
-    runtime.clearTrainingSnapshots()
-    setContext(null)
-    validationRef.current = null
-    dispatchResults({ type: 'experiment-changed' })
-    setDetailsOpen(false)
-    calculationValuesRef.current = {}
-    setCalculationValues({})
-    setCalculationPrimaryRevision((current) => current + 1)
-    setDirection(
-      nextSetup.executionId === 'remote-knn' && !nextSetup.models?.forward && nextSetup.models?.inverse
-        ? 'inverse'
-        : 'forward',
-    )
-    activeForwardVarsFingerprintRef.current = null
-    if (active) {
-      autoLoadAttemptRef.current = `${dataReadable}:${experimentId ?? 'none'}`
-      void reloadData({ savedModel: nextSetup.executionId === 'remote-knn' })
-    }
-  }, [experimentId, queryScope])
-
-  useEffect(() => {
-    const loadKey = `${dataReadable}:${experimentId ?? 'none'}`
-    if (!active || !dataReadable || context || busy || autoLoadAttemptRef.current === loadKey) return
-    autoLoadAttemptRef.current = loadKey
-    void reloadData()
-  }, [active, busy, context, dataReadable, experimentId, reloadData])
-
-  useEffect(() => {
-    if (dataReadable) return
-    autoLoadAttemptRef.current = null
-    runtime.invalidateLoad()
-    cancelCurrent()
-    runtime.resetExecution()
-    clearModelCaches()
-    runtime.clearTrainingSnapshots()
-    setContext(null)
-    calculationValuesRef.current = {}
-    setCalculationValues({})
-    setCalculationPrimaryRevision((current) => current + 1)
-    validationRef.current = null
-    dispatchResults({ type: 'access-lost' })
-    setDetailsOpen(false)
-    setStatus('Prediction 가능한 Experiment를 선택하세요.')
-  }, [cancelCurrent, clearModelCaches, dataReadable, runtime, setStatus])
-
-  const checkDataFingerprint = useCallback(async () => {
-    if (
-      !dataReadable ||
-      experimentId === null ||
-      !context ||
-      context.experimentId !== experimentId ||
-      lifecycleRef.current.operation !== 'idle'
+      !state.active ||
+      state.unavailable ||
+      !state.context ||
+      !state.candidateVars ||
+      !state.document.varsSchema ||
+      !state.document.simulationProgram?.boxGrids ||
+      running.current === state.predictionKey
     )
       return
-    setFreshnessPending(true)
-    const checkRevision = runtime.nextFingerprintCheck()
-    const loadRevision = runtime.currentLoadRevision()
-    const signal = runtime.fingerprintSignal()
+    const key = state.predictionKey
+    attempted.current = key
+    running.current = key
+    const transaction = runtime.beginTransaction()
+    setPredicting(true)
+    setStatus('원격 모델 로드·BoxGrid 예측 중…')
     try {
-      const fingerprint = await loadPredictionContextFingerprint({
-        savedModel: setup.executionId === 'remote-knn',
-        experimentId,
-        queryClient,
-        queryScope,
-        signal,
+      const preview = await predictCandidate({
+        runtime,
+        transaction,
+        setup: state.setup,
+        context: state.context,
+        varsSchema: state.document.varsSchema,
+        vars: state.candidateVars,
+        sourceHash: state.sourceHash,
+        candidateBoxGrids: state.document.simulationProgram.boxGrids,
+        resultContracts: state.document.simulationProgram.resultContracts,
+        onActivity: state.onActivity,
       })
-      if (
-        !runtime.fingerprintCheckIsCurrent(checkRevision) ||
-        !runtime.loadIsCurrent(loadRevision) ||
-        experimentIdRef.current !== experimentId ||
-        contextRef.current !== context
-      )
+      if (!runtime.transactionIsCurrent(transaction) || latest.current.predictionKey !== key || !latest.current.active)
         return
-      if (fingerprint !== context.fingerprint) {
-        if (setup.executionId === 'remote-knn') {
-          const fresh = await loadPredictionContextData({
-            experimentId,
-            queryClient,
-            queryScope,
-            signal,
-            savedModel: true,
-          })
-          if (!runtime.fingerprintCheckIsCurrent(checkRevision) || contextRef.current !== context) return
-          setContext(fresh)
-          setStatus('원본 변경 감지 · Dataset 동기화와 모델 업데이트를 명시적으로 실행하세요.')
-          setFreshnessPending(false)
-          return
-        }
-        setStatus('Measurement 또는 Calculation 변경 감지 · 모델을 자동 갱신하는 중…')
-        await reloadData({ automatic: true, preserveValidation: true })
-        return
-      }
-      setFreshnessPending(false)
-    } catch {
-      if (
-        runtime.fingerprintCheckIsCurrent(checkRevision) &&
-        runtime.loadIsCurrent(loadRevision) &&
-        experimentIdRef.current === experimentId &&
-        contextRef.current === context
-      ) {
-        setDataStale(setup.executionId !== 'remote-knn')
-        setFreshnessPending(false)
-        setStatus(
-          setup.executionId === 'remote-knn'
-            ? '원본 변경 확인 실패 · 선택한 저장 모델은 유지됩니다. 원본 확인을 다시 시도하세요.'
-            : 'Prediction 데이터 최신성을 확인하지 못했습니다. Reload Data를 실행하세요.',
-        )
+      setViewer({
+        experimentId: state.experimentId,
+        varsFingerprint: varsFingerprint(state.candidateVars),
+        sourceHash: state.sourceHash,
+        varsHash: materialVarsHash(state.candidateVars),
+        contextKey: key,
+        transaction,
+        preview,
+      })
+      setStatus('예측 BoxGrid 준비됨')
+    } catch (error) {
+      if (!runtime.transactionIsCurrent(transaction)) return
+      setStatus(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (running.current === key) {
+        running.current = null
+        setPredicting(false)
       }
     }
-  }, [
-    lifecycleRef,
-    context,
-    setup.executionId,
-    dataReadable,
-    experimentId,
-    queryClient,
-    queryScope,
-    reloadData,
-    runtime,
-    setDataStale,
-    setFreshnessPending,
-    setStatus,
-  ])
+  }, [runtime])
 
   useEffect(() => {
-    if (!active) return
-    void checkDataFingerprint()
-    const onFocus = () => void checkDataFingerprint()
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [active, checkDataFingerprint])
+    if (!active || unavailable || validating || attempted.current === predictionKey || currentViewer) return
+    void runPrediction()
+  }, [active, unavailable, validating, predictionKey, currentViewer, runPrediction, retryRevision, routeKey])
 
   useEffect(() => {
-    const mutableDataBusy = workbench.measurementActions.busy || workbench.calculationDataActions.busy
-    const wasBusy = previousMutableDataBusyRef.current
-    previousMutableDataBusyRef.current = mutableDataBusy
-    if (!active) return
-    if (mutableDataBusy) {
-      runtime.invalidateFingerprintCheck()
-      setFreshnessPending(true)
-    } else if (wasBusy) void checkDataFingerprint()
-  }, [
-    active,
-    checkDataFingerprint,
-    runtime,
-    setFreshnessPending,
-    workbench.calculationDataActions.busy,
-    workbench.measurementActions.busy,
-  ])
-
-  useEffect(() => {
-    const wasBusy = previousPredictionBusyRef.current
-    previousPredictionBusyRef.current = busy
-    if (active && wasBusy && !busy && !workbench.measurementActions.busy && !workbench.calculationDataActions.busy) {
-      if (skipNextPredictionBusyCheckRef.current) skipNextPredictionBusyCheckRef.current = false
-      else void checkDataFingerprint()
-    }
-  }, [active, busy, checkDataFingerprint, workbench.calculationDataActions.busy, workbench.measurementActions.busy])
-
-  const checkTrainingFreshness = useCallback(
-    () =>
-      loadPredictionContextFingerprint({
-        experimentId: experimentId!,
-        queryClient,
-        queryScope,
-        signal: runtime.transactionSignal(),
-      }),
-    [experimentId, queryClient, queryScope, runtime],
-  )
-
-  const { forwardOutputs, predictInverse } = usePredictionModels({
-    checkFreshness: checkTrainingFreshness,
-    clearModelCaches,
-    context,
-    experimentId,
-    onActivity,
-    onForwardRecordProfilesChange: receiveForwardRecordProfiles,
-    onProfile: rememberProfile,
-    recordedData: workbench.experimentDocument.simulationProgram?.recordedData ?? Object.freeze({}),
-    candidateBoxGrids: workbench.experimentDocument.simulationProgram?.boxGrids,
-    candidateReady:
-      candidateEvaluationReady &&
-      requiredPredictionRecords.every((name) => workbench.experimentDocument.simulationProgram?.boxGrids?.[name]),
-    resultContracts: workbench.experimentDocument.simulationProgram?.resultContracts,
-    runtime,
-    selectedCalculations,
-    setup,
-    varsSchema,
-  })
-  const forwardOutputsRef = useRef(forwardOutputs)
-  forwardOutputsRef.current = forwardOutputs
-
-  const reloadChangedTraining = useCallback(async () => {
-    setFreshnessPending(true)
-    runtime.clearTrainingSnapshots()
-    clearModelCaches()
-    dispatchResults({ type: 'predictions-invalidated' })
-    await reloadData({ automatic: true })
-  }, [clearModelCaches, reloadData, runtime, setFreshnessPending])
-
-  const runForward = useCallback(
-    async (vars: Readonly<Vars>) => {
-      const expectedFingerprint = candidateFingerprint(vars)
-      const document = experimentDocumentRef.current
-      if (
-        !predictionEnabled ||
-        deletionBlocksRef.current.forward === predictionFingerprint([setup.models?.forward, setup.routes?.forward]) ||
-        lifecycleRef.current.freshnessPending ||
-        lifecycleRef.current.dataStale ||
-        !context ||
-        context.experimentId !== experimentId ||
-        !setup.calculationIds.length ||
-        (!document.predictionCandidate && document.status !== 'Ready') ||
-        document.successfulRevision !== document.revision ||
-        candidateFingerprint(document.variables) !== expectedFingerprint ||
-        candidateFingerprintRef.current !== expectedFingerprint ||
-        activeForwardVarsFingerprintRef.current === expectedFingerprint
-      )
-        return
-      runtime.advancePrimaryRevision()
-      const transaction = runtime.beginTransaction()
-      setViewerState(null)
-      activeForwardVarsFingerprintRef.current = expectedFingerprint
-      runtime.abortCalculation()
-      if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
-      dispatchResults({ type: 'forward-started' })
-      startOperation('forward', 'Forward · RecordedData를 예측하는 중…', { direction: 'forward' })
-      try {
-        const completed = await forwardOutputs(vars, transaction, receiveRecorded(vars, transaction))
-        const completedDocument = experimentDocumentRef.current
-        if (
-          !predictionForwardResultIsCurrent({
-            candidateReady:
-              (completedDocument.predictionCandidate ? true : completedDocument.status === 'Ready') &&
-              completedDocument.successfulRevision === completedDocument.revision &&
-              candidateFingerprint(completedDocument.variables) === expectedFingerprint,
-            currentCandidateFingerprint: candidateFingerprintRef.current,
-            currentTransaction: runtime.currentTransaction(),
-            expectedFingerprint,
-            transaction,
-          })
-        )
-          return
-        calculationValuesRef.current = completed.calculated.values
-        setCalculationValues(completed.calculated.values)
-        setCalculationPrimaryRevision((current) => current + 1)
-        rememberProfile(completed.model.profile, completed.model.fingerprint)
-        const calculationFailure = setup.calculationIds
-          .map((id) => completed.calculated.errors[id])
-          .find((message): message is string => Boolean(message))
-        dispatchResults({
-          type: 'forward-completed',
-          result: completed.result,
-          errors: completed.calculated.errors,
-          fingerprint: expectedFingerprint,
-          failure: calculationFailure,
-        })
-        if (calculationFailure) {
-          setStatus(`Forward 결과 갱신 실패 · ${calculationFailure}`)
-          return
-        }
-        if (userChangedVarsRef.current) setGuideProgress((current) => ({ ...current, forward: true }))
-        setStatus('Forward 완료 · CalculationData가 최신입니다.')
-      } catch (cause: unknown) {
-        if (!runtime.transactionIsCurrent(transaction)) return
-        if (cause instanceof PredictionTrainingChangedError) {
-          await reloadChangedTraining()
-          return
-        }
-        if ((cause as { name?: string })?.name === 'AbortError') {
-          setStatus('현재 Vars의 Forward 갱신을 다시 예약하는 중…')
-          return
-        }
-        clearModelCaches()
-        const message = cause instanceof Error ? cause.message : String(cause)
-        dispatchResults({ type: 'forward-failed', fingerprint: expectedFingerprint, message })
-        setStatus(`Forward 결과 갱신 실패 · ${message}`)
-        toast.error(message)
-      } finally {
-        if (activeForwardVarsFingerprintRef.current === expectedFingerprint) {
-          activeForwardVarsFingerprintRef.current = null
-        }
-        if (runtime.transactionIsCurrent(transaction)) finishOperation()
-      }
-    },
-    [
-      clearModelCaches,
-      context,
-      experimentId,
-      finishOperation,
-      forwardOutputs,
-      predictionEnabled,
-      receiveRecorded,
-      rememberProfile,
-      reloadChangedTraining,
-      runtime,
-      setStatus,
-      setup.calculationIds,
-      startOperation,
-    ],
-  )
-
-  const runInverse = useCallback(
-    async (targets: Readonly<Record<number, CalculationDataOutput>>) => {
-      if (
-        !predictionEnabled ||
-        deletionBlocksRef.current.inverse === predictionFingerprint([setup.models?.inverse, setup.routes?.inverse]) ||
-        lifecycleRef.current.freshnessPending ||
-        lifecycleRef.current.dataStale ||
-        !context ||
-        context.experimentId !== experimentId ||
-        !varsSchema ||
-        setup.calculationIds.some((id) => !targets[id])
-      )
-        return
-      runtime.advancePrimaryRevision()
-      const transaction = runtime.beginTransaction()
-      setViewerState(null)
-      activeForwardVarsFingerprintRef.current = null
-      runtime.abortCalculation()
-      if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
-      dispatchResults({ type: 'inverse-started' })
-      startOperation('inverse', 'Inverse · Vars를 예측하는 중…', { direction: 'inverse' })
-      try {
-        const prediction = await predictInverse(targets, transaction)
-        if (!runtime.transactionIsCurrent(transaction)) return
-        const { model, result } = prediction
-        const nextVars = Object.freeze(
-          Object.fromEntries(
-            result.output.map((sample) => [sample.layout.key, varsTensorFromFlat(sample.values, sample.layout.shape)]),
-          ),
-        ) as Readonly<Vars>
-        const nextFingerprint = candidateFingerprint(nextVars)
-        if (!workbench.setCandidateVariables(nextVars, 'prediction-inverse')) {
-          throw new Error('Inverse Vars가 현재 varsSchema를 통과하지 못했습니다.')
-        }
-        suppressedCandidateRef.current = nextFingerprint
-        dispatchResults({ type: 'inverse-completed', result, fingerprint: nextFingerprint })
-        setGuideProgress((current) => ({ ...current, inverse: true }))
-        rememberProfile(model.profile, model.fingerprint)
-        if (
-          setup.executionId === 'remote-knn' &&
-          (!setup.models?.forward ||
-            deletionBlocksRef.current.forward === predictionFingerprint([setup.models?.forward, setup.routes?.forward]))
-        ) {
-          dispatchResults({ type: 'surrogate-failed' })
-          setStatus(
-            'Inverse 완료 · Target과 실제 결과를 Save & Run으로 비교할 수 있습니다. Re-predicted에는 Forward 모델이 필요합니다.',
-          )
-          return
-        }
-        setStatus('Inverse 완료 · Viewer를 갱신하고 surrogate를 계산하는 중…')
-        try {
-          const deadline = Date.now() + 30_000
-          while (true) {
-            if (!runtime.transactionIsCurrent(transaction)) return
-            const document = experimentDocumentRef.current
-            if (document.status === 'Error') throw new Error('Inverse Candidate의 Prediction 입력 준비에 실패했습니다.')
-            if (
-              (document.predictionCandidate ? true : document.status === 'Ready') &&
-              document.successfulRevision === document.revision &&
-              candidateFingerprint(document.variables) === nextFingerprint
-            )
-              break
-            if (Date.now() >= deadline)
-              throw new Error('Inverse Candidate의 Prediction 입력 준비를 기다리는 시간이 초과되었습니다.')
-            await new Promise((resolve) => setTimeout(resolve, 50))
-          }
-          const surrogate = await forwardOutputsRef.current(
-            nextVars,
-            transaction,
-            receiveRecorded(nextVars, transaction),
-          )
-          if (!runtime.transactionIsCurrent(transaction)) return
-          dispatchResults({
-            type: 'surrogate-completed',
-            values: surrogate.calculated.values,
-            errors: surrogate.calculated.errors,
-            provenance: surrogate.result.provenance,
-          })
-          setStatus(
-            Object.keys(surrogate.calculated.errors).length
-              ? 'Inverse 완료 · 일부 Forward surrogate Calculation이 실패했습니다.'
-              : 'Inverse 완료 · Target은 유지되고 Vars가 적용되었습니다.',
-          )
-        } catch (cause: unknown) {
-          if (!runtime.transactionIsCurrent(transaction)) return
-          if (cause instanceof PredictionTrainingChangedError) {
-            await reloadChangedTraining()
-            return
-          }
-          clearModelCaches('forward')
-          dispatchResults({ type: 'surrogate-failed' })
-          setStatus(`Inverse 완료 · surrogate unavailable: ${cause instanceof Error ? cause.message : String(cause)}`)
-        }
-      } catch (cause: unknown) {
-        if (!runtime.transactionIsCurrent(transaction) || (cause as { name?: string })?.name === 'AbortError') return
-        if (cause instanceof PredictionTrainingChangedError) {
-          await reloadChangedTraining()
-          return
-        }
-        clearModelCaches()
-        const message = cause instanceof Error ? cause.message : String(cause)
-        setStatus(message)
-        toast.error(message)
-      } finally {
-        if (runtime.transactionIsCurrent(transaction)) finishOperation()
-      }
-    },
-    [
-      clearModelCaches,
-      context,
-      experimentId,
-      finishOperation,
-      forwardOutputs,
-      receiveRecorded,
-      predictInverse,
-      predictionEnabled,
-      reloadChangedTraining,
-      rememberProfile,
-      runtime,
-      setStatus,
-      setup.calculationIds,
-      setup.executionId,
-      setup.models,
-      varsSchema,
-      workbench,
-      startOperation,
-    ],
-  )
-
-  useEffect(() => {
+    runtime.abortCalculation()
     if (
       !active ||
-      !predictionEnabled ||
-      freshnessPending ||
-      dataStale ||
-      !contextExperimentMatches ||
-      !candidateVars ||
-      !setup.calculationIds.length ||
-      direction !== 'forward' ||
-      validating ||
-      samplingProgress !== null ||
-      forwardVarsFingerprint === currentCandidateFingerprint ||
-      currentForwardFailure ||
-      activeForwardVarsFingerprintRef.current === currentCandidateFingerprint ||
-      !candidateEvaluationReady
-    )
-      return
-    if (suppressedCandidateRef.current === currentCandidateFingerprint) {
-      suppressedCandidateRef.current = null
+      !currentViewer ||
+      !context ||
+      !selectedCalculations.length ||
+      cancelledCalculation.current === calculationKey
+    ) {
+      setCalculating(false)
       return
     }
-    void runForward(candidateVars)
-    // A completed freshness check must retry even if React batches pending true/false into one render.
-  }, [
-    active,
-    predictionEnabled,
-    candidateVars,
-    contextExperimentMatches,
-    currentCandidateFingerprint,
-    currentForwardFailure,
-    candidateEvaluationReady,
-    dataStale,
-    direction,
-    forwardVarsFingerprint,
-    freshnessPending,
-    lifecycle,
-    runForward,
-    samplingProgress,
-    setup.calculationIds.length,
-    validating,
-  ])
-
-  const previousCandidateFingerprintRef = useRef(currentCandidateFingerprint)
-  useEffect(() => {
-    const previousFingerprint = previousCandidateFingerprintRef.current
-    previousCandidateFingerprintRef.current = currentCandidateFingerprint
-    if (previousFingerprint === currentCandidateFingerprint) return
-    if (suppressedCandidateRef.current === currentCandidateFingerprint) {
-      suppressedCandidateRef.current = null
-      return
-    }
-    if (!validationRef.current) return
-    validationRef.current = null
-    dispatchResults({ type: 'validation-cleared' })
-  }, [currentCandidateFingerprint])
-
-  const changeCalculationOutput = useCallback(
-    (calculationId: number, output: CalculationDataOutput) => {
-      if (lifecycleRef.current.freshnessPending || lifecycleRef.current.dataStale) return
-      runtime.advancePrimaryRevision()
-      runtime.invalidateTransaction()
-      activeForwardVarsFingerprintRef.current = null
-      runtime.abortCalculation()
-      if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
-      setDirection('inverse')
-      validationRef.current = null
-      dispatchResults({ type: 'candidate-edited', direction: 'inverse' })
-      const next = Object.freeze({ ...calculationValuesRef.current, [calculationId]: output })
-      calculationValuesRef.current = next
-      setCalculationValues(next)
-      if (setup.calculationIds.every((id) => next[id])) void runInverse(next)
-      else {
-        finishOperation({ status: 'Inverse 대기 · 선택한 모든 CalculationData Target을 채우세요.' })
-      }
-    },
-    [clearModelCaches, lifecycleRef, finishOperation, runInverse, runtime, setDirection, setup.calculationIds],
-  )
-
-  const validationDisabledReason = useMemo(() => {
-    if (direction === 'forward' ? forwardDeletionBlocked : inverseDeletionBlocked)
-      return '선택한 모델 파일의 삭제를 요청했습니다. 다른 복사본을 선택하거나 복원하세요.'
-    if (!predictionEnabled) return activationMessage
-    if (!authenticated) return '로그인 후 검증할 수 있습니다.'
-    if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
-    if (!contextExperimentMatches) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
-    if (freshnessPending) return 'Prediction 데이터 최신성을 확인하는 중입니다.'
-    if (!workbench.experimentClean || experimentId === null) return '저장되고 수정되지 않은 Experiment가 필요합니다.'
-    if (
-      validating ||
-      samplingProgress !== null ||
-      workbench.measurementActions.busy ||
-      workbench.calculationDataActions.busy
-    )
-      return '진행 중인 작업이 있습니다.'
-    if (dataStale) return 'Prediction 데이터를 Reload하세요.'
-    if (!candidateEvaluationReady) return '현재 Candidate를 평가하는 중입니다.'
-    if (direction === 'forward' && currentForwardFailure)
-      return `Forward 결과 갱신 실패: ${currentForwardFailure.message}`
-    if (direction === 'forward' && forwardRefreshState === 'updating')
-      return '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
-    if (busy) return '진행 중인 작업이 있습니다.'
-    if (!workbench.experimentDocument.predictionCandidate && !workbench.experimentDocument.materialSnapshot)
-      return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
-    if (workbench.experimentDocument.draftTaskNames.length > 0) {
-      return 'Solver가 선택되지 않은 Draft Task가 있어 검증할 수 없습니다.'
-    }
-    if (setup.calculationIds.some((id) => !calculationValues[id])) return '모든 선택 Calculation의 값이 필요합니다.'
-    if (direction === 'inverse' && inverseVarsFingerprint !== currentCandidateFingerprint)
-      return '현재 Vars가 최신 Inverse 결과가 아닙니다.'
-    return undefined
-  }, [
-    forwardDeletionBlocked,
-    inverseDeletionBlocked,
-    authenticated,
-    predictionEnabled,
-    busy,
-    candidateEvaluationReady,
-    calculationValues,
-    contextExperimentMatches,
-    currentForwardFailure,
-    currentCandidateFingerprint,
-    dataStale,
-    direction,
-    experimentId,
-    forwardRefreshState,
-    freshnessPending,
-    inverseVarsFingerprint,
-    samplingProgress,
-    setup.calculationIds,
-    validating,
-    workbench.calculationDataActions.busy,
-    workbench.experimentDocument.draftTaskNames,
-    workbench.experimentDocument.materialSnapshot,
-    workbench.experimentDocument.predictionCandidate,
-    workbench.experimentClean,
-    workbench.measurementActions.busy,
-    workbench.experimentManageable,
-  ])
-
-  const samplingDisabledReason = useMemo(() => {
-    if (!predictionEnabled) return activationMessage
-    if (!authenticated) return '로그인 후 sampling할 수 있습니다.'
-    if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
-    if (!contextExperimentMatches || !varsSchema) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
-    if (freshnessPending) return 'Prediction 데이터 최신성을 확인하는 중입니다.'
-    if (!workbench.experimentClean || experimentId === null) return '저장되고 수정되지 않은 Experiment가 필요합니다.'
-    if (busy || workbench.measurementActions.busy || workbench.calculationDataActions.busy)
-      return '진행 중인 작업이 있습니다.'
-    if (dataStale) return 'Prediction 데이터를 Reload하세요.'
-    if (workbench.experimentDocument.draftTaskNames.length > 0) return 'Solver가 선택되지 않은 Draft Task가 있습니다.'
-    let active = false
-    for (const [key, entry] of Object.entries(varsSchema)) {
-      const range = effectiveSamplingRanges[key]
-      if (
-        !range ||
-        !Number.isFinite(range.min) ||
-        !Number.isFinite(range.max) ||
-        range.min < entry.min ||
-        range.max > entry.max ||
-        range.min > range.max
-      ) {
-        return `${key} sampling 범위가 schema 범위 안의 올바른 Min/Max여야 합니다.`
-      }
-      if (range.min < range.max) active = true
-    }
-    if (!active) return 'Sampling 범위가 고정되지 않은 Vars가 하나 이상 필요합니다.'
-    return undefined
-  }, [
-    authenticated,
-    busy,
-    contextExperimentMatches,
-    dataStale,
-    effectiveSamplingRanges,
-    predictionEnabled,
-    experimentId,
-    freshnessPending,
-    varsSchema,
-    workbench.calculationDataActions.busy,
-    workbench.experimentClean,
-    workbench.experimentDocument.draftTaskNames,
-    workbench.experimentManageable,
-    workbench.measurementActions.busy,
-  ])
-
-  const sampleAndRun = useCallback(
-    async (total: number) => {
-      if (lifecycleRef.current.operation !== 'idle') return
-      if (samplingDisabledReason) {
-        toast.error(samplingDisabledReason)
-        return
-      }
-      if (!Number.isSafeInteger(total) || total <= 0 || !runtime.executionAvailable || !context || !varsSchema) {
-        toast.error('Sampling N은 양의 JavaScript safe integer여야 합니다.')
-        return
-      }
-      const revision = runtime.beginSampling()
-      const sessionId = crypto.randomUUID()
-      const fingerprint = predictionFingerprint([
-        'prediction-sampling',
-        context.fingerprint,
-        sourceIdentity,
-        effectiveSamplingRanges,
-        total,
-      ])
-      let successes = 0
-      let failures = 0
-      let recorded = 0
-      let attempted = 0
-      let stoppedReason: string | null = null
-      let batchSummary = ''
-      activeForwardVarsFingerprintRef.current = null
-      runtime.resetExecution()
-      clearModelCaches()
-      dispatchResults({ type: 'sampling-started' })
-      startOperation('sampling', 'Sampling 후보 안전 예산을 확인하는 중…', {
-        samplingProgress: {
-          attempt: 0,
-          failures: 0,
-          phase: 'sampling',
-          recorded: 0,
-          sessionId,
-          successes: 0,
-          total,
+    const abort = runtime.beginCalculation()
+    setCalculating(true)
+    void calculatePrediction(currentViewer.preview, selectedCalculations, context, abort.signal, onActivity)
+      .then(
+        (calculated) => {
+          if (!abort.signal.aborted) dispatchResults({ type: 'calculated', calculations: calculated })
         },
+        (error: unknown) => {
+          if (!abort.signal.aborted) setStatus(error instanceof Error ? error.message : String(error))
+        },
+      )
+      .finally(() => {
+        if (!abort.signal.aborted) setCalculating(false)
       })
-      validationRef.current = null
-      try {
-        const measurements =
-          setup.executionId === 'remote-knn'
-            ? await loadPredictionSamplingMeasurements(queryClient, queryScope, context.experimentId)
-            : context.measurements
-        if (!runtime.samplingIsCurrent(revision)) return
-        const centers = measurements.flatMap((measurement) => {
-          try {
-            return [predictionVarsSamples(measurement.vars as Readonly<Vars>, varsSchema)]
-          } catch {
-            return []
-          }
-        })
-        const profile = await runtime.startSampling(sessionId, {
-          fingerprint,
-          totalAttempts: total,
-          layouts: predictionVarsLayouts(varsSchema),
-          ranges: effectiveSamplingRanges,
-          centers,
-        })
-        if (!runtime.samplingIsCurrent(revision)) return
-        onActivity?.({
-          source: 'prediction',
-          level: 'info',
-          phase: 'sampling',
-          message: `[Sampling] ${profile.existingCenterCount.toLocaleString()} centers · ${profile.candidateCount.toLocaleString()} candidates/window · ${profile.activeComponentCount.toLocaleString()} active components`,
-        })
-        let sample: readonly import('./knn').PredictionTensorSample[] | null = null
-        let preparationFailures = 0
-        await measurementActionsRef.current.runCandidatesAsync(
-          {
-            count: total,
-            algorithm: 'latin-hypercube',
-            next: async (attempt, signal) => {
-              signal.throwIfAborted()
-              if (!runtime.samplingIsCurrent(revision) || sourceIdentityRef.current !== sourceIdentity) {
-                throw new DOMException('Experiment 또는 source가 변경되어 Sampling을 중단합니다.', 'AbortError')
-              }
-              attempted = attempt
-              setSamplingProgress({ attempt, failures, phase: 'candidate', recorded, sessionId, successes, total })
-              setStatus(`${attempt}/${total} · 샘플 입력 준비 · 준비 실패 ${preparationFailures}`)
-              sample = await runtime.nextSample(sessionId, fingerprint, attempt)
-              signal.throwIfAborted()
-              return Object.freeze(
-                Object.fromEntries(
-                  sample.map((entry) => [entry.layout.key, varsTensorFromFlat(entry.values, entry.layout.shape)]),
-                ),
-              ) as Readonly<Vars>
-            },
-            accepted: async () => {
-              if (!runtime.samplingIsCurrent(revision))
-                throw new DOMException('Sampling이 취소되었습니다.', 'AbortError')
-              await runtime.acceptSample(sessionId, fingerprint, sample!)
-            },
-            failed: (attempt, cause) => {
-              preparationFailures += 1
-              failures = preparationFailures
-              const message = cause instanceof Error ? cause.message : String(cause)
-              onActivity?.({
-                source: 'prediction',
-                level: 'error',
-                phase: 'sampling',
-                message: `[Sampling ${attempt}/${total}] 입력 준비 실패 · ${message}`,
-              })
-            },
-          },
-          (progress) => {
-            if (!runtime.samplingIsCurrent(revision)) return
-            recorded = progress.succeeded
-            successes = progress.calculated - progress.calculationFailed
-            failures = preparationFailures + progress.failed + progress.calculationFailed
-            setSamplingProgress({
-              attempt: attempted,
-              failures,
-              phase: 'simulation',
-              recorded,
-              sessionId,
-              successes,
-              total,
-            })
-            batchSummary = `Batch ${progress.batchId} · 서버 성공 ${progress.succeeded}/${progress.total} · 실패 ${progress.failed} · 취소 ${progress.cancelled} · Calculation 완료 ${progress.calculated} · 실패 ${progress.calculationFailed} · 준비 실패 ${preparationFailures}`
-            setStatus(batchSummary)
-          },
-        )
-      } catch (cause: unknown) {
-        if (runtime.samplingIsCurrent(revision) && (cause as { name?: string })?.name === 'AbortError')
-          stoppedReason = 'Sampling이 취소되었습니다.'
-        if (runtime.samplingIsCurrent(revision) && (cause as { name?: string })?.name !== 'AbortError') {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          stoppedReason = message
-          setStatus(`Sampling 실패 · ${message}`)
-          toast.error(message)
-        }
-      } finally {
-        if (runtime.finishSampling(revision)) {
-          setSamplingProgress({
-            attempt: Math.min(total, lifecycleRef.current.samplingProgress?.attempt ?? total),
-            failures,
-            phase: 'stopping',
-            recorded,
-            sessionId,
-            successes,
-            total,
-          })
-          await runtime.dropSampling(sessionId).catch(() => undefined)
-          clearModelCaches()
-          dispatchResults({ type: 'predictions-invalidated' })
-          if (recorded > 0) setFreshnessPending(true)
-          else setFreshnessPending(false)
-          finishOperation({
-            clearSampling: true,
-            status: stoppedReason
-              ? `Sampling 중단 · ${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · ${stoppedReason}`
-              : `Sampling 완료 · ${batchSummary || `${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · Recorded ${recorded}`}`,
-          })
-          if (recorded === 0) skipNextPredictionBusyCheckRef.current = true
-          if (recorded === 0 && candidateVarsRef.current) {
-            window.setTimeout(() => {
-              if (direction === 'inverse') void runInverse(calculationValuesRef.current)
-              else void runForward(candidateVarsRef.current!)
-            }, 0)
-          }
-        }
-      }
-    },
-    [
-      clearModelCaches,
-      context,
-      direction,
-      effectiveSamplingRanges,
-      finishOperation,
-      onActivity,
-      queryClient,
-      queryScope,
-      runForward,
-      runInverse,
-      runtime,
-      samplingDisabledReason,
-      setFreshnessPending,
-      setSamplingProgress,
-      setStatus,
-      sourceIdentity,
-      setup.executionId,
-      startOperation,
-      varsSchema,
-      workbench,
-    ],
-  )
+    return () => abort.abort()
+  }, [active, calculationKey, context, currentViewer, onActivity, runtime, selectedCalculations])
 
-  useEffect(() => {
-    if (!samplingProgress || !workbench.measurementActions.stage) return
-    setStatus(
-      `${samplingProgress.attempt}/${samplingProgress.total} · ${workbench.measurementActions.stage} · 성공 ${samplingProgress.successes} · 실패 ${samplingProgress.failures}`,
-    )
-  }, [samplingProgress, workbench.measurementActions.stage])
+  const retry = useCallback(() => {
+    if (latest.current.remoteState === 'failed') runtime.resetExecution()
+    attempted.current = null
+    cancelledCalculation.current = null
+    setViewer(null)
+    setRetryRevision((value) => value + 1)
+  }, [runtime])
 
-  const validatePrediction = useCallback(async () => {
-    if (lifecycleRef.current.operation !== 'idle') return
-    if (lifecycleRef.current.freshnessPending) {
-      toast.error('Prediction 데이터 최신성을 확인하는 중입니다.')
-      return
-    }
-    if (validationDisabledReason) {
-      toast.error(validationDisabledReason)
-      return
-    }
-    const validationRevision = runtime.beginValidation()
-    const validationSignal = runtime.validationSignal()
-    const calculationIds = Object.freeze([...setup.calculationIds])
-    const reference = Object.freeze({ ...calculationValues })
-    const frozenDirection = direction
-    const frozenProvenance = { ...provenanceByDirection }
-    const frozenProfile = profile
-    const frozenCalculationWeights =
-      setup.executionId === 'remote-knn' && frozenProfile?.knn
-        ? Object.fromEntries(
-            calculationIds.map((id) => [id, frozenProfile.knn!.inputBlockWeights[`calculation:${id}`] ?? 1]),
-          )
-        : setup.algorithm.calculationWeights
-    const frozenModelFingerprint = runtime.cachedModel(direction)?.fingerprint ?? null
-    const frozenPrimaryRevision = runtime.currentPrimaryRevision()
-    const frozenRepredicted = Object.freeze(frozenDirection === 'inverse' ? { ...surrogateValues } : {})
-    const frozenSetup = setup
-    const frozenCalculationContractFingerprint = selectedCalculationContractFingerprint
-    const frozenSourceIdentity = sourceIdentity
-    const frozenTransactionId = runtime.currentTransaction()
-    validationRef.current = null
-    dispatchResults({ type: 'validation-cleared' })
-    startOperation('validation', 'Validation · Candidate 저장과 Simulation 실행 중…')
-    setSetupOpen(false)
-    setDetailsDirection(frozenDirection)
-    let datasetMutated = false
+  const cancel = useCallback(() => {
+    attempted.current = latest.current.predictionKey
+    cancelledCalculation.current = latest.current.calculationKey
+    running.current = null
+    runtime.cancelCurrent()
+    validationAbort.current?.abort()
+    if (validating) latest.current.workbench.measurementActions.cancel()
+    setPredicting(false)
+    setCalculating(false)
+    setValidating(false)
+    setStatus('Prediction 작업을 취소했습니다. 다시 예측하거나 Vars를 바꾸세요.')
+  }, [runtime, validating])
+
+  const validate = useCallback(async () => {
+    const state = latest.current
+    if (state.validationDisabledReason || !state.currentViewer || state.experimentId === null) return
+    const preview = state.currentViewer
+    const predictedValues =
+      state.results.calculations?.source === preview.preview.source ? state.results.calculations.values : {}
+    const selected = state.selectedCalculations.filter((item) => predictedValues[item.id])
+    const abort = new AbortController()
+    validationAbort.current?.abort()
+    validationAbort.current = abort
+    setValidating(true)
+    setStatus('Candidate 저장·실제 해석 실행 중…')
     try {
-      const sourceFingerprintEntries = Object.freeze(
+      const sourceHashes = new Map(
         await Promise.all(
-          selectedCalculations.map(
-            async (calculation) => [calculation.id, await calculationSourceHash(calculation.source_code)] as const,
-          ),
+          selected.map(async (item) => [item.id, await calculationSourceHash(item.source_code)] as const),
         ),
       )
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      if (candidateFingerprintRef.current !== currentCandidateFingerprint) {
-        throw new Error('Validation 준비 중 Candidate Vars가 변경되었습니다. 다시 시도하세요.')
-      }
-      const sourceFingerprints = new Map(sourceFingerprintEntries)
-      const snapshotFingerprint = predictionFingerprint([
-        frozenDirection,
-        currentCandidateFingerprint,
-        frozenPrimaryRevision,
-        frozenTransactionId,
-        calculationIds,
-        reference,
-        frozenRepredicted,
-        sourceFingerprintEntries,
-        frozenSetup,
-        frozenModelFingerprint,
-      ])
-      const completion = await workbench.measurementActions.saveAndRunCurrentAsync()
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      datasetMutated = true
-      const { actual, currentSourceFingerprints } = await loadPredictionValidationData({
-        calculationIds,
-        experimentId: experimentId!,
+      abort.signal.throwIfAborted()
+      const completion = await state.workbench.measurementActions.saveAndRunCurrentAsync()
+      abort.signal.throwIfAborted()
+      const actual = await loadPredictionValidationData({
+        calculationIds: selected.map((item) => item.id),
+        experimentId: state.experimentId,
         measurementId: completion.measurementId,
         queryClient,
         queryScope,
-        signal: validationSignal,
+        signal: abort.signal,
       })
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      const byCalculation = new Map(actual.map((record) => [record.calculation_id, record]))
-      const rows = calculationIds.map((calculationId): ValidationRow => {
-        const record = byCalculation.get(calculationId)
-        if (sourceFingerprints.get(calculationId) !== currentSourceFingerprints.get(calculationId)) {
-          return Object.freeze({
-            actual: record?.data ?? null,
-            calculationId,
-            metric: null,
-            error: 'Calculation source가 Validation snapshot과 다릅니다.',
-            reference: reference[calculationId],
-          })
+      abort.signal.throwIfAborted()
+      if (latest.current.predictionKey !== preview.contextKey) return
+      const rows = selected.map((calculation): ValidationRow => {
+        const record = actual.actual.find((item) => item.calculation_id === calculation.id)
+        const error =
+          sourceHashes.get(calculation.id) !== actual.currentSourceFingerprints.get(calculation.id)
+            ? 'Calculation source가 검증 snapshot과 다릅니다.'
+            : !record
+              ? '실제 Calculation 결과가 없습니다.'
+              : null
+        return {
+          calculationId: calculation.id,
+          reference: predictedValues[calculation.id],
+          actual: record?.data ?? null,
+          error,
+          metric: record && !error ? comparePredictionOutput(predictedValues[calculation.id], record.data) : null,
         }
-        if (!record) {
-          return Object.freeze({
-            actual: null,
-            calculationId,
-            metric: null,
-            error: '실제 CalculationData가 저장되지 않았습니다.',
-            reference: reference[calculationId],
-          })
-        }
-        return Object.freeze({
-          actual: record.data,
-          calculationId,
-          metric: comparePredictionOutput(reference[calculationId], record.data),
-          error: null,
-          reference: reference[calculationId],
-        })
       })
-      const failed = rows.filter((row) => row.error || !row.metric?.compatible).length
-      const aggregateError =
-        frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
-          ? inverseValidationAggregateErrorFromScales(
-              rows,
-              frozenCalculationWeights,
-              frozenProfile.inputLayouts,
-              frozenProfile.knn.inputScales,
-            )
-          : null
-      const summary = `Measurement #${completion.measurementId} · ${frozenDirection} 검증 · ${rows.length - failed}/${rows.length}개 비교 완료${aggregateError === null ? '' : ` · Aggregate ${aggregateError.toPrecision(5)}`}`
-      const nextValidation = Object.freeze({
-        aggregateError,
-        calculationContractFingerprint: frozenCalculationContractFingerprint,
-        candidateVarsFingerprint: currentCandidateFingerprint,
-        calculationWeights: frozenCalculationWeights,
-        direction: frozenDirection,
-        experimentId: experimentId!,
-        inverseInputLayouts:
-          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
-            ? frozenProfile.inputLayouts
-            : null,
-        inverseInputScales:
-          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
-            ? frozenProfile.knn.inputScales
-            : null,
-        measurementId: completion.measurementId,
-        primaryRevision: frozenPrimaryRevision,
-        repredicted: frozenRepredicted,
-        modelProvenance: frozenProvenance,
-        rows: Object.freeze(rows),
-        snapshotFingerprint,
-        sourceFingerprints: Object.freeze(Object.fromEntries(sourceFingerprintEntries)),
-        setupFingerprint: predictionSetupFingerprint(frozenSetup),
-        sourceIdentity: frozenSourceIdentity,
-        summary,
-        transactionId: frozenTransactionId,
-      })
-      validationRef.current = nextValidation
-      dispatchResults({ type: 'validation-completed', validation: nextValidation })
-      setStatus(summary)
-      runtime.resetExecution()
-      clearModelCaches()
-      dispatchResults({ type: 'predictions-invalidated' })
-      setFreshnessPending(true)
-    } catch (cause: unknown) {
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      if (datasetMutated) {
-        runtime.resetExecution()
-        clearModelCaches()
-        dispatchResults({ type: 'predictions-invalidated' })
-        setFreshnessPending(true)
-      }
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setStatus(`Validation 실패 · ${message}`)
-      toast.error(message)
+      dispatchResults({ type: 'validated', rows, measurementId: completion.measurementId })
+      setStatus(`Measurement #${completion.measurementId} 실제 해석 완료`)
+    } catch (error) {
+      if (!abort.signal.aborted) setStatus(error instanceof Error ? error.message : String(error))
     } finally {
-      if (runtime.finishValidation(validationRevision)) finishOperation()
-    }
-  }, [
-    calculationValues,
-    clearModelCaches,
-    direction,
-    experimentId,
-    finishOperation,
-    profile,
-    provenanceByDirection,
-    queryClient,
-    queryScope,
-    runtime,
-    selectedCalculations,
-    selectedCalculationContractFingerprint,
-    setFreshnessPending,
-    setStatus,
-    setup,
-    setup.calculationIds,
-    startOperation,
-    sourceIdentity,
-    surrogateValues,
-    validationDisabledReason,
-    workbench.measurementActions,
-  ])
-
-  const retryValidationCalculations = useCallback(async () => {
-    if (
-      !validation ||
-      experimentId === null ||
-      validation.experimentId !== experimentId ||
-      !contextExperimentMatches ||
-      !workbench.experimentManageable ||
-      lifecycleRef.current.operation !== 'idle' ||
-      lifecycleRef.current.freshnessPending ||
-      !validation.rows.some((row) => row.error)
-    )
-      return
-    const validationRevision = runtime.beginValidation()
-    const validationSignal = runtime.validationSignal()
-    const calculationIds = Object.freeze(validation.rows.map((row) => row.calculationId))
-    startOperation('validation-retry', `Validation · Measurement #${validation.measurementId} Calculation 재시도 중…`)
-    try {
-      runtime.setCalculationDataOperationOwned(true)
-      await workbench.calculationDataActions.calculateMeasurement(validation.measurementId, { announce: true })
-      runtime.setCalculationDataOperationOwned(false)
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      const { actual, currentSourceFingerprints } = await loadPredictionValidationData({
-        calculationIds,
-        experimentId,
-        measurementId: validation.measurementId,
-        queryClient,
-        queryScope,
-        signal: validationSignal,
-      })
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      const byCalculation = new Map(actual.map((record) => [record.calculation_id, record]))
-      const rows = validation.rows.map((previous): ValidationRow => {
-        const record = byCalculation.get(previous.calculationId)
-        if (
-          validation.sourceFingerprints[previous.calculationId] !==
-          currentSourceFingerprints.get(previous.calculationId)
-        ) {
-          return Object.freeze({
-            ...previous,
-            actual: record?.data ?? null,
-            metric: null,
-            error: 'Calculation source가 Validation snapshot과 다릅니다.',
-          })
-        }
-        if (!record) {
-          return Object.freeze({
-            ...previous,
-            actual: null,
-            metric: null,
-            error: '실제 CalculationData가 저장되지 않았습니다.',
-          })
-        }
-        return Object.freeze({
-          ...previous,
-          actual: record.data,
-          metric: comparePredictionOutput(previous.reference, record.data),
-          error: null,
-        })
-      })
-      const failed = rows.filter((row) => row.error || !row.metric?.compatible).length
-      const aggregateError =
-        validation.direction === 'inverse' && validation.inverseInputLayouts && validation.inverseInputScales
-          ? inverseValidationAggregateErrorFromScales(
-              rows,
-              validation.calculationWeights,
-              validation.inverseInputLayouts,
-              validation.inverseInputScales,
-            )
-          : null
-      const summary = `Measurement #${validation.measurementId} · ${validation.direction} 검증 · ${rows.length - failed}/${rows.length}개 비교 완료${aggregateError === null ? '' : ` · Aggregate ${aggregateError.toPrecision(5)}`}`
-      const nextValidation = Object.freeze({
-        ...validation,
-        aggregateError,
-        rows: Object.freeze(rows),
-        summary,
-      })
-      validationRef.current = nextValidation
-      dispatchResults({ type: 'validation-completed', validation: nextValidation })
-      setStatus(summary)
-    } catch (cause: unknown) {
-      if (!runtime.validationIsCurrent(validationRevision)) return
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setStatus(`Calculation 재시도 실패 · ${message}`)
-      toast.error(message)
-    } finally {
-      if (runtime.finishValidation(validationRevision)) {
-        runtime.setCalculationDataOperationOwned(false)
-        finishOperation()
+      if (validationAbort.current === abort) {
+        validationAbort.current = null
+        setValidating(false)
       }
     }
-  }, [
-    contextExperimentMatches,
-    experimentId,
-    finishOperation,
-    lifecycleRef,
-    queryClient,
-    queryScope,
-    runtime,
-    setStatus,
-    startOperation,
-    validation,
-    workbench.calculationDataActions,
-    workbench.experimentManageable,
-  ])
-
-  useEffect(() => {
-    if (!command) return
-    if (command.type === 'settings') {
-      setSetupDraft(setup)
-      setSetupOpen(true)
-    } else if (command.type === 'details') {
-      setDetailsDirection(direction)
-      setDetailsOpen(true)
-    } else if (command.type === 'cancel') {
-      suppressedCandidateRef.current = currentCandidateFingerprint
-      if (direction === 'forward' && forwardVarsFingerprint !== currentCandidateFingerprint) {
-        dispatchResults({
-          type: 'forward-failed',
-          fingerprint: currentCandidateFingerprint,
-          message: '사용자가 Forward 갱신을 취소했습니다.',
-        })
-      }
-      cancelCurrent(true)
-    } else if (command.type === 'sample') void sampleAndRun(command.sampleCount ?? 10)
-    else void validatePrediction()
-  }, [command?.id])
-
-  const setupDraftError = useMemo(() => {
-    if (setupDraft.executionId === 'remote-knn' && !authenticated) return '로그인 후 저장 모델을 선택하세요.'
-    if (setupDraft.executionId === 'remote-knn') return null
-    if (!setupDraft.calculationIds.length) return 'Calculation을 하나 이상 선택하세요.'
-    if (
-      setupDraft.calculationIds.some(
-        (id) => context?.calculations.find((calculation) => calculation.id === id)?.contract_status !== 'ready',
-      )
-    ) {
-      return '선택한 Calculation을 Calculation 탭에서 preflight 후 다시 저장하세요.'
-    }
-    const weights = setupDraft.calculationIds.map((id) => setupDraft.algorithm.calculationWeights[id] ?? 1)
-    if (weights.some((weight) => !Number.isFinite(weight) || weight < 0)) {
-      return 'Calculation weight는 유한한 0 이상의 수여야 합니다.'
-    }
-    if (!weights.some((weight) => weight > 0)) return 'Calculation weight 중 하나 이상은 양수여야 합니다.'
-    if (
-      setupDraft.algorithm.kMode === 'manual' &&
-      (!Number.isSafeInteger(setupDraft.algorithm.manualK) ||
-        setupDraft.algorithm.manualK < 1 ||
-        (setupDraft.executionId === 'browser-knn' &&
-          setupDraft.algorithm.manualK > (context?.measurements.length ?? 0)))
-    ) {
-      return `Manual k는 1..${(context?.measurements.length ?? 0).toLocaleString()} 범위의 정수여야 합니다.`
-    }
-    return null
-  }, [authenticated, context, setupDraft])
-  const setupDraftApplied = predictionSetupFingerprint(setupDraft) === predictionSetupFingerprint(setup)
-
-  const initializeMissingInverseTargets = useCallback(async () => {
-    if (!predictionEnabled) return
-    const compatibleTargets: Record<number, CalculationDataOutput> = {}
-    for (const id of setup.calculationIds) {
-      const target = calculationValuesRef.current[id]
-      const layout = context?.calculations.find((item) => item.id === id)?.output_layout
-      if (!target || !layout) continue
-      try {
-        calculationOutputSample(id, target)
-        if (
-          predictionFingerprint([calculationOutputContract(layout)]) ===
-          predictionFingerprint([calculationOutputContract(target)])
-        )
-          compatibleTargets[id] = target
-      } catch {
-        /* A changed input contract requires an explicit new Target. */
-      }
-    }
-    calculationValuesRef.current = Object.freeze(compatibleTargets)
-    setCalculationValues(calculationValuesRef.current)
-    const missingIds = setup.calculationIds.filter((id) => !compatibleTargets[id])
-    if (!missingIds.length) {
-      await runInverse(calculationValuesRef.current)
-      return
-    }
-    if (setup.executionId === 'remote-knn' && !setup.models?.forward) {
-      const transaction = runtime.beginTransaction()
-      const measurementId = selectionMeasurementRef.current
-      const targetRevision = runtime.currentPrimaryRevision()
-      const next = { ...calculationValuesRef.current }
-      if (measurementId !== null && experimentId !== null) {
-        setStatus('선택한 실제 CalculationData로 비어 있는 Target을 준비하는 중…')
-        try {
-          const actual = await loadPredictionSelectedTargets(
-            experimentId,
-            measurementId,
-            missingIds,
-            runtime.transactionSignal(),
-          )
-          if (
-            !runtime.transactionIsCurrent(transaction) ||
-            targetRevision !== runtime.currentPrimaryRevision() ||
-            selectionMeasurementRef.current !== measurementId
-          )
-            return
-          for (const row of actual) {
-            const layout = context?.calculations.find((item) => item.id === row.calculation_id)?.output_layout
-            if (
-              !layout ||
-              next[row.calculation_id] ||
-              predictionFingerprint([calculationOutputContract(layout)]) !==
-                predictionFingerprint([calculationOutputContract(row.data)])
-            )
-              continue
-            try {
-              calculationOutputSample(row.calculation_id, row.data)
-              next[row.calculation_id] = row.data
-            } catch {
-              /* Invalid actual data leaves this Target for explicit input. */
-            }
-          }
-        } catch (cause) {
-          if (!runtime.transactionIsCurrent(transaction)) return
-          onActivity?.({
-            source: 'prediction',
-            level: 'warning',
-            phase: 'targets',
-            message: `실제 Target을 읽지 못했습니다. 직접 입력할 수 있습니다. ${cause instanceof Error ? cause.message : String(cause)}`,
-          })
-        }
-      }
-      calculationValuesRef.current = Object.freeze(next)
-      setCalculationValues(calculationValuesRef.current)
-      dispatchResults({ type: 'targets-initialized', errors: {} })
-      if (setup.calculationIds.every((id) => next[id])) await runInverse(next)
-      else setStatus('Inverse 대기 · 비어 있는 Target을 직접 입력하세요. Forward 모델은 필요하지 않습니다.')
-      return
-    }
-    if (!candidateVars) {
-      dispatchResults({
-        type: 'targets-initialized',
-        errors: Object.fromEntries(missingIds.map((id) => [id, 'Target이 필요합니다.'])),
-      })
-      setStatus('새 Calculation의 Target을 초기화할 Candidate가 없습니다.')
-      return
-    }
-    const transaction = runtime.beginTransaction()
-    activeForwardVarsFingerprintRef.current = null
-    runtime.abortCalculation()
-    if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
-    dispatchResults({ type: 'target-initialization-started' })
-    startOperation('initializing-targets', '새 Calculation Target을 현재 Candidate의 Forward 예측으로 초기화하는 중…')
-    try {
-      const completed = await forwardOutputs(candidateVars, transaction, receiveRecorded(candidateVars, transaction))
-      if (!runtime.transactionIsCurrent(transaction)) return
-      const nextValues = { ...calculationValuesRef.current }
-      const nextErrors: Record<number, string> = {}
-      missingIds.forEach((id) => {
-        if (completed.calculated.values[id]) nextValues[id] = completed.calculated.values[id]
-        else nextErrors[id] = completed.calculated.errors[id] ?? 'Forward 예측 Target을 만들지 못했습니다.'
-      })
-      const frozen = Object.freeze(nextValues)
-      calculationValuesRef.current = frozen
-      setCalculationValues(frozen)
-      dispatchResults({ type: 'targets-initialized', errors: nextErrors })
-      if (setup.calculationIds.every((id) => frozen[id])) await runInverse(frozen)
-      else setStatus('일부 새 Calculation Target을 초기화하지 못했습니다. 해당 Calculation을 확인하세요.')
-    } catch (cause: unknown) {
-      if (!runtime.transactionIsCurrent(transaction) || (cause as { name?: string })?.name === 'AbortError') return
-      if (cause instanceof PredictionTrainingChangedError) {
-        await reloadChangedTraining()
-        return
-      }
-      const message = cause instanceof Error ? cause.message : String(cause)
-      dispatchResults({
-        type: 'targets-initialized',
-        errors: Object.fromEntries(missingIds.map((id) => [id, message])),
-      })
-      setStatus(message)
-      toast.error(message)
-    } finally {
-      if (runtime.transactionIsCurrent(transaction)) finishOperation()
-    }
-  }, [
-    candidateVars,
-    clearModelCaches,
-    context,
-    experimentId,
-    finishOperation,
-    forwardOutputs,
-    onActivity,
-    predictionEnabled,
-    receiveRecorded,
-    reloadChangedTraining,
-    runInverse,
-    runtime,
-    setStatus,
-    setup.calculationIds,
-    setup.executionId,
-    setup.models,
-    startOperation,
-  ])
-
-  const applySetup = useCallback(
-    (requested?: PredictionSetup, requestedDirection?: PredictionDirection) => {
-      const next = requested ?? setupDraft
-      for (const item of ['forward', 'inverse'] as const) {
-        const reference = next.models?.[item]
-        const route = next.routes?.[item]
-        if (!reference || !route) continue
-        const copy = assets
-          .getSnapshot()
-          .models.find((model) => model.id === reference.modelId)
-          ?.revisions.find((revision) => revision.revision === reference?.modelRevision)
-          ?.replicas.find((replica) => replica.storage_id === route?.storageId)
-        if (copy && ['present', 'unverified'].includes(copy.state)) {
-          deletionBlocksRef.current = { ...deletionBlocksRef.current, [item]: undefined }
-          setDeletionBlocks((previous) => ({ ...previous, [item]: undefined }))
-        }
-      }
-      if (!requested && setupDraftError) {
-        toast.error(setupDraftError)
-        return
-      }
-      const meaningChanged = predictionSetupFingerprint(next) !== predictionSetupFingerprint(setup)
-      const directionChanged = requestedDirection !== undefined && requestedDirection !== direction
-      const previousTransaction = runtime.currentTransaction()
-      const previousOperation = lifecycleRef.current.operation
-      if (meaningChanged || directionChanged) cancelCurrent()
-      configureExecutions(next)
-      if (experimentId !== null && authenticated) persistPredictionSetup(queryScope, experimentId, next)
-      setSetup(next)
-      setSetupDraft(next)
-      setBrowserActivation(next.executionId === 'browser-knn' ? { experimentId, queryScope } : null)
-      setSetupOpen(false)
-      if (next.executionId !== setup.executionId) void reloadData({ savedModel: next.executionId === 'remote-knn' })
-      if (!meaningChanged && !directionChanged && predictionEnabled) {
-        const transaction = runtime.currentTransaction()
-        setViewerState((previous) =>
-          previous?.transaction === previousTransaction ? { ...previous, transaction } : previous,
-        )
-        const predictionOperation = ['idle', 'forward', 'inverse', 'initializing-targets'].includes(previousOperation)
-        if (predictionOperation) {
-          finishOperation({ status: '저장 모델 선택을 유지한 채 설정을 적용했습니다.' })
-          const targetInitializationPending =
-            direction === 'inverse' && setup.calculationIds.some((id) => !calculationValuesRef.current[id])
-          if (transaction !== previousTransaction && (previousOperation !== 'idle' || targetInitializationPending)) {
-            activeForwardVarsFingerprintRef.current = null
-            setPredictionRefreshRevision((current) => current + 1)
-          }
-        }
-        return
-      }
-      if (requestedDirection) setDirection(requestedDirection)
-      else if (next.executionId === 'remote-knn' && !next.models?.forward && next.models?.inverse)
-        setDirection('inverse')
-      validationRef.current = null
-      dispatchResults({ type: 'setup-applied' })
-      clearModelCaches()
-      activeForwardVarsFingerprintRef.current = null
-      setPredictionRefreshRevision((current) => current + 1)
-    },
-    [
-      authenticated,
-      assets,
-      cancelCurrent,
-      clearModelCaches,
-      configureExecutions,
-      direction,
-      experimentId,
-      finishOperation,
-      lifecycleRef,
-      predictionEnabled,
-      queryScope,
-      reloadData,
-      runtime,
-      setDirection,
-      setup,
-      setupDraft,
-      setupDraftError,
-    ],
-  )
+  }, [queryClient, queryScope])
 
   useEffect(
     () =>
       assets.registerDeletionHandler(async (target) => {
-        const affected = (['forward', 'inverse'] as const).filter((item) => {
-          const model = setup.models?.[item]
-          return (
-            model?.modelId === target.modelId &&
-            (target.revision === undefined || model.modelRevision === target.revision) &&
-            (target.storageId === undefined || setup.routes?.[item]?.storageId === target.storageId)
-          )
-        })
-        if (!affected.length) return
-        const blocks = { ...deletionBlocksRef.current }
-        for (const item of affected) blocks[item] = predictionFingerprint([setup.models?.[item], setup.routes?.[item]])
-        deletionBlocksRef.current = blocks
-        setDeletionBlocks(blocks)
-        await runtime.releaseLoadedModels(affected)
-        finishOperation({ status: '선택한 복사본의 사용을 해제했습니다. 삭제 확인을 진행합니다.' })
-      }),
-    [assets, setup, runtime, finishOperation],
-  )
-
-  useEffect(() => {
-    if (
-      !active ||
-      !predictionEnabled ||
-      !predictionRefreshRevision ||
-      !context ||
-      (direction === 'forward' && !candidateEvaluationReady) ||
-      lifecycleRef.current.freshnessPending ||
-      lifecycleRef.current.dataStale ||
-      handledPredictionRefreshRevision.current === predictionRefreshRevision
-    )
-      return
-    handledPredictionRefreshRevision.current = predictionRefreshRevision
-    if (direction === 'inverse') {
-      void initializeMissingInverseTargets()
-    } else if (candidateVars) {
-      void runForward(candidateVars)
-    }
-  }, [
-    active,
-    predictionEnabled,
-    predictionRefreshRevision,
-    context,
-    candidateEvaluationReady,
-    lifecycle,
-    lifecycleRef,
-    direction,
-    initializeMissingInverseTargets,
-    candidateVars,
-    runForward,
-  ])
-
-  const calculateMissing = useCallback(async () => {
-    if (
-      lifecycleRef.current.operation !== 'idle' ||
-      lifecycleRef.current.freshnessPending ||
-      lifecycleRef.current.dataStale ||
-      !contextExperimentMatches ||
-      !workbench.experimentManageable ||
-      workbench.measurementActions.busy ||
-      workbench.calculationDataActions.busy
-    )
-      return
-    const operationRevision = runtime.currentLoadRevision()
-    setSetupBusyAction('calculate-missing')
-    startOperation('calculating-missing', 'Prediction cohort의 누락 CalculationData를 계산하는 중…')
-    runtime.setCalculationDataOperationOwned(true)
-    try {
-      for (const calculationId of setupDraft.calculationIds) {
-        const summary = await workbench.calculationDataActions.calculateSelected(calculationId)
-        if (!runtime.loadIsCurrent(operationRevision) || summary.cancelled) return
-      }
-      runtime.setCalculationDataOperationOwned(false)
-      if (!runtime.loadIsCurrent(operationRevision)) return
-      await reloadData()
-    } finally {
-      runtime.setCalculationDataOperationOwned(false)
-      setSetupBusyAction(null)
-      if (runtime.loadIsCurrent(operationRevision)) finishOperation()
-    }
-  }, [
-    lifecycleRef,
-    contextExperimentMatches,
-    finishOperation,
-    reloadData,
-    runtime,
-    setupDraft.calculationIds,
-    startOperation,
-    workbench.calculationDataActions,
-    workbench.experimentManageable,
-    workbench.measurementActions.busy,
-  ])
-
-  const reloadFromSetup = useCallback(async () => {
-    setSetupBusyAction('reload')
-    try {
-      await reloadData()
-    } finally {
-      setSetupBusyAction(null)
-    }
-  }, [reloadData])
-
-  useEffect(() => {
-    onChromeStateChange({
-      busy,
-      canSample: samplingDisabledReason === undefined,
-      canValidate: validationDisabledReason === undefined,
-      direction,
-      sampleDisabledReason: samplingDisabledReason,
-      status: predictionStatus,
-      validateDisabledReason: validationDisabledReason,
-    })
-  }, [busy, direction, onChromeStateChange, samplingDisabledReason, predictionStatus, validationDisabledReason])
-
-  const paneItems = useMemo<readonly PredictionCalculationPaneItem[]>(
-    () =>
-      selectedCalculations.map((calculation) => {
-        const committedOutput = calculationValues[calculation.id] ?? null
-        const validationSnapshotCurrent =
-          validation?.direction === direction &&
-          validation.experimentId === experimentId &&
-          validation.setupFingerprint === predictionSetupFingerprint(setup) &&
-          validation.sourceIdentity === sourceIdentity &&
-          validation.calculationContractFingerprint === selectedCalculationContractFingerprint
-            ? validation
-            : null
-        const candidateValidationRow = validationSnapshotCurrent?.rows.find(
-          (row) => row.calculationId === calculation.id,
+        const state = latest.current.setup
+        const model = state.models?.forward
+        if (
+          model?.modelId !== target.modelId ||
+          (target.revision !== undefined && target.revision !== model.modelRevision) ||
+          (target.storageId !== undefined && target.storageId !== state.routes?.forward?.storageId)
         )
-        const validationRow = candidateValidationRow ?? null
-        const output =
-          validationRow?.reference ??
-          committedOutput ??
-          (calculation.output_layout ? calculationPlaceholder(calculation.output_layout) : null)
-        const repredictedOutput =
-          direction === 'inverse'
-            ? (validationSnapshotCurrent?.repredicted[calculation.id] ?? surrogateValues[calculation.id] ?? null)
-            : null
-        const repredictedMetric =
-          output && repredictedOutput ? comparePredictionOutput(output, repredictedOutput) : null
-        const repredictedStatus =
-          direction !== 'inverse'
-            ? 'unavailable'
-            : repredictedOutput
-              ? comparePredictionOutput(repredictedOutput, repredictedOutput).compatible
-                ? 'ready'
-                : 'incompatible'
-              : busy
-                ? 'updating'
-                : 'unavailable'
-        const actualStatus = validating
-          ? 'updating'
-          : validationRow?.error
-            ? 'unavailable'
-            : validationRow?.actual
-              ? comparePredictionOutput(validationRow.actual, validationRow.actual).compatible
-                ? 'ready'
-                : 'incompatible'
-              : 'unavailable'
-        const actualOutput = actualStatus === 'ready' ? validationRow?.actual : null
-        const [minimum, maximum] = predictionOutputRange([output])
-        const [constraintMinimum, constraintMaximum] = output
-          ? (integerRanges[output.dtype] ??
-            (output.dtype === 'float32'
-              ? [-3.402_823_466_385_288_6e38, 3.402_823_466_385_288_6e38]
-              : [-Number.MAX_VALUE, Number.MAX_VALUE]))
-          : [-Number.MAX_VALUE, Number.MAX_VALUE]
-        const primaryStatus = !predictionEnabled
-          ? ('unavailable' as const)
-          : validationSnapshotCurrent
-            ? output
-              ? ('ready' as const)
-              : ('unavailable' as const)
-            : direction === 'forward'
-              ? forwardRefreshState === 'ready'
-                ? committedOutput
-                  ? ('ready' as const)
-                  : ('unavailable' as const)
-                : forwardRefreshState === 'failed'
-                  ? ('unavailable' as const)
-                  : ('updating' as const)
-              : committedOutput
-                ? ('ready' as const)
-                : busy
-                  ? ('updating' as const)
-                  : ('unavailable' as const)
-        const primaryError = !predictionEnabled
-          ? activationMessage
-          : validationSnapshotCurrent
-            ? null
-            : (calculationErrors[calculation.id] ??
-              (direction === 'forward'
-                ? forwardRefreshState === 'waiting-candidate'
-                  ? '현재 Candidate를 평가하는 중입니다.'
-                  : forwardRefreshState === 'updating'
-                    ? '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
-                    : forwardRefreshState === 'failed'
-                      ? (currentForwardFailure?.message ?? 'Forward 결과 갱신에 실패했습니다.')
-                      : committedOutput
-                        ? null
-                        : 'Prediction 결과가 없습니다.'
-                : committedOutput
-                  ? null
-                  : busy
-                    ? 'Prediction 결과를 계산하는 중입니다.'
-                    : 'Prediction 결과가 없습니다.'))
-        return Object.freeze({
-          actual: Object.freeze({
-            error: validating
-              ? null
-              : (validationRow?.error ?? (actualStatus === 'incompatible' ? validationRow?.metric?.message : null)),
-            metric: validationRow?.metric ?? null,
-            output: actualOutput ?? null,
-            snapshotKey: validationSnapshotCurrent?.snapshotFingerprint ?? null,
-            status: actualStatus,
-          }),
-          calculationId: calculation.id,
-          constraintMinimum,
-          constraintMaximum,
-          name: calculation.name,
-          canInitializeTarget:
-            direction === 'inverse' &&
-            setup.executionId === 'remote-knn' &&
-            !committedOutput &&
-            Boolean(calculation.output_layout),
-          primary: Object.freeze({
-            output,
-            role: direction === 'forward' ? 'predicted' : 'target',
-            status: primaryStatus,
-          }),
-          error: primaryError,
-          extrapolated:
-            direction === 'inverse' &&
-            Boolean(lastResult?.extrapolatedInputKeys.includes(`calculation:${calculation.id}`)),
-          minimum,
-          maximum,
-          ...(direction === 'inverse'
-            ? {
-                repredicted: Object.freeze({
-                  error:
-                    repredictedStatus === 'incompatible'
-                      ? repredictedMetric?.message
-                      : repredictedOutput
-                        ? null
-                        : (surrogateErrors[calculation.id] ?? null),
-                  metric: repredictedMetric,
-                  output: repredictedStatus === 'ready' ? repredictedOutput : null,
-                  snapshotKey:
-                    validationSnapshotCurrent?.snapshotFingerprint ?? `transaction:${runtime.currentTransaction()}`,
-                  status: repredictedStatus,
-                }),
-              }
-            : {}),
-        })
+          return
+        attempted.current = latest.current.predictionKey
+        setDeletedRoute(predictionFingerprint([state.routes?.forward, queryScope]))
+        await runtime.releaseLoadedModels()
+        setPredicting(false)
+        setStatus('선택한 모델 인스턴스를 해제했습니다.')
       }),
-    [
-      busy,
-      calculationErrors,
-      calculationValues,
-      currentForwardFailure,
-      direction,
-      experimentId,
-      forwardRefreshState,
-      lastResult,
-      predictionEnabled,
-      runtime,
-      selectedCalculations,
-      setup,
-      selectedCalculationContractFingerprint,
-      sourceIdentity,
-      surrogateErrors,
-      surrogateValues,
-      validation,
-      validating,
-    ],
+    [assets, queryScope, runtime],
   )
 
-  const validationText = validation
-    ? [
-        validation.summary,
-        ...(validation.aggregateError === null
-          ? []
-          : [`Inverse normalized aggregate error: ${validation.aggregateError.toPrecision(7)}`]),
-        ...validation.rows.map((row) => {
-          const calculation = context?.calculations.find((item) => item.id === row.calculationId)
-          if (row.error) return `${calculation?.name ?? `#${row.calculationId}`}: ${row.error}`
-          if (!row.metric?.compatible) return `${calculation?.name ?? `#${row.calculationId}`}: ${row.metric?.message}`
-          if (row.reference.shape.length === 0) {
-            return `${calculation?.name ?? `#${row.calculationId}`}: Reference ${String(row.reference.data)}, Actual ${String(row.actual?.data)}, Abs ${row.metric.maxAbsoluteError?.toPrecision(5)}${row.metric.relativeError === null ? '' : `, Rel ${(row.metric.relativeError! * 100).toPrecision(5)}%`}`
-          }
-          return `${calculation?.name ?? `#${row.calculationId}`}: MAE ${row.metric.mae?.toPrecision(5)}, RMSE ${row.metric.rmse?.toPrecision(5)}, Max ${row.metric.maxAbsoluteError?.toPrecision(5)}`
-        }),
-      ].join('\n')
-    : null
+  const commands = useRef({ setup, retry, cancel, validate })
+  commands.current = { setup, retry, cancel, validate }
+  useEffect(() => {
+    if (!command) return
+    if (command.type === 'settings') {
+      setDraft(commands.current.setup)
+      setSettingsOpen(true)
+    } else if (command.type === 'details') setDetailsOpen(true)
+    else if (command.type === 'predict') commands.current.retry()
+    else if (command.type === 'cancel') commands.current.cancel()
+    else void commands.current.validate()
+  }, [command])
 
-  const modelWarningText = useMemo(() => {
-    const warnings: string[] = []
-    if (profile && profile.rowCount < 3) {
-      warnings.push(`신뢰도 경고: compatible Measurement가 ${profile.rowCount}개뿐입니다.`)
-    }
-    if (profile?.knn?.activeInputBlockCount === 0) {
-      warnings.push('신뢰도 경고: 선택한 cohort의 모든 입력 component가 상수라 전체 cohort 평균을 사용합니다.')
-    }
-    if (lastResult?.extrapolatedInputKeys.length) {
-      warnings.push(`학습 범위 밖 입력: ${lastResult.extrapolatedInputKeys.join(', ')}`)
-    }
-    if (lastResult?.constantInputKeysChanged.length) {
-      warnings.push(`학습 cohort에서 상수였던 입력이 변경됨: ${lastResult.constantInputKeysChanged.join(', ')}`)
-    }
-    if (lastResult?.queryDiagnostics.length) {
-      warnings.push(
-        `현재 query의 metadata 차이 ${lastResult.queryDiagnostics.length.toLocaleString()}개를 무시하고 같은 shape의 cell index 기준으로 예측했습니다.`,
-      )
-    }
-    return warnings.length ? warnings.join('\n') : null
-  }, [lastResult, profile])
+  useEffect(
+    () =>
+      onChromeStateChange({
+        busy,
+        canPredict: !unavailable && !validating,
+        canValidate: !validationDisabledReason,
+        status: unavailable ?? remoteMessage ?? status,
+        predictDisabledReason: unavailable,
+        validateDisabledReason: validationDisabledReason,
+      }),
+    [busy, unavailable, validating, validationDisabledReason, status, remoteMessage, onChromeStateChange],
+  )
 
   const varsPane = (
     <PredictionVarsPane
       candidateSessionKey={`${workbench.workspaceSession}:prediction`}
-      direction={direction}
-      disabled={
-        validating || samplingProgress !== null || dataStale || freshnessPending || !varsSchema || !candidateVars
-      }
-      guideVisible={workbench.experimentIsDemo && (!guideProgress.forward || !guideProgress.inverse)}
-      schema={varsSchema}
-      status={predictionStatus}
-      updating={predictionUpdating}
+      schema={document.varsSchema}
       vars={candidateVars}
-      onDismissGuide={() => setGuideProgress({ forward: true, inverse: true })}
-      onVarsChange={(nextVars) => {
-        if (lifecycleRef.current.freshnessPending || lifecycleRef.current.dataStale) return
-        if (!candidateVars) return
-        if (candidateFingerprint(nextVars) === currentCandidateFingerprint) return
-        if (!workbench.setCandidateVariables(nextVars, 'user-vars')) return
-        userChangedVarsRef.current = true
-        suppressedCandidateRef.current = null
-        runtime.advancePrimaryRevision()
+      disabled={validating}
+      status={unavailable ?? remoteMessage ?? status}
+      onVarsChange={(vars: Readonly<Vars>) => {
+        if (varsFingerprint(vars) === candidateFingerprint) return
         runtime.invalidateTransaction()
-        activeForwardVarsFingerprintRef.current = null
-        runtime.abortCalculation()
-        if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
-        setDirection('forward')
-        validationRef.current = null
-        dispatchResults({ type: 'candidate-edited', direction: 'forward' })
-        setStatus('현재 Candidate를 평가하는 중…')
+        workbench.setCandidateVariables(vars, 'user-vars')
       }}
     />
   )
 
-  if (!dataReadable) {
-    return (
-      <>
-        {varsContainer ? createPortal(varsPane, varsContainer) : null}
-        <div className="grid h-full place-items-center p-6 text-center">
-          <div>
-            <p className="font-medium">Experiment를 열거나 로그인하세요.</p>
-            <button className="mt-3 text-sm font-medium text-primary underline" type="button" onClick={onRequestLogin}>
-              로그인
-            </button>
-          </div>
-        </div>
-      </>
-    )
-  }
+  const executionPane = (
+    <section className="flex flex-wrap items-end gap-3 border-b px-3 py-2" aria-label="원격 Prediction 실행">
+      <label className="block min-w-48 text-xs">
+        모델
+        <select
+          aria-label="Prediction 모델"
+          className="mt-1 w-full rounded border bg-background p-2"
+          value={reference?.modelId ?? ''}
+          onChange={(event) => {
+            const model = availableModels.find((item) => item.id === event.target.value)
+            if (!model) {
+              applySetup({ ...setup, models: {}, routes: {}, recordIds: [] })
+              return
+            }
+            const revision = model.revisions
+              .filter((item) => item.state === 'ready')
+              .reduce((latest, item) => Math.max(latest, item.revision), 0)
+            applySetup(
+              setupUsingSavedModel(setup, model, revision, preferredModelRoute(model, revision, assetState.storages)),
+            )
+          }}
+        >
+          <option value="">모델 선택</option>
+          {reference && !availableModels.some((item) => item.id === reference.modelId) ? (
+            <option value={reference.modelId}>저장된 모델 · 목록 확인 필요</option>
+          ) : null}
+          {availableModels.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {reference ? (
+        <p className="text-xs text-muted-foreground">
+          {selectedRevision?.definition.algorithm &&
+          typeof selectedRevision.definition.algorithm === 'object' &&
+          'kind' in selectedRevision.definition.algorithm
+            ? String(selectedRevision.definition.algorithm.kind)
+            : 'kNN'}{' '}
+          · revision {reference.modelRevision}
+        </p>
+      ) : null}
+      <label className="block min-w-48 text-xs">
+        실행할 Launcher
+        <select
+          aria-label="Prediction Launcher"
+          className="mt-1 w-full rounded border bg-background p-2"
+          value={route ? `${route.storageId}:${route.launcherId}` : ''}
+          onChange={(event) => {
+            const next = routes.find((item) => `${item.storageId}:${item.launcherId}` === event.target.value)
+            applySetup({
+              ...setup,
+              routes: {
+                forward: next
+                  ? { replicaId: next.replicaId, storageId: next.storageId, launcherId: next.launcherId }
+                  : undefined,
+              },
+            })
+          }}
+        >
+          <option value="">Launcher 선택</option>
+          {route && !selectedRoute ? (
+            <option value={`${route.storageId}:${route.launcherId}`}>저장된 Launcher · 연결 확인 필요</option>
+          ) : null}
+          {routes.map((item) => (
+            <option key={`${item.storageId}:${item.launcherId}`} value={`${item.storageId}:${item.launcherId}`}>
+              {assetState.launchers.find((launcher) => launcher.id === item.launcherId)?.launcher_name ?? item.name}
+              {item.connected ? '' : ' · 연결 끊김'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p role="status" className="text-xs">
+        {unavailable ?? remoteMessage ?? status}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" disabled={Boolean(unavailable) || validating || predicting} onClick={retry}>
+          예측
+        </Button>
+        <Button size="sm" variant="outline" disabled={!busy} onClick={cancel}>
+          취소
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setReload((value) => value + 1)
+            void assets.refresh()
+          }}
+        >
+          목록 새로고침
+        </Button>
+      </div>
+      {!authenticated ? (
+        <Button size="sm" onClick={onRequestLogin}>
+          로그인
+        </Button>
+      ) : null}
+    </section>
+  )
 
   return (
     <>
       {varsContainer ? createPortal(varsPane, varsContainer) : null}
-      <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto">
+        {executionContainer ? createPortal(executionPane, executionContainer) : executionPane}
+        <section className="space-y-2 rounded border p-3" aria-label="예측할 BoxGrid">
+          <h3 className="text-sm font-medium">예측할 BoxGrid</h3>
+          {(context?.experimentRecords ?? [])
+            .filter((record) => !reference || Boolean(reference.contract?.records[record.id]))
+            .map((record) => (
+              <label className="flex gap-2 text-xs" key={record.id}>
+                <input
+                  type="checkbox"
+                  checked={setup.recordIds.includes(record.id)}
+                  onChange={(event) =>
+                    applySetup({
+                      ...setup,
+                      recordIds: event.target.checked
+                        ? [...setup.recordIds, record.id]
+                        : setup.recordIds.filter((id) => id !== record.id),
+                    })
+                  }
+                />
+                {record.name}
+              </label>
+            ))}
+          {!reference ? (
+            <p className="text-xs text-muted-foreground">모델을 선택하면 지원하는 출력을 확인할 수 있습니다.</p>
+          ) : null}
+        </section>
         <PredictionModelSummary
           manager={assets}
           setup={setup}
           onManage={() => {
-            setSetupDraft(setup)
-            setSetupOpen(true)
+            setDraft(setup)
+            setSettingsOpen(true)
           }}
         />
-        <PredictionCalculationPane
-          disabled={validating || dataStale || freshnessPending}
-          items={paneItems}
-          mode={direction === 'forward' ? 'prediction' : 'target'}
-          resetKey={`${experimentId ?? 'none'}:${calculationPrimaryRevision}`}
-          status={predictionStatus}
-          updating={predictionUpdating}
-          onOutputChange={changeCalculationOutput}
-        />
+        <details open={setup.calculationIds.length > 0} className="space-y-2 rounded border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Calculation · 선택적 분석</summary>
+          <p className="text-xs text-muted-foreground">
+            예측 BoxGrid에 적용합니다. 분석 선택은 모델을 변경하지 않습니다.
+          </p>
+          {context?.calculationError ? <p className="text-xs">{context.calculationError}</p> : null}
+          {(context?.calculations ?? []).map((calculation) => (
+            <label className="flex gap-2 text-xs" key={calculation.id}>
+              <input
+                type="checkbox"
+                checked={setup.calculationIds.includes(calculation.id)}
+                disabled={calculation.contract_status !== 'ready'}
+                onChange={(event) =>
+                  applySetup({
+                    ...setup,
+                    calculationIds: event.target.checked
+                      ? [...setup.calculationIds, calculation.id]
+                      : setup.calculationIds.filter((id) => id !== calculation.id),
+                  })
+                }
+              />
+              {calculation.name}
+            </label>
+          ))}
+          {selectedCalculations.length ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                applySetup({
+                  ...setup,
+                  recordIds: [
+                    ...new Set([
+                      ...setup.recordIds,
+                      ...selectedCalculations
+                        .flatMap((item) => item.experiment_record_ids)
+                        .filter((id) => Boolean(reference?.contract?.records[id])),
+                    ]),
+                  ],
+                })
+              }
+            >
+              분석에 필요한 BoxGrid 선택
+            </Button>
+          ) : null}
+          {missingModelOutputs.length ? (
+            <p className="text-xs text-amber-700">
+              선택한 분석에 이 모델이 지원하지 않는 출력이 있습니다. 해당 BoxGrid를 포함한 모델을 선택하거나 만드세요.
+            </p>
+          ) : null}
+          <PredictionCalculationPane
+            calculations={selectedCalculations}
+            result={results.calculations?.source === currentViewer?.preview.source ? results.calculations : null}
+            actual={results.actual}
+            busy={calculating}
+          />
+        </details>
       </div>
-      <PredictionSetupDialog
-        algorithmLabel="kNN"
-        executionLabel={setupDraft.executionId === 'browser-knn' ? '브라우저' : setupDraft.executionId}
-        executionSettings={
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>데이터·모델 관리</DialogTitle>
+          </DialogHeader>
           <RemotePredictionSettings
             authenticated={authenticated}
+            open={settingsOpen}
             manager={assets}
-            direction={direction}
-            onUse={applySetup}
-            open={setupOpen}
             context={context}
-            varsSchema={varsSchema}
             sourceHash={workbench.experimentRecord?.source_hash ?? null}
-            rules={recordedDataRules(
-              workbench.experimentDocument.simulationProgram?.recordedData ?? {},
-              'prediction.forward',
-            )}
-            resultContracts={workbench.experimentDocument.simulationProgram?.resultContracts ?? {}}
-            setup={setupDraft}
-            onChange={setSetupDraft}
+            varsSchema={document.varsSchema}
+            rules={recordedDataRules(document.simulationProgram?.recordedData ?? {}, 'prediction.forward')}
+            resultContracts={document.simulationProgram?.resultContracts ?? {}}
+            setup={draft}
+            onChange={setDraft}
+            onUse={applySetup}
             onActivity={onActivity}
           />
-        }
-        applyDisabled={Boolean(setupDraftError) || dataStale || freshnessPending || validating}
-        autoK={
-          setupDraftApplied && profile?.rowCount
-            ? Math.min(15, Math.max(1, Math.round(Math.sqrt(profile.rowCount))))
-            : null
-        }
-        busyAction={setupBusyAction}
-        calculateMissingDisabled={
-          !setupDraft.calculationIds.length ||
-          busy ||
-          dataStale ||
-          freshnessPending ||
-          !contextExperimentMatches ||
-          !workbench.experimentManageable ||
-          workbench.measurementActions.busy ||
-          workbench.calculationDataActions.busy
-        }
-        calculateMissingLabel={
-          authenticated
-            ? workbench.experimentManageable
-              ? '누락 데이터 계산'
-              : '데이터 변경 권한 없음'
-            : '로그인하여 데이터 계산'
-        }
-        calculations={
-          contextExperimentMatches
-            ? context.calculations.map((calculation) => ({
-                id: calculation.id,
-                name: calculation.name,
-                description: calculation.description,
-                dependencyNames: calculation.experiment_record_ids.map(
-                  (recordId) =>
-                    context.experimentRecords.find((record) => record.id === recordId)?.name ?? `#${recordId}`,
-                ),
-                disabled: calculation.contract_status !== 'ready' || !calculation.output_layout,
-                disabledReason:
-                  calculation.contract_status !== 'ready' || !calculation.output_layout
-                    ? 'Calculation 탭에서 성공한 preflight 후 다시 저장해야 합니다.'
-                    : undefined,
-                missingCount: Math.max(
-                  0,
-                  (context.measurements.length ?? 0) -
-                    new Set(
-                      context.analysis.items
-                        .filter((item) => item.calculation_id === calculation.id)
-                        .map((item) => item.measurement_id),
-                    ).size,
-                ),
-              }))
-            : []
-        }
-        calculationWeights={setupDraft.algorithm.calculationWeights}
-        cohortSummaries={
-          setupDraftApplied && contextExperimentMatches
-            ? Object.freeze({
-                ...(profiles.forward?.knn
-                  ? { forward: cohortSummary(profiles.forward, context.measurements.length)! }
-                  : {}),
-                ...(profiles.inverse?.knn
-                  ? { inverse: cohortSummary(profiles.inverse, context.measurements.length)! }
-                  : {}),
-              })
-            : {}
-        }
-        kMode={setupDraft.algorithm.kMode}
-        manualK={setupDraft.algorithm.manualK}
-        manualKMaximum={setupDraft.executionId === 'browser-knn' ? (context?.measurements.length ?? 0) : undefined}
-        open={setupOpen}
-        reloadDisabled={busy}
-        selectedCalculationIds={setupDraft.calculationIds}
-        validationMessage={
-          setupDraftError ?? (dataStale ? '새 Measurement를 반영하려면 Reload Data가 필요합니다.' : null)
-        }
-        weighting={setupDraft.algorithm.weighting}
-        onApply={() => applySetup()}
-        onCalculateMissing={() => (authenticated ? void calculateMissing() : onRequestLogin())}
-        onCalculationSelectedChange={(calculationId, selected) =>
-          setSetupDraft((current) => {
-            const calculationIds = selected
-              ? [...current.calculationIds, calculationId]
-              : current.calculationIds.filter((id) => id !== calculationId)
-            return Object.freeze({
-              ...current,
-              calculationIds: Object.freeze([...new Set(calculationIds)]),
-              algorithm: Object.freeze({
-                ...current.algorithm,
-                calculationWeights: Object.freeze({
-                  ...current.algorithm.calculationWeights,
-                  [calculationId]: current.algorithm.calculationWeights[calculationId] ?? 1,
-                }),
-              }),
-            })
-          })
-        }
-        onCalculationWeightChange={(calculationId, weight) =>
-          setSetupDraft((current) =>
-            Object.freeze({
-              ...current,
-              algorithm: Object.freeze({
-                ...current.algorithm,
-                calculationWeights: Object.freeze({ ...current.algorithm.calculationWeights, [calculationId]: weight }),
-              }),
-            }),
-          )
-        }
-        onCancel={() => setSetupOpen(false)}
-        onKModeChange={(kMode) =>
-          setSetupDraft((current) =>
-            Object.freeze({ ...current, algorithm: Object.freeze({ ...current.algorithm, kMode }) }),
-          )
-        }
-        onManualKChange={(manualK) =>
-          setSetupDraft((current) =>
-            Object.freeze({ ...current, algorithm: Object.freeze({ ...current.algorithm, manualK }) }),
-          )
-        }
-        onOpenChange={setSetupOpen}
-        onReload={() => void reloadFromSetup()}
-        onWeightingChange={(weighting) =>
-          setSetupDraft((current) =>
-            Object.freeze({ ...current, algorithm: Object.freeze({ ...current.algorithm, weighting }) }),
-          )
-        }
-      />
-      <PredictionDetailsDialog
-        direction={detailsDirection}
-        forwardRecordProfiles={forwardRecordProfiles}
-        neighbors={neighborsByDirection[detailsDirection] ?? []}
-        open={detailsOpen}
-        profiles={profiles}
-        provenance={provenanceByDirection}
-        validationProvenance={validation?.modelProvenance}
-        resultText={modelWarningText}
-        retryCalculationsDisabled={
-          busy ||
-          freshnessPending ||
-          !contextExperimentMatches ||
-          validation?.experimentId !== experimentId ||
-          !validation?.rows.some((row) => row.error)
-        }
-        retryingCalculations={retryingValidation}
-        validationComparisons={
-          validation?.rows.map((row) => ({
-            actual: row.actual,
-            calculationId: row.calculationId,
-            direction: validation.direction,
-            error: row.error,
-            metric: row.metric,
-            name:
-              context?.calculations.find((calculation) => calculation.id === row.calculationId)?.name ??
-              `#${row.calculationId}`,
-            repredicted: validation.repredicted[row.calculationId] ?? null,
-            reference: row.reference,
-          })) ?? []
-        }
-        validationText={validationText}
-        onDirectionChange={setDetailsDirection}
-        onOpenChange={setDetailsOpen}
-        onRetryCalculations={
-          validation && workbench.experimentManageable ? () => void retryValidationCalculations() : undefined
-        }
-      />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>예측 출처</DialogTitle>
+          </DialogHeader>
+          {currentViewer ? (
+            <div className="space-y-2 text-xs break-all">
+              <p>Candidate {currentViewer.preview.source.candidate.fingerprint}</p>
+              <p>
+                Model {currentViewer.preview.source.model.modelId} · r{currentViewer.preview.source.model.modelRevision}
+              </p>
+              <p>
+                Dataset {currentViewer.preview.source.model.datasetId} · r
+                {currentViewer.preview.source.model.datasetRevision}
+              </p>
+              <p>예측 결과 · 실제 RecordedData 및 학습 관측값으로 저장되지 않습니다.</p>
+              {currentViewer.preview.result.extrapolatedInputKeys.length ? (
+                <p>학습 범위 밖 입력: {currentViewer.preview.result.extrapolatedInputKeys.join(', ')}</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm">현재 Candidate의 예측 결과가 없습니다.</p>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

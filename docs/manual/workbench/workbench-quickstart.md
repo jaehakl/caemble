@@ -32,7 +32,7 @@ Caemble에서 **Experiment**는 형상, 변수, 재료와 계산 방법을 모�
 | Experiment | 형상과 소스를 살펴보고 실험 설계를 저장합니다. |
 | Measurement | 변수 조건을 만들고 Solver를 실행해 결과를 기록합니다. |
 | Calculation | 기록된 결과에서 평균, 그래프 등 필요한 값을 계산합니다. |
-| Prediction | 기존 결과를 바탕으로 새 조건의 결과나 목표에 맞는 조건을 예측합니다. |
+| Prediction | 내 Launcher의 저장 모델로 새 Vars의 BoxGrid를 예측하고 선택적으로 후처리합니다. |
 | Analysis | 저장된 후처리 결과를 비교하고 변수와 결과의 관계를 살펴봅니다. |
 
 ## 순서대로 진행하기

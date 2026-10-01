@@ -41,7 +41,7 @@ def dataset():
 def definition(manifest, **algorithm):
     return {"fingerprint": "model-fingerprint", "snapshotFingerprint": manifest["fingerprint"],
             "implementationId": "remote-knn", "implementationVersion": "knn-v1", "preprocessingVersion": "box-relative-v2",
-            "algorithm": {"kind": "knn", "kMode": "auto", "manualK": 1, "weighting": "distance", "calculationWeights": {}, **algorithm}}
+            "algorithm": {"kind": "knn", "kMode": "auto", "manualK": 1, "weighting": "distance", **algorithm}}
 
 
 def stage(runtime, manifest=None):

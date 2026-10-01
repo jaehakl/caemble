@@ -83,12 +83,13 @@ export function createPredictionApi(client: CaembleClient) {
       jobId: string,
       release = false,
       route?: { replica_id?: string; storage_id?: string },
+      context?: RequestContext,
     ) =>
       client.request(
         'post',
         `/prediction/models/${encodeURIComponent(id)}/leases${release ? '/release' : ''}`,
         { revision, job_id: jobId, ...route },
-        { csrf: 'required' },
+        { ...context, csrf: 'required' },
       ),
     registerStorage: (body: { storage_id: string; launcher_id: string; name: string }, context?: RequestContext) =>
       client.request('post', '/prediction/storages', body, { ...context, csrf: 'required' }),

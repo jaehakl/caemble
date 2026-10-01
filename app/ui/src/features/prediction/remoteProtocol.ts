@@ -1,20 +1,20 @@
 import { z } from 'zod'
 import {
   cohortDiagnosticSchema,
+  legacyCohortDiagnosticSchema,
   exclusionCountsSchema,
   predictionNeighborSchema,
   predictionTensorLayoutSchema,
   predictionTensorSampleSchema,
   queryDiagnosticSchema,
 } from './protocolValidation'
-import type { PredictionModelProfile } from './execution'
 import type { RecordedDataRule } from '@/lib/cad/model'
 
 const identity = z.string().min(1)
 const count = z.number().int().nonnegative()
 const direction = z.enum(['forward', 'inverse'])
 
-export const remoteProfileSchema = z.object({
+const legacyProfileSchema = z.object({
   direction,
   rowCount: count,
   inputLayouts: z.array(predictionTensorLayoutSchema),
@@ -22,7 +22,7 @@ export const remoteProfileSchema = z.object({
   outputSize: count,
   includedMeasurementIds: z.array(z.number().int().positive()),
   warningMeasurementIds: z.array(z.number().int().positive()),
-  diagnostics: z.array(cohortDiagnosticSchema),
+  diagnostics: z.array(legacyCohortDiagnosticSchema),
   omittedDiagnosticGroups: count,
   excluded: exclusionCountsSchema,
   knn: z
@@ -38,6 +38,15 @@ export const remoteProfileSchema = z.object({
     })
     .optional(),
   resources: z.object({ persistentBytes: count, workingSetBytes: count }).optional(),
+})
+
+export const remoteProfileSchema = legacyProfileSchema.extend({
+  direction: z.literal('forward'),
+  diagnostics: z.array(cohortDiagnosticSchema),
+  knn: legacyProfileSchema.shape.knn
+    .unwrap()
+    .extend({ inputScaling: z.literal('range') })
+    .optional(),
 })
 
 export const remoteArtifactSchema = z
@@ -57,7 +66,7 @@ export const remoteArtifactSchema = z
     manifestChecksum: z.string().regex(/^[a-f0-9]{64}$/),
     formatVersion: z.literal(1),
     files: z.array(z.object({ name: identity, sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: count })),
-    profile: remoteProfileSchema,
+    profile: legacyProfileSchema,
     inputLayouts: z.array(predictionTensorLayoutSchema),
     outputLayouts: z.array(predictionTensorLayoutSchema),
   })
@@ -119,12 +128,12 @@ export const remotePreparedSchema = z.object({
   rules: z
     .array(z.object({ label: identity }).passthrough())
     .transform((rules) => rules as unknown as readonly RecordedDataRule[]),
-  artifact: remoteArtifactSchema,
+  artifact: remoteArtifactSchema.extend({ direction: z.literal('forward'), profile: remoteProfileSchema }),
 })
 export type RemotePrepared = z.infer<typeof remotePreparedSchema>
 
 export const remoteResultSchema = z.object({
-  direction,
+  direction: z.literal('forward'),
   fingerprint: identity,
   output: z.array(predictionTensorSampleSchema),
   extrapolatedInputKeys: z.array(z.string()),
@@ -171,7 +180,7 @@ export function parseRemoteEnvelope(value: unknown, requestId: string, sessionId
 }
 
 /** Typed arrays are local; registered metadata uses portable JSON arrays. */
-export function profileJson(profile: PredictionModelProfile) {
+export function profileJson(profile: z.infer<typeof legacyProfileSchema>) {
   return {
     ...profile,
     ...(profile.knn ? { knn: { ...profile.knn, inputScales: Array.from(profile.knn.inputScales) } } : {}),

@@ -88,6 +88,8 @@ export function retryPredictionAssetOperation(
     const operation = await predictionApi.operation(identity, { signal: work.signal })
     work.operation(operation)
     if (['completed', 'succeeded'].includes(operation.state)) return operation
+    if (operation.kind === 'prepare' && operation.details.direction === 'inverse')
+      throw new Error('Inverse 모델 준비는 지원 종료되었습니다. 기존 저장 파일은 유지됩니다.')
     if (operation.kind.startsWith('delete_') && operation.asset_kind === 'model') {
       const replica = manager
         .getSnapshot()
@@ -324,6 +326,8 @@ async function resumePreparedModel(
   operation: PredictionOperation,
   work: PredictionAssetWork,
 ) {
+  if (operation.details.direction === 'inverse')
+    throw new Error('Inverse 모델 준비는 지원 종료되었습니다. 기존 저장 파일은 유지됩니다.')
   if (!operation.target_launcher_id) throw new Error('모델을 준비하던 장비를 확인할 수 없습니다.')
   const remote = await work.connect(operation.target_launcher_id, true)
   if (remote.hello!.storageId !== operation.target_storage_id) throw new Error('모델 준비 저장소가 변경되었습니다.')
@@ -335,6 +339,7 @@ async function resumePreparedModel(
   const revision = model?.revisions.find((item) => item.revision === operation.revision)
   if (!model || !revision || revision.state !== 'reserved')
     throw new Error('이 준비 작업은 더 이상 유효하지 않습니다. 모델 목록을 확인하세요.')
+  if (model.direction !== 'forward') throw new Error('지원 종료된 모델은 다시 준비할 수 없습니다.')
   const definition = z
     .object({
       fingerprint: z.string(),
@@ -342,7 +347,6 @@ async function resumePreparedModel(
       implementationId: z.string(),
       implementationVersion: z.string(),
       preprocessingVersion: z.string(),
-      calculationIds: z.array(z.number()).optional(),
       requiredRecordIds: z.array(z.number()).optional(),
       contract: savedPredictionReferenceSchema.shape.contract.optional(),
       algorithm: z.object({
@@ -350,7 +354,6 @@ async function resumePreparedModel(
         kMode: z.enum(['auto', 'manual']),
         manualK: z.number().int().positive(),
         weighting: z.enum(['uniform', 'distance']),
-        calculationWeights: z.record(z.string(), z.number().nonnegative()),
       }),
     })
     .passthrough()

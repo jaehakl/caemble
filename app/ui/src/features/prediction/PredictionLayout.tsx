@@ -13,12 +13,14 @@ const limits = {
 export function PredictionLayout({
   menubar,
   ribbon,
+  execution,
   vars,
   viewer,
   calculations,
 }: {
   menubar: ReactNode
   ribbon: ReactNode
+  execution?: ReactNode
   vars: ReactNode
   viewer: ReactNode
   calculations: ReactNode
@@ -29,6 +31,7 @@ export function PredictionLayout({
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       {menubar}
       {ribbon}
+      {execution}
       <div className="min-h-0 flex-1 overflow-x-auto">
         <ResizableWorkbenchLayout
           limits={limits}
@@ -37,7 +40,7 @@ export function PredictionLayout({
           viewer={viewer}
           viewerLabel="예측과 실제 비교"
           right={calculations}
-          rightLabel="Calculation 및 Target"
+          rightLabel="Prediction 출력 및 선택적 분석"
           leftWidthRatio={left}
           rightWidthRatio={right}
           onLeftWidthRatioChange={setLeft}

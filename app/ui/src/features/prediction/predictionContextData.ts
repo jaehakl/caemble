@@ -1,185 +1,102 @@
-import type { FetchQueryOptions, QueryClient, QueryKey } from '@tanstack/react-query'
+import type { QueryClient } from '@tanstack/react-query'
 import {
   dbTables,
   getListRequest,
-  type CalculationDataAnalysisResponse,
   type CalculationDataRecord,
   type ExperimentRecordedDataRecord,
   type PersistedCalculationRecord,
-  type PersistedMeasurementRecord,
 } from '@/api'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
 import { calculationsQueryOptions } from '@/features/calculation/queryOptions'
 import { experimentRecordsQueryOptions } from '@/features/experiment/queryOptions'
-import { measurementsQueryOptions } from '@/features/measurement/queryOptions'
 import { calculationSourceHash } from '@/lib/calculation'
 import { predictionFingerprint } from './data'
 
 export type SavedPredictionCalculation = PersistedCalculationRecord
-export type SavedPredictionMeasurement = PersistedMeasurementRecord
-
 export type PredictionContext = Readonly<{
-  analysis: CalculationDataAnalysisResponse
   calculations: readonly SavedPredictionCalculation[]
+  calculationError?: string
   experimentId: number
   fingerprint: string
   experimentRecords: readonly ExperimentRecordedDataRecord[]
-  measurements: readonly SavedPredictionMeasurement[]
 }>
-
 export type PredictionValidationData = Readonly<{
   actual: readonly CalculationDataRecord[]
   currentSourceFingerprints: ReadonlyMap<number, string>
 }>
 
-/** Sampling reads current centers explicitly, independently of saved-model inference. */
-export async function loadPredictionSamplingMeasurements(
-  queryClient: QueryClient,
-  queryScope: PrivateQueryScope,
-  experimentId: number,
-) {
-  const response = await fetchFreshQuery(
-    queryClient,
-    measurementsQueryOptions(queryScope, experimentId, contextListRequest(experimentId)),
-  )
-  return response.items.filter((item) => item.recorded_at !== null)
-}
-
-type PredictionContextMetadata = Readonly<{
-  calculations: readonly SavedPredictionCalculation[]
-  experimentRecords: readonly ExperimentRecordedDataRecord[]
-  measurements: readonly SavedPredictionMeasurement[]
+type ContextOptions = Readonly<{
+  experimentId: number
+  queryClient: QueryClient
+  queryScope: PrivateQueryScope
+  signal?: AbortSignal
 }>
 
-async function fetchFreshQuery<TQueryFnData, TError, TData, TQueryKey extends QueryKey, TPageParam>(
-  queryClient: QueryClient,
-  options: FetchQueryOptions<TQueryFnData, TError, TData, TQueryKey, TPageParam>,
-  signal?: AbortSignal,
-) {
+async function awaitContext<T>(request: Promise<T>, signal?: AbortSignal): Promise<T> {
   signal?.throwIfAborted()
-  const request = queryClient.fetchQuery({ ...options, retry: false, staleTime: 0 })
-  if (!signal) return request
-  // Metadata queries can be shared by other observers. The Query-owned signal controls
-  // their transport; a workflow signal only stops this caller from awaiting shared work.
-  return new Promise<TData>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason ?? new DOMException('Prediction 요청이 취소되었습니다.', 'AbortError'))
-    signal.addEventListener('abort', onAbort, { once: true })
+  return new Promise<T>((resolve, reject) => {
+    const finish = () => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', cancel)
+    }
+    const cancel = () => {
+      finish()
+      reject(new DOMException('Prediction context 조회가 취소되었습니다.', 'AbortError'))
+    }
+    const timeout = setTimeout(() => {
+      finish()
+      reject(new Error('Prediction 계약 조회 시간이 초과되었습니다. 다시 시도하세요.'))
+    }, 30_000)
+    signal?.addEventListener('abort', cancel, { once: true })
     void request.then(
       (value) => {
-        signal.removeEventListener('abort', onAbort)
+        finish()
         resolve(value)
       },
       (error: unknown) => {
-        signal.removeEventListener('abort', onAbort)
+        finish()
         reject(error)
       },
     )
   })
 }
 
-function contextListRequest(experimentId: number) {
-  return {
-    ...getListRequest('visible'),
-    limit: null,
-    filter: { experiment_id: [experimentId, experimentId] as const },
-  }
-}
-
-async function loadContextMetadata(
-  queryClient: QueryClient,
-  queryScope: PrivateQueryScope,
-  experimentId: number,
-  signal?: AbortSignal,
-  includeTraining = true,
-): Promise<PredictionContextMetadata> {
-  const listRequest = contextListRequest(experimentId)
-  const [calculationResponse, measurementResponse, experimentRecordResponse] = await Promise.all([
-    fetchFreshQuery(queryClient, calculationsQueryOptions(queryScope, experimentId, listRequest), signal),
-    includeTraining
-      ? fetchFreshQuery(queryClient, measurementsQueryOptions(queryScope, experimentId, listRequest), signal)
-      : Promise.resolve({ items: [] }),
-    fetchFreshQuery(queryClient, experimentRecordsQueryOptions(queryScope, experimentId), signal),
-  ])
-  signal?.throwIfAborted()
-  return Object.freeze({
-    calculations: Object.freeze([...calculationResponse.items]),
-    experimentRecords: Object.freeze([...experimentRecordResponse.items]),
-    measurements: Object.freeze(measurementResponse.items.filter((row) => row.recorded_at !== null)),
-  })
-}
-
-function contextFingerprint(
-  experimentId: number,
-  analysisFingerprint: string,
-  { calculations, experimentRecords, measurements }: PredictionContextMetadata,
-) {
-  return predictionFingerprint([
-    experimentId,
-    analysisFingerprint,
-    [...measurements].sort((left, right) => left.id - right.id).map((row) => [row.id, row.updated_at, row.recorded_at]),
-    [...experimentRecords].sort((left, right) => left.id - right.id).map((record) => [record.id, record.contract_hash]),
-    [...calculations]
-      .sort((left, right) => left.id - right.id)
-      .map((row) => [
-        row.id,
-        row.updated_at,
-        row.source_hash,
-        row.output_layout,
-        row.experiment_record_ids,
-        row.contract_status,
-      ]),
-  ])
-}
-
+/** Saved-model inference needs output contracts only; optional analyses load independently. */
 export async function loadPredictionContextData({
   experimentId,
   queryClient,
   queryScope,
   signal,
-  savedModel = false,
-}: Readonly<{
-  experimentId: number
-  queryClient: QueryClient
-  queryScope: PrivateQueryScope
-  signal?: AbortSignal
-  savedModel?: boolean
-}>): Promise<PredictionContext> {
-  const [metadata, analysis] = await Promise.all([
-    loadContextMetadata(queryClient, queryScope, experimentId, signal, !savedModel),
-    savedModel
-      ? Promise.resolve({ fingerprint: 'saved-model-contracts', total: 0, measurement_count: 0, items: [] })
-      : dbTables.CalculationData.analysis(experimentId, { signal }),
-  ])
+}: ContextOptions): Promise<PredictionContext> {
+  const response = await awaitContext(
+    queryClient.fetchQuery({ ...experimentRecordsQueryOptions(queryScope, experimentId), retry: false, staleTime: 0 }),
+    signal,
+  )
   signal?.throwIfAborted()
+  const experimentRecords = Object.freeze([...response.items])
   return Object.freeze({
-    ...metadata,
-    analysis,
     experimentId,
-    fingerprint: contextFingerprint(experimentId, analysis.fingerprint, metadata),
+    experimentRecords,
+    calculations: [],
+    fingerprint: predictionFingerprint([experimentId, experimentRecords.map((row) => [row.id, row.contract_hash])]),
   })
 }
 
-export async function loadPredictionContextFingerprint({
-  experimentId,
-  queryClient,
-  queryScope,
-  signal,
-  savedModel = false,
-}: Readonly<{
-  experimentId: number
-  queryClient: QueryClient
-  queryScope: PrivateQueryScope
-  signal?: AbortSignal
-  savedModel?: boolean
-}>) {
-  const [metadata, analysisStatus] = await Promise.all([
-    loadContextMetadata(queryClient, queryScope, experimentId, signal, !savedModel),
-    savedModel
-      ? Promise.resolve({ fingerprint: 'saved-model-contracts' })
-      : dbTables.CalculationData.analysisStatus(experimentId, { signal }),
-  ])
-  signal?.throwIfAborted()
-  return contextFingerprint(experimentId, analysisStatus.fingerprint, metadata)
+export async function loadPredictionCalculations({ experimentId, queryClient, queryScope, signal }: ContextOptions) {
+  const request = {
+    ...getListRequest('visible'),
+    limit: null,
+    filter: { experiment_id: [experimentId, experimentId] as const },
+  }
+  const response = await awaitContext(
+    queryClient.fetchQuery({
+      ...calculationsQueryOptions(queryScope, experimentId, request),
+      retry: false,
+      staleTime: 0,
+    }),
+    signal,
+  )
+  return Object.freeze([...response.items])
 }
 
 export async function loadPredictionValidationData({
@@ -197,35 +114,38 @@ export async function loadPredictionValidationData({
   queryScope: PrivateQueryScope
   signal?: AbortSignal
 }>): Promise<PredictionValidationData> {
-  const calculationRequest = {
-    ...getListRequest('visible', calculationIds),
-    filter: { experiment_id: [experimentId, experimentId] as const },
-    limit: calculationIds.length,
-  }
-  const [analysis, calculationResponse] = await Promise.all([
+  if (!calculationIds.length) return { actual: [], currentSourceFingerprints: new Map() }
+  const [analysis, calculations] = await Promise.all([
     dbTables.CalculationData.analysis(experimentId, { signal }),
-    fetchFreshQuery(queryClient, calculationsQueryOptions(queryScope, experimentId, calculationRequest), signal),
+    queryClient.fetchQuery({
+      ...calculationsQueryOptions(queryScope, experimentId, {
+        ...getListRequest('visible', calculationIds),
+        filter: { experiment_id: [experimentId, experimentId] },
+        limit: calculationIds.length,
+      }),
+      retry: false,
+      staleTime: 0,
+    }),
   ])
   signal?.throwIfAborted()
   const currentSourceFingerprints = new Map(
     await Promise.all(
-      calculationResponse.items.map(
+      calculations.items.map(
         async (calculation) => [calculation.id, await calculationSourceHash(calculation.source_code)] as const,
       ),
     ),
   )
-  signal?.throwIfAborted()
-  const calculationDataIds = analysis.items
+  const ids = analysis.items
     .filter((item) => item.measurement_id === measurementId && calculationIds.includes(item.calculation_id))
     .map((item) => item.calculation_data_id)
   const actual: CalculationDataRecord[] = []
-  for (let offset = 0; offset < calculationDataIds.length; offset += 50) {
-    const selectedIds = calculationDataIds.slice(offset, offset + 50)
+  for (let offset = 0; offset < ids.length; offset += 50) {
+    const selected = ids.slice(offset, offset + 50)
     const response = await dbTables.CalculationData.listRows(
       {
-        ...getListRequest('visible', selectedIds),
+        ...getListRequest('visible', selected),
         experiment_id: experimentId,
-        limit: selectedIds.length,
+        limit: selected.length,
         sort: ['id', 'asc'],
       },
       { signal },
@@ -233,30 +153,5 @@ export async function loadPredictionValidationData({
     signal?.throwIfAborted()
     actual.push(...response.items)
   }
-  return Object.freeze({
-    actual: Object.freeze(actual),
-    currentSourceFingerprints,
-  })
-}
-
-/** Read only the selected actual values; historical training samples are not a prerequisite. */
-export async function loadPredictionSelectedTargets(
-  experimentId: number,
-  measurementId: number,
-  calculationIds: readonly number[],
-  signal?: AbortSignal,
-) {
-  const response = await dbTables.CalculationData.listRows(
-    {
-      ...getListRequest('visible'),
-      experiment_id: experimentId,
-      filter: { measurement_id: [measurementId, measurementId] },
-      limit: null,
-    },
-    { signal },
-  )
-  signal?.throwIfAborted()
-  return response.items.filter(
-    (item) => item.measurement_id === measurementId && calculationIds.includes(item.calculation_id),
-  )
+  return Object.freeze({ actual, currentSourceFingerprints })
 }

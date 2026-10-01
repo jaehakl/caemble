@@ -177,6 +177,8 @@ export type ConnectOptions = {
 };
 
 export type RunJobOptions = ConnectOptions & {
+  /** Cancels connection setup and its HTTP requests; a returned session owns its own lifetime. */
+  signal?: AbortSignal;
   slaveAppId?: string;
   targetLauncherId?: string;
   resources?: ResourceRequest;

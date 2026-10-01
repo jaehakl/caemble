@@ -85,8 +85,9 @@ are unavailable and start automatically after earlier instances finish cleanup.
 Install `predictor` with `poetry install` in its own directory, then restart the
 launcher. It uses CPU NumPy and the existing WebRTC SDK; it does not require a GPU,
 the AI application, or a separate signaling service. In Prediction, select a saved
-model revision and then its replica and launcher. Forward and Inverse can use
-different launchers. A local model is never scheduled on another machine as a fallback.
+Forward model revision and then its replica and launcher. Calculation is optional.
+Legacy Inverse assets remain available for management and backup/restore but cannot
+be prepared or executed. A local model is never scheduled on another machine as a fallback.
 
 Set `CAEMBLE_PREDICTOR_STORAGE_ROOT` in `app/launcher/.env` to keep Dataset and model
 files on a chosen local disk. The default is `%LOCALAPPDATA%/Caemble/predictor` on
@@ -178,11 +179,12 @@ operation contracts.
 
 An open Prediction session retains CPU/RAM reservations. The UI finishes it after
 five idle minutes and reloads the same saved model on the next prediction. Explicit
-Cancel, leaving the remote execution, or connection loss ends in-flight work; model
-files remain. Launcher reservations are returned only after the full process tree
+Cancel stops the caller and ignores late results while retaining reusable models.
+Tab changes do not recreate the model. Connection loss invalidates the execution;
+model files remain. Launcher reservations are returned only after the full process tree
 exits. Reconnecting does not resume an unfinished preparation or create an updated
-model automatically. The browser retains one inference session per selected
-launcher/store route, sharing it when both directions use the same route.
+model automatically. The browser retains the selected Forward inference session
+independently of Vars and optional Calculation selection.
 
 Management jobs have a separate lifetime from inference and from the management
 panel. Closing the panel does not cancel a preparation, backup or restore. Transfer
@@ -213,7 +215,7 @@ poetry run python -m pytest tests/test_webrtc_browser.py tests/test_predictor_br
 
 These tests substitute HTTP scheduling only. They verify binary transfers, new
 process identity after restart, cancellation, disconnect and confirmed resource
-cleanup. The Predictor test prepares Forward and Inverse artifacts, backs up the
+cleanup. The Predictor test prepares Forward artifacts, backs up the
 model, removes the source store, and restores into a different storage identity.
 A fresh third Predictor process loads the restored files and checks unchanged
 manifest checksums, provenance and predictions. They do not claim production

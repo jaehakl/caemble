@@ -28,6 +28,10 @@ async def test_predictor_browser_prepares_and_reloads_after_process_and_dataset_
     fixtures = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fixtures)
     manifest = fixtures.dataset()
+    for rule in manifest["rules"]:
+        rule["result"]["tensorOrder"] = 0
+        for axis in rule["result"]["axes"][:3]:
+            axis.pop("ticks", None)
     scenario = f"const definition={json.dumps(fixtures.definition(manifest))};\n" + """
       const options={slaveAppId:'predictor',targetLauncherId:launcherId,autoFinish:false,timeoutMs:30000};
       async function cleaned(jobId) {
@@ -60,19 +64,13 @@ async def test_predictor_browser_prepares_and_reloads_after_process_and_dataset_
       const dataset={datasetId:imported.dataset.datasetId,revision:imported.dataset.revision,fingerprint:imported.dataset.fingerprint};
       const unchanged=await call(first,'dataset.sync',{datasetId:dataset.datasetId});
       if(unchanged.dataset.revision!==1) throw new Error('unchanged sync created a new revision');
-      const prepared={};
-      const results={};
-      const reloaded={};
-      const inputs={forward:{direction:'forward',vars:{x:.5}},inverse:{direction:'inverse',targets:{'4':{dtype:'float64',shape:[],axes:[],data:15}}}};
-      for(const direction of ['forward','inverse']) {
-        prepared[direction]=await call(first,'model.prepare',{dataset,direction,definition,
-          model:{modelId:'browser-'+direction,revision:1,operationId:'prepare-'+direction,name:direction}});
-        results[direction]=await call(first,'model.predict',{instance:prepared[direction].instance,input:inputs[direction]});
-        const expected=direction==='forward'?15:.5;
-        if(Math.abs(results[direction].output[0].values[0]-expected)>1e-10) throw new Error(direction+' prediction mismatch');
-        await call(first,'model.release',{instance:prepared[direction].instance});
-      }
-      if((await call(first,'model.list')).models.length!==2) throw new Error('release removed saved artifacts');
+      const input={direction:'forward',vars:{x:.5}};
+      const prepared=await call(first,'model.prepare',{dataset,direction:'forward',definition,
+        model:{modelId:'browser-forward',revision:1,operationId:'prepare-forward',name:'Forward'}});
+      const initial=await call(first,'model.predict',{instance:prepared.instance,input});
+      if(Math.abs(initial.output[0].values[0]-15)>1e-10) throw new Error('Forward prediction mismatch');
+      await call(first,'model.release',{instance:prepared.instance});
+      if((await call(first,'model.list')).models.length!==1) throw new Error('release removed saved artifacts');
       await fetch('/fixture/change-dataset-source',{method:'POST'});
       const synced=await call(first,'dataset.sync',{datasetId:dataset.datasetId});
       if(synced.dataset.datasetId!==dataset.datasetId || synced.dataset.revision!==2 || synced.dataset.sampleCount!==2) throw new Error('explicit Dataset sync failed');
@@ -84,25 +82,22 @@ async def test_predictor_browser_prepares_and_reloads_after_process_and_dataset_
       const firstProcess=await cleaned(first.session.jobId);
       const second=await open();
       if(second.payload.sessionId===first.payload.sessionId || second.payload.storageId!==first.payload.storageId) throw new Error('process/storage identity mismatch');
-      if(second.payload.datasets.length || second.payload.models.length!==2) throw new Error('persistent artifact discovery mismatch');
-      await call(second,'model.predict',{instance:prepared.forward.instance,input:inputs.forward},'instance-invalidated');
-      for(const direction of ['forward','inverse']) {
-        const loaded=await call(second,'model.load',{modelId:'browser-'+direction,revision:1});
-        if(loaded.artifact.manifestChecksum!==prepared[direction].artifact.manifestChecksum) throw new Error('load rebuilt the saved model');
-        const prediction=await call(second,'model.predict',{instance:loaded.instance,input:inputs[direction]});
-        reloaded[direction]=prediction.output;
-        if(prediction.provenance.datasetRevision!==1 || prediction.provenance.modelRevision!==1) throw new Error('provenance lost on reload');
-        await call(second,'model.delete',{modelId:'browser-'+direction},'model-in-use');
-        await call(second,'model.release',{instance:loaded.instance});
-        await call(second,'model.delete',{modelId:'browser-'+direction});
-        await call(second,'model.load',{modelId:'browser-'+direction,revision:1},'deleted');
-      }
+      if(second.payload.datasets.length || second.payload.models.length!==1) throw new Error('persistent artifact discovery mismatch');
+      await call(second,'model.predict',{instance:prepared.instance,input},'instance-invalidated');
+      const loaded=await call(second,'model.load',{modelId:'browser-forward',revision:1});
+      if(loaded.artifact.manifestChecksum!==prepared.artifact.manifestChecksum) throw new Error('load rebuilt the saved model');
+      const prediction=await call(second,'model.predict',{instance:loaded.instance,input});
+      const preview=await (await import('/prediction-ui-fixture.js')).displayAndCalculate(loaded,prediction);
+      if(prediction.provenance.datasetRevision!==1 || prediction.provenance.modelRevision!==1) throw new Error('provenance lost on reload');
+      await call(second,'model.delete',{modelId:'browser-forward'},'model-in-use');
+      await call(second,'model.release',{instance:loaded.instance});
+      await call(second,'model.delete',{modelId:'browser-forward'});
+      await call(second,'model.load',{modelId:'browser-forward',revision:1},'deleted');
       await second.session.finish();
       const secondProcess=await cleaned(second.session.jobId);
       client.clearPrewarmedJobConnections();
       return {firstPid:firstProcess.pid,secondPid:secondProcess.pid,storageId:second.payload.storageId,
-        forward:results.forward.output[0].values[0],inverse:results.inverse.output[0].values[0],
-        outputs:{forward:results.forward.output,inverse:results.inverse.output},reloaded};
+        forward:initial.output[0].values[0],outputs:initial.output,reloaded:prediction.output,preview};
     """
     def stage(source):
         raw = json.dumps(source, ensure_ascii=False).encode("utf-8")
@@ -127,9 +122,12 @@ async def test_predictor_browser_prepares_and_reloads_after_process_and_dataset_
         staging = tmp_path / "storage/owners" / owner_hash / "imports/browser-fixture"
         staging.mkdir(parents=True)
         stage(manifest)
-        result = await fixture.run_browser()
+        result = await fixture.run_browser(runner=APP_ROOT / "launcher/tests/prediction-browser.mjs", timeout=240)
+        assert result["preview"]["calculated"] == 15
+        assert result["preview"]["candidateOrigin"] == [20, 30, 40]
+        assert result["preview"]["sourceKind"] == "prediction"
+        assert result["preview"]["canvasCount"] >= 1
         assert result["forward"] == pytest.approx(15)
-        assert result["inverse"] == pytest.approx(.5)
         assert result["outputs"] == result["reloaded"]
         assert result["firstPid"] != result["secondPid"]
         assert not psutil.pid_exists(result["firstPid"])

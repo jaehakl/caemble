@@ -55,8 +55,7 @@ class PredictorRuntime:
         return stored
 
     def _available_memory(self) -> int:
-        used = sum(sum(array.nbytes for model in bundle.models for array in model.arrays.values())
-                   for _, bundle, _ in self.instances.values())
+        used = sum(bundle.persistent_bytes for _, bundle, _ in self.instances.values())
         return max(0, min(self.memory_budget - used, int(psutil.virtual_memory().available * .7)))
 
     def dispatch(self, action: str, payload: dict, cancel: threading.Event | None = None) -> dict:
@@ -67,6 +66,8 @@ class PredictorRuntime:
         if action in ("artifact.backup", "artifact.restore", "artifact.remove", "artifact.verify", "operation.inspect"):
             result = self.operations.run(action, payload, cancel)
             return {**result, "protocolVersion": 2, "requestId": payload["requestId"], "sessionId": self.session_id}
+        if action == "model.prepare" and payload.get("direction") != "forward":
+            raise PredictionError("unsupported-model", "Inverse Prediction is retired. Use Optimization for inverse design.")
         if action in ("model.prepare", "model.load"):
             identity = payload["model"]["modelId"] if action == "model.prepare" else payload["modelId"]
             revision = payload["model"]["revision"] if action == "model.prepare" else payload["revision"]
@@ -82,7 +83,7 @@ class PredictorRuntime:
                     lease = (self.store.read_lease("datasets", reference["datasetId"], reference["revision"], cancel, allow_missing=True)
                              if "datasetId" in reference else nullcontext())
                     with lease:
-                        dataset = self.reader.load(reference, cancel, payload["direction"], payload["definition"])
+                        dataset = self.reader.load(reference, cancel, payload["definition"])
                     bundle = ModelBundle.prepare(dataset, payload["direction"], payload["definition"], payload["model"], self._available_memory(), cancel)
                     artifact = bundle.save(self.store, cancel)
                 if payload.get("manifestChecksum") and payload["manifestChecksum"] != artifact["manifestChecksum"]:
@@ -97,8 +98,8 @@ class PredictorRuntime:
             if action == "predictor.hello":
                 result = {"storageId": self.store.storage_id, "launcherId": self.store.launcher_id,
                           "implementationVersion": IMPLEMENTATION_VERSION, "preprocessingVersion": PREPROCESSING_VERSION,
-                          "capabilities": {"algorithms": ["knn"], "directions": ["forward", "inverse"],
-                                           "representations": ["box-relative-v2", "calculation-ordinal-v1"], "persistentModels": True,
+                          "capabilities": {"algorithms": ["knn"], "directions": ["forward"],
+                                           "representations": ["box-relative-v2"], "persistentModels": True,
                                            "portableArchives": True, "archiveFormatVersion": 1},
                           "datasets": self.store.list("datasets", verify=False), "models": self.store.list("models", verify=False)}
             elif action == "dataset.import":

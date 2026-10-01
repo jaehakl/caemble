@@ -360,6 +360,10 @@ async def operation_response(db, row):
 async def issue_grant(db, row, *, retry=False):
     if row.state in TERMINAL:
         raise HTTPException(409, "This operation is already complete or cancelled.")
+    if row.kind == "prepare":
+        model = await db.get(PredictionModel, row.asset_id)
+        if model is None or model.direction != "forward":
+            raise HTTPException(409, "Inverse Prediction preparation is retired. Existing files are retained.")
     if not settings.JWT_SECRET:
         raise HTTPException(503, "Prediction transfer signing is not configured.")
     if retry:

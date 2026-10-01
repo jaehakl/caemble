@@ -35,15 +35,14 @@ export function predictionDatasetSelection(
   input: Omit<PredictionCreationInput, 'direction' | 'launcherId'>,
   requestId: string,
 ): PredictionDatasetSelection {
-  const selected = input.context.calculations.filter((item) => input.setup.calculationIds.includes(item.id))
   return {
     request_id: requestId,
     name: input.dataset?.name || input.name.trim() || `Experiment ${input.context.experimentId} 학습 데이터`,
     experiment_id: input.context.experimentId,
     source_hash: input.sourceHash,
     vars_schema: input.varsSchema,
-    calculation_ids: [...input.setup.calculationIds],
-    record_ids: [...new Set(selected.flatMap((item) => item.experiment_record_ids))],
+    calculation_ids: [],
+    record_ids: [...new Set(input.setup.recordIds)].sort((a, b) => a - b),
     rules: input.rules,
     result_contracts: input.resultContracts,
     ...(input.dataset ? { expected_revision: input.dataset.current_revision } : {}),
@@ -51,6 +50,8 @@ export function predictionDatasetSelection(
 }
 
 export function createPredictionModel(manager: PredictionAssetController, input: PredictionCreationInput) {
+  if (!input.setup.recordIds.length) throw new Error('학습할 BoxGrid를 하나 이상 선택하세요.')
+  if (input.previous?.direction === 'inverse') throw new Error('Inverse 모델은 지원 종료되어 관리만 가능합니다.')
   // These identities are captured by retries, including a lost create/reserve response.
   const datasetRequestId = crypto.randomUUID()
   const modelRequestId = crypto.randomUUID()
@@ -97,18 +98,11 @@ export function createPredictionModel(manager: PredictionAssetController, input:
     const source = dataset.revisions.find((item) => item.revision === revision)
     if (!source?.payload_available || dataset.state !== 'active')
       throw new Error('선택한 Dataset revision의 원본을 사용할 수 없습니다.')
-    const requiredRecordIds = [
-      ...new Set(
-        input.context.calculations
-          .filter((item) => input.setup.calculationIds.includes(item.id))
-          .flatMap((item) => item.experiment_record_ids),
-      ),
-    ]
+    const requiredRecordIds = [...new Set(input.setup.recordIds)].sort((a, b) => a - b)
     const frozen = savedContractFromSource(source.source_contracts)
     const contract = {
       ...frozen,
       records: Object.fromEntries(requiredRecordIds.map((id) => [id, frozen.records[id]])),
-      calculations: Object.fromEntries(input.setup.calculationIds.map((id) => [id, frozen.calculations[id]])),
     }
     assertSavedPredictionCompatible(
       {
@@ -123,17 +117,20 @@ export function createPredictionModel(manager: PredictionAssetController, input:
       input.context,
       input.varsSchema,
       requiredRecordIds,
-      input.setup.calculationIds,
     )
     const meaning = {
       snapshotFingerprint: source.fingerprint,
-      algorithm: input.setup.algorithm,
+      algorithm: {
+        kind: input.setup.algorithm.kind,
+        kMode: input.setup.algorithm.kMode,
+        manualK: input.setup.algorithm.manualK,
+        weighting: input.setup.algorithm.weighting,
+      },
       implementationId: remote.id,
       implementationVersion: remote.implementationVersion,
       preprocessingVersion: remote.preprocessingVersion,
       contract,
       direction: input.direction,
-      calculationIds: input.setup.calculationIds,
       requiredRecordIds,
     }
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(predictionFingerprint([meaning])))
@@ -169,10 +166,7 @@ export function createPredictionModel(manager: PredictionAssetController, input:
     const reserved = await predictionApi.reserve(
       {
         request_id: modelRequestId,
-        name:
-          input.name.trim() ||
-          input.previous?.name ||
-          `${dataset.name} · ${input.direction === 'forward' ? 'Forward' : 'Inverse'}`,
+        name: input.name.trim() || input.previous?.name || `${dataset.name} · Forward`,
         direction: input.direction,
         dataset_id: dataset.id,
         dataset_revision: revision,

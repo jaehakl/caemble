@@ -2,6 +2,10 @@
 export const documentationAnchorRedirects: Readonly<
   Record<string, Readonly<Record<string, { item: string; anchor: string }>>>
 > = {
+  'workbench-prediction': {
+    '마지막-편집이-예측-방향을-정합니다': { item: 'workbench-prediction', anchor: 'vars-변경과-자동-예측' },
+    'farthest-sample--run': { item: 'workbench-measurement', anchor: '일괄생성' },
+  },
   'workbench-analysis': {
     mining: { item: 'workbench-analysis', anchor: 'explore' },
     'data와-csv': { item: 'workbench-analysis', anchor: 'explore' },

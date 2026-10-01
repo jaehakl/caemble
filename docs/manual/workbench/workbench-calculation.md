@@ -140,7 +140,7 @@ const sample = flat[base]
 
 `axes`를 생략하면 `index` 또는 `row`/`column`/`depth`라는 순번 축을 만듭니다. 축을 직접 지정한다면 모든 축의 좌표값(ticks)이 유한한 숫자여야 하고, 개수도 추론된 shape와 일치해야 합니다. 저장 후에는 검증된 dtype·shape·축 이름·단위를 지켜야 하지만, 좌표값 자체는 Measurement마다 달라도 됩니다. 각 결과는 실제 좌표를 보존해 표시합니다.
 
-Prediction의 Predicted·Target·Re-predicted·Actual 비교는 shape가 같으면 같은 배열 인덱스끼리 수행합니다. 축 좌표·이름·단위나 숫자 dtype이 달라도 비교하며, 겹쳐 표시할 때는 Predicted 또는 Target의 축을 사용합니다. 좌표 보간이나 단위 변환은 하지 않으므로 같은 인덱스를 비교하는 것이 의미에 맞는지 확인하세요.
+Prediction의 선택적 Calculation 후처리는 Predicted·Actual의 shape가 같으면 같은 배열 인덱스끼리 비교합니다. 축 좌표·이름·단위나 숫자 dtype이 달라도 비교하며, 겹쳐 표시할 때는 Predicted의 축을 사용합니다. 좌표 보간이나 단위 변환은 하지 않으므로 같은 인덱스를 비교하는 것이 의미에 맞는지 확인하세요. Calculation 변경은 저장 예측 모델의 재학습을 요구하지 않습니다.
 
 2차원 Heatmap은 열:행 비율을 유지해 셀을 정사각형으로 표시하고 차트 영역에 맞춰 확대합니다. 숫자 축 레이블은 최대 유효숫자 5개로 표시하지만 포인터를 올려 확인하는 좌표와 Return 데이터는 원본 정밀도를 유지합니다.
 

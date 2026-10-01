@@ -39,17 +39,13 @@ export function PredictionComparison({
   active: boolean
   onActivity?: RuntimeActivityCallback
 }) {
-  const [lastPrediction, setLastPrediction] = useState(prediction)
-  useLayoutEffect(() => {
-    if (prediction) setLastPrediction(prediction)
-  }, [prediction])
   const candidateSourceHash =
     workbench.experimentDocument.predictionCandidate?.sourceHash ??
     workbench.experimentDocument.evaluatedSnapshot?.sourceHash
   const preview =
-    lastPrediction?.varsFingerprint === varsFingerprint(workbench.candidateVars) &&
-    lastPrediction.sourceHash === candidateSourceHash
-      ? lastPrediction
+    prediction?.varsFingerprint === varsFingerprint(workbench.candidateVars) &&
+    prediction.sourceHash === candidateSourceHash
+      ? prediction
       : null
   const [actual, setActual] = useState<ActualSnapshot | null>(null)
   const selection = workbench.selection

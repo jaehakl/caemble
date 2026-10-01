@@ -12,7 +12,7 @@ afterEach(() => vi.restoreAllMocks())
 it('prepares real Catalog BoxGrids with full-evaluation parity and no solid builds', () => {
   const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
   installCatalogRuntimeSlice(catalog)
-  for (const suffix of ['matched-impedance-duct', 'pixel-monochromatic-response']) {
+  for (const suffix of ['matched-impedance-duct', 'continuous-ray-optics']) {
     const example = examples.find((value) => value.coordinate.includes(`/${suffix}@`))!
     expect(example).toBeTruthy()
     const compiled = compileCatalogExample(example, catalog)

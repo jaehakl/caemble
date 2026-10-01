@@ -84,12 +84,16 @@ export function PredictionAssetTasks({
                 : (stages[operation.stage] ?? stages[operation.state] ?? '상태 확인 중')}
             </p>
             {operation.error && <p className="text-destructive">{operation.error}</p>}
+            {operation.kind === 'prepare' && operation.details.direction === 'inverse' && (
+              <p>Inverse 모델 준비는 지원 종료되었습니다. 기존 저장 파일은 유지됩니다.</p>
+            )}
             {!['succeeded', 'completed', 'cancelled'].includes(operation.state) && (
               <div className="flex gap-2">
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
+                  disabled={operation.kind === 'prepare' && operation.details.direction === 'inverse'}
                   onClick={() => void retryPredictionAssetOperation(manager, operation)}
                 >
                   상태 확인·다시 시도

@@ -59,7 +59,7 @@ function createExperimentDocument(sourceBundle: ExperimentSourceBundle) {
 }
 
 export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback; predictionMode?: boolean }>
-export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling' | 'optimization'
+export type CandidateVariablesOrigin = 'user-vars' | 'optimization'
 
 export function useCaeWorkbenchState(
   user: UserData | null,
@@ -371,7 +371,7 @@ export function useCaeWorkbenchState(
         dispatchEditing({
           type: 'candidateVariablesChanged',
           vars: Object.freeze(normalized),
-          clearMaterialSnapshot: origin === 'prediction-sampling' || origin === 'optimization',
+          clearMaterialSnapshot: origin === 'optimization',
         })
         return true
       } catch (cause: unknown) {

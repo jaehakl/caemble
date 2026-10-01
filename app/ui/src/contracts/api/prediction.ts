@@ -58,7 +58,8 @@ export const predictionDatasetSchema = z.object({
 export const predictionModelSchema = z.object({
   ...asset,
   direction: z.enum(['forward', 'inverse']),
-  algorithm: z.literal('knn'),
+  support_status: z.enum(['supported', 'retired']).optional(),
+  algorithm: z.string().min(1),
   revisions: z.array(
     z.object({
       revision,
@@ -162,7 +163,7 @@ export type PredictionModelReservation = Readonly<{
   model_id?: string
   expected_revision?: number
   name: string
-  direction: 'forward' | 'inverse'
+  direction: 'forward'
   dataset_id: string
   dataset_revision: number
   definition: Readonly<Record<string, unknown>>

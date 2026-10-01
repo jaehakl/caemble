@@ -117,6 +117,43 @@ beforeEach(() => {
   })
 })
 
+it('initializes Prediction Vars and all output contracts before selecting any BoxGrid', async () => {
+  const schema = { x: { dtype: 'float64', shape: [], min: 0, max: 2 } }
+  const contracts = { 'heat.T': { task: 'heat', output: 'T' } }
+  mocks.inspectDocument.mockResolvedValue({ varsSchema: schema })
+  mocks.preparePredictionDocument.mockImplementation(async ({ vars }, records) => ({
+    sourceHash: 'source',
+    variables: vars,
+    varsSchema: schema,
+    records,
+    geometrySources: [],
+    simulationProgram: {
+      tasks: {},
+      recordedData: {},
+      resultContracts: contracts,
+      boxGrids: records.length ? { 'heat.T': { ready: true } } : {},
+    },
+  }))
+  const { result, rerender } = renderHook(
+    ({ records }) =>
+      useCadWorkspace(firstExperiment, undefined, {
+        candidateVars: firstCandidateVars,
+        predictionRecords: records,
+        geometryRequired: false,
+      }),
+    { initialProps: { records: [] as readonly string[] } },
+  )
+  await waitFor(() => expect(result.current.experimentDocument.variables).toEqual(firstCandidateVars))
+  expect(result.current.experimentDocument.varsSchema).toEqual(schema)
+  expect(result.current.experimentDocument.simulationProgram?.resultContracts).toEqual(contracts)
+  expect(result.current.experimentDocument.simulationProgram?.boxGrids).toEqual({})
+  rerender({ records: ['heat.T'] })
+  await waitFor(() => expect(result.current.experimentDocument.predictionCandidate?.records).toEqual(['heat.T']))
+  expect(mocks.inspectDocument).toHaveBeenCalledOnce()
+  expect(mocks.evaluateDocument).not.toHaveBeenCalled()
+  expect(mocks.buildMeasurement).not.toHaveBeenCalled()
+})
+
 it('reports source errors once per location with technical details and keeps editor diagnostics', async () => {
   const diagnostic = {
     file: 'experiment.tsx',

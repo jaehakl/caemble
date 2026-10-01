@@ -14,7 +14,7 @@ import { adminQueryKeys, adminUsersQueryOptions } from './adminQueryOptions'
 
 function countLabel(experiment: AvailableExperimentRecord) {
   const counts = experiment.predictionCounts
-  return `${counts.recordedMeasurements} Measurements · ${counts.readyCalculations} Calculations · ${counts.calculationData} Data`
+  return `BoxGrid 학습 표본 ${counts.recordedMeasurements}개 · 선택 후처리 ${counts.readyCalculations}개 · Calculation Data ${counts.calculationData}개`
 }
 
 export function AdminWorkspace({
@@ -156,7 +156,10 @@ export function AdminWorkspace({
           <Card>
             <CardHeader>
               <CardTitle>공개 순서와 대표 Demo</CardTitle>
-              <CardDescription>첫 방문자는 별표로 표시된 대표 Demo를 자동으로 엽니다.</CardDescription>
+              <CardDescription>
+                첫 방문자는 별표로 표시된 대표 Demo를 자동으로 엽니다. 학습 데이터 표시는 원격 실행 가능 상태와
+                다릅니다. 예측에는 사용자의 저장 모델과 연결 가능한 Launcher가 필요합니다.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {orderedIds.map((id, index) => {
@@ -170,7 +173,7 @@ export function AdminWorkspace({
                       <span className="block text-xs text-muted-foreground">{countLabel(experiment)}</span>
                     </span>
                     <Badge className={experiment.predictionReady ? '' : 'bg-destructive text-white'}>
-                      {experiment.predictionReady ? 'Ready' : 'Not ready'}
+                      {experiment.predictionReady ? '학습 데이터 있음' : '학습 데이터 없음'}
                     </Badge>
                     <Button aria-label="대표 Demo 지정" size="icon" variant="ghost" onClick={() => setDefaultId(id)}>
                       <Star className={defaultId === id ? 'fill-amber-400 text-amber-500' : ''} />
@@ -207,7 +210,7 @@ export function AdminWorkspace({
                   {availableToAdd.map((experiment) => (
                     <option key={experiment.id} value={experiment.id}>
                       {experiment.name} ·{' '}
-                      {experiment.predictionReady ? countLabel(experiment) : 'Prediction 준비 안 됨'}
+                      {experiment.predictionReady ? countLabel(experiment) : 'BoxGrid 학습 데이터 없음'}
                     </option>
                   ))}
                 </select>

@@ -1,4 +1,4 @@
-"""CPU kNN numerical contract shared through fixtures with browser Prediction."""
+"""CPU Forward kNN numerics with fixed Vars range scaling."""
 from __future__ import annotations
 
 import copy
@@ -75,7 +75,7 @@ def coordinate_diagnostics(baseline: dict, actual: dict) -> list[dict]:
     return diagnostics
 
 
-def cohort(rows: list[dict], input_keys: list[str], output_keys: list[str], direction: str,
+def cohort(rows: list[dict], input_keys: list[str], output_keys: list[str],
            fixed_inputs: list[dict] | None = None, fixed_outputs: list[dict] | None = None, cancel=None):
     groups: dict[str, list[dict]] = {}
     excluded = dict.fromkeys(EXCLUSION_REASONS, 0)
@@ -111,7 +111,7 @@ def cohort(rows: list[dict], input_keys: list[str], output_keys: list[str], dire
         except PredictionError as error:
             reason = error.code if error.code in excluded else "invalid-tensor"
             excluded[reason] += 1
-            diagnostics.append({"direction": direction, "disposition": "excluded", "reason": reason,
+            diagnostics.append({"direction": "forward", "disposition": "excluded", "reason": reason,
                                 "side": side, "blockKey": block_key, "fieldPath": "contract",
                                 "baselineMeasurementId": None, "expected": "compatible finite tensor",
                                 "actual": str(error), "measurementIds": [measurement_id]})
@@ -124,23 +124,14 @@ def cohort(rows: list[dict], input_keys: list[str], output_keys: list[str], dire
         if other_signature == signature:
             continue
         excluded["layout-mismatch"] += len(group)
-        diagnostics.append({"direction": direction, "disposition": "excluded", "reason": "layout-mismatch",
+        diagnostics.append({"direction": "forward", "disposition": "excluded", "reason": "layout-mismatch",
                             "side": "output", "blockKey": output_keys[0], "fieldPath": "boxGridContract",
                             "baselineMeasurementId": baseline_id, "expected": signature, "actual": other_signature,
                             "measurementIds": [row["measurementId"] for row in group]})
     for diagnostic in diagnostics:
         diagnostic["baselineMeasurementId"] = baseline_id
-    warnings = []
-    if direction == "inverse":
-        for row in selected[1:]:
-            for baseline, actual in zip(selected[0]["inputs"], row["inputs"]):
-                for diagnostic in coordinate_diagnostics(baseline["layout"], actual["layout"]):
-                    warnings.append(row["measurementId"])
-                    diagnostics.append({**diagnostic, "direction": direction, "disposition": "included-with-warning",
-                                        "reason": "metadata-mismatch", "side": "input", "baselineMeasurementId": baseline_id,
-                                        "measurementIds": [row["measurementId"]]})
     summary = {"totalRows": len(rows), "includedRows": len(selected),
-               "includedMeasurementIds": [row["measurementId"] for row in selected], "warningMeasurementIds": sorted(set(warnings)),
+               "includedMeasurementIds": [row["measurementId"] for row in selected], "warningMeasurementIds": [],
                "dominantShapeSignature": signature, "baselineMeasurementId": baseline_id,
                "diagnostics": diagnostics[:500], "omittedDiagnosticGroups": max(0, len(diagnostics) - 500),
                "excluded": excluded}
@@ -153,11 +144,11 @@ class KnnModel:
     arrays: dict[str, np.ndarray]
 
     @classmethod
-    def build(cls, rows: list[dict], *, direction: str, fingerprint: str, input_keys: list[str],
+    def build(cls, rows: list[dict], *, fingerprint: str, input_keys: list[str],
               output_keys: list[str], algorithm: dict, memory_budget: int,
               fixed_inputs: list[dict] | None = None, fixed_outputs: list[dict] | None = None,
               nearest_only: bool = False, cancel=None) -> "KnnModel":
-        selected, summary = cohort(rows, input_keys, output_keys, direction, fixed_inputs, fixed_outputs, cancel)
+        selected, summary = cohort(rows, input_keys, output_keys, fixed_inputs, fixed_outputs, cancel)
         input_layouts = [sample["layout"] for sample in selected[0]["inputs"]]
         output_layouts = [sample["layout"] for sample in selected[0]["outputs"]]
         input_offsets, output_offsets = [0], [0]
@@ -176,29 +167,17 @@ class KnnModel:
         outputs = np.array([np.concatenate([sample["values"] for sample in row["outputs"]]) for row in selected], dtype=np.float64)
         minimums, maximums = inputs.min(axis=0), inputs.max(axis=0)
         scales = np.zeros(input_size, dtype=np.float64)
-        scaling = "range" if direction == "forward" else "standard-deviation"
-        for column in range(input_size):
-            if column % 256 == 0:
-                check_cancel(cancel)
-            maximum = float(np.max(np.abs(inputs[:, column])))
-            if maximum:
-                scaled = inputs[:, column] / maximum
-                mean = sum(float(value) for value in scaled) / len(selected)
-                scales[column] = maximum * math.sqrt(sum((float(value) - mean) ** 2 for value in scaled) / len(selected))
-        if scaling == "range":
-            for block, layout in enumerate(input_layouts):
-                low, high = layout["minimum"], layout["maximum"]
-                extent = high - low
-                if not math.isfinite(extent):
-                    magnitude = max(abs(low), abs(high))
-                    extent = high / magnitude - low / magnitude
-                if extent < 0 or not math.isfinite(extent):
-                    raise PredictionError("invalid-data", "Vars range is not finite and ordered.")
-                scales[input_offsets[block]:input_offsets[block + 1]] = extent
-        block_weights = {layout["key"]: float(algorithm.get("calculationWeights", {}).get(layout["key"].removeprefix("calculation:"), 1))
-                         if direction == "inverse" else 1.0 for layout in input_layouts}
-        if any(not math.isfinite(weight) or weight < 0 for weight in block_weights.values()) or not any(block_weights.values()):
-            raise PredictionError("invalid-data", "Calculation weights must be nonnegative with a positive block.")
+        for block, layout in enumerate(input_layouts):
+            check_cancel(cancel)
+            low, high = layout["minimum"], layout["maximum"]
+            extent = high - low
+            if not math.isfinite(extent):
+                magnitude = max(abs(low), abs(high))
+                extent = high / magnitude - low / magnitude
+            if extent < 0 or not math.isfinite(extent):
+                raise PredictionError("invalid-data", "Vars range is not finite and ordered.")
+            scales[input_offsets[block]:input_offsets[block + 1]] = extent
+        block_weights = {layout["key"]: 1.0 for layout in input_layouts}
         active_counts = [int(np.count_nonzero(scales[input_offsets[block]:input_offsets[block + 1]] > 0))
                          for block in range(len(input_layouts))]
         active_weight_scale = max((block_weights[layout["key"]] for block, layout in enumerate(input_layouts)
@@ -212,10 +191,10 @@ class KnnModel:
         weighting = algorithm.get("weighting", "distance")
         if weighting not in ("distance", "uniform"):
             raise PredictionError("invalid-data", "Unsupported kNN weighting.")
-        metadata = {"direction": direction, "fingerprint": fingerprint, "inputLayouts": input_layouts,
+        metadata = {"direction": "forward", "fingerprint": fingerprint, "inputLayouts": input_layouts,
                     "outputLayouts": output_layouts, "inputOffsets": input_offsets, "outputOffsets": output_offsets,
                     "inputSize": input_size, "outputSize": output_size, "rowCount": count, "k": k,
-                    "weighting": weighting, "inputScaling": scaling, "inputBlockWeights": block_weights,
+                    "weighting": weighting, "inputScaling": "range", "inputBlockWeights": block_weights,
                     "inputBlockActiveCounts": active_counts, "activeInputWeightScale": active_weight_scale,
                     "activeInputWeightSum": active_weight_sum, "activeInputBlockCount": sum(
                         active_counts[index] > 0 and block_weights[layout["key"]] > 0 for index, layout in enumerate(input_layouts)),
@@ -257,7 +236,7 @@ class KnnModel:
                     continue
                 component_weight = math.sqrt(weight / meta["activeInputWeightScale"] / active / meta["activeInputWeightSum"])
                 magnitude = 1
-                if meta["inputScaling"] == "range" and not math.isfinite(layout["maximum"] - layout["minimum"]):
+                if not math.isfinite(layout["maximum"] - layout["minimum"]):
                     magnitude = max(abs(layout["maximum"]), abs(layout["minimum"]))
                 for column in range(*meta["inputOffsets"][block:block + 2]):
                     deviation = float(arrays["inputScales"][column])
@@ -290,10 +269,10 @@ class KnnModel:
         for block, layout in enumerate(meta["outputLayouts"]):
             values = predicted[slice(*meta["outputOffsets"][block:block + 2])].copy()
             dtype = layout["dtype"]
-            if dtype == "complex64" or (meta["direction"] == "forward" and dtype in ("float32", "float16")):
+            if dtype in ("complex64", "float32", "float16"):
                 with np.errstate(over="ignore", invalid="ignore"):
                     values = values.astype("float32" if dtype == "complex64" else dtype).astype(np.float64)
-            elif meta["direction"] == "forward" and dtype in INTEGER_RANGES:
+            elif dtype in INTEGER_RANGES:
                 # JS Math.round chooses +infinity at ties, including negative halves.
                 lower = np.floor(values)
                 rounded = np.where(values - lower >= .5, lower + 1, lower)

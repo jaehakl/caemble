@@ -1,5 +1,7 @@
 import { GpStationClient, type JobSession } from '@gpstation/v1-master-js-sdk'
+import { z } from 'zod'
 import { browserClient } from '@/api/http'
+import { describeResourceWait } from '@/features/runtime/resources'
 import { predictionApi } from '@/api/prediction'
 import { predictionGrantSchema } from '@/contracts/api/prediction'
 import {
@@ -23,10 +25,11 @@ import {
   type RemotePrepared,
 } from './remoteProtocol'
 
-export type RemotePredictionState = 'disconnected' | 'connecting' | 'connected' | 'idle' | 'failed'
+export type RemotePredictionState =
+  'disconnected' | 'connecting' | 'waiting-resources' | 'reconciling' | 'connected' | 'idle' | 'failed'
 export type PredictionTransport = Readonly<{
-  connect: (requestId: string) => Promise<{ session: JobSession; payload: unknown }>
-  cancel: (jobId: string) => Promise<void>
+  connect: (requestId: string, signal?: AbortSignal) => Promise<{ session: JobSession; payload: unknown }>
+  cancel: (jobId: string, signal?: AbortSignal) => Promise<void>
 }>
 type LoadedModel = {
   reference: SavedPredictionModel
@@ -36,6 +39,37 @@ type LoadedModel = {
 }
 const invalidSessionCodes = new Set(['stale-response', 'model-mismatch', 'storage-mismatch', 'unsupported-execution'])
 
+/** Bound the entire phase, including HTTP auth/registration and late transport replies. */
+function withDeadline<T>(
+  milliseconds: number,
+  label: string,
+  operation: (signal: AbortSignal) => Promise<T>,
+  lifetime?: AbortSignal,
+): Promise<T> {
+  const abort = new AbortController()
+  const stop = () => abort.abort(lifetime?.reason)
+  if (lifetime?.aborted) stop()
+  else lifetime?.addEventListener('abort', stop, { once: true })
+  const timer = setTimeout(
+    () => abort.abort(new DOMException(`${label} 대기 시간이 초과되었습니다. 다시 시도하세요.`, 'TimeoutError')),
+    milliseconds,
+  )
+  return new Promise<T>((resolve, reject) => {
+    const interrupted = () => reject(abort.signal.reason)
+    if (abort.signal.aborted) return interrupted()
+    abort.signal.addEventListener('abort', interrupted, { once: true })
+    Promise.resolve()
+      .then(() => operation(abort.signal))
+      .then(resolve, reject)
+      .finally(() => {
+        abort.signal.removeEventListener('abort', interrupted)
+      })
+  }).finally(() => {
+    clearTimeout(timer)
+    lifetime?.removeEventListener('abort', stop)
+  })
+}
+
 /** One wire call at a time. Aborting a caller does not break the SDK response/ACK exchange. */
 export class RemotePredictionExecution implements PredictionExecution {
   readonly id = 'remote-knn'
@@ -43,8 +77,9 @@ export class RemotePredictionExecution implements PredictionExecution {
   readonly implementationVersion = 'knn-v1'
   readonly preprocessingVersion = 'box-relative-v2'
   readonly algorithms = Object.freeze(['knn'] as const)
-  readonly directions = Object.freeze(['forward', 'inverse'] as const)
-  readonly representations = Object.freeze(['box-relative-v2', 'calculation-ordinal-v1'])
+  readonly directions = Object.freeze(['forward'] as const)
+  readonly representations = Object.freeze(['box-relative-v2'])
+  private readonly lifetime = new AbortController()
   private epoch = 0
   private readonly key = crypto.randomUUID()
   private readonly transport: PredictionTransport
@@ -70,7 +105,7 @@ export class RemotePredictionExecution implements PredictionExecution {
       storageId?: string
       onState?: (state: RemotePredictionState, message?: string) => void
       onWarning?: (message: string) => void
-      onHello?: (hello: RemoteHello) => Promise<void>
+      onHello?: (hello: RemoteHello, signal?: AbortSignal) => Promise<void>
     } = {},
   ) {
     const client = new GpStationClient({
@@ -79,23 +114,57 @@ export class RemotePredictionExecution implements PredictionExecution {
       jobApiPrefix: '/web/jobs',
     })
     this.transport = options.transport ?? {
-      connect: (requestId) =>
-        client.runJob(
-          'predictor.hello',
-          { protocolVersion: 2, requestId },
-          {
-            slaveAppId: 'predictor',
-            targetLauncherId: launcherId,
-            autoFinish: false,
-            resources: { gpu_count: 0 },
-            timeoutMs: 60_000,
-            onJobCreated: (job) => {
-              this.connectingJobId = job.id
-              if (this.disposed) void client.cancelJob(job.id).catch(() => undefined)
+      connect: async (requestId, signal) => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let finished = false
+        const observe = async (jobId: string) => {
+          try {
+            const job = await browserClient.request('get', `/web/jobs/${encodeURIComponent(jobId)}`, undefined, {
+              signal,
+              validate: (value) => z.object({ waiting_reason: z.string().nullable().optional() }).parse(value),
+            })
+            if (!finished && !signal?.aborted) {
+              const reason = describeResourceWait(job.waiting_reason)
+              this.changeState(reason ? 'waiting-resources' : 'connecting', reason ?? 'Predictor 연결 중')
+            }
+          } catch {
+            // The connection owns errors; optional queue observation must not start another job.
+          }
+          if (!finished && !signal?.aborted)
+            timer = setTimeout(() => {
+              void observe(jobId)
+            }, 2_000)
+        }
+        try {
+          return await client.runJob(
+            'predictor.hello',
+            { protocolVersion: 2, requestId },
+            {
+              slaveAppId: 'predictor',
+              targetLauncherId: launcherId,
+              autoFinish: false,
+              resources: { gpu_count: 0 },
+              timeoutMs: 60_000,
+              signal,
+              onJobCreated: (job) => {
+                this.connectingJobId = job.id
+                if (this.disposed || signal?.aborted) void this.cleanupJob(job.id)
+                else {
+                  const reason = describeResourceWait(job.waiting_reason)
+                  if (reason) this.changeState('waiting-resources', reason)
+                  timer = setTimeout(() => {
+                    void observe(job.id)
+                  }, 2_000)
+                }
+              },
             },
-          },
-        ),
-      cancel: (jobId) => client.cancelJob(jobId),
+          )
+        } finally {
+          finished = true
+          if (timer) clearTimeout(timer)
+        }
+      },
+      cancel: (jobId, signal) => client.cancelJob(jobId, signal),
     }
   }
 
@@ -115,15 +184,24 @@ export class RemotePredictionExecution implements PredictionExecution {
   }
 
   private fail(error: unknown) {
+    this.lifetime.abort(error)
     const session = this.session
     this.session = null
     session?.close()
     const jobId = session?.jobId ?? this.connectingJobId
     this.connectingJobId = null
-    if (jobId) void this.transport.cancel(jobId).catch(() => undefined)
+    if (jobId) void this.cleanupJob(jobId)
     if (!this.disposed) {
       this.failed = true
       this.changeState('failed', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  private async cleanupJob(jobId: string) {
+    try {
+      await withDeadline(10_000, 'Prediction 자원 정리', (signal) => this.transport.cancel(jobId, signal))
+    } catch {
+      this.options.onWarning?.('Prediction 자원 정리를 확인하지 못했습니다. Launcher 실행 상태를 확인하세요.')
     }
   }
 
@@ -141,10 +219,23 @@ export class RemotePredictionExecution implements PredictionExecution {
     const requestId = crypto.randomUUID()
     this.changeState('connecting')
     this.connecting = (async () => {
-      const result = await this.transport.connect(requestId)
+      const result = await withDeadline(
+        60_000,
+        'Predictor 연결',
+        async (signal) => {
+          const connected = await this.transport.connect(requestId, signal)
+          if (signal.aborted || this.disposed || epoch !== this.epoch) {
+            connected.session.close()
+            void this.cleanupJob(connected.session.jobId)
+            throw signal.reason ?? new DOMException('Prediction 연결이 취소되었습니다.', 'AbortError')
+          }
+          return connected
+        },
+        this.lifetime.signal,
+      )
       if (this.disposed || epoch !== this.epoch) {
         result.session.close()
-        await this.transport.cancel(result.session.jobId)
+        await this.cleanupJob(result.session.jobId)
         throw new DOMException('Prediction 연결이 취소되었습니다.', 'AbortError')
       }
       this.session = result.session
@@ -158,7 +249,15 @@ export class RemotePredictionExecution implements PredictionExecution {
       )
         throw new RemotePredictionError('unsupported-execution', 'Predictor 장비 또는 구현 버전이 요청과 다릅니다.')
       this.helloValue = hello
-      await this.options.onHello?.(hello)
+      if (this.options.onHello) {
+        this.changeState('reconciling', '저장 모델 목록 확인 중')
+        await withDeadline(
+          30_000,
+          'Prediction 자산 등록',
+          (signal) => this.options.onHello!(hello, signal),
+          this.lifetime.signal,
+        )
+      }
       if (this.disposed || epoch !== this.epoch)
         throw new DOMException('Prediction 연결이 취소되었습니다.', 'AbortError')
       this.changeState('connected')
@@ -176,20 +275,27 @@ export class RemotePredictionExecution implements PredictionExecution {
 
   private async rpc(session: JobSession, type: string, body: object, requestId: string = crypto.randomUUID()) {
     const sessionId = this.helloValue!.sessionId
-    const response = await session.call(
+    const timeoutMs =
+      type === 'artifact.backup' || type === 'artifact.restore'
+        ? 1_800_000
+        : type.startsWith('artifact.') ||
+            type === 'model.prepare' ||
+            type === 'dataset.import' ||
+            type === 'dataset.sync'
+          ? 600_000
+          : 60_000
+    const response = await withDeadline(
+      timeoutMs,
       type,
-      { ...body, protocolVersion: 2, requestId, sessionId },
-      {
-        timeoutMs:
-          type === 'artifact.backup' || type === 'artifact.restore'
-            ? 1_800_000
-            : type.startsWith('artifact.') ||
-                type === 'model.prepare' ||
-                type === 'dataset.import' ||
-                type === 'dataset.sync'
-              ? 600_000
-              : 60_000,
-      },
+      () =>
+        session.call(
+          type,
+          { ...body, protocolVersion: 2, requestId, sessionId },
+          {
+            timeoutMs,
+          },
+        ),
+      this.lifetime.signal,
     )
     return parseRemoteEnvelope(response.payload, requestId, sessionId)
   }
@@ -274,9 +380,14 @@ export class RemotePredictionExecution implements PredictionExecution {
     // Serialize a subsequent connect behind graceful finish and resource cleanup.
     this.tail = this.tail.then(async () => {
       try {
-        await session.finish({ timeoutMs: 10_000 })
+        await withDeadline(
+          10_000,
+          'Prediction 세션 종료',
+          () => session.finish({ timeoutMs: 10_000 }),
+          this.lifetime.signal,
+        )
       } catch {
-        await this.transport.cancel(session.jobId).catch(() => undefined)
+        await this.cleanupJob(session.jobId)
       } finally {
         session.close()
         if (!this.disposed) this.changeState('idle')
@@ -291,7 +402,13 @@ export class RemotePredictionExecution implements PredictionExecution {
       if (hello.storageId !== this.helloValue?.storageId || hello.launcherId !== this.launcherId)
         throw new RemotePredictionError('storage-mismatch', '연결된 저장소 identity가 변경되었습니다.')
       this.helloValue = hello
-      await this.options.onHello?.(hello)
+      if (this.options.onHello)
+        await withDeadline(
+          30_000,
+          'Prediction 자산 등록',
+          (signal) => this.options.onHello!(hello, signal),
+          this.lifetime.signal,
+        )
       return hello
     })
   }
@@ -301,6 +418,13 @@ export class RemotePredictionExecution implements PredictionExecution {
   }
 
   private checkedPrepared(value: unknown, expected?: SavedPredictionModel): RemotePrepared {
+    if (
+      value &&
+      typeof value === 'object' &&
+      'artifact' in value &&
+      (value.artifact as { direction?: unknown })?.direction !== 'forward'
+    )
+      throw new RemotePredictionError('model-mismatch', 'Inverse 모델은 지원이 종료되어 실행할 수 없습니다.')
     const wire = remotePreparedSchema.parse(value)
     const artifact = wire.artifact
     if (
@@ -345,15 +469,24 @@ export class RemotePredictionExecution implements PredictionExecution {
 
   private async recordVerifiedReplica(wire: RemotePrepared) {
     try {
-      await predictionApi.checkReplica({
-        asset_kind: 'model',
-        asset_id: wire.artifact.modelId,
-        revision: wire.artifact.revision,
-        storage_id: wire.artifact.storageId,
-        launcher_id: wire.artifact.launcherId,
-        state: 'present',
-        manifest_sha256: wire.artifact.manifestChecksum,
-      })
+      await withDeadline(
+        30_000,
+        '모델 복사본 확인',
+        (signal) =>
+          predictionApi.checkReplica(
+            {
+              asset_kind: 'model',
+              asset_id: wire.artifact.modelId,
+              revision: wire.artifact.revision,
+              storage_id: wire.artifact.storageId,
+              launcher_id: wire.artifact.launcherId,
+              state: 'present',
+              manifest_sha256: wire.artifact.manifestChecksum,
+            },
+            { signal },
+          ),
+        this.lifetime.signal,
+      )
     } catch {
       this.options.onWarning?.(
         '모델 파일 검증은 완료했지만 저장 위치 상태를 등록하지 못했습니다. 관리 화면에서 파일 확인을 다시 실행하세요.',
@@ -368,10 +501,23 @@ export class RemotePredictionExecution implements PredictionExecution {
     release = false,
     route?: PredictionExecutionRoute,
   ) {
-    return predictionApi.lease(modelId, revision, session.jobId, release, {
-      ...(route?.replicaId ? { replica_id: route.replicaId } : {}),
-      storage_id: route?.storageId ?? this.helloValue!.storageId,
-    })
+    return withDeadline(
+      30_000,
+      '모델 사용권 확인',
+      (signal) =>
+        predictionApi.lease(
+          modelId,
+          revision,
+          session.jobId,
+          release,
+          {
+            ...(route?.replicaId ? { replica_id: route.replicaId } : {}),
+            storage_id: route?.storageId ?? this.helloValue!.storageId,
+          },
+          { signal },
+        ),
+      this.lifetime.signal,
+    )
   }
 
   private async releaseRejectedLease(
@@ -392,7 +538,8 @@ export class RemotePredictionExecution implements PredictionExecution {
   }
 
   prepare(input: PredictionPreparationInput, definition: PredictionModelDefinition, request: PredictionRequest) {
-    if (!('kind' in input)) return Promise.reject(new Error('원격 Prediction은 Dataset revision 참조가 필요합니다.'))
+    if (input.kind !== 'dataset-revision' || input.direction !== 'forward')
+      return Promise.reject(new Error('원격 Prediction은 Forward Dataset revision 참조가 필요합니다.'))
     return this.enqueue(
       request,
       async (session) => {
@@ -448,6 +595,8 @@ export class RemotePredictionExecution implements PredictionExecution {
   }
 
   load(reference: SavedPredictionModel, request: PredictionRequest, route?: PredictionExecutionRoute) {
+    if (reference.direction !== 'forward')
+      return Promise.reject(new RemotePredictionError('unsupported-model', 'Inverse 모델은 지원이 종료되었습니다.'))
     if (!route || route.launcherId !== this.launcherId)
       return Promise.reject(new Error('저장 모델을 사용할 실행 위치를 선택하세요.'))
     return this.enqueue(
@@ -577,6 +726,7 @@ export class RemotePredictionExecution implements PredictionExecution {
   dispose() {
     if (this.disposed) return
     this.disposed = true
+    this.lifetime.abort(new DOMException('Prediction 연결이 종료되었습니다.', 'AbortError'))
     this.epoch += 1
     if (this.idleTimer) clearTimeout(this.idleTimer)
     for (const cancel of this.pending.values()) cancel()
@@ -584,8 +734,8 @@ export class RemotePredictionExecution implements PredictionExecution {
     const session = this.session
     this.session = null
     session?.close()
-    if (session) void this.transport.cancel(session.jobId).catch(() => undefined)
-    if (this.connectingJobId) void this.transport.cancel(this.connectingJobId).catch(() => undefined)
+    if (session) void this.cleanupJob(session.jobId)
+    if (this.connectingJobId) void this.cleanupJob(this.connectingJobId)
     this.changeState('disconnected')
   }
 }

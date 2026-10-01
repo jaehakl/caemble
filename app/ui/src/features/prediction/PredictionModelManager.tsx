@@ -33,14 +33,14 @@ export function PredictionModelManager({
     <div className="space-y-3">
       {state.models.length === 0 && (
         <p className="py-3 text-sm text-muted-foreground">
-          아직 저장 모델이 없습니다. 학습 데이터와 장비를 확인한 뒤 필요한 방향의 모델을 만드세요.
+          아직 저장 모델이 없습니다. 학습 데이터와 장비를 확인한 뒤 BoxGrid를 예측할 모델을 만드세요.
         </p>
       )}
       <div className="max-h-64 space-y-2 overflow-y-auto" aria-label="등록된 모델">
         {state.models
           .filter((item) => item.state !== 'deleted')
           .map((item) => {
-            const selected = setup.models?.[item.direction]
+            const selected = item.direction === 'forward' ? setup.models?.forward : undefined
             return (
               <button
                 key={item.id}
@@ -51,7 +51,7 @@ export function PredictionModelManager({
               >
                 <span className="block font-medium break-words">{item.name}</span>
                 <span className="text-xs text-muted-foreground">
-                  {item.direction === 'forward' ? 'Forward' : 'Inverse'} ·{' '}
+                  {item.direction === 'forward' ? 'Forward' : 'Inverse · 지원 종료'} ·{' '}
                   {item.current_revision ? `최신 r${item.current_revision}` : '첫 모델 준비 중'}
                   {selected?.modelId === item.id ? ` · 선택 r${selected.modelRevision}` : ''}
                   {item.state === 'deleting' ? ' · 삭제 확인 대기' : ''}
@@ -95,7 +95,7 @@ export function ModelDetail({
   managementOnly?: boolean
 }>) {
   const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot)
-  const selected = setup.models?.[model.direction]
+  const selected = model.direction === 'forward' ? setup.models?.forward : undefined
   const [revisionNumber, setRevisionNumber] = useState(
     initialRevision ??
       (selected?.modelId === model.id
@@ -114,7 +114,12 @@ export function ModelDetail({
   const revision = model.revisions.find((item) => item.revision === revisionNumber)
   if (!revision) return <p>모델 revision 등록을 확인하는 중입니다.</p>
   const routes = modelExecutionRoutes(model, revisionNumber, state.storages)
-  const preferred = preferredModelRoute(model, revisionNumber, state.storages, setup.routes?.[model.direction])
+  const preferred = preferredModelRoute(
+    model,
+    revisionNumber,
+    state.storages,
+    model.direction === 'forward' ? setup.routes?.forward : undefined,
+  )
   const selectedRoute =
     routes.find((route) => `${route.replicaId}:${route.launcherId}` === routeKey) ??
     routes.find((route) => route.replicaId === preferred?.replicaId && route.launcherId === preferred?.launcherId)
@@ -168,8 +173,9 @@ export function ModelDetail({
   )
   const profile = revision.artifact?.profile as { rowCount?: number } | undefined
   const active = model.state === 'active'
+  const executable = model.direction === 'forward' && model.support_status !== 'retired'
   const useModel = () => {
-    onUse(setupUsingSavedModel(setup, model, revisionNumber, selectedRoute), model.direction)
+    if (executable) onUse(setupUsingSavedModel(setup, model, revisionNumber, selectedRoute), 'forward')
   }
   const restore = async (replicaId: string, useAfter: boolean) => {
     const key = manager.currentSelectionKey
@@ -183,6 +189,7 @@ export function ModelDetail({
       include_dataset: restoreDataset,
     })
     if (
+      executable &&
       useAfter &&
       result &&
       ['succeeded', 'completed'].includes(result.state) &&
@@ -201,12 +208,17 @@ export function ModelDetail({
           storageId: copy.storage_id,
           launcherId: restoreLauncherId,
         }),
-        model.direction,
+        'forward',
       )
     }
   }
   return (
     <section className="space-y-3 rounded-lg border p-3" aria-label="모델 상세">
+      {!executable && (
+        <p role="status" className="text-sm">
+          Inverse 모델 · 지원 종료. 저장 파일의 백업·복원·관리는 계속 사용할 수 있습니다.
+        </p>
+      )}
       <div className="flex gap-2">
         <Input aria-label="모델 이름" value={name} onChange={(event) => setName(event.target.value)} />
         <Button
@@ -251,7 +263,7 @@ export function ModelDetail({
         {dataset?.name ?? '학습 데이터'} r{revision.dataset_revision}. 저장 모델은 해당 버전의 설정과 데이터를
         사용합니다.
       </p>
-      {!managementOnly && (
+      {!managementOnly && executable && (
         <label className="block text-sm">
           실행 위치
           <select
@@ -278,7 +290,7 @@ export function ModelDetail({
             : '실행할 복사본이 없습니다. 저장 파일을 확인하거나 백업에서 복원하세요.'}
         </p>
       )}
-      {!managementOnly && (
+      {!managementOnly && executable && (
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -296,8 +308,8 @@ export function ModelDetail({
               onClick={() => {
                 const models = { ...setup.models }
                 const nextRoutes = { ...setup.routes }
-                delete models[model.direction]
-                delete nextRoutes[model.direction]
+                delete models.forward
+                delete nextRoutes.forward
                 onChange({ ...setup, models, routes: nextRoutes })
               }}
             >
@@ -548,7 +560,7 @@ export function ModelDetail({
                   >
                     복원
                   </Button>
-                  {!managementOnly && (
+                  {!managementOnly && executable && (
                     <Button
                       type="button"
                       size="sm"

@@ -61,3 +61,58 @@ test('public cancel uses the configured authenticated job endpoint', async (cont
   const client = new GpStationClient({ apiBaseUrl: 'http://localhost', token: 'fixture', jobApiPrefix: '/custom/jobs' });
   await client.cancelJob('job/id');
 });
+
+test('aborting connection HTTP stops the request without a pre-input retry', async (context) => {
+  const abort = new AbortController();
+  let requested;
+  const ready = new Promise((resolve) => { requested = resolve; });
+  context.mock.method(globalThis, 'fetch', async (_url, init) => {
+    requested();
+    assert.equal(init.signal, abort.signal);
+    return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }));
+  });
+  const previous = globalThis.RTCPeerConnection;
+  globalThis.RTCPeerConnection = OfferPeer;
+  const client = new GpStationClient({ apiBaseUrl: 'http://localhost', token: 'fixture' });
+  try {
+    const pending = client.runJob('predictor.hello', {}, { autoFinish: false, signal: abort.signal });
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    await ready;
+    abort.abort();
+    await rejected;
+    assert.equal(globalThis.fetch.mock.calls.length, 1);
+  } finally {
+    globalThis.RTCPeerConnection = previous;
+  }
+});
+
+test('a job created after cancellation is cleaned up without starting another attempt', async (context) => {
+  const abort = new AbortController();
+  let requested;
+  let created;
+  const ready = new Promise((resolve) => { requested = resolve; });
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url.endsWith('/late-job/kill')) {
+      assert.equal(init.method, 'POST');
+      return Response.json({ ok: true });
+    }
+    requested();
+    // A reply already in transit may arrive after the HTTP signal was aborted.
+    return new Promise((resolve) => { created = resolve; });
+  });
+  const previous = globalThis.RTCPeerConnection;
+  globalThis.RTCPeerConnection = OfferPeer;
+  const client = new GpStationClient({ apiBaseUrl: 'http://localhost', token: 'fixture' });
+  try {
+    const pending = client.runJob('predictor.hello', {}, { autoFinish: false, signal: abort.signal });
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    await ready;
+    abort.abort();
+    created(Response.json({ job: { id: 'late-job' } }));
+    await rejected;
+    assert.equal(globalThis.fetch.mock.calls.length, 2);
+    assert.equal(globalThis.fetch.mock.calls[1].arguments[0], 'http://localhost/v1/jobs/late-job/kill');
+  } finally {
+    globalThis.RTCPeerConnection = previous;
+  }
+});

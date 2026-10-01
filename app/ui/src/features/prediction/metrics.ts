@@ -1,6 +1,5 @@
 import type { CalculationDataOutput, CalculationOutputLayout } from '@/api'
 import { fitTensorDisplayDomain } from '@/components/tensor-editor/displayDomain'
-import type { PredictionTensorLayout, PredictionTrainingRow } from './knn'
 
 export type PredictionValidationMetric = Readonly<{
   compatible: boolean
@@ -9,12 +8,6 @@ export type PredictionValidationMetric = Readonly<{
   rmse: number | null
   maxAbsoluteError: number | null
   relativeError: number | null
-}>
-
-export type InverseValidationPair = Readonly<{
-  actual: CalculationDataOutput | null
-  calculationId: number
-  reference: CalculationDataOutput
 }>
 
 export function calculationOutputContract(output: CalculationDataOutput | CalculationOutputLayout) {
@@ -30,32 +23,6 @@ export function calculationOutputContract(output: CalculationDataOutput | Calcul
       ),
     ),
   })
-}
-
-function stableEuclideanNorm(values: readonly number[]) {
-  let scale = 0
-  let sum = 0
-  values.forEach((value) => {
-    const absolute = Math.abs(value)
-    if (absolute === 0) return
-    if (scale < absolute) {
-      const ratio = scale / absolute
-      sum = 1 + sum * ratio * ratio
-      scale = absolute
-    } else {
-      const ratio = absolute / scale
-      sum += ratio * ratio
-    }
-  })
-  return scale === 0 ? 0 : scale * Math.sqrt(sum)
-}
-
-function populationStandardDeviation(values: readonly number[]) {
-  const maximum = values.reduce((current, value) => Math.max(current, Math.abs(value)), 0)
-  if (maximum === 0) return 0
-  const mean = values.reduce((sum, value) => sum + value / maximum, 0) / values.length
-  const variance = values.reduce((sum, value) => sum + (value / maximum - mean) ** 2, 0) / values.length
-  return maximum * Math.sqrt(variance)
 }
 
 function incompatibleMetric(message: string): PredictionValidationMetric {
@@ -150,88 +117,4 @@ export function comparePredictionOutput(
     maxAbsoluteError,
     relativeError,
   })
-}
-
-export function inverseValidationAggregateError(
-  pairs: readonly InverseValidationPair[],
-  calculationWeights: Readonly<Record<number, number>>,
-  trainingRows: readonly PredictionTrainingRow[],
-  includedMeasurementIds: readonly number[],
-) {
-  const included = new Set(includedMeasurementIds)
-  const blocks: { error: number; weight: number }[] = []
-  for (const pair of pairs) {
-    if (!pair.actual || !comparePredictionOutput(pair.reference, pair.actual).compatible) return null
-    const reference = flatOutput(pair.reference)
-    const actual = flatOutput(pair.actual)
-    if (!reference || !actual) return null
-    const key = `calculation:${pair.calculationId}`
-    const samples = trainingRows
-      .filter((row) => included.has(row.measurementId))
-      .map((row) => row.inputs.find((sample) => sample.layout.key === key)?.values)
-    if (
-      samples.length !== includedMeasurementIds.length ||
-      samples.some((values) => !values || values.length !== reference.length)
-    ) {
-      return null
-    }
-    const normalizedErrors: number[] = []
-    for (let index = 0; index < reference.length; index += 1) {
-      const deviation = populationStandardDeviation(samples.map((values) => values![index]))
-      if (deviation === 0) continue
-      const normalized = (actual[index] - reference[index]) / deviation
-      if (!Number.isFinite(normalized)) return null
-      normalizedErrors.push(normalized)
-    }
-    const weight = calculationWeights[pair.calculationId] ?? 1
-    if (!Number.isFinite(weight) || weight < 0) return null
-    blocks.push({
-      error: normalizedErrors.length ? stableEuclideanNorm(normalizedErrors) / Math.sqrt(normalizedErrors.length) : 0,
-      weight,
-    })
-  }
-  return weightedAggregateError(blocks)
-}
-
-function weightedAggregateError(blocks: readonly Readonly<{ error: number; weight: number }>[]) {
-  const weightScale = blocks.reduce((maximum, block) => Math.max(maximum, block.weight), 0)
-  if (weightScale === 0) return null
-  const weightSum = blocks.reduce((sum, block) => sum + block.weight / weightScale, 0)
-  return stableEuclideanNorm(blocks.map((block) => block.error * Math.sqrt(block.weight / weightScale / weightSum)))
-}
-
-export function inverseValidationAggregateErrorFromScales(
-  pairs: readonly InverseValidationPair[],
-  calculationWeights: Readonly<Record<number, number>>,
-  inputLayouts: readonly PredictionTensorLayout[],
-  inputScales: Float64Array,
-) {
-  const offsets = [0]
-  const sizes = inputLayouts.map((layout) => layout.shape.reduce((size, length) => size * length, 1))
-  sizes.forEach((size) => offsets.push(offsets[offsets.length - 1] + size))
-  if (offsets[offsets.length - 1] !== inputScales.length) return null
-  const blocks: { error: number; weight: number }[] = []
-  for (const pair of pairs) {
-    if (!pair.actual || !comparePredictionOutput(pair.reference, pair.actual).compatible) return null
-    const reference = flatOutput(pair.reference)
-    const actual = flatOutput(pair.actual)
-    if (!reference || !actual) return null
-    const block = inputLayouts.findIndex((layout) => layout.key === `calculation:${pair.calculationId}`)
-    if (block < 0 || sizes[block] !== reference.length) return null
-    const normalizedErrors: number[] = []
-    for (let index = 0; index < reference.length; index += 1) {
-      const deviation = inputScales[offsets[block] + index]
-      if (deviation === 0) continue
-      const normalized = (actual[index] - reference[index]) / deviation
-      if (!Number.isFinite(normalized)) return null
-      normalizedErrors.push(normalized)
-    }
-    const weight = calculationWeights[pair.calculationId] ?? 1
-    if (!Number.isFinite(weight) || weight < 0) return null
-    blocks.push({
-      error: normalizedErrors.length ? stableEuclideanNorm(normalizedErrors) / Math.sqrt(normalizedErrors.length) : 0,
-      weight,
-    })
-  }
-  return weightedAggregateError(blocks)
 }

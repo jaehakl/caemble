@@ -44,12 +44,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
     onChange,
     onUse,
     manager,
-    direction = 'forward',
   } = props
   const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot)
   const [tab, setTab] = useState<'models' | 'datasets' | 'operations'>('models')
   const [creationOpen, setCreationOpen] = useState(false)
-  const [newDirection, setNewDirection] = useState(direction)
   const [launcherId, setLauncherId] = useState('')
   const [datasetId, setDatasetId] = useState(setup.datasetId ?? '')
   const [datasetRevision, setDatasetRevision] = useState<number | undefined>()
@@ -71,37 +69,21 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
       setup,
       name,
       launcherId,
-      direction: newDirection,
+      direction: 'forward',
       dataset,
       datasetRevision,
       previous,
       refreshDataset,
     })
     if (next && manager.active && selection === manager.currentSelectionKey) {
-      applyModel(next, newDirection)
+      applyModel(next, 'forward')
       setCreationOpen(false)
     }
   }
   return (
     <section className="space-y-3 rounded-lg border p-3" aria-label="데이터·모델 관리" hidden={!open}>
-      <label className="block text-sm font-medium">
-        예측 방법
-        <select
-          aria-label="Prediction 실행 위치"
-          className="mt-1 w-full rounded-md border bg-background p-2"
-          value={setup.executionId}
-          onChange={(event) => onChange({ ...setup, executionId: event.target.value })}
-        >
-          <option value="browser-knn">브라우저 kNN · 현재 선택 데이터</option>
-          <option value="remote-knn" disabled={!authenticated}>
-            저장 모델 사용{!authenticated ? ' (로그인 필요)' : ''}
-          </option>
-        </select>
-      </label>
-      {setup.executionId === 'browser-knn' ? (
-        <p className="text-xs text-muted-foreground">
-          브라우저에서는 현재 선택한 데이터로 예측합니다. 장비 연결과 모델 저장은 필요하지 않습니다.
-        </p>
+      {!authenticated ? (
+        <p className="text-xs text-muted-foreground">저장 모델 관리와 원격 예측에는 로그인이 필요합니다.</p>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
@@ -170,7 +152,6 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                 size="sm"
                 onClick={() => {
                   setPrevious(undefined)
-                  setNewDirection(direction)
                   setName('')
                   setRefreshDataset(false)
                   setDatasetRevision(undefined)
@@ -186,7 +167,6 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                 onUse={applyModel}
                 onNewVersion={(model) => {
                   setPrevious(model)
-                  setNewDirection(model.direction)
                   setName(model.name)
                   setDatasetId(
                     model.revisions.find((item) => item.revision === model.current_revision)?.dataset_id ?? '',
@@ -205,23 +185,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                   </h4>
                   <Input
                     aria-label="새 모델 이름"
-                    placeholder="모델 이름 (비우면 데이터와 방향으로 제안)"
+                    placeholder="모델 이름 (비우면 학습 데이터 이름으로 제안)"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
                   />
-                  <label className="block text-sm">
-                    예측 방향
-                    <select
-                      aria-label="만들 모델 방향"
-                      className="mt-1 w-full rounded border bg-background p-2"
-                      value={newDirection}
-                      disabled={Boolean(previous)}
-                      onChange={(event) => setNewDirection(event.target.value as PredictionDirection)}
-                    >
-                      <option value="forward">Forward · Vars에서 결과 예측</option>
-                      <option value="inverse">Inverse · Target에서 Vars 제안</option>
-                    </select>
-                  </label>
                   <label className="block text-sm">
                     학습 데이터
                     <select
@@ -298,9 +265,80 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                     </select>
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    현재 선택한 Calculation과 아래 새 버전 작성안의 k·거리 설정을 사용합니다. 파일 저장과 등록이 모두
-                    성공하면 해당 방향의 모델을 전환합니다.
+                    현재 선택한 BoxGrid와 k·거리 설정으로 원격 Forward 모델을 만듭니다. 파일 저장과 등록이 모두 성공하면
+                    선택 모델을 전환합니다.
                   </p>
+                  <fieldset className="space-y-2 text-sm">
+                    <legend>학습할 BoxGrid</legend>
+                    {context?.experimentRecords.map((record) => (
+                      <label key={record.id} className="flex gap-2">
+                        <input
+                          type="checkbox"
+                          checked={setup.recordIds.includes(record.id)}
+                          onChange={(event) =>
+                            onChange({
+                              ...setup,
+                              recordIds: event.target.checked
+                                ? [...setup.recordIds, record.id]
+                                : setup.recordIds.filter((id) => id !== record.id),
+                            })
+                          }
+                        />
+                        {record.name}
+                      </label>
+                    ))}
+                  </fieldset>
+                  <div className="flex flex-wrap gap-3 text-sm">
+                    <label>
+                      이웃 수
+                      <select
+                        aria-label="새 모델 이웃 수 방식"
+                        className="ml-2 rounded border bg-background p-1"
+                        value={setup.algorithm.kMode}
+                        onChange={(event) =>
+                          onChange({
+                            ...setup,
+                            algorithm: { ...setup.algorithm, kMode: event.target.value as 'auto' | 'manual' },
+                          })
+                        }
+                      >
+                        <option value="auto">자동 k</option>
+                        <option value="manual">직접 지정</option>
+                      </select>
+                    </label>
+                    {setup.algorithm.kMode === 'manual' && (
+                      <Input
+                        aria-label="새 모델 k"
+                        type="number"
+                        min={1}
+                        step={1}
+                        className="w-24"
+                        value={setup.algorithm.manualK}
+                        onChange={(event) => {
+                          const value = Number(event.target.value)
+                          if (Number.isSafeInteger(value) && value > 0)
+                            onChange({ ...setup, algorithm: { ...setup.algorithm, manualK: value } })
+                        }}
+                      />
+                    )}
+                    <label>
+                      이웃 가중 방식
+                      <select
+                        aria-label="새 모델 거리 가중 방식"
+                        className="ml-2 rounded border bg-background p-1"
+                        value={setup.algorithm.weighting}
+                        onChange={(event) =>
+                          onChange({
+                            ...setup,
+                            algorithm: { ...setup.algorithm, weighting: event.target.value as 'distance' | 'uniform' },
+                          })
+                        }
+                      >
+                        <option value="distance">거리</option>
+                        <option value="uniform">균등</option>
+                      </select>
+                    </label>
+                  </div>
                   <div className="flex gap-2">
                     <Button
                       type="button"
@@ -311,10 +349,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                         !varsSchema ||
                         unresolvedDataset ||
                         !launcherId ||
-                        !setup.calculationIds.length ||
+                        !setup.recordIds.length ||
                         state.tasks.some(
                           (task) =>
-                            task.state === 'running' && task.key === `model:${previous?.id ?? newDirection}:create`,
+                            task.state === 'running' && task.key === `model:${previous?.id ?? 'forward'}:create`,
                         )
                       }
                       onClick={() => void create()}

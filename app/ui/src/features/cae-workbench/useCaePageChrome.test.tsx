@@ -63,9 +63,8 @@ it('uses the sole New action to open Templates and removes the old Examples and 
       guardReplacement: vi.fn(),
       predictionState: {
         busy: false,
-        canSample: false,
+        canPredict: false,
         canValidate: false,
-        direction: 'forward',
         status: '',
       },
       requestAccount: vi.fn(),
@@ -175,9 +174,8 @@ it.each([
       guardReplacement: vi.fn(),
       predictionState: {
         busy: false,
-        canSample: false,
+        canPredict: false,
         canValidate: false,
-        direction: 'forward',
         status: '',
       },
       requestAccount: vi.fn(),

@@ -28,7 +28,7 @@ type Grant = {
 };
 type Prepare = {
   dataset: DatasetRef | { grant: Grant };
-  direction: "forward" | "inverse";
+  direction: "forward";
   definition: PredictionModelDefinition;
   model: {
     modelId: string;
@@ -46,7 +46,7 @@ type Prepare = {
 // dataset.delete {datasetId:string} -> {deleted:true}
 // model.prepare Prepare -> {...PreparedPredictionModel,artifact:Artifact}
 // model.load {modelId:string,revision:number,manifestChecksum?:string} -> {...PreparedPredictionModel,artifact:Artifact}
-// model.predict {instance:PredictionModelInstance,input:PredictionInput}
+// model.predict {instance:PredictionModelInstance,input:{direction:"forward",vars:Vars}}
 //   -> {...PredictionExecutionResult,provenance:{modelId,modelRevision,datasetId,datasetRevision}}
 // model.release {instance:PredictionModelInstance} -> {released:true}
 // model.list {} -> {models:Artifact[]}
@@ -58,7 +58,7 @@ type Artifact = {
   name: string;
   direction: "forward" | "inverse";
   algorithm: "knn";
-  definition: PredictionModelDefinition;
+  definition: Record<string, unknown>; // Preserve opaque legacy definition fields.
   datasetId: string;
   datasetRevision: number;
   datasetFingerprint: string;
@@ -76,13 +76,15 @@ type Artifact = {
 The direction-neutral Dataset manifest is `kind: 'caemble.prediction.dataset', version: 1`
 with `datasetId`, `revision`, `fingerprint`, `experimentId`, `sourceHash`, `measurements`,
 `varsSchema`, `records`, `recorded`, `rules`, `resultContracts`, `calculations`, and
-`calculationData`. Rows use the existing TrainingSnapshot representation. A local
+`calculationData`. Rows preserve the existing recorded tensor and Measurement representation. A local
 Dataset is a checked copy of that manifest and its referenced object files, imported
 directly by the slave using a scoped API grant. Arbitrary master-supplied paths are
 never accepted. Import replaces only the latest payload for that Dataset; existing
 self-contained saved models remain usable after import or Dataset deletion.
-`definition.calculationIds` and `definition.requiredRecordIds` select a frozen subset
-for a model; those contracts and preprocessing results are retained in its artifact.
+`definition.requiredRecordIds` selects one or more frozen BoxGrid outputs. Its Experiment,
+Vars schema, output contracts and preprocessing results belong to the model. Calculation
+selection, targets and weights are not model configuration. Dataset Calculation assets
+remain intact, but Forward preparation never decodes or requires their results.
 Server grants passed to `model.prepare` use temporary staging, which is removed after
 loading; they do not create persistent local Dataset caches.
 Expiring grants renew through their pinned revision's `refresh_url` with the scoped
@@ -169,17 +171,23 @@ again. `dataset.import` continues to create a new identity; it is not restoratio
 ## Numerical contract
 
 Forward uses Vars range scaling and matching Box relative cell indices. Spatial origin,
-size and rotation may differ; dimensions, quantity, units, components, channels and
-sampled time/frequency must match. Modal output groups use the nearest Measurement,
+size, rotation, spatial ticks and length units may differ; no spatial conversion or
+interpolation is applied to the numerical cells. Dimensions, quantity and value units,
+components, channels and sampled time/frequency must match. Modal output groups use the nearest Measurement,
 including its modal frequency ticks. Polar values are averaged in Cartesian form.
-The caller attaches predictions to the Candidate Box Grid, as in browser execution.
+The caller attaches predictions to the current Candidate BoxGrid, preserving the
+Candidate geometry and the model/Dataset revision provenance.
 
-Inverse uses Calculation tensors, population standard deviations, per-block weights
-and active cell normalization, and clamps output Vars to their declared bounds.
-Calculation dtype, shape, axis name and unit must match the frozen Calculation
-contract; per-Measurement ticks remain ordinal correspondence. Missing/null/nonfinite
-values exclude the complete sample with a diagnostic. No zero imputation or unit
-conversion is performed. Ties use Measurement ID; all exact matches share equal weight.
+Only Forward Vars-to-BoxGrid models execute. Legacy Inverse metadata remains readable
+in model lists and archives; prepare/load/predict reject it with `unsupported-model`.
+Existing Forward artifacts load without rewriting their definition or checksum.
+Legacy Inverse files can still be inspected, backed up, restored or explicitly removed.
+No model is automatically converted or deleted. Inverse design belongs to Optimization.
+
+`models.py` manages immutable model artifacts and selects a Forward implementation.
+`forward.py` implements kNN sample preparation, prediction and numerical file loading;
+`runtime.py` manages remote sessions and handles. A future algorithm implements the same
+Vars-to-BoxGrid boundary without changing Dataset or process lifecycle management.
 
 `CAEMBLE_PREDICTOR_OWNER_ID` and `CAEMBLE_PREDICTOR_API_URL` are trusted launcher
 environment values required at session initialization. `CAEMBLE_PREDICTOR_STORAGE_ROOT`
@@ -188,6 +196,15 @@ owner namespace prevent different installations/users from sharing identities.
 
 Run focused tests with `python -m pytest app/slaves/predictor/tests` from the checkout.
 No CAE Solver execution is required.
-The checked `tests/browser_reference.json` fixture is generated by
-`tests/browser_reference.ts` using the actual browser kNN implementation. It compares
-neighbor order, weights, scaling and outputs at a relative/absolute tolerance of 1e-12.
+The checked `tests/forward_reference.json` contains fixed numerical golden results,
+independent of any browser kNN implementation. It verifies neighbor order, weights,
+scaling and outputs at a relative/absolute tolerance of 1e-12; dtype rounding is exact.
+The tiny `tests/fixtures/legacy-forward.zip` and `legacy-inverse.zip` were produced by
+the preceding artifact v1 implementation and lock byte-preserving compatibility.
+
+The opt-in launcher test `RUN_WEBRTC_BROWSER_TESTS=1 python -m pytest tests/test_predictor_browser.py` (from `app/launcher`, after building the JS SDK)
+runs real Chromium WebRTC and the small kNN fixture. It covers a fresh process loading
+its saved model, prediction, production BoxGrid Viewer rendering with Candidate geometry,
+optional Calculation compilation/execution in the isolated runner, release and cleanup.
+A second case verifies portable backup/restore after losing the original storage.
+Neither case reruns a CAE Solver.

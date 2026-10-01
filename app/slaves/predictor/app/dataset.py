@@ -336,7 +336,7 @@ class DatasetReader:
                 raise PredictionError("dataset-format", f"Dataset manifest is missing {key}.")
 
     def load(self, reference: dict, cancel: threading.Event | None = None,
-             direction: str | None = None, definition: dict | None = None) -> dict:
+             definition: dict | None = None) -> dict:
         if "grant" in reference:
             transfers = self.store.namespace / ".transfers"
             transfers.mkdir(exist_ok=True)
@@ -344,7 +344,7 @@ class DatasetReader:
                 temporary_store = ArtifactStore(Path(temporary), "transfer", self.store.launcher_id)
                 reader = DatasetReader(temporary_store, self.api_url, self.memory_budget)
                 imported = reader.import_grant(reference["grant"], cancel)
-                return reader.load(imported, cancel, direction, definition)
+                return reader.load(imported, cancel, definition)
         parent = self.store.path("datasets", reference["datasetId"])
         latest = self.store.latest_dataset(reference["datasetId"]) if (parent / "latest").exists() else None
         if latest != reference["revision"] and not (parent / "retained" / str(reference["revision"])).exists():
@@ -355,17 +355,16 @@ class DatasetReader:
         if manifest["fingerprint"] != reference["fingerprint"]:
             raise PredictionError("dataset-checksum", "Dataset fingerprint differs from the requested revision.")
         definition = definition or {}
-        for selection, member, id_key in (("calculationIds", "calculations", "id"), ("requiredRecordIds", "records", "id")):
-            if selection in definition:
-                selected = definition[selection]
-                by_id = {item[id_key]: item for item in manifest.get(member, [])}
-                if len(set(selected)) != len(selected) or any(identity not in by_id for identity in selected):
-                    raise PredictionError("missing-contract", "Selected model contracts are not present in the Dataset revision.")
-                manifest[member] = [by_id[identity] for identity in selected]
+        if "requiredRecordIds" in definition:
+            selected = definition["requiredRecordIds"]
+            by_id = {item["id"]: item for item in manifest.get("records", [])}
+            if not selected or len(set(selected)) != len(selected) or any(identity not in by_id for identity in selected):
+                raise PredictionError("missing-contract", "Selected BoxGrid contracts are not present in the Dataset revision.")
+            manifest["records"] = [by_id[identity] for identity in selected]
         record_ids = {item["id"] for item in manifest.get("records", [])}
-        calculation_ids = {item["id"] for item in manifest.get("calculations", [])}
-        manifest["recorded"] = [row for row in manifest.get("recorded", []) if row["experiment_record_id"] in record_ids] if direction != "inverse" else []
-        manifest["calculationData"] = [row for row in manifest.get("calculationData", []) if row["calculation_id"] in calculation_ids] if direction != "forward" else []
+        manifest["recorded"] = [row for row in manifest.get("recorded", []) if row["experiment_record_id"] in record_ids]
+        # Dataset assets retain Calculation data; Forward preparation never decodes or depends on it.
+        manifest["calculations"], manifest["calculationData"] = [], []
         record_names = {item["name"] for item in manifest.get("records", [])}
         manifest["rules"] = [rule for rule in manifest.get("rules", []) if rule["label"] in record_names]
         cells = sum(math.prod(row["data"]["shape"]) for row in manifest["recorded"] + manifest["calculationData"])

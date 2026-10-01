@@ -87,7 +87,7 @@ describe('Predictor Python wire contracts', () => {
     expect(() => parseRemoteEnvelope(response, 'previous-request', 'old-process')).toThrowError('Missing Dataset.')
   })
 
-  it('converts only wire scaling arrays and preserves persisted numerical metadata', () => {
+  it('lists legacy Inverse metadata while refusing it as an executable profile', () => {
     const profile = {
       direction: 'inverse',
       rowCount: 2,
@@ -116,7 +116,41 @@ describe('Predictor Python wire contracts', () => {
         activeInputBlockCount: 1,
       },
     }
-    const parsed = remoteProfileSchema.parse(profile)
+    expect(remoteProfileSchema.safeParse(profile).success).toBe(false)
+    const hello = remoteHelloSchema.parse({
+      sessionId: 'session',
+      storageId: 'storage',
+      launcherId: 'launcher',
+      implementationVersion: 'knn-v1',
+      preprocessingVersion: 'box-relative-v2',
+      capabilities: {},
+      datasets: [],
+      models: [
+        {
+          modelId: 'model',
+          revision: 1,
+          operationId: 'operation',
+          name: 'Legacy Inverse',
+          direction: 'inverse',
+          algorithm: 'knn',
+          definition: { fingerprint: 'legacy' },
+          datasetId: 'dataset',
+          datasetRevision: 1,
+          datasetFingerprint: 'data',
+          storageId: 'storage',
+          launcherId: 'launcher',
+          manifestChecksum: 'a'.repeat(64),
+          formatVersion: 1,
+          files: [],
+          profile,
+          inputLayouts: [],
+          outputLayouts: [],
+        },
+      ],
+    })
+    const asset = hello.models[0]
+    if (!('profile' in asset)) throw new Error('Expected saved asset metadata')
+    const parsed = asset.profile
     expect(parsed.knn!.inputScales).toBeInstanceOf(Float64Array)
     expect(profileJson(parsed)).toEqual(profile)
   })
@@ -166,5 +200,6 @@ describe('Predictor Python wire contracts', () => {
     }
     expect(remoteResultSchema.parse(result).output[0].layout).toEqual(output.layout)
     expect(remoteResultSchema.safeParse({ ...result, output: [{ ...output, values: [] }] }).success).toBe(false)
+    expect(remoteResultSchema.safeParse({ ...result, direction: 'inverse' }).success).toBe(false)
   })
 })

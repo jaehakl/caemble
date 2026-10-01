@@ -64,8 +64,11 @@ state survive a browser disconnect. The browser subscribes to server events and
 restores snapshots using an event cursor; closing the Workbench only stops that
 subscription. Completed selected Measurements are fetched again for visualization.
 Standalone CalculationData postprocessing runs explicitly in the browser or CLI;
-Prediction iteration remains browser work. These do not automatically resume on
-reconnect. Optimizations separately own their persisted build/solve/calculate
+Forward Prediction runs saved models on the user's remote Predictor; the browser
+prepares Candidate BoxGrid context and optional Calculation postprocessing. Model
+references survive reloads, while execution handles are recreated. Neither model
+training nor interrupted postprocessing automatically resumes on reconnect.
+Optimizations separately own their persisted build/solve/calculate
 stages and continue server coordination after browser disconnects.
 Failed and cancelled runs require manual retry, which
 reuses the saved source, Vars, model definitions, selections and parameters.

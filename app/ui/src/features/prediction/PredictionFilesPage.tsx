@@ -194,7 +194,11 @@ export function PredictionFilesWorkspace({ scope }: { scope: PrivateQueryScope }
       header: () => <button onClick={() => sort('name')}>모델명 ↕</button>,
       cell: ({ row }) => <span className="block max-w-72 min-w-36 break-words">{row.original.model.name}</span>,
     },
-    { id: 'direction', header: '방향', cell: ({ row }) => row.original.model.direction },
+    {
+      id: 'direction',
+      header: '지원 상태',
+      cell: ({ row }) => (row.original.model.direction === 'forward' ? 'Forward' : 'Inverse · 지원 종료'),
+    },
     {
       id: 'revision',
       header: () => <button onClick={() => sort('revision')}>Revision ↕</button>,

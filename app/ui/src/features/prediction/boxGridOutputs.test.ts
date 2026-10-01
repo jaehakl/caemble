@@ -6,9 +6,8 @@ import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import { createCalculationInput } from '@/lib/calculation/input'
 import { assertCalculationInput } from '@/lib/calculation/validation'
 import { fieldScalar, fieldSlice, structuredField } from '@/features/viewer/viewer/structuredField'
-import { predictedRecordedData, predictionRecordedRowSample } from './data'
-import { buildPredictionKnnModel, predictWithKnn, selectPredictionCohort } from './knn'
-import { assertPredictionRecordedMemory } from './browserTrainingPolicy'
+import { predictedRecordedData } from './data'
+import type { PredictionTensorSample } from './types'
 
 function output(
   name: string,
@@ -79,10 +78,19 @@ function output(
     data_schema: rule.result,
     data: tensor,
   }
-  return { boxGrid, rule, tensor, row, sample: predictionRecordedRowSample(row) }
+  const sample: PredictionTensorSample = {
+    layout: {
+      key: name,
+      dtype: 'float64',
+      shape: tensor.shape,
+      axes: axes.map((axis, index) => ({ ...axis, ticks: ticks[index] })),
+      boxGrid,
+      frequencyOutput: modal,
+    },
+    values: [values[0] * Math.cos(values[1]), values[0] * Math.sin(values[1]), ...(modal ? [frequency] : [])],
+  }
+  return { boxGrid, rule, tensor, row, sample }
 }
-
-const scalar = (value: number) => ({ layout: { key: 'x', dtype: 'float64' as const, shape: [] }, values: [value] })
 
 describe('Box Grid consumer contract', () => {
   it('rejects unresolved candidate result metadata before constructing predicted records', () => {
@@ -101,31 +109,6 @@ describe('Box Grid consumer contract', () => {
     )
     expect(() => predictedRecordedData([record.sample], [record.rule])).not.toThrow()
   })
-  it('preserves the material configuration in Calculation and separates Prediction cohorts', () => {
-    const records = [
-      output('field', [1, 0], 0, false, { configuration: 'current', weighting: 'material-volume' }),
-      output('field', [2, 0], 0, false, { configuration: 'current', weighting: 'material-volume' }),
-      output('field', [3, 0], 0, false, { configuration: 'reference', weighting: 'material-volume' }),
-      output('field', [4, 0], 0, false, { configuration: 'current' }),
-    ]
-    const input = createCalculationInput([records[0].rule], { field: records[0].tensor })
-    expect(input.field.boxGrid.configuration).toBe('current')
-    expect(input.field.boxGrid.weighting).toBe('material-volume')
-    const cohort = selectPredictionCohort({
-      direction: 'forward',
-      fingerprint: 'configuration',
-      inputKeys: ['x'],
-      outputKeys: ['field'],
-      rows: records.map((record, index) => ({
-        measurementId: index + 1,
-        inputs: [scalar(index)],
-        outputs: [record.sample],
-      })),
-    })
-    expect(cohort.summary.includedMeasurementIds).toEqual([1, 2])
-    expect(cohort.summary.excluded['layout-mismatch']).toBe(2)
-  })
-
   it('requires seven explicit axes and preserves geometry in Calculation input', () => {
     const record = output('field', [2, 0])
     const input = createCalculationInput([record.rule], { field: record.tensor })
@@ -137,22 +120,9 @@ describe('Box Grid consumer contract', () => {
     expect(() => assertCalculationInput({ field: { ...input.field, dtype: 'string', data: ['a', 'b'] } })).toThrow()
   })
 
-  it('averages polar data in Cartesian coordinates and restores candidate Box coordinates', () => {
+  it('restores polar remote values and the current Candidate Box coordinates', () => {
     const first = output('field', [1, Math.PI - 0.1])
-    const second = output('field', [1, -Math.PI + 0.1])
-    const model = buildPredictionKnnModel({
-      direction: 'forward',
-      fingerprint: 'polar',
-      inputKeys: ['x'],
-      outputKeys: ['field'],
-      k: 2,
-      weighting: 'uniform',
-      rows: [
-        { measurementId: 1, inputs: [scalar(0)], outputs: [first.sample] },
-        { measurementId: 2, inputs: [scalar(1)], outputs: [second.sample] },
-      ],
-    })
-    const predicted = predictWithKnn(model, [scalar(0.5)], 'polar')
+    const predicted = { output: [{ ...first.sample, values: [-Math.cos(0.1), 0] }] }
     const candidate = { ...first.boxGrid, origin: [10, 20, 30] as const, size: [4, 8, 12] as const }
     const restored = predictedRecordedData(predicted.output, [first.rule], undefined, { field: candidate })
     const input = createCalculationInput([first.rule], restored)
@@ -162,32 +132,37 @@ describe('Box Grid consumer contract', () => {
     expect(input.field.axes[0].ticks).toEqual([2])
   })
 
-  it('keeps a whole modal group and its eigenfrequency ticks from one nearest measurement', () => {
+  it('preserves a remote modal group and its predicted eigenfrequency ticks', () => {
     const a = output('u', [1, 0], 10, true)
     const b = output('r', [2, Math.PI], 10, true)
-    const c = output('u', [8, Math.PI], 20, true)
-    const d = output('r', [9, 0], 20, true)
-    const model = buildPredictionKnnModel({
-      direction: 'forward',
-      fingerprint: 'modal',
-      inputKeys: ['x'],
-      outputKeys: ['u', 'r'],
-      k: 1,
-      nearestOnly: true,
-      rows: [
-        { measurementId: 2, inputs: [scalar(0)], outputs: [c.sample, d.sample] },
-        { measurementId: 1, inputs: [scalar(0)], outputs: [a.sample, b.sample] },
-        { measurementId: 3, inputs: [scalar(1)], outputs: [c.sample, d.sample] },
-      ],
-    })
-    const predicted = predictWithKnn(model, [scalar(0)], 'modal')
-    expect(predicted.neighbors).toEqual([{ measurementId: 1, distanceSquared: 0, weight: 1 }])
+    const predicted = { output: [a.sample, b.sample] }
     const restored = predictedRecordedData(predicted.output, [a.rule, b.rule])
     const input = createCalculationInput([a.rule, b.rule], restored)
     expect(input.u.axes[4].ticks).toEqual([10])
     expect(input.r.axes[4].ticks).toEqual([10])
     expect(input.u.data[0]).toBe(1)
     expect(input.r.data[0]).toBe(2)
+  })
+
+  it('rejects different Candidate output meaning while allowing relative spatial cell correspondence', () => {
+    const record = output('field', [1, 0])
+    for (const difference of [
+      { sampling: 'cell-average' as const },
+      { channelUnits: ['m', 'rad'] },
+      { components: ['displacement'] },
+      { frequencyKind: 'modal' as const },
+    ]) {
+      expect(() =>
+        predictedRecordedData([record.sample], [record.rule], undefined, {
+          field: { ...record.boxGrid, ...difference },
+        }),
+      ).toThrow(/Candidate BoxGrid .*모델 출력 계약/)
+    }
+    expect(() =>
+      predictedRecordedData([record.sample], [record.rule], undefined, {
+        field: { ...record.boxGrid, gridShape: [2, 1, 1] },
+      }),
+    ).toThrow(/shape/)
   })
 
   it('keeps stored float32 polar phases inside the canonical interval and clears underflow phase', () => {
@@ -213,28 +188,6 @@ describe('Box Grid consumer contract', () => {
     }
   })
 
-  it('uses Box relative positions but rejects incompatible sampled frequencies', () => {
-    const a = output('field', [1, 0], 10)
-    const b = output('field', [2, 0], 10, false, { origin: [5, 0, 0] })
-    const c = output('field', [3, 0], 20)
-    const cohort = selectPredictionCohort({
-      direction: 'forward',
-      fingerprint: 'layout',
-      inputKeys: ['x'],
-      outputKeys: ['field'],
-      rows: [a, b, c].map((record, index) => ({
-        measurementId: index + 1,
-        inputs: [scalar(index)],
-        outputs: [record.sample],
-      })),
-    })
-    expect(cohort.summary.includedMeasurementIds).toEqual([1, 2])
-    expect(cohort.summary.excluded['layout-mismatch']).toBe(1)
-    expect(cohort.summary.diagnostics).toContainEqual(
-      expect.objectContaining({ fieldPath: 'boxGridContract', measurementIds: [3] }),
-    )
-  })
-
   it('renders a rotated seven-axis field in world space with world components', () => {
     const record = output('field', [3, Math.PI / 2], 20, false, {
       origin: [10, 20, 30],
@@ -250,15 +203,5 @@ describe('Box Grid consumer contract', () => {
     const slice = fieldSlice(field, 'field', 2, 0, 0, 0, 'abs', [0, 3])
     expect(Array.from(slice.geometries[0].positions.slice(0, 3))).toEqual([10, 20, 33])
     expect(createDataTensorAccessor(record.rule.result, record.tensor).shape).toHaveLength(7)
-  })
-
-  it('rejects oversized tensors from metadata before their objects are downloaded', () => {
-    const record = output('field', [1, 0])
-    expect(() =>
-      assertPredictionRecordedMemory(
-        [{ ...record.row, data: { ...record.tensor, shape: [512, 512, 512, 1, 1, 2, 1] } }],
-        1,
-      ),
-    ).toThrow(/제한/)
   })
 })

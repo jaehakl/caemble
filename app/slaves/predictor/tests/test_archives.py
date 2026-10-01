@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import shutil
 import stat
 import threading
@@ -240,3 +242,41 @@ def test_expired_download_ticket_cannot_switch_immutable_object(tmp_path):
         with pytest.raises(PredictionError, match="immutable content"):
             transfer.download("model", target, pinned)
         assert target.read_bytes() == b""
+
+
+@pytest.mark.parametrize("direction", ["forward", "inverse"])
+def test_legacy_model_archives_remain_byte_identical_and_inverse_is_retired(tmp_path, direction):
+    """These artifacts were saved before Forward-only execution was introduced."""
+    archive = Path(__file__).with_name("fixtures") / f"legacy-{direction}.zip"
+    with zipfile.ZipFile(archive) as saved:
+        package = json.loads(saved.read("package.json"))
+        original_model = saved.read("model.json")
+    worker = runtime(tmp_path / "restored")
+    identity = package["identity"]
+    checksum = package["manifestSha256"]
+    staging = worker.store.namespace / "legacy-staging"
+    unpack_archive(archive, staging, "model", identity, 1, checksum)
+    worker.store.publish_replica("models", identity, 1, staging, checksum)
+    listed = call(worker, "predictor.hello")["models"]
+    assert len(listed) == 1
+    assert listed[0]["direction"] == direction
+    assert listed[0]["manifestChecksum"] == checksum
+    assert listed[0]["available"] is True
+    if direction == "forward":
+        prepared = call(worker, "model.load", modelId=identity, revision=1, manifestChecksum=checksum)
+        assert prepared["artifact"]["definition"]["algorithm"]["calculationWeights"] == {}
+        result = call(worker, "model.predict", instance=prepared["instance"], input={"direction": "forward", "vars": {"x": .5}})
+        assert result["output"][0]["values"] == pytest.approx([15])
+        call(worker, "model.release", instance=prepared["instance"])
+    else:
+        with pytest.raises(PredictionError, match="retired") as error:
+            call(worker, "model.load", modelId=identity, revision=1, manifestChecksum=checksum)
+        assert error.value.code == "unsupported-model"
+        assert worker.instances == {}
+    saved_path = worker.store.path("models", identity, 1)
+    assert (saved_path / "model.json").read_bytes() == original_model
+    backup = tmp_path / "backup.zip"
+    result = create_archive(worker.store, "model", identity, 1, backup)
+    assert result["manifest_sha256"] == checksum
+    assert backup.read_bytes() == archive.read_bytes()
+    assert call(worker, "model.list")["models"][0]["manifestChecksum"] == checksum

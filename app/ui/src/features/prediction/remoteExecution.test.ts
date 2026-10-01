@@ -88,7 +88,7 @@ const definition: PredictionModelDefinition = {
   implementationId: 'remote-knn',
   implementationVersion: 'knn-v1',
   preprocessingVersion: 'box-relative-v2',
-  algorithm: { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance', calculationWeights: {} },
+  algorithm: { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' },
 }
 
 function transportFixture() {
@@ -230,6 +230,63 @@ afterEach(() => {
 })
 
 describe('remote Prediction execution lifecycle', () => {
+  it('bounds a stalled connection and cleans up a session arriving after its deadline', async () => {
+    vi.useFakeTimers()
+    const fixture = transportFixture()
+    const connect = fixture.transport.connect
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const transport = {
+      ...fixture.transport,
+      connect: async (id: string) => {
+        const result = await connect(id)
+        await gate
+        return result
+      },
+    }
+    const remote = new RemotePredictionExecution(launcherId, { transport })
+    const pending = remote.load(reference, request('load'), route)
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    await vi.advanceTimersByTimeAsync(60_001)
+    await rejected
+    expect(remote.state).toBe('failed')
+    finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fixture.sessions[0].closed).toBe(true)
+    expect(transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId, expect.any(AbortSignal))
+    await expect(remote.load(reference, request('again'), route)).rejects.toMatchObject({ retryable: false })
+    remote.dispose()
+  })
+
+  it.each(['hello', 'lease', 'load'] as const)(
+    'bounds a stalled %s phase and releases the serial queue',
+    async (phase) => {
+      vi.useFakeTimers()
+      const fixture = transportFixture()
+      const never = () => new Promise<never>(() => undefined)
+      if (phase === 'lease') vi.mocked(predictionApi.lease).mockImplementation(never)
+      if (phase === 'load') fixture.delayNextModel()
+      const remote = new RemotePredictionExecution(launcherId, {
+        transport: fixture.transport,
+        ...(phase === 'hello' ? { onHello: never } : {}),
+      })
+      const pending = remote.load(reference, request('first'), route)
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+      const queued = expect(remote.load(reference, request('queued'), route)).rejects.toMatchObject({
+        retryable: false,
+      })
+      await vi.advanceTimersByTimeAsync(phase === 'load' ? 60_001 : 30_001)
+      await rejected
+      await queued
+      expect(remote.state).toBe('failed')
+      expect(fixture.sessions[0].closed).toBe(true)
+      expect(fixture.transport.cancel).toHaveBeenCalled()
+      remote.dispose()
+    },
+  )
+
   it.each(['load', 'prepare'] as const)(
     'releases a late %s result after caller cancellation without deleting the artifact',
     async (operation) => {
@@ -247,9 +304,16 @@ describe('remote Prediction execution lifecycle', () => {
       await rejected
       complete()
       await vi.waitFor(() => expect(fixture.calls.some((call) => call.type === 'model.release')).toBe(true))
-      expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[0].jobId, true, {
-        storage_id: storageId,
-      })
+      expect(predictionApi.lease).toHaveBeenLastCalledWith(
+        reference.modelId,
+        2,
+        fixture.sessions[0].jobId,
+        true,
+        {
+          storage_id: storageId,
+        },
+        { signal: expect.any(AbortSignal) },
+      )
       expect(fixture.transport.cancel).not.toHaveBeenCalled()
       expect(fixture.calls.some((call) => call.type === 'model.delete')).toBe(false)
       remote.dispose()
@@ -268,7 +332,7 @@ describe('remote Prediction execution lifecycle', () => {
     await expect(remote.load(reference, request('load'), route)).rejects.toMatchObject({ code: 'model-mismatch' })
     expect(remote.state).toBe('failed')
     expect(fixture.sessions[0].closed).toBe(true)
-    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId)
+    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId, expect.any(AbortSignal))
     remote.dispose()
   })
 
@@ -279,7 +343,7 @@ describe('remote Prediction execution lifecycle', () => {
     await expect(remote.prepare(datasetInput, definition, request('prepare'))).rejects.toMatchObject({
       code: 'model-mismatch',
     })
-    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId)
+    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId, expect.any(AbortSignal))
     remote.dispose()
   })
 
@@ -381,7 +445,7 @@ describe('remote Prediction execution lifecycle', () => {
     expect(fixture.sessions[0].finish).not.toHaveBeenCalled()
     remote.dispose()
     await rejected
-    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId)
+    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId, expect.any(AbortSignal))
     complete()
   })
 
@@ -418,9 +482,16 @@ describe('remote Prediction execution lifecycle', () => {
     await expect(
       remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('predict')),
     ).rejects.toMatchObject({ code: 'artifact-missing' })
-    expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true, {
-      storage_id: storageId,
-    })
+    expect(predictionApi.lease).toHaveBeenLastCalledWith(
+      reference.modelId,
+      2,
+      fixture.sessions[1].jobId,
+      true,
+      {
+        storage_id: storageId,
+      },
+      { signal: expect.any(AbortSignal) },
+    )
     expect(remote.state).toBe('connected')
     remote.dispose()
   })
@@ -440,9 +511,16 @@ describe('remote Prediction execution lifecycle', () => {
     complete()
     await rejected
     expect(fixture.calls.filter((call) => call.type === 'model.release')).toHaveLength(1)
-    expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true, {
-      storage_id: storageId,
-    })
+    expect(predictionApi.lease).toHaveBeenLastCalledWith(
+      reference.modelId,
+      2,
+      fixture.sessions[1].jobId,
+      true,
+      {
+        storage_id: storageId,
+      },
+      { signal: expect.any(AbortSignal) },
+    )
     expect(fixture.calls.some((call) => call.type === 'model.predict')).toBe(false)
     remote.dispose()
   })
@@ -491,23 +569,45 @@ it('leases the selected replica and retains it across idle reloads and release',
       state: 'present',
       manifest_sha256: reference.manifestChecksum,
     }),
+    { signal: expect.any(AbortSignal) },
   )
-  expect(predictionApi.lease).toHaveBeenCalledWith(reference.modelId, 2, fixture.sessions[0].jobId, false, {
-    replica_id: replicaRoute.replicaId,
-    storage_id: storageId,
-  })
+  expect(predictionApi.lease).toHaveBeenCalledWith(
+    reference.modelId,
+    2,
+    fixture.sessions[0].jobId,
+    false,
+    {
+      replica_id: replicaRoute.replicaId,
+      storage_id: storageId,
+    },
+    { signal: expect.any(AbortSignal) },
+  )
   await vi.advanceTimersByTimeAsync(101)
   await remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('predict'))
   expect(predictionApi.checkReplica).toHaveBeenCalledTimes(2)
-  expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, false, {
-    replica_id: replicaRoute.replicaId,
-    storage_id: storageId,
-  })
+  expect(predictionApi.lease).toHaveBeenLastCalledWith(
+    reference.modelId,
+    2,
+    fixture.sessions[1].jobId,
+    false,
+    {
+      replica_id: replicaRoute.replicaId,
+      storage_id: storageId,
+    },
+    { signal: expect.any(AbortSignal) },
+  )
   await remote.release(model.instance)
-  expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true, {
-    replica_id: replicaRoute.replicaId,
-    storage_id: storageId,
-  })
+  expect(predictionApi.lease).toHaveBeenLastCalledWith(
+    reference.modelId,
+    2,
+    fixture.sessions[1].jobId,
+    true,
+    {
+      replica_id: replicaRoute.replicaId,
+      storage_id: storageId,
+    },
+    { signal: expect.any(AbortSignal) },
+  )
   remote.dispose()
 })
 

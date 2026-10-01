@@ -17,7 +17,7 @@ from gpstation.db import Job, Launcher
 from gpstation.service.state import utcnow
 from prediction import operations
 from prediction.datasets import freeze_dataset, preview_source, register_local_dataset
-from prediction.db import DatasetRevision, ModelLease, ModelRevision, Operation, OperationObject, Replica
+from prediction.db import DatasetRevision, ModelLease, ModelRevision, Operation, OperationObject, PredictionModel, Replica
 from prediction.lifecycle import register_storage
 from prediction.models import complete_model, lease_model, list_models, reserve_model
 from prediction.replicas import check_replica
@@ -30,6 +30,26 @@ from settings import settings
 
 
 class PredictionReplicaTests(fixtures.PredictionAssetsTests):
+    async def test_retired_inverse_backup_and_restore_preserve_immutable_revision(self):
+        async with self.sessions() as db:
+            dataset, model = await self.ready_model(db)
+            stored = await db.get(PredictionModel, model["id"])
+            stored.direction = "inverse"
+            await db.commit()
+            backup, _ = await self.backup(db, dataset, model)
+            launcher_id, storage_id = await self.second_storage(db)
+            response = await operations.create_operation(db, OperationCreate(request_id=uuid4(), kind="restore",
+                asset_id=model["id"], revision=1, source_replica_id=backup.details["result_replicas"]["model"],
+                target_storage_id=storage_id, target_launcher_id=launcher_id), self.owner)
+            await operations.complete_operation(db, await db.get(Operation, response["id"]),
+                OperationComplete(model=model["revisions"][0]["artifact"]))
+            listed = (await list_models(db, self.owner))["items"][0]
+            self.assertEqual(listed["support_status"], "retired")
+            self.assertEqual(listed["current_revision"], 1)
+            self.assertEqual(listed["revisions"][0]["artifact"], model["revisions"][0]["artifact"])
+            self.assertEqual(len(listed["revisions"][0]["replicas"]), 3)
+            self.assertIsNotNone((await db.get(DatasetRevision, (dataset["id"], 1))).payload)
+
     async def test_remove_last_copy_refresh_then_delete_model_without_launcher(self):
         async with self.sessions() as db:
             _, model = await self.ready_model(db)

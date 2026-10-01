@@ -54,7 +54,7 @@ it('allows an Experiment without prediction data to be added and saved as the de
     </QueryClientProvider>,
   )
 
-  const candidate = await screen.findByRole('option', { name: 'Geometry only · Prediction 준비 안 됨' })
+  const candidate = await screen.findByRole('option', { name: 'Geometry only · BoxGrid 학습 데이터 없음' })
   expect(candidate).toBeEnabled()
 
   fireEvent.change(screen.getByLabelText('Experiment 선택', { selector: 'select' }), { target: { value: '7' } })

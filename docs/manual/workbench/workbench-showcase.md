@@ -45,4 +45,4 @@ Workbench의 **Experiment** 탭은 왼쪽 Viewer와 오른쪽 코드 편집기�
 
 - 직접 한 번 실행하려면 [빠른 시작](workbench-quickstart.md)을 따라 해 보세요.
 - 카드의 대표이미지와 처음 보이는 결과를 바꾸려면 [초기 화면과 대표이미지 수정](workbench-save.md#초기-화면과-대표이미지-수정)을 확인하세요.
-- 공개 Demo의 변수를 바꿔 예측을 체험하려면 [Prediction 사용법](workbench-prediction.md)을 이어서 읽어 보세요.
+- 원격 저장 모델로 Vars의 BoxGrid를 예측하려면 [Prediction 사용법](workbench-prediction.md)을 확인하세요. 실행에는 로그인과 내 Launcher가 필요합니다.

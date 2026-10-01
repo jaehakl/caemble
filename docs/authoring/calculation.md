@@ -99,7 +99,7 @@ $measurementId = 'REPLACE_WITH_RECORDED_MEASUREMENT_ID'
 
 실수부·허수부가 필요하면 `re = amplitude * cos(phase)`, `im = amplitude * sin(phase)`로 복원합니다. 진폭 0의 저장 위상은 0이며 방향에 관한 위상 정보를 담지 않습니다. 스펙트럼 장의 표본은 결과 이름에 적힌 파장이 아니라 frequency 축의 ticks로 선택합니다.
 
-Forward Prediction은 Box Grid 전체를 예측한 후 Calculation을 실행합니다. 후보마다 다른 Box는 정규화한 로컬 위치끼리 대응하며, 예측 입력에는 현재 후보의 실제 Box 형상을 복원합니다. 메시·광선 표시 자료는 학습이나 Calculation 입력에 포함되지 않습니다.
+Forward Prediction은 원격에서 선택한 Box Grid를 예측하며 Calculation은 선택적 후처리입니다. Calculation 없이도 예측과 Viewer 표시가 가능합니다. 후보마다 다른 Box는 정규화한 로컬 위치끼리 대응하며, 후처리 입력에는 현재 후보의 실제 Box 형상과 예측 출처를 유지합니다. 메시·광선 표시 자료는 학습이나 Calculation 입력에 포함되지 않습니다.
 
 ## 결과가 예상과 다를 때
 

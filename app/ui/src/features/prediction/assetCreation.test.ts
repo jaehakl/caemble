@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import type { PredictionDatasetRecord, PredictionModelRecord } from '@/contracts/api/prediction'
-import { createPredictionModel, type PredictionCreationInput } from './assetCreation'
+import { createPredictionModel, predictionDatasetSelection, type PredictionCreationInput } from './assetCreation'
 import type { PredictionAssetController, PredictionAssetWork } from './assetManagement'
 import type { PredictionContext } from './predictionContextData'
 import { remoteArtifactSchema } from './remoteProtocol'
@@ -44,21 +44,18 @@ const calculations = [
   },
 ]
 const sourceContracts = { experimentId: 1, sourceHash: 'b'.repeat(64), varsSchema, records, calculations }
-const algorithm = { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance', calculationWeights: {} } as const
+const algorithm = { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' } as const
 const input: PredictionCreationInput = {
   context: {
     experimentId: 1,
     experimentRecords: records,
     calculations,
-    measurements: [],
-    fingerprint: 'context',
-    analysis: { fingerprint: 'analysis', items: [] },
   } as unknown as PredictionContext,
   sourceHash: sourceContracts.sourceHash,
   varsSchema,
   rules: [],
   resultContracts: {},
-  setup: { executionId: 'remote-knn', calculationIds: [4], algorithm },
+  setup: { executionId: 'remote-knn', recordIds: [10], calculationIds: [], algorithm },
   name: '온도 모델',
   launcherId,
   direction: 'forward',
@@ -227,6 +224,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Prediction model creation recovery', () => {
+  it('freezes explicit BoxGrid outputs without requiring Calculation data', () => {
+    const selection = predictionDatasetSelection(
+      { ...input, context: { ...input.context, calculations: [] } },
+      datasetRequestId,
+    )
+    expect(selection.record_ids).toEqual([10])
+    expect(selection.calculation_ids).toEqual([])
+  })
   it('reuses the matching hello receipt without fetching training data or preparing again', async () => {
     const { manager, remote, work } = harness(true)
     const result = await createPredictionModel(manager, input)
@@ -239,6 +244,7 @@ describe('Prediction model creation recovery', () => {
         manifest_sha256: checksum,
         verified: false,
       }),
+      { signal: undefined },
     )
     expect(result?.models?.forward).toMatchObject({ modelId, modelRevision: 1, datasetId, datasetRevision: 2 })
     expect(result?.routes?.forward).toEqual({ replicaId: 'local-replica', storageId, launcherId })

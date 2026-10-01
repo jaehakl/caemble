@@ -15,7 +15,8 @@ import pytest
 
 from predictor.errors import PredictionError
 from predictor.knn import KnnModel
-from predictor.models import ModelBundle, recorded_sample
+from predictor.models import ModelBundle
+from predictor.forward import recorded_sample
 from predictor.runtime import PredictorRuntime
 from predictor.storage import ArtifactStore, encode_json
 from .fixtures import dataset, definition, stage
@@ -36,19 +37,23 @@ def prepare(worker, direction="forward", manifest=None, **algorithm):
                 model={"modelId": f"model-{direction}", "revision": 1, "operationId": "operation-1", "name": direction})
 
 
-def test_forward_relative_coordinates_and_inverse_weights(tmp_path):
+def test_forward_relative_coordinates(tmp_path):
     worker = runtime(tmp_path)
-    forward = prepare(worker)
+    manifest = dataset()
+    for index, row in enumerate(manifest["recorded"]):
+        row["data"] = copy.deepcopy(row["data"])
+        row["data"]["axes"][0]["ticks"] = [100 + index]
+        row["data"]["boxGrid"]["lengthUnit"] = "mm" if index else "m"
+        for axis in row["data_schema"]["axes"][:3]:
+            axis["unit"] = row["data"]["boxGrid"]["lengthUnit"]
+        row["data"]["boxGrid"]["rotation"] = [[0, -1, 0], [1, 0, 0], [0, 0, 1]] if index else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    forward = prepare(worker, manifest=manifest)
     result = call(worker, "model.predict", instance=forward["instance"], input={"direction": "forward", "vars": {"x": .5}})
     assert result["output"][0]["values"] == pytest.approx([15])
     assert result["knn"]["neighbors"] == [
         {"measurementId": 1, "distanceSquared": .0625, "weight": .5},
         {"measurementId": 2, "distanceSquared": .0625, "weight": .5}]
     assert forward["profile"]["rowCount"] == 3
-    inverse = prepare(worker, "inverse")
-    result = call(worker, "model.predict", instance=inverse["instance"], input={"direction": "inverse", "targets": {"4": {"dtype": "float64", "shape": [], "axes": [], "data": 15}}})
-    assert result["output"][0]["values"] == pytest.approx([.5])
-    assert inverse["profile"]["knn"]["inputScales"] == pytest.approx([np.sqrt(200 / 3)])
 
 
 def test_restart_reloads_without_dataset_or_training(tmp_path):
@@ -134,14 +139,15 @@ def test_dataset_sync_replaces_payload_but_models_survive(tmp_path):
     assert loaded["profile"]["rowCount"] == 3
 
 
-def test_null_exclusion_and_strict_calculation_contract(tmp_path):
+def test_invalid_sample_excluded_without_requiring_calculations(tmp_path):
     manifest = dataset()
-    manifest["calculationData"][0]["data"]["data"] = None
-    manifest["calculationData"][1]["data"]["dtype"] = "float32"
-    bundle = ModelBundle.prepare(manifest, "inverse", definition(manifest), {"modelId": "m", "revision": 1, "operationId": "o", "name": "n"}, 1000000)
-    assert bundle.profile()["includedMeasurementIds"] == [3]
-    assert bundle.profile()["excluded"]["invalid-tensor"] == 1
-    assert bundle.profile()["excluded"]["layout-mismatch"] == 1
+    manifest.pop("calculations")
+    manifest.pop("calculationData")
+    manifest["recorded"][0]["data"]["storage"]["value"] = [[[[[[[None]]]]]]]
+    prepared = prepare(runtime(tmp_path), manifest=manifest)
+    assert prepared["profile"]["includedMeasurementIds"] == [2, 3]
+    assert prepared["profile"]["excluded"]["missing-block"] == 1
+    assert "calculationWeights" not in prepared["artifact"]["definition"]["algorithm"]
 
 
 def test_memory_limit_not_browser_cell_limit(tmp_path):
@@ -270,24 +276,23 @@ def test_polar_and_modal_groups_use_correct_numerical_representation(tmp_path):
     assert predicted["output"][0]["values"][:2] == pytest.approx([-np.cos(.1), np.sin(.1)])
 
 
-def test_zero_distance_uses_all_exact_rows_and_clamps_inverse():
+def test_zero_distance_uses_all_exact_rows():
     sample = lambda key, value, **extra: {"layout": {"key": key, "dtype": "float64", "shape": [], **extra}, "values": [value]}
-    rows = [{"measurementId": index + 1, "inputs": [sample("calculation:1", 1)], "outputs": [sample("x", value, minimum=0, maximum=2)]}
+    rows = [{"measurementId": index + 1, "inputs": [sample("x", 1, minimum=0, maximum=2)], "outputs": [sample("temperature", value)]}
             for index, value in enumerate((1, 2, 9))]
-    model = KnnModel.build(rows, direction="inverse", fingerprint="f", input_keys=["calculation:1"], output_keys=["x"],
+    model = KnnModel.build(rows, fingerprint="f", input_keys=["x"], output_keys=["temperature"],
                            algorithm={"kMode": "manual", "manualK": 1, "weighting": "distance"}, memory_budget=1000000)
-    result = model.predict([sample("calculation:1", 1)])
+    result = model.predict([sample("x", 1, minimum=0, maximum=2)])
     assert len(result["knn"]["neighbors"]) == 3
-    assert result["output"][0]["values"] == [2]
+    assert result["output"][0]["values"] == [4]
 
 
-def test_browser_numpy_numerical_contract_fixture():
-    fixture = json.loads(Path(__file__).with_name("browser_reference.json").read_text(encoding="utf-8"))
+def test_fixed_forward_numerical_contract_fixture():
+    fixture = json.loads(Path(__file__).with_name("forward_reference.json").read_text(encoding="utf-8"))
     for case in fixture["cases"]:
         options = case["options"]
-        algorithm = {"kMode": "manual", "manualK": options["k"], "weighting": options["weighting"],
-                     "calculationWeights": {key.removeprefix("calculation:"): weight for key, weight in options.get("inputBlockWeights", {}).items()}}
-        model = KnnModel.build(options["rows"], direction=options["direction"], fingerprint=case["name"],
+        algorithm = {"kMode": "manual", "manualK": options["k"], "weighting": options["weighting"]}
+        model = KnnModel.build(options["rows"], fingerprint=case["name"],
                                input_keys=options["inputKeys"], output_keys=options["outputKeys"], algorithm=algorithm,
                                memory_budget=1000000, nearest_only=options.get("nearestOnly", False))
         result = model.predict(case["query"])
@@ -354,15 +359,56 @@ def test_direct_scoped_grant_preparation_verifies_chunks_without_retaining_datas
         thread.join()
 
 
-def test_selection_pins_only_requested_calculation_contracts(tmp_path):
+def test_output_selection_ignores_calculation_contracts(tmp_path):
     worker = runtime(tmp_path)
     manifest = dataset()
-    extra = copy.deepcopy(manifest["calculations"][0])
-    extra["id"] = 5
-    manifest["calculations"].append(extra)
+    extra = {**manifest["records"][0], "id": 11, "name": "heat.other"}
+    manifest["records"].append(extra)
+    # A broken Calculation is unrelated to Forward input preparation.
+    manifest["calculations"][0]["output_layout"] = None
+    manifest["calculationData"][0]["data"] = {"shape": [10 ** 12]}
     reference = stage(worker, manifest)
-    model_definition = {**definition(manifest), "calculationIds": [4], "requiredRecordIds": [10]}
-    prepared = call(worker, "model.prepare", dataset=reference, direction="inverse", definition=model_definition,
+    model_definition = {**definition(manifest), "requiredRecordIds": [10]}
+    prepared = call(worker, "model.prepare", dataset=reference, direction="forward", definition=model_definition,
                     model={"modelId": "selected", "revision": 1, "operationId": "operation", "name": "Selected"})
-    assert prepared["profile"]["inputLayouts"][0]["key"] == "calculation:4"
-    assert len(prepared["profile"]["inputLayouts"]) == 1
+    assert [item["recordId"] for item in prepared["recordProfiles"]] == [10]
+    result = call(worker, "model.predict", instance=prepared["instance"], input={"direction": "forward", "vars": {"x": .5}})
+    assert [item["layout"]["key"] for item in result["output"]] == ["heat.T"]
+    assert result["output"][0]["values"] == pytest.approx([15])
+
+
+def test_retired_inverse_requests_do_not_create_or_run_models(tmp_path):
+    worker = runtime(tmp_path)
+    hello = call(worker, "predictor.hello")
+    assert hello["capabilities"]["directions"] == ["forward"]
+    assert hello["capabilities"]["representations"] == ["box-relative-v2"]
+    with pytest.raises(PredictionError, match="retired") as error:
+        prepare(worker, "inverse")
+    assert error.value.code == "unsupported-model"
+    assert call(worker, "model.list")["models"] == []
+    forward = prepare(worker)
+    with pytest.raises(PredictionError, match="Forward Vars"):
+        call(worker, "model.predict", instance=forward["instance"], input={"direction": "inverse", "targets": {}})
+
+
+@pytest.mark.parametrize("change", ["components", "unit", "shape", "time", "frequency"])
+def test_unsupported_boxgrid_differences_report_excluded_cohort(tmp_path, change):
+    manifest = dataset()
+    row = copy.deepcopy(manifest["recorded"][2])
+    manifest["recorded"][2] = row
+    if change == "components":
+        row["data"]["boxGrid"]["components"] = ["other"]
+        row["data"]["axes"][6]["ticks"] = ["other"]
+    elif change == "unit":
+        row["data_schema"]["unit"] = "Cel"
+    elif change == "shape":
+        row["data"]["shape"][0] = 2
+        row["data"]["boxGrid"]["gridShape"][0] = 2
+        row["data"]["axes"][0]["ticks"] = [0, 1]
+        row["data"]["storage"]["value"] *= 2
+    else:
+        row["data"]["axes"][3 if change == "time" else 4]["ticks"] = [1]
+    prepared = prepare(runtime(tmp_path), manifest=manifest)
+    assert prepared["profile"]["includedMeasurementIds"] == [1, 2]
+    assert prepared["profile"]["excluded"]["layout-mismatch"] == 1
+    assert prepared["profile"]["diagnostics"][0]["reason"] == "layout-mismatch"

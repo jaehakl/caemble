@@ -4,11 +4,14 @@ import hashlib
 import os
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 import jwt
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -21,7 +24,7 @@ from prediction.datasets import content_identity, freeze_dataset, register_local
 from prediction.db import Dataset, DatasetGrant, DatasetObject, DatasetRevision, ModelRevision, PredictionModel
 from prediction.grants import create_grant, read_granted_object, read_granted_revision, release_grant, renew_grant
 from prediction.lifecycle import delete_asset, register_storage
-from prediction.models import complete_model, lease_model, reserve_model
+from prediction.models import complete_model, lease_model, reserve_model, list_models
 from prediction.schemas import DatasetSelection, DeleteRequest, LocalDatasetRegistration, ModelComplete, ModelLeaseRequest, ModelReserve, StorageRegistration
 from settings import settings
 from simulation.db import Experiment, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
@@ -32,12 +35,92 @@ from user_auth.db import User
 
 
 class PredictionIdentityTests(unittest.TestCase):
+    def test_new_model_and_dataset_contracts_reject_inverse_training(self):
+        with self.assertRaises(ValidationError):
+            ModelReserve(request_id=uuid4(), name="Retired", direction="inverse", dataset_id=uuid4(),
+                dataset_revision=1, definition={}, storage_id=uuid4(), launcher_id=uuid4())
+        with self.assertRaises(ValidationError):
+            DatasetSelection(request_id=uuid4(), name="Forward", experiment_id=1, source_hash="a" * 64,
+                vars_schema={}, record_ids=[1], calculation_ids=[2])
+
     def test_content_identity_ignores_location_but_preserves_meaning(self):
         first = {"kind": "caemble.object", "version": 1, "id": str(uuid4()), "sha256": "a" * 64,
             "encoding": "json", "byteLength": 3, "length": 1}
         moved = {**first, "id": str(uuid4())}
         self.assertEqual(content_identity(first), content_identity(moved))
         self.assertNotEqual(content_identity(first), content_identity({**moved, "sha256": "b" * 64}))
+
+
+class RetiredPredictionGuardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retired_ready_receipt_replays_but_unfinished_publication_is_rejected(self):
+        request_id = uuid4()
+        body = ModelComplete(request_id=request_id, manifest_sha256="a" * 64,
+            files=[{"name": "model.json", "sha256": "b" * 64, "byteLength": 3}],
+            profile={}, input_layouts=[], output_layouts=[])
+        artifact = body.model_dump(mode="json", exclude={"request_id", "verified"})
+        model = SimpleNamespace(id=str(uuid4()), direction="inverse")
+        revision = SimpleNamespace(request_id=str(request_id), state="ready", artifact=artifact)
+        db = SimpleNamespace(get=AsyncMock(return_value=revision), commit=AsyncMock())
+        response = {"id": model.id, "support_status": "retired"}
+        with patch("prediction.models.owned", AsyncMock(return_value=model)), \
+                patch("prediction.models.model_view", AsyncMock(return_value=response)):
+            self.assertEqual(await complete_model(db, model.id, 1, body, "owner"), response)
+            revision.state = "reserved"
+            with self.assertRaises(HTTPException) as error:
+                await complete_model(db, model.id, 1, body, "owner")
+            self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(revision.artifact, artifact)
+        db.commit.assert_not_awaited()
+
+    async def test_retired_lease_can_release_but_cannot_load(self):
+        from prediction.db import ModelLease
+        model = SimpleNamespace(id=str(uuid4()), direction="inverse")
+        body = ModelLeaseRequest(job_id=uuid4(), revision=1)
+        db = SimpleNamespace(get=AsyncMock(return_value=None), commit=AsyncMock(), delete=AsyncMock())
+        with patch("prediction.models.owned", AsyncMock(return_value=model)):
+            with self.assertRaises(HTTPException) as error:
+                await lease_model(db, model.id, body, "owner")
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertEqual(await lease_model(db, model.id, body, "owner", release=True), {"released": True})
+        db.get.assert_called_with(ModelLease, (model.id, 1, str(body.job_id)))
+        db.delete.assert_not_awaited()
+
+    async def test_retired_prepare_retry_is_rejected_before_changing_operation(self):
+        from prediction.operations import issue_grant
+        operation = SimpleNamespace(kind="prepare", state="interrupted", stage="preparing", asset_id=str(uuid4()))
+        db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(direction="inverse")), commit=AsyncMock())
+        with self.assertRaises(HTTPException) as error:
+            await issue_grant(db, operation, retry=True)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(operation.state, "interrupted")
+        db.commit.assert_not_awaited()
+
+
+class LocalForwardDatasetTests(unittest.IsolatedAsyncioTestCase):
+    async def test_registration_preserves_legacy_calculation_metadata_without_requiring_live_calculations(self):
+        contracts = {"experimentId": 3, "sourceHash": "a" * 64,
+            "records": [{"id": 5}], "calculations": [{"id": 9001, "source_hash": "retired-source"}]}
+        body = LocalDatasetRegistration(request_id=uuid4(), dataset_id=uuid4(), revision=1,
+            name="Legacy data", experiment_id=3, source_hash="a" * 64,
+            fingerprint="sha256:" + "d" * 64, manifest_sha256="d" * 64,
+            storage_id=uuid4(), launcher_id=uuid4(), sample_count=1, source_contracts=contracts)
+        db = SimpleNamespace(get=AsyncMock(return_value=None), add=Mock(), flush=AsyncMock(),
+            scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [5])),
+            execute=AsyncMock(), commit=AsyncMock())
+        with patch("prediction.datasets.connected_storage", AsyncMock()), \
+                patch("prediction.datasets.lock_identity", AsyncMock()), \
+                patch("prediction.datasets.source_experiment", AsyncMock()), \
+                patch("prediction.replicas.put_replica", AsyncMock()) as put_replica, \
+                patch("prediction.datasets.dataset_view", AsyncMock(return_value={"id": str(body.dataset_id)})):
+            await register_local_dataset(db, body, "owner")
+        db.scalars.assert_awaited_once()
+        revision = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], DatasetRevision))
+        self.assertEqual(revision.payload, {"sourceContracts": contracts})
+        self.assertEqual(revision.summary["source_contracts"], contracts)
+        self.assertEqual(revision.summary["manifest_sha256"], body.manifest_sha256)
+        self.assertEqual(revision.fingerprint, body.fingerprint)
+        self.assertEqual(put_replica.await_args.kwargs["artifact"],
+            {"manifest_sha256": body.manifest_sha256, "fingerprint": body.fingerprint})
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
@@ -305,8 +388,26 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stale.exception.status_code, 410)
             finished = await complete_model(db, first["id"], 2, self.completion(next_request.request_id), self.owner)
             self.assertEqual(finished["current_revision"], 2)
-            inverse = await reserve_model(db, self.model_request(dataset, direction="inverse"), self.owner)
-            self.assertNotEqual(inverse["id"], finished["id"])
+            with self.assertRaises(ValidationError):
+                self.model_request(dataset, direction="inverse")
+
+    async def test_legacy_inverse_remains_listed_and_reconciles_ready_receipt_without_launching(self):
+        async with self.sessions() as db:
+            dataset = await freeze_dataset(db, self.selection(), self.owner)
+            request = self.model_request(dataset)
+            model = await reserve_model(db, request, self.owner)
+            completion = self.completion(request.request_id)
+            finished = await complete_model(db, model["id"], 1, completion, self.owner)
+            stored = await db.get(PredictionModel, model["id"])
+            stored.direction = "inverse"  # Seed a pre-retirement asset without an active Inverse creation API.
+            await db.commit()
+            replay = await complete_model(db, stored.id, 1, completion, self.owner)
+            self.assertEqual(replay["support_status"], "retired")
+            self.assertEqual(replay["revisions"], finished["revisions"])
+            self.assertEqual((await list_models(db, self.owner))["items"][0]["id"], stored.id)
+            with self.assertRaises(HTTPException) as denied:
+                await reserve_model(db, self.model_request(dataset, model_id=stored.id, expected_revision=1), self.owner)
+            self.assertEqual(denied.exception.status_code, 409)
 
     async def test_concurrent_creation_reuses_one_revision(self):
         request = self.selection()

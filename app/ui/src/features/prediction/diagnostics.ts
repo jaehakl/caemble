@@ -7,10 +7,8 @@ import type { PredictionExecutionResult, PredictionModelProfile } from './execut
 
 export const PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT = 100
 
-export function predictionCohortDiagnosticActivities(
-  profile: PredictionModelProfile,
-): readonly RuntimeActivityDraft[] {
-  const directionLabel = profile.direction === 'forward' ? 'Forward' : 'Inverse'
+export function predictionCohortDiagnosticActivities(profile: PredictionModelProfile): readonly RuntimeActivityDraft[] {
+  const directionLabel = 'Forward'
   const activities: RuntimeActivityDraft[] = profile.diagnostics
     .slice(0, PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT)
     .map((diagnostic) => ({
@@ -71,7 +69,7 @@ export function emitPredictionQueryDiagnostics(
   const fingerprint = `query:${result.direction}:${modelFingerprint}:${JSON.stringify(result.queryDiagnostics)}`
   if (emittedFingerprints.has(fingerprint)) return false
   emittedFingerprints.add(fingerprint)
-  const directionLabel = result.direction === 'forward' ? 'Forward' : 'Inverse'
+  const directionLabel = 'Forward'
   result.queryDiagnostics.slice(0, PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT).forEach((diagnostic) => {
     emitRuntimeActivity(onActivity, {
       source: 'prediction',

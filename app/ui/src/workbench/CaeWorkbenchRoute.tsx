@@ -189,15 +189,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const guardReplacement = page.guardReplacement
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
+  const [predictionExecutionContainer, setPredictionExecutionContainer] = useState<HTMLDivElement | null>(null)
   const [predictionVarsContainer, setPredictionVarsContainer] = useState<HTMLDivElement | null>(null)
   const [analysisCommand, setAnalysisCommand] = useState<AnalysisCommand | null>(null)
   const [predictionCommand, setPredictionCommand] = useState<PredictionWorkspaceCommand | null>(null)
   const [predictionViewer, setPredictionViewer] = useState<PredictionViewerState | null>(null)
   const [predictionState, setPredictionState] = useState<PredictionWorkspaceChromeState>({
     busy: false,
-    canSample: false,
+    canPredict: false,
     canValidate: false,
-    direction: 'forward',
     status: 'Prediction을 준비하는 중입니다.',
     validateDisabledReason: 'Prediction 결과가 필요합니다.',
   })
@@ -250,8 +250,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const requestAnalysisCommand = useCallback((type: AnalysisRibbonCommand) => {
     setAnalysisCommand({ id: ++commandSequence.current, type })
   }, [])
-  const requestPredictionCommand = useCallback((type: PredictionRibbonCommand, sampleCount?: number) => {
-    setPredictionCommand({ id: ++commandSequence.current, type, sampleCount })
+  const requestPredictionCommand = useCallback((type: PredictionRibbonCommand) => {
+    setPredictionCommand({ id: ++commandSequence.current, type })
   }, [])
   const requestCalculationSave = useCallback(() => {
     setCalculationSaveCommand((current) => current + 1)
@@ -400,6 +400,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           onRequestLogin={requestAccount}
           selectedCalculationId={workbench.selectionContext.calculationId}
           varsContainer={predictionVarsContainer}
+          executionContainer={predictionExecutionContainer}
           workbench={workbench}
         />
       </Suspense>
@@ -487,6 +488,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           {predictionActivated ? (
             <div className={isPrediction ? 'h-full min-h-0' : 'hidden'} hidden={!isPrediction}>
               <PredictionLayout
+                execution={<div ref={setPredictionExecutionContainer} />}
                 menubar={menubar}
                 ribbon={ribbon}
                 vars={<div className="h-full min-h-0" ref={setPredictionVarsContainer} />}

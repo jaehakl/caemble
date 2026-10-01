@@ -5,7 +5,6 @@ from uuid import uuid5
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
 
-from calculation.db import Calculation, CalculationData, CalculationExperimentRecord, CalculationSource
 from prediction.common import IDENTITY_NAMESPACE, connected_storage, digest, lock_identity, owned, require_dataset_idle
 from prediction.db import Dataset, DatasetObject, DatasetRequest, DatasetRevision, Replica
 from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
@@ -43,16 +42,6 @@ async def capture(db, selection, user_id):
     ).order_by(ExperimentRecord.id).with_for_update(read=True))).all())
     if {row.id for row in records} != set(selection.record_ids):
         raise HTTPException(422, "Selected Records do not belong to this Experiment.")
-    source_ids = select(Calculation.source_id).where(Calculation.id.in_(selection.calculation_ids), Calculation.experiment_id == experiment.id)
-    await db.scalars(select(CalculationSource).where(CalculationSource.id.in_(source_ids)).order_by(
-        CalculationSource.id).with_for_update(read=True))
-    calculations = list((await db.scalars(select(Calculation).where(
-        Calculation.id.in_(selection.calculation_ids), Calculation.experiment_id == experiment.id
-    ).order_by(Calculation.id).with_for_update(read=True))).all())
-    if {row.id for row in calculations} != set(selection.calculation_ids):
-        raise HTTPException(422, "Selected Calculations do not belong to this Experiment.")
-    if any(row.contract_status != "ready" or row.validated_source_revision != row.source.revision for row in calculations):
-        raise HTTPException(409, "Preflight selected Calculations before freezing their data.")
     measurements = list((await db.scalars(select(Measurement).where(
         Measurement.experiment_id == experiment.id, Measurement.user_id == user_id,
         Measurement.recorded_at.is_not(None)
@@ -62,11 +51,6 @@ async def capture(db, selection, user_id):
         RecordedData.measurement_id.in_(measurement_ids), RecordedData.experiment_record_id.in_(selection.record_ids),
         RecordedData.user_id == user_id
     ).order_by(RecordedData.measurement_id, RecordedData.experiment_record_id).with_for_update(read=True))).all())
-    calculation_data = list((await db.scalars(select(CalculationData).where(
-        CalculationData.measurement_id.in_(measurement_ids), CalculationData.calculation_id.in_(selection.calculation_ids)
-    ).order_by(CalculationData.measurement_id, CalculationData.calculation_id).with_for_update(read=True))).all())
-    links = (await db.execute(select(CalculationExperimentRecord).where(
-        CalculationExperimentRecord.calculation_id.in_(selection.calculation_ids)))).scalars().all()
     record_map = {row.id: row for row in records}
     if any(row.data is None for row in recorded):
         raise HTTPException(422, "Prediction requires native RecordedData, not external data URLs.")
@@ -85,12 +69,7 @@ async def capture(db, selection, user_id):
             "quantity_kind": record_map[row.experiment_record_id].quantity_kind,
             "tensor_order": record_map[row.experiment_record_id].tensor_order,
             "data_schema": record_map[row.experiment_record_id].data_schema} for row in recorded],
-        "calculations": [{"id": row.id, "experiment_id": row.experiment_id, "name": row.name,
-            "source_hash": row.source_hash, "source_code": row.source_code, "source_revision": row.source_revision,
-            "revision": row.revision, "output_layout": row.output_layout, "contract_status": row.contract_status,
-            "experiment_record_ids": sorted(link.experiment_record_id for link in links if link.calculation_id == row.id)} for row in calculations],
-        "calculationData": [{"id": row.id, "measurement_id": row.measurement_id,
-            "calculation_id": row.calculation_id, "data": row.data} for row in calculation_data],
+        "calculations": [], "calculationData": [],
     }
     # Check every dependency before publishing. Retention pins are committed in the
     # same transaction, so source deletion cannot race the object cleanup sweep.
@@ -105,7 +84,7 @@ async def capture(db, selection, user_id):
 def source_contracts(payload):
     contracts = deepcopy({key: payload[key] for key in ("experimentId", "sourceHash", "varsSchema", "records", "rules", "resultContracts")})
     contracts["calculations"] = []
-    for source in payload["calculations"]:
+    for source in payload.get("calculations", []):
         calculation = {key: source[key] for key in ("id", "name", "source_hash", "source_revision", "revision", "contract_status", "experiment_record_ids")}
         layout = source.get("output_layout")
         if layout:
@@ -248,14 +227,16 @@ async def register_local_dataset(db, body, user_id):
     contracts = body.source_contracts
     if contracts.get("experimentId") != body.experiment_id or contracts.get("sourceHash") != body.source_hash:
         raise HTTPException(422, "Local Dataset contracts must identify their native Experiment and source hash.")
-    for key, table in (("records", ExperimentRecord), ("calculations", Calculation)):
-        entries = contracts.get(key, [])
-        if not isinstance(entries, list) or any(not isinstance(entry, dict) or type(entry.get("id")) is not int for entry in entries):
-            raise HTTPException(422, "Local Dataset source contracts must contain native integer IDs.")
-        ids = {entry["id"] for entry in entries}
-        found = set((await db.scalars(select(table.id).where(table.id.in_(ids), table.experiment_id == body.experiment_id))).all())
-        if ids != found:
-            raise HTTPException(422, "Local Dataset source contracts belong to another Experiment or were removed.")
+    # Legacy Calculation metadata remains part of the immutable Dataset, but
+    # Forward registration depends only on the native output Records.
+    records = contracts.get("records", [])
+    if not isinstance(records, list) or any(not isinstance(record, dict) or type(record.get("id")) is not int for record in records):
+        raise HTTPException(422, "Local Dataset source contracts must contain native integer IDs.")
+    record_ids = {record["id"] for record in records}
+    found = set((await db.scalars(select(ExperimentRecord.id).where(
+        ExperimentRecord.id.in_(record_ids), ExperimentRecord.experiment_id == body.experiment_id))).all())
+    if record_ids != found:
+        raise HTTPException(422, "Local Dataset source contracts belong to another Experiment or were removed.")
     summary = {"sample_count": body.sample_count, "source_hash": body.source_hash,
         "manifest_sha256": body.manifest_sha256, "source_contracts": body.source_contracts}
     db.add(DatasetRevision(dataset_id=identity, revision=body.revision, request_id=str(body.request_id),

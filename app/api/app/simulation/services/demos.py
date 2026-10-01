@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from calculation.db import Calculation, CalculationData
-from simulation.db import Experiment, ExperimentDemo, Measurement
+from simulation.db import Experiment, ExperimentDemo, ExperimentRecord, Measurement, RecordedData
 from simulation.schemas import DemoExperimentUpdateRequest
 from user_auth.schemas import UserData
 from user_auth.db import Role, UserRole
@@ -24,8 +24,12 @@ async def _prediction_counts(db: AsyncSession, experiment_ids: Iterable[int]) ->
         return counts
 
     recorded = await db.execute(
-        select(Measurement.experiment_id, func.count(Measurement.id))
-        .where(Measurement.experiment_id.in_(ids), Measurement.recorded_at.is_not(None))
+        select(Measurement.experiment_id, func.count(func.distinct(Measurement.id)))
+        .join(RecordedData, RecordedData.measurement_id == Measurement.id)
+        .join(ExperimentRecord, ExperimentRecord.id == RecordedData.experiment_record_id)
+        .where(Measurement.experiment_id.in_(ids), Measurement.recorded_at.is_not(None),
+               ExperimentRecord.experiment_id == Measurement.experiment_id,
+               ExperimentRecord.data_schema.has_key("boxGrid"), RecordedData.data.is_not(None))
         .group_by(Measurement.experiment_id)
     )
     for experiment_id, count in recorded.all():
@@ -60,7 +64,8 @@ def _summary(
     demo: ExperimentDemo | None,
 ) -> dict[str, Any]:
     version = f"{experiment.version_major}.{experiment.version_minor}.{experiment.version_patch}"
-    prediction_ready = all(counts[field] > 0 for field in counts)
+    # This is training-data availability, never per-user model/Launcher execution readiness.
+    prediction_ready = counts.get("recordedMeasurements", 0) > 0
     return {
         "id": experiment.id,
         "user_id": experiment.user_id,

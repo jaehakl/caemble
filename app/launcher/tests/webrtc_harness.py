@@ -175,8 +175,8 @@ class WebRtcHarness:
             return 404, "application/json", b'{"detail":"Not found"}'
         return 200, "application/json", json.dumps(value).encode("utf-8")
 
-    async def run_browser(self, *, timeout=120):
-        self.browser = await asyncio.create_subprocess_exec("node", str(BROWSER_RUNNER), self.url,
+    async def run_browser(self, *, timeout=120, runner=BROWSER_RUNNER):
+        self.browser = await asyncio.create_subprocess_exec("node", str(runner), self.url,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             **({"creationflags": 0x08000000} if os.name == "nt" else {}))
         stdout, stderr = await asyncio.wait_for(self.browser.communicate(), timeout=timeout)

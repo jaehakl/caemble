@@ -16,7 +16,13 @@ export const predictionNumericDtypes = [
 ] as const
 
 export type PredictionNumericDtype = (typeof predictionNumericDtypes)[number]
-export type PredictionDirection = 'forward' | 'inverse'
+export type PredictionDirection = 'forward'
+export type PredictionWeighting = 'uniform' | 'distance'
+export type PredictionNeighbor = Readonly<{
+  measurementId: number
+  distanceSquared: number
+  weight: number
+}>
 
 export type PredictionAxis = Readonly<{
   name: string
@@ -42,12 +48,6 @@ export type PredictionTensorLayout = Readonly<{
 export type PredictionTensorSample = Readonly<{
   layout: PredictionTensorLayout
   values: readonly number[]
-}>
-
-export type PredictionTrainingRow = Readonly<{
-  measurementId: number
-  inputs: readonly PredictionTensorSample[]
-  outputs: readonly PredictionTensorSample[]
 }>
 
 export type PredictionCohortExclusionReason =

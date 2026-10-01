@@ -9,11 +9,6 @@
       "count": 2
     }
   },
-  "src/features/prediction/PredictionWorkspace.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 8
-    }
-  },
   "src/features/viewer/workspace/useCadWorkspace.ts": {
     "react-hooks/exhaustive-deps": {
       "count": 1

@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CalculationDataOutput } from '@/api'
-import {
-  comparePredictionOutput,
-  inverseValidationAggregateError,
-  inverseValidationAggregateErrorFromScales,
-} from './metrics'
+import { comparePredictionOutput } from './metrics'
 
 const reference: CalculationDataOutput = {
   dtype: 'float64',
@@ -32,29 +28,13 @@ describe('shape-based Prediction metrics', () => {
       maxAbsoluteError: 4,
     })
   })
-  it('compares by index and applies the same rule to both inverse aggregate paths', () => {
+  it('compares matching shapes by index across numeric dtypes and axis coordinates', () => {
     expect(comparePredictionOutput(reference, actual)).toMatchObject({
       compatible: true,
       mae: 3,
       rmse: Math.sqrt(10),
       maxAbsoluteError: 4,
     })
-    const pairs = [{ calculationId: 1, reference, actual }]
-    const layout = { key: 'calculation:1', dtype: 'float64' as const, shape: [2], axes: reference.axes }
-    expect(inverseValidationAggregateErrorFromScales(pairs, { 1: 1 }, [layout], new Float64Array([1, 2]))).toBeCloseTo(
-      2,
-    )
-    expect(
-      inverseValidationAggregateError(
-        pairs,
-        { 1: 1 },
-        [
-          { measurementId: 1, inputs: [{ layout, values: [0, 0] }], outputs: [] },
-          { measurementId: 2, inputs: [{ layout, values: [2, 4] }], outputs: [] },
-        ],
-        [1, 2],
-      ),
-    ).toBeCloseTo(2)
   })
 
   it('rejects different shapes with the same number of elements', () => {

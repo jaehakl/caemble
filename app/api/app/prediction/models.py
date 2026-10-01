@@ -17,7 +17,10 @@ async def model_view(db, row):
     revisions = (await db.scalars(select(ModelRevision).where(ModelRevision.model_id == row.id)
         .order_by(ModelRevision.revision.desc()))).all()
     return {"id": row.id, "name": row.name, "experiment_id": row.experiment_id, "direction": row.direction,
-        "algorithm": "knn", "state": row.state, "current_revision": row.current_revision,
+        "algorithm": next((item.definition.get("algorithm", {}).get("kind", "knn")
+            for item in revisions if item.revision == row.current_revision), "knn"),
+        "support_status": "supported" if row.direction == "forward" else "retired",
+        "state": row.state, "current_revision": row.current_revision,
         "delete_id": row.delete_id,
         "revisions": [{"revision": item.revision, "operation_id": item.request_id, "state": item.state,
             "dataset_id": item.dataset_id, "dataset_revision": item.dataset_revision,
@@ -36,12 +39,16 @@ async def list_models(db, user_id, experiment_id=None):
 
 
 async def reserve_model(db, body, user_id):
+    if body.direction != "forward":
+        raise HTTPException(422, "Inverse Prediction is retired. Use Optimization for Inverse Design.")
     identity = str(body.model_id) if body.model_id else str(uuid5(IDENTITY_NAMESPACE, f"{user_id}/model/{body.request_id}"))
     await lock_identity(db, identity)
     row = await db.get(PredictionModel, identity)
     request_hash = digest(body.model_dump(mode="json"))
     if row is not None:
         row = await owned(db, PredictionModel, identity, user_id)
+        if row.direction != "forward":
+            raise HTTPException(409, "Inverse Prediction models are retained for management only.")
         previous = await db.scalar(select(ModelRevision).where(
             ModelRevision.model_id == identity, ModelRevision.request_id == str(body.request_id)))
         if previous is not None:
@@ -66,6 +73,9 @@ async def reserve_model(db, body, user_id):
     if (not isinstance(algorithm, dict) or algorithm.get("kind") != "knn"
             or definition.get("direction", body.direction) != body.direction):
         raise HTTPException(422, "Model definition must identify kNN and its requested direction.")
+    if (definition.get("calculationIds") or algorithm.get("calculationWeights")
+            or any(key in definition for key in ("targets", "constraints", "objectiveWeights"))):
+        raise HTTPException(422, "Forward models accept Vars and BoxGrid outputs, without Calculation objectives.")
     if definition.get("snapshotFingerprint", dataset_revision.fingerprint) != dataset_revision.fingerprint:
         raise HTTPException(409, "Model definition targets another Dataset fingerprint.")
     if row is None:
@@ -112,6 +122,8 @@ async def complete_model(db, model_id, revision, body, user_id):
         if item.artifact != artifact:
             raise HTTPException(409, "Saved model revision is immutable.")
         return await model_view(db, row)
+    if row.direction != "forward":
+        raise HTTPException(409, "Inverse Prediction preparation is retired. Existing saved files are retained.")
     if item.state != "reserved":
         raise HTTPException(410, "Model preparation was superseded by a newer request.")
     operation = await db.get(Operation, item.request_id)
@@ -140,6 +152,8 @@ async def lease_model(db, model_id, body, user_id, *, release=False):
             await db.delete(lease)
             await db.commit()
         return {"released": True}
+    if row.direction != "forward":
+        raise HTTPException(409, "Inverse Prediction is retired. This model is available for management only.")
     job = await db.get(Job, str(body.job_id))
     revision = await db.get(ModelRevision, (row.id, body.revision))
     if (job is None or job.user_id != user_id or job.slave_app_id != "predictor" or job.job_mode != "webrtc"

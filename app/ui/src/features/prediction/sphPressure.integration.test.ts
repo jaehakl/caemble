@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { expect, it } from 'vitest'
-import type { BoxGridData, BoxGridProfile } from '@/contracts/boxGrid'
+import { BOX_GRID_AXES, type BoxGridData, type BoxGridProfile } from '@/contracts/boxGrid'
 import { createDataTensor } from '@/lib/cad/model/dataTensor'
 import type { RecordedDataRule } from '@/lib/cad/model/descriptor'
 import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import { createCalculationInput } from '@/lib/calculation/input'
-import { predictedRecordedData, predictionRecordedRowSample } from './data'
-import { buildPredictionKnnModel, predictWithKnn } from './knn'
+import { predictedRecordedData } from './data'
+import type { PredictionTensorSample } from './types'
 
 it('consumes Catalog SPH pressure and density through Calculation and Forward without a new result format', () => {
   const contracts = JSON.parse(
@@ -53,20 +53,23 @@ with open_catalog() as catalog:
       boxGrid,
       axes: [[0.5, 1.5, 2.5], [0.5], [0.5], [2], [0], ['value'], ['value']].map((ticks) => ({ ticks })),
     })
-    const sample = predictionRecordedRowSample({
-      name,
-      measurement_id: 1,
-      experiment_record_id: name === 'pressure' ? 1 : 2,
-      dtype: 'float64',
-      tensor_order: 0,
-      quantity_kind: null,
-      data_schema: result,
-      data: tensor,
-    })
+    const sample: PredictionTensorSample = {
+      layout: {
+        key: name,
+        dtype: 'float64',
+        shape: tensor.shape,
+        boxGrid,
+        axes: result.axes!.map((axis, index) => ({
+          name: axis.name ?? BOX_GRID_AXES[index],
+          ...('unit' in axis ? { unit: axis.unit } : {}),
+          ticks: tensor.axes![index].ticks!,
+        })),
+      },
+      values,
+    }
     return { rule, tensor, sample, boxGrid }
   }
   const first = [record('pressure', [-20, 0, 0]), record('density', [8, 3, 0])]
-  const second = [record('pressure', [-40, 0, 0]), record('density', [12, 3, 0])]
   const rules = first.map((item) => item.rule)
   const measured = createCalculationInput(rules, { pressure: first[0].tensor, density: first[1].tensor })
   expect(measured.pressure.quantityKind).toBe('Pressure')
@@ -76,20 +79,8 @@ with open_catalog() as catalog:
   expect(measured.pressure.boxGrid.configuration).toBe('current')
   expect(measured.pressure.boxGrid.weighting).toBe('material-volume')
   expect(measured.density.boxGrid.weighting).toBeUndefined()
-  const scalar = (value: number) => ({ layout: { key: 'x', dtype: 'float64' as const, shape: [] }, values: [value] })
-  const model = buildPredictionKnnModel({
-    direction: 'forward',
-    fingerprint: 'sph-pressure',
-    inputKeys: ['x'],
-    outputKeys: ['pressure', 'density'],
-    k: 2,
-    weighting: 'uniform',
-    rows: [
-      { measurementId: 1, inputs: [scalar(0)], outputs: first.map((item) => item.sample) },
-      { measurementId: 2, inputs: [scalar(1)], outputs: second.map((item) => item.sample) },
-    ],
-  })
-  const predicted = predictWithKnn(model, [scalar(0.5)], 'sph-pressure')
+  // Forward values returned by the remote kNN fixture; no browser model is built.
+  const predicted = { output: [record('pressure', [-30, 0, 0]).sample, record('density', [10, 3, 0]).sample] }
   const restored = predictedRecordedData(predicted.output, rules, undefined, {
     pressure: first[0].boxGrid,
     density: first[1].boxGrid,

@@ -32,9 +32,6 @@ src/features/measurement/index.ts
 src/features/measurement/measurementCalculationPoint.ts
 src/features/measurement/MeasurementDetail.tsx
 src/features/measurement/recordedData.ts
-src/features/prediction/diagnostics.ts
-src/features/prediction/knn.ts
-src/features/prediction/metrics.ts
 src/features/cae/client.ts
 src/features/cae/manifests.ts
 src/features/runtime-console/index.ts

@@ -31,6 +31,12 @@ class ExperimentThumbnailTests(unittest.IsolatedAsyncioTestCase):
         row.thumbnail_url = None
         self.assertIsNone(_summary(row, {"recordedMeasurements": 0}, demo=None)["thumbnail_url"])
 
+    def test_forward_training_data_is_available_without_calculation_outputs(self):
+        summary = _summary(self.row(), {"recordedMeasurements": 2, "readyCalculations": 0, "calculationData": 0}, demo=None)
+        self.assertTrue(summary["predictionReady"])
+        unavailable = _summary(self.row(), {"recordedMeasurements": 0, "readyCalculations": 3, "calculationData": 12}, demo=None)
+        self.assertFalse(unavailable["predictionReady"])
+
     async def test_available_includes_actual_derived_counts_and_thumbnail(self):
         row = self.row()
         demo = SimpleNamespace(experiment_id=1, display_order=0, is_default=True)

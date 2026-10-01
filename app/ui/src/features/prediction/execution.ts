@@ -1,5 +1,4 @@
-import type { CalculationDataOutput, CalculationDataRecord, RecordedDataRecord } from '@/api'
-import type { RecordedDataRule, Vars, VarsSchemaEntry } from '@/lib/cad/model'
+import type { RecordedDataRule, Vars } from '@/lib/cad/model'
 import type {
   PredictionCohortDiagnosticGroup,
   PredictionCohortExclusionReason,
@@ -7,16 +6,15 @@ import type {
   PredictionQueryDiagnostic,
   PredictionTensorLayout,
   PredictionTensorSample,
+  PredictionNeighbor,
+  PredictionWeighting,
 } from './types'
-import type { PredictionNeighbor, PredictionWeighting } from './knn'
-import type { TrainingSnapshot } from './trainingSnapshot'
 
 export type PredictionAlgorithm = Readonly<{
   kind: 'knn'
   kMode: 'auto' | 'manual'
   manualK: number
   weighting: PredictionWeighting
-  calculationWeights: Readonly<Record<number, number>>
 }>
 
 /** Numerical implementation details are optional at the application boundary. */
@@ -36,7 +34,7 @@ export type PredictionModelProfile = Readonly<{
     baselineMeasurementId: number
     k: number
     weighting: PredictionWeighting
-    inputScaling: 'range' | 'standard-deviation'
+    inputScaling: 'range'
     inputScales: Float64Array
     inputBlockWeights: Readonly<Record<string, number>>
     activeInputBlockCount: number
@@ -81,7 +79,6 @@ export type PredictionSavedContract = Readonly<{
   experimentId: number
   varsSchemaFingerprint: string
   records: Readonly<Record<number, string>>
-  calculations: Readonly<Record<number, string>>
 }>
 
 export type PredictionDatasetInput = Readonly<{
@@ -92,7 +89,7 @@ export type PredictionDatasetInput = Readonly<{
   model: Readonly<{ modelId: string; revision: number; operationId: string; name: string }>
 }>
 
-export type PredictionPreparationInput = TrainingSnapshot | PredictionDatasetInput
+export type PredictionPreparationInput = PredictionDatasetInput
 
 export type PredictionModelDefinition = Readonly<{
   fingerprint: string
@@ -101,7 +98,6 @@ export type PredictionModelDefinition = Readonly<{
   implementationId: string
   implementationVersion: string
   preprocessingVersion: string
-  calculationIds?: readonly number[]
   requiredRecordIds?: readonly number[]
   contract?: PredictionSavedContract
 }>
@@ -131,32 +127,24 @@ export type PreparedPredictionModel = Readonly<{
 }>
 
 export type PredictionRequest = Readonly<{ requestId: string; signal: AbortSignal }>
-export type PredictionInput =
-  | Readonly<{ direction: 'forward'; vars: Readonly<Vars> }>
-  | Readonly<{ direction: 'inverse'; targets: Readonly<Record<number, CalculationDataOutput>> }>
-
-export type PredictionTrainingPolicy = Readonly<{
-  checkRecordedData: (rows: readonly RecordedDataRecord[], schema: Readonly<Record<string, VarsSchemaEntry>>) => void
-  checkCalculationData: (rows: readonly CalculationDataRecord[]) => void
-}>
+export type PredictionInput = Readonly<{ direction: 'forward'; vars: Readonly<Vars> }>
 
 /** A local interface, not a transport protocol or a persistent model registry. */
 export interface PredictionExecution {
   readonly id: string
-  readonly location: 'browser' | 'remote'
+  readonly location: 'remote'
   readonly sessionId: string
   readonly implementationVersion: string
   readonly preprocessingVersion: string
   readonly algorithms: readonly PredictionAlgorithm['kind'][]
   readonly directions: readonly PredictionDirection[]
   readonly representations?: readonly string[]
-  readonly trainingPolicy?: PredictionTrainingPolicy
   prepare(
     snapshot: PredictionPreparationInput,
     definition: PredictionModelDefinition,
     request: PredictionRequest,
   ): Promise<PreparedPredictionModel>
-  load?(
+  load(
     model: SavedPredictionModel,
     request: PredictionRequest,
     route?: PredictionExecutionRoute,
