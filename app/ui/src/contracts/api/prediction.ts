@@ -1,11 +1,14 @@
 import { z } from 'zod'
 
 const id = z.string().uuid()
+// Migration 24 stored PostgreSQL UUID values without RFC version/variant bits.
+// Preserve those opaque location IDs while still requiring canonical GUID syntax.
+export const predictionLocationIdSchema = z.guid()
 const revision = z.number().int().nonnegative()
 const definition = z.object({ fingerprint: z.string().min(1) }).passthrough()
 export const predictionReplicaSchema = z.object({
-  id,
-  storage_id: id,
+  id: predictionLocationIdSchema,
+  storage_id: predictionLocationIdSchema,
   state: z.enum(['unverified', 'present', 'missing', 'corrupt', 'deleting', 'deleted']),
   manifest_sha256: z.string().nullable(),
   artifact: z.record(z.string(), z.unknown()).nullable(),
@@ -14,7 +17,7 @@ export const predictionReplicaSchema = z.object({
   delete_id: id.nullable(),
 })
 export const predictionStorageSchema = z.object({
-  storage_id: id,
+  storage_id: predictionLocationIdSchema,
   name: z.string(),
   kind: z.enum(['predictor_local', 'object_backup', 'api_dataset']),
   configured: z.boolean().optional(),
@@ -105,8 +108,8 @@ export const predictionOperationSchema = z.object({
   asset_kind: z.enum(['model', 'dataset']),
   asset_id: id,
   revision: revision.nullable(),
-  source_replica_id: id.nullable(),
-  target_storage_id: id.nullable(),
+  source_replica_id: predictionLocationIdSchema.nullable(),
+  target_storage_id: predictionLocationIdSchema.nullable(),
   target_launcher_id: id.nullable(),
   include_dataset: z.boolean(),
   details: z.record(z.string(), z.unknown()),

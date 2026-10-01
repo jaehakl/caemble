@@ -19,6 +19,7 @@ export type PredictionAssetTask = Readonly<{
   message: string
   operationId?: string
 }>
+type PredictionAssetList = 'models' | 'datasets' | 'storages' | 'operations' | 'launchers'
 export type PredictionAssetsSnapshot = Readonly<{
   models: readonly PredictionModelRecord[]
   datasets: readonly PredictionDatasetRecord[]
@@ -28,6 +29,8 @@ export type PredictionAssetsSnapshot = Readonly<{
   tasks: readonly PredictionAssetTask[]
   loading: boolean
   error: string | null
+  listErrors: Readonly<Partial<Record<PredictionAssetList, string>>>
+  launchersLoaded: boolean
 }>
 export type PredictionAssetWork = Readonly<{
   id: string
@@ -55,6 +58,8 @@ export class PredictionAssetController {
     tasks: [],
     loading: false,
     error: null,
+    listErrors: {},
+    launchersLoaded: false,
   }
   private listeners = new Set<() => void>()
   private tasks = new Map<string, RunningTask>()
@@ -94,39 +99,57 @@ export class PredictionAssetController {
   async refresh() {
     if (!this.scope || !this.experimentId) return
     const sequence = ++this.refreshSequence
-    this.update({ loading: true, error: null })
-    try {
-      const [models, datasets, storages, operations, launchers] = await Promise.all([
-        predictionApi.models(this.experimentId),
-        predictionApi.datasets(this.experimentId),
-        predictionApi.storages(),
-        predictionApi.operations(this.experimentId),
-        this.client.listLaunchers(),
-      ])
-      if (sequence !== this.refreshSequence) return
-      this.update({
-        models,
-        datasets,
-        storages,
-        operations,
-        tasks: this.snapshot.tasks.map((task) => {
-          if (!['waiting', 'failed'].includes(task.state) || !task.operationId) return task
-          const operation = operations.find((item) => item.id === task.operationId)
-          if (!operation) return task
-          if (['completed', 'succeeded'].includes(operation.state))
-            return { ...task, state: 'succeeded', message: '완료' }
-          if (operation.state === 'cancelled')
-            return { ...task, state: 'cancelled', message: '중단됨 · 완료된 파일은 유지됩니다.' }
-          return task
-        }),
-        launchers: launchers.filter((launcher) => launcher.slave_app_ids.includes('predictor')),
-      })
-    } catch (error) {
-      if (sequence === this.refreshSequence)
-        this.update({ error: error instanceof Error ? error.message : String(error) })
-    } finally {
-      if (sequence === this.refreshSequence) this.update({ loading: false })
+    this.update({ loading: true, error: null, listErrors: {} })
+    const [models, datasets, storages, operations, launchers] = await Promise.allSettled([
+      predictionApi.models(this.experimentId),
+      predictionApi.datasets(this.experimentId),
+      predictionApi.storages(),
+      predictionApi.operations(this.experimentId),
+      this.client.listLaunchers(),
+    ])
+    if (sequence !== this.refreshSequence) return
+    const results = { models, datasets, storages, operations, launchers }
+    const labels = {
+      models: '모델',
+      datasets: '학습 데이터',
+      storages: '저장 위치',
+      operations: '작업',
+      launchers: '장비',
     }
+    const listErrors: Partial<Record<PredictionAssetList, string>> = {}
+    for (const key of Object.keys(results) as PredictionAssetList[]) {
+      const result = results[key]
+      if (result.status === 'rejected')
+        listErrors[key] =
+          `${labels[key]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`
+    }
+    this.update({
+      models: models.status === 'fulfilled' ? models.value : this.snapshot.models,
+      datasets: datasets.status === 'fulfilled' ? datasets.value : this.snapshot.datasets,
+      storages: storages.status === 'fulfilled' ? storages.value : this.snapshot.storages,
+      operations: operations.status === 'fulfilled' ? operations.value : this.snapshot.operations,
+      tasks:
+        operations.status === 'fulfilled'
+          ? this.snapshot.tasks.map((task) => {
+              if (!['waiting', 'failed'].includes(task.state) || !task.operationId) return task
+              const operation = operations.value.find((item) => item.id === task.operationId)
+              if (!operation) return task
+              if (['completed', 'succeeded'].includes(operation.state))
+                return { ...task, state: 'succeeded', message: '완료' }
+              if (operation.state === 'cancelled')
+                return { ...task, state: 'cancelled', message: '중단됨 · 완료된 파일은 유지됩니다.' }
+              return task
+            })
+          : this.snapshot.tasks,
+      launchers:
+        launchers.status === 'fulfilled'
+          ? launchers.value.filter((launcher) => launcher.slave_app_ids.includes('predictor'))
+          : this.snapshot.launchers,
+      launchersLoaded: this.snapshot.launchersLoaded || launchers.status === 'fulfilled',
+      listErrors,
+      error: Object.values(listErrors).join('\n') || null,
+      loading: false,
+    })
   }
 
   async run<T>(key: string, label: string, action: (work: PredictionAssetWork) => Promise<T>): Promise<T | undefined> {

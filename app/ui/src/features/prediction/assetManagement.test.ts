@@ -42,10 +42,12 @@ vi.mock('./remoteExecution', () => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 const operation = (state: string) => ({ id: 'operation', state }) as PredictionOperation
 
@@ -65,6 +67,98 @@ describe('Prediction asset task ownership', () => {
     expect(mocks.models).toHaveBeenCalledWith(12)
     expect(mocks.operations).toHaveBeenCalledWith(12)
     expect(mocks.remotes).toHaveLength(0)
+  })
+
+  it('keeps successful lists and Predictor launchers when model metadata fails validation', async () => {
+    const manager = new PredictionAssetController('owner', 12)
+    const datasets = [{ id: 'dataset' }]
+    const storages = [{ storage_id: 'storage' }]
+    const predictor = { id: 'predictor', slave_app_ids: ['predictor'], status: 'offline' }
+    mocks.models.mockRejectedValue(new Error('invalid_uuid'))
+    mocks.datasets.mockResolvedValue(datasets)
+    mocks.storages.mockResolvedValue(storages)
+    mocks.operations.mockResolvedValue([operation('completed')])
+    mocks.launchers.mockResolvedValue([predictor, { id: 'cae-only', slave_app_ids: ['cae'] }])
+
+    await manager.refresh()
+
+    expect(manager.getSnapshot()).toMatchObject({
+      models: [],
+      datasets,
+      storages,
+      operations: [operation('completed')],
+      launchers: [predictor],
+      launchersLoaded: true,
+      listErrors: { models: '모델: invalid_uuid' },
+      error: '모델: invalid_uuid',
+      loading: false,
+    })
+  })
+
+  it('preserves only failed lists on refresh and clears their errors after recovery', async () => {
+    const manager = new PredictionAssetController('owner', 12)
+    const models = [{ id: 'model' }]
+    const launcher = { id: 'predictor', slave_app_ids: ['predictor'] }
+    mocks.models.mockResolvedValueOnce(models)
+    mocks.launchers.mockResolvedValueOnce([launcher])
+    await manager.refresh()
+    mocks.models.mockRejectedValueOnce(new Error('잘못된 응답'))
+    mocks.launchers.mockRejectedValueOnce(new Error('연결 실패'))
+    const datasets = [{ id: 'new-dataset' }]
+    mocks.datasets.mockResolvedValueOnce(datasets)
+
+    await manager.refresh()
+
+    expect(manager.getSnapshot()).toMatchObject({
+      models,
+      datasets,
+      launchers: [launcher],
+      launchersLoaded: true,
+      listErrors: { models: '모델: 잘못된 응답', launchers: '장비: 연결 실패' },
+      error: '모델: 잘못된 응답\n장비: 연결 실패',
+    })
+    await manager.refresh()
+    expect(manager.getSnapshot()).toMatchObject({ models: [], launchers: [], listErrors: {}, error: null })
+  })
+
+  it.each(['success', 'failure'])('ignores an older refresh %s after a newer refresh finishes', async (outcome) => {
+    const manager = new PredictionAssetController('owner', 12)
+    const first = deferred<unknown[]>()
+    mocks.models.mockReturnValueOnce(first.promise)
+    mocks.launchers.mockResolvedValueOnce([{ id: 'old', slave_app_ids: ['predictor'] }])
+    const older = manager.refresh()
+    mocks.models.mockResolvedValueOnce([{ id: 'new-model' }])
+    mocks.launchers.mockRejectedValueOnce(new Error('최신 조회 실패'))
+    await manager.refresh()
+    const latest = manager.getSnapshot()
+
+    if (outcome === 'success') first.resolve([{ id: 'old-model' }])
+    else first.reject(new Error('이전 조회 실패'))
+    await older
+
+    expect(manager.getSnapshot()).toBe(latest)
+    expect(latest).toMatchObject({
+      models: [{ id: 'new-model' }],
+      launchers: [],
+      launchersLoaded: false,
+      error: '장비: 최신 조회 실패',
+      loading: false,
+    })
+  })
+
+  it('does not stop the newer refresh loading state when an older refresh settles', async () => {
+    const manager = new PredictionAssetController('owner', 12)
+    const first = deferred<unknown[]>()
+    const second = deferred<unknown[]>()
+    mocks.models.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const older = manager.refresh()
+    const newer = manager.refresh()
+    first.reject(new Error('이전 조회 실패'))
+    await older
+    expect(manager.getSnapshot()).toMatchObject({ loading: true, error: null, listErrors: {} })
+    second.resolve([{ id: 'new-model' }])
+    await newer
+    expect(manager.getSnapshot()).toMatchObject({ models: [{ id: 'new-model' }], loading: false })
   })
 
   it('finishes a started operation after the last panel unsubscribes', async () => {
@@ -140,9 +234,28 @@ describe('Prediction asset task ownership', () => {
     const manager = new PredictionAssetController('owner', 12)
     await manager.run('delete:a', '복사본 삭제', async (work) => work.operation(operation('pending')))
     expect(manager.getSnapshot().tasks[0].state).toBe('waiting')
+    mocks.models.mockRejectedValueOnce(new Error('잘못된 모델 응답'))
     mocks.operations.mockResolvedValue([operation('completed')])
     await manager.refresh()
     expect(manager.getSnapshot().tasks[0]).toMatchObject({ state: 'succeeded', message: '완료' })
+  })
+
+  it('preserves operation and task state when only the operation list fails', async () => {
+    const manager = new PredictionAssetController('owner', 12)
+    mocks.operations.mockResolvedValueOnce([operation('pending')])
+    await manager.run('delete:a', '복사본 삭제', async (work) => work.operation(operation('pending')))
+    const tasks = manager.getSnapshot().tasks
+    mocks.operations.mockRejectedValueOnce(new Error('작업 조회 실패'))
+    mocks.models.mockResolvedValueOnce([{ id: 'new-model' }])
+
+    await manager.refresh()
+
+    expect(manager.getSnapshot().tasks).toBe(tasks)
+    expect(manager.getSnapshot()).toMatchObject({
+      models: [{ id: 'new-model' }],
+      operations: [operation('pending')],
+      listErrors: { operations: '작업: 작업 조회 실패' },
+    })
   })
 
   it('rejects a duplicate in-flight action but permits another asset', async () => {

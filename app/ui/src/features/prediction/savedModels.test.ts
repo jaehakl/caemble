@@ -141,6 +141,31 @@ describe('saved Prediction contracts', () => {
 })
 
 describe('saved Prediction setup persistence', () => {
+  it('preserves migrated opaque replica and storage IDs across save and restore', () => {
+    const setup = {
+      ...setupWithModels(),
+      routes: {
+        forward: {
+          replicaId: '5b42b8de-3de3-b05d-ea6f-1274e1a2a93a',
+          storageId: 'da148b6d-bf41-e61f-cd2f-123456789abc',
+          launcherId,
+        },
+      },
+    }
+    persistPredictionSetup('owner-a', 3, setup)
+    expect(restorePredictionSetup('owner-a', 3)).toEqual(setup)
+    expect(JSON.parse(localStorage.getItem('caemble.prediction.setup:owner-a:3')!).setup.routes).toEqual(setup.routes)
+  })
+
+  it.each(['replicaId', 'storageId', 'launcherId'] as const)('rejects a malformed persisted route %s', (field) => {
+    const setup = { ...setupWithModels(), routes: { forward: { storageId, launcherId, [field]: 'not-an-id' } } }
+    localStorage.setItem(
+      'caemble.prediction.setup:owner-a:3',
+      JSON.stringify({ version: 2, owner: 'owner-a', experimentId: 3, setup }),
+    )
+    expect(restorePredictionSetup('owner-a', 3)).toBeNull()
+  })
+
   it('migrates v1 identity and exact revisions without requiring the original launcher online', () => {
     const setup = setupWithModels()
     const legacy = {

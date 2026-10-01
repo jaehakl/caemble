@@ -196,9 +196,9 @@ function setup(): PredictionSetup {
   }
 }
 
-async function show(initial = setup()) {
+async function show(initial = setup(), refresh = true) {
   const manager = new PredictionAssetController('owner:1', 1)
-  await manager.refresh()
+  if (refresh) await manager.refresh()
   const props = {
     authenticated: true,
     open: true,
@@ -264,6 +264,115 @@ beforeEach(() => {
 })
 
 describe('model-first Prediction management', () => {
+  it.each(['failed', 'empty'])(
+    'requires an explicit Dataset choice when the selected Dataset list is %s',
+    async (state) => {
+      if (state === 'failed') mocks.datasets.mockRejectedValueOnce(new Error('Dataset 응답 실패'))
+      else mocks.datasets.mockResolvedValueOnce([])
+      mocks.createDataset.mockResolvedValueOnce(dataset())
+      const { onUse } = await show()
+      fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+      fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+
+      const selectedDataset = screen.getByLabelText('모델 학습 데이터')
+      expect(selectedDataset).toHaveValue(datasetId)
+      expect(
+        within(selectedDataset).getByRole('option', { name: '선택한 학습 데이터 · 확인 필요' }),
+      ).toBeInTheDocument()
+      expect(screen.getByText(/선택한 학습 데이터를 목록에서 확인할 수 없습니다/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '모델 만들고 사용' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+      expect(mocks.createDataset).not.toHaveBeenCalled()
+      expect(mocks.syncDataset).not.toHaveBeenCalled()
+      expect(mocks.reserve).not.toHaveBeenCalled()
+      expect(mocks.inspect).not.toHaveBeenCalled()
+
+      fireEvent.change(selectedDataset, { target: { value: '' } })
+      expect(screen.getByRole('button', { name: '모델 만들고 사용' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+      await waitFor(() => expect(onUse).toHaveBeenCalledOnce())
+      expect(mocks.createDataset).toHaveBeenCalledOnce()
+      expect(mocks.reserve).toHaveBeenCalledOnce()
+      expect(mocks.syncDataset).not.toHaveBeenCalled()
+    },
+  )
+
+  it('offers supported launchers when model list validation fails', async () => {
+    mocks.models.mockRejectedValueOnce(new Error('invalid_uuid'))
+    await show()
+    expect(screen.getByRole('alert')).toHaveTextContent('모델: invalid_uuid')
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    expect(
+      within(screen.getByLabelText('모델 생성 장비')).getByRole('option', { name: /Fixture launcher/ }),
+    ).toBeEnabled()
+    expect(screen.queryByText(/Predictor를 지원하는 장비가 없습니다/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/장비 목록 조회에 실패했습니다/)).not.toBeInTheDocument()
+  })
+
+  it('explains launcher query failure separately from no supported devices', async () => {
+    mocks.listLaunchers.mockRejectedValueOnce(new Error('장비 응답 실패'))
+    await show()
+    expect(screen.getByRole('alert')).toHaveTextContent('장비: 장비 응답 실패')
+    expect(screen.getByText(/장비 목록 조회에 실패했습니다/)).toBeInTheDocument()
+    expect(screen.queryByText(/Predictor를 지원하는 장비가 없습니다/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    expect(within(screen.getByLabelText('모델 생성 장비')).getAllByRole('option')).toHaveLength(1)
+  })
+
+  it.each([{ apps: [] }, { apps: ['cae'] }])(
+    'explains an empty supported-device list after a successful query (%j)',
+    async ({ apps }) => {
+      mocks.listLaunchers.mockResolvedValueOnce(
+        apps.length ? [{ id: launcherId, launcher_name: 'CAE launcher', slave_app_ids: apps }] : [],
+      )
+      await show()
+      expect(screen.getByText(/Predictor를 지원하는 장비가 없습니다/)).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByText(/장비 목록 조회에 실패했습니다/)).not.toBeInTheDocument()
+    },
+  )
+
+  it('keeps the previously selected launcher visible when its refresh fails', async () => {
+    const { manager } = await show()
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+    mocks.listLaunchers.mockRejectedValueOnce(new Error('일시적인 연결 실패'))
+
+    await act(async () => manager.refresh())
+
+    expect(screen.getByLabelText('모델 생성 장비')).toHaveValue(launcherId)
+    expect(
+      within(screen.getByLabelText('모델 생성 장비')).getByRole('option', { name: /Fixture launcher/ }),
+    ).toBeEnabled()
+    expect(screen.getByText(/이전에 확인한 장비를 표시합니다/)).toBeInTheDocument()
+    expect(screen.queryByText(/Predictor를 지원하는 장비가 없습니다/)).not.toBeInTheDocument()
+  })
+
+  it('distinguishes an initial or pending launcher query from a confirmed empty list', async () => {
+    let finish!: (value: []) => void
+    mocks.listLaunchers.mockReturnValueOnce(
+      new Promise<[]>((resolve) => {
+        finish = resolve
+      }),
+    )
+    const { manager } = await show(setup(), false)
+    expect(screen.getByText(/장비 목록을 아직 불러오지 않았습니다/)).toBeInTheDocument()
+    let refresh!: Promise<void>
+    act(() => {
+      refresh = manager.refresh()
+    })
+    expect(screen.getByRole('status')).toHaveTextContent('장비 목록을 불러오는 중입니다.')
+    expect(screen.queryByText(/Predictor를 지원하는 장비가 없습니다/)).not.toBeInTheDocument()
+
+    await act(async () => {
+      finish([])
+      await refresh
+    })
+
+    expect(screen.getByText(/Predictor를 지원하는 장비가 없습니다/)).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
   it('supports keyboard traversal across management tabs and a full long Korean model name', async () => {
     const longName = '한글모델이름과버전별예측결과'.repeat(30)
     mocks.models.mockResolvedValue([{ ...model('inverse'), name: longName }])

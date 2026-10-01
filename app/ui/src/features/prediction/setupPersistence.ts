@@ -1,10 +1,11 @@
 ﻿import { z } from 'zod'
+import { predictionLocationIdSchema } from '@/contracts/api/prediction'
 import { savedPredictionReferenceSchema } from './savedModels'
 import type { PredictionSetup } from './usePredictionModels'
 
 export const predictionExecutionRouteSchema = z.object({
-  replicaId: z.string().uuid().optional(),
-  storageId: z.string().uuid(),
+  replicaId: predictionLocationIdSchema.optional(),
+  storageId: predictionLocationIdSchema,
   launcherId: z.string().uuid(),
 })
 const algorithmSchema = z.object({
@@ -38,7 +39,7 @@ const setupSchema = z.object({
   }),
 })
 const legacyModelSchema = savedPredictionReferenceSchema.extend({
-  storageId: z.string().uuid(),
+  storageId: predictionLocationIdSchema,
   launcherId: z.string().uuid(),
 })
 const legacySchema = setupSchema.extend({

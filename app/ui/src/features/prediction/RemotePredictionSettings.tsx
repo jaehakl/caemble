@@ -60,9 +60,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
   const [previous, setPrevious] = useState<PredictionModelRecord | undefined>()
   const [refreshDataset, setRefreshDataset] = useState(false)
   const dataset = state.datasets.find((item) => item.id === datasetId)
+  const unresolvedDataset = Boolean(datasetId) && !dataset
   const applyModel = onUse ?? onChange
   const create = async () => {
-    if (!context || !sourceHash || !varsSchema) return
+    if (!context || !sourceHash || !varsSchema || unresolvedDataset) return
     const selection = manager.currentSelectionKey
     const next = await createPredictionModel(manager, {
       context,
@@ -139,10 +140,29 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
             </Button>
           </div>
           {state.error && (
-            <p role="alert" className="text-sm text-destructive">
-              목록을 불러오지 못했습니다: {state.error}
+            <p role="alert" className="text-sm whitespace-pre-line text-destructive">
+              일부 목록을 불러오지 못했습니다. 이전에 불러온 목록은 유지됩니다.{'\n'}
+              {state.error}
             </p>
           )}
+          {state.listErrors.launchers ? (
+            <p className="text-xs text-muted-foreground">
+              장비 목록 조회에 실패했습니다. 목록 새로고침으로 다시 시도하세요.
+              {state.launchers.length > 0 && ' 이전에 확인한 장비를 표시합니다.'}
+            </p>
+          ) : state.loading && state.launchers.length === 0 ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              장비 목록을 불러오는 중입니다.
+            </p>
+          ) : !state.launchersLoaded ? (
+            <p className="text-xs text-muted-foreground">
+              장비 목록을 아직 불러오지 않았습니다. 목록 새로고침을 눌러 주세요.
+            </p>
+          ) : state.launchers.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Predictor를 지원하는 장비가 없습니다. 설정의 Launchers에서 장비의 지원 앱을 확인하세요.
+            </p>
+          ) : null}
           {tab === 'models' && (
             <div role="tabpanel" aria-label="모델 관리" className="space-y-3">
               <Button
@@ -215,6 +235,7 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                       }}
                     >
                       <option value="">현재 선택 데이터로 만들기</option>
+                      {unresolvedDataset && <option value={datasetId}>선택한 학습 데이터 · 확인 필요</option>}
                       {state.datasets
                         .filter((item) => item.state === 'active')
                         .map((item) => (
@@ -224,6 +245,12 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                         ))}
                     </select>
                   </label>
+                  {unresolvedDataset && (
+                    <p className="text-xs text-muted-foreground">
+                      선택한 학습 데이터를 목록에서 확인할 수 없습니다. 목록을 새로고침하거나 현재 선택 데이터로
+                      만들기를 직접 선택하세요.
+                    </p>
+                  )}
                   {dataset && (
                     <label className="block text-sm">
                       학습 데이터 버전
@@ -282,6 +309,7 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                         !context ||
                         !sourceHash ||
                         !varsSchema ||
+                        unresolvedDataset ||
                         !launcherId ||
                         !setup.calculationIds.length ||
                         state.tasks.some(
