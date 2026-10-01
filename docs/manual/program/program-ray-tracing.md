@@ -51,7 +51,7 @@ CurvedEdgeCylinder는 전 영역에서 양의 반지름을 갖는 정칙 형상�
 
 ### 픽셀 전력과 입력 파장별 응답
 
-**Pixel Monochromatic Response** 예제는 정지한 슬릿부터 검출면까지의 기하광학 응답을 보여 줍니다. 현재 Output 선언·Geometry·Calculation 원본은 [Catalog 예제](/doc?help=examples&item=caemble:experiment/caemble/verified/pixel-monochromatic-response@1.0.3)에서 확인하세요.
+**Pixel Monochromatic Response** 예제는 정지한 슬릿부터 검출면까지의 기하광학 응답을 보여 줍니다. 현재 Output 선언·Geometry·Calculation 원본은 [Catalog 예제](/doc?help=examples&item=caemble:experiment/caemble/verified/pixel-monochromatic-response@1.0.4)에서 확인하세요.
 
 흡수 경계조건은 광선을 종료하고, 픽셀 Output은 그 검출 직전의 광학적 전력을 누적합니다. Output을 추가하거나 픽셀 수·관측 두께·`maxPaths`를 바꿔도 광선의 물리적 동작은 바뀌지 않습니다. `maxPaths: 0`은 경로 미저장이며 수치 기록은 계속 생성합니다. 여러 Output이 같은 면을 관측해도 전체 detected power를 중복 집계하지 않습니다.
 
@@ -81,7 +81,7 @@ Prediction에서는 픽셀 수와 입력 파장 표본을 고정한 채 광학�
 
 효율은 입사 전력에 대한 **절대 비율**입니다. 격자 면에서는 별도 Fresnel 계수를 곱하지 않으며, 미지정 전력과 전파 불가능한 차수의 전력은 손실입니다. 역방향 입사에도 같은 지정 효율을 사용합니다. 같은 면의 중복 격자 및 detector·박막·표면 산란과의 중복 적용은 거부합니다.
 
-[Transmission Grating Response](/doc?help=examples&item=caemble:experiment/caemble/verified/transmission-grating-response@1.0.1)는 유한한 슬릿 영역의 평행 입력, 투명 기판, 반사측·투과측 픽셀 검출기를 포함합니다. 기본 입력은 450/550/650 nm이며 +1차의 반사 효율은 0.1, 투과 효율은 0.7입니다. 한 Measurement에 `reflectedPower`, `transmittedPower`, `launchedPower`를 기록하며 Calculation으로 양쪽 총전력·도달 효율과 투과측 파장별 u 중심을 계산합니다. 중심은 기록된 Box local 좌표를 사용합니다. Viewer에서 두 검출기의 입력 파장별 응답과 양쪽 광로를 확인하세요.
+[Transmission Grating Response](/doc?help=examples&item=caemble:experiment/caemble/verified/transmission-grating-response@1.0.2)는 유한한 슬릿 영역의 평행 입력, 투명 기판, 반사측·투과측 픽셀 검출기를 포함합니다. 기본 입력은 450/550/650 nm이며 +1차의 반사 효율은 0.1, 투과 효율은 0.7입니다. 한 Measurement에 `reflectedPower`, `transmittedPower`, `launchedPower`를 기록하며 Calculation으로 양쪽 총전력·도달 효율과 투과측 파장별 u 중심을 계산합니다. 중심은 기록된 Box local 좌표를 사용합니다. Viewer에서 두 검출기의 입력 파장별 응답과 양쪽 광로를 확인하세요.
 
 이 모델은 지정 효율을 사용하는 기하광학 모델입니다. 효율의 파장·입사각·편광 의존성, RCWA, 체적 홀로그래픽 격자와 회절 PSF는 계산하지 않습니다. 픽셀 신호나 선폭을 최종 분광 분해능으로 해석하지 마세요.
 

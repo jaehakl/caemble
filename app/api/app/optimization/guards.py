@@ -2,10 +2,11 @@
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import Text, cast, select
+from sqlalchemy.orm import aliased
 
 from gpstation.db import Job
-from optimization.db import StageSubmission, Optimization, Trial
+from optimization.db import Evaluation, StageSubmission, Optimization, Trial
 
 
 async def require_unreferenced_experiments(db, experiment_ids: list[int]) -> None:
@@ -14,7 +15,9 @@ async def require_unreferenced_experiments(db, experiment_ids: list[int]) -> Non
 
 
 async def require_unreferenced_measurements(db, measurement_ids: list[int]) -> None:
-    if await db.scalar(select(Trial.id).where(Trial.measurement_id.in_(measurement_ids)).limit(1)) is not None:
+    trial = await db.scalar(select(Trial.id).where(Trial.measurement_id.in_(measurement_ids)).limit(1))
+    evaluation = await db.scalar(select(Evaluation.id).where(Evaluation.measurement_id.in_(measurement_ids)).limit(1))
+    if trial is not None or evaluation is not None:
         raise HTTPException(409, "Delete the referencing Optimization before deleting its Measurements.")
 
 
@@ -25,6 +28,13 @@ async def require_unmanaged_execution(db, *, job_id: str | None = None, batch_id
     if user_id is not None:
         query = query.where(Optimization.user_id == user_id)
     optimization_id = await db.scalar(query.limit(1))
+    if optimization_id is None and job_id is not None:
+        child_query = select(Optimization.id).join(Job,
+            Job.artifact_metadata["optimization_id"].astext == cast(Optimization.id, Text)).where(
+                Job.id == job_id, Job.artifact_metadata.has_key("optimization_parent"))
+        if user_id is not None:
+            child_query = child_query.where(Optimization.user_id == user_id)
+        optimization_id = await db.scalar(child_query.limit(1))
     if optimization_id is not None:
         raise HTTPException(409, {"code": "optimization_execution_managed", "message": "Control this execution from its Optimization.", "optimization_id": optimization_id})
 
@@ -36,4 +46,11 @@ def unmanaged_execution_clause(*, job_id: Any = None, batch_id: Any = None) -> A
     if job_id is None and batch_id is None:
         job_id = Job.id
     condition = StageSubmission.job_id == job_id if job_id is not None else StageSubmission.batch_id == batch_id
-    return ~select(StageSubmission.id).where(condition).exists()
+    unmanaged = ~select(StageSubmission.id).where(condition).exists()
+    if job_id is not None:
+        child = aliased(Job)
+        owned_child = select(child.id).join(Optimization,
+            child.artifact_metadata["optimization_id"].astext == cast(Optimization.id, Text)).where(
+                child.id == job_id, child.artifact_metadata.has_key("optimization_parent"))
+        unmanaged = unmanaged & ~owned_child.exists()
+    return unmanaged

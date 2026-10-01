@@ -214,6 +214,10 @@ async def cleanup_objects(db):
         if row.purpose == "layout":
             calculation = await db.get(Calculation, row.calculation_id) if row.calculation_id else None
             alive = alive and calculation is not None and any(ref.get("id") == row.id for ref in object_refs(calculation.output_layout))
+        if row.purpose == "evaluation":
+            from optimization.db import StageSubmission
+            submission = await db.scalar(select(StageSubmission.id).where(StageSubmission.job_id == row.job_id).limit(1)) if row.job_id else None
+            alive = alive and submission is not None
         if row.purpose == "record" and not row.bound and row.job_id:
             job = await db.get(Job, row.job_id)
             alive = (row.user_id is not None and row.experiment_id is not None and job is not None

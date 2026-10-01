@@ -19,10 +19,12 @@ class ServerJobCancelled(Exception):
 
 
 class ServerJobContext:
-    def __init__(self, websocket: Any, job_id: str, attempt_count: int) -> None:
+    def __init__(self, websocket: Any, job_id: str, attempt_count: int, assignment: dict | None = None) -> None:
         self.websocket = websocket
         self.job_id = job_id
         self.attempt_count = attempt_count
+        # Kept in the trusted Python runtime, never included in authored child input.
+        self.assignment = assignment
         self.execution = execution_context()
         if self.execution is not None and (self.execution.identity.job_id != job_id or self.execution.identity.attempt_count != attempt_count):
             raise ValueError("Server context does not match the allocated execution")
@@ -109,7 +111,7 @@ async def run_server_job(app: ServerSlaveApp, assignment: dict[str, Any]) -> Non
         connect = websockets.connect
         keyword = "additional_headers" if int(websockets.__version__.split(".")[0]) >= 14 else "extra_headers"
         async with connect(assignment["websocket_url"], **{keyword: headers}, max_size=None) as websocket:
-            context = ServerJobContext(websocket, job_id, attempt_count)
+            context = ServerJobContext(websocket, job_id, attempt_count, assignment)
             await context.send({"type": "job.ready", "job_id": job_id, "attempt_count": attempt_count})
 
             payload, attachments = await receive_packet(

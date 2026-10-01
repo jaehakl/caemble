@@ -92,7 +92,7 @@ class PredictorRuntime:
                 with self.store.transaction(cancel):
                     result = self._install(bundle, artifact)
             return {**result, "protocolVersion": 2, "requestId": payload["requestId"], "sessionId": self.session_id}
-        disk = self.store.transaction(cancel) if action not in ("model.predict", "model.release", "model.list", "dataset.list", "dataset.preview") else nullcontext()
+        disk = self.store.transaction(cancel) if action not in ("model.predict", "model.predict_batch", "model.release", "model.list", "dataset.list", "dataset.preview") else nullcontext()
         with self.lock, disk:
             check_cancel(cancel)
             if action == "predictor.hello":
@@ -100,7 +100,7 @@ class PredictorRuntime:
                           "implementationVersion": IMPLEMENTATION_VERSION, "preprocessingVersion": PREPROCESSING_VERSION,
                           "capabilities": {"algorithms": ["knn"], "directions": ["forward"],
                                            "representations": ["box-relative-v2"], "persistentModels": True,
-                                           "portableArchives": True, "archiveFormatVersion": 1},
+                                           "portableArchives": True, "archiveFormatVersion": 1, "maxBatchInputs": 32},
                           "datasets": self.store.list("datasets", verify=False), "models": self.store.list("models", verify=False)}
             elif action == "dataset.import":
                 imported = self.reader.import_grant(payload["grant"], cancel) if "grant" in payload else self.reader.import_local(payload["importId"], cancel, payload.get("experimentId"))
@@ -120,6 +120,23 @@ class PredictorRuntime:
                 _, bundle, _ = self._instance(payload["instance"])
                 result = bundle.predict(payload["input"], cancel)
                 check_cancel(cancel)
+            elif action == "model.predict_batch":
+                _, bundle, artifact = self._instance(payload["instance"])
+                inputs = payload.get("inputs")
+                if not isinstance(inputs, list) or not 1 <= len(inputs) <= 32:
+                    raise PredictionError("invalid-batch", "Prediction batches require between 1 and 32 inputs.")
+                identifiers = [item.get("candidateId") for item in inputs if isinstance(item, dict)]
+                if (len(identifiers) != len(inputs) or any(not isinstance(identity, str) or not identity for identity in identifiers)
+                        or len(set(identifiers)) != len(identifiers)):
+                    raise PredictionError("invalid-batch", "Prediction candidate IDs must be unique nonempty strings.")
+                predictions = []
+                for item in inputs:
+                    check_cancel(cancel)
+                    prediction = bundle.predict(item["input"], cancel)
+                    predictions.append({"candidateId": item["candidateId"], **prediction,
+                        "provenance": {**prediction["provenance"], "manifestChecksum": artifact["manifestChecksum"]}})
+                check_cancel(cancel)
+                result = {"predictions": predictions}
             elif action == "model.release":
                 instance = payload["instance"]
                 stored = self.instances.get(instance.get("handle"))
@@ -167,7 +184,7 @@ def create_app():
         return DataChannelMessage(id=message.id, type=f"{message.type}.result", payload=response)
 
     for action in ("predictor.hello", "dataset.import", "dataset.list", "dataset.sync", "dataset.preview", "dataset.delete", "model.prepare",
-                   "model.load", "model.predict", "model.release", "model.list", "model.delete",
+                   "model.load", "model.predict", "model.predict_batch", "model.release", "model.list", "model.delete",
                    "artifact.backup", "artifact.restore", "artifact.remove", "artifact.verify", "operation.inspect"):
         app.handler(action)(handle)
     return app

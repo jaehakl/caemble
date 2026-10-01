@@ -46,6 +46,16 @@ const bestTrialSchema = z.object({
   result: optimizationResultSchema,
   measurement_id: z.number().int().nullable(),
 })
+export const optimizationHybridSchema = z
+  .object({
+    model_id: z.string(),
+    model_revision: z.number().int().nonnegative(),
+    replica_id: z.string(),
+    launcher_id: z.string(),
+    max_solver_runs: z.number().int().positive(),
+  })
+  .passthrough()
+export type OptimizationHybrid = z.infer<typeof optimizationHybridSchema>
 export const optimizationSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -67,6 +77,18 @@ export const optimizationSummarySchema = z.object({
   cleanup_pending: z.boolean(),
   manual_retry_pending: z.boolean(),
   best_trial: bestTrialSchema.nullable(),
+  best_predicted_trial: bestTrialSchema.nullable().optional(),
+  best_verified_trial: bestTrialSchema.nullable().optional(),
+  solver_budget: z
+    .object({
+      limit: z.number().int().nonnegative(),
+      used: z.number().int().nonnegative(),
+      reserved: z.number().int().nonnegative(),
+      remaining: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+  termination_reason: z.string().nullable().optional(),
 })
 export const optimizationDetailSchema = optimizationSummarySchema.extend({
   definition: z
@@ -85,6 +107,7 @@ export const optimizationDetailSchema = optimizationSummarySchema.extend({
         }),
       ),
       hash: z.string(),
+      hybrid: optimizationHybridSchema.partial({ max_solver_runs: true }).nullable().optional(),
     })
     .passthrough(),
   settings: z.object({
@@ -96,9 +119,40 @@ export const optimizationDetailSchema = optimizationSummarySchema.extend({
     max_parallel: z.number().int(),
     initial_step: z.number(),
     min_step: z.number(),
+    hybrid: optimizationHybridSchema.nullable().optional(),
   }),
   optimizer_state: z.record(z.string(), z.unknown()),
 })
+const optimizationStageSchema = z
+  .object({
+    id: z.string(),
+    stage: z.string(),
+    generation: z.number().int(),
+    batch_id: z.string().nullable(),
+    job_id: z.string().nullable(),
+    state: z.string(),
+    result: z.unknown().nullable(),
+    error: optimizationErrorSchema.nullable(),
+    job: caeJobSchema.nullable(),
+  })
+  .passthrough()
+export const optimizationEvaluationSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(['prediction', 'solver']),
+    definition_hash: z.string(),
+    source: z.record(z.string(), z.unknown()),
+    state: z.string(),
+    next_stage: z.enum(['predict', 'build', 'solve', 'calculate', 'complete']),
+    measurement_id: z.number().int().nullable(),
+    result: optimizationResultSchema.nullable(),
+    error: optimizationErrorSchema.nullable(),
+    manual_retry_requested: z.boolean(),
+    retry_count: z.number().int().nonnegative(),
+    stages: z.array(optimizationStageSchema),
+  })
+  .passthrough()
+export type OptimizationEvaluation = z.infer<typeof optimizationEvaluationSchema>
 export const optimizationTrialSchema = z.object({
   id: z.string(),
   optimization_id: z.string(),
@@ -107,7 +161,7 @@ export const optimizationTrialSchema = z.object({
   variables: optimizationVarsSchema,
   fingerprint: z.string(),
   state: z.string(),
-  next_stage: z.enum(['build', 'solve', 'calculate', 'complete']),
+  next_stage: z.enum(['predict', 'build', 'solve', 'calculate', 'complete']),
   measurement_id: z.number().int().nullable(),
   result: optimizationResultSchema.nullable(),
   error: optimizationErrorSchema.nullable(),
@@ -115,21 +169,8 @@ export const optimizationTrialSchema = z.object({
   retry_count: z.number().int().nonnegative(),
   created_at: z.string(),
   updated_at: z.string(),
-  stages: z.array(
-    z
-      .object({
-        id: z.string(),
-        stage: z.string(),
-        generation: z.number().int(),
-        batch_id: z.string().nullable(),
-        job_id: z.string().nullable(),
-        state: z.string(),
-        result: z.unknown().nullable(),
-        error: optimizationErrorSchema.nullable(),
-        job: caeJobSchema.nullable(),
-      })
-      .passthrough(),
-  ),
+  stages: z.array(optimizationStageSchema),
+  evaluations: z.array(optimizationEvaluationSchema).optional(),
 })
 export const optimizationListSchema = z.object({ items: z.array(optimizationSummarySchema), total: z.number().int() })
 export const optimizationTrialListSchema = z.object({
@@ -151,4 +192,5 @@ export type OptimizationCreateRequest = Readonly<{
   constraints?: { calculation_id: number; minimum?: number; maximum?: number }[]
   max_trials?: number
   max_parallel?: number
+  hybrid?: OptimizationHybrid
 }>

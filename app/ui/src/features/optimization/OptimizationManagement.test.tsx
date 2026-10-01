@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { optimizationApi } from '@/api/optimization'
@@ -17,6 +17,7 @@ vi.mock('@/api/optimization', () => ({
     read: vi.fn(),
     trials: vi.fn(),
     retry: vi.fn(),
+    retryEvaluation: vi.fn(),
     stop: vi.fn(),
     resume: vi.fn(),
     remove: vi.fn(),
@@ -29,6 +30,91 @@ beforeEach(() => {
   vi.mocked(optimizationApi.read).mockResolvedValue(optimizationFixture)
   vi.mocked(optimizationApi.trials).mockResolvedValue({ items: [trialFixture], total: 1 })
   vi.mocked(optimizationApi.retry).mockResolvedValue(optimizationFixture)
+  vi.mocked(optimizationApi.retryEvaluation).mockResolvedValue(optimizationFixture)
+})
+
+it('restores separate predictions and verifications, applies only verified Vars, and retries Calculation after budget exhaustion', async () => {
+  const predicted = {
+    ...optimizationFixture.best_trial!,
+    id: 'predicted-trial',
+    ordinal: 2,
+    variables: { width: 4 },
+    measurement_id: null,
+    result: { objective: 1, feasible: true, violation: 0, constraints: [] },
+  }
+  const hybrid = {
+    model_id: 'model-1',
+    model_revision: 2,
+    replica_id: 'replica-1',
+    launcher_id: 'launcher-1',
+    max_solver_runs: 8,
+  }
+  const optimization = {
+    ...optimizationFixture,
+    state: 'completed',
+    termination_reason: 'solver_budget_exhausted',
+    settings: { ...optimizationFixture.settings, hybrid },
+    best_predicted_trial: predicted,
+    best_verified_trial: optimizationFixture.best_trial,
+    solver_budget: { limit: 8, used: 8, reserved: 0, remaining: 0 },
+  }
+  const prediction = {
+    id: 'prediction-evaluation',
+    kind: 'prediction' as const,
+    definition_hash: 'prediction-hash',
+    source: { model_id: hybrid.model_id, model_revision: 2 },
+    state: 'failed',
+    next_stage: 'calculate' as const,
+    measurement_id: null,
+    result: null,
+    error: { message: 'Prediction calculation failed' },
+    retry_count: 0,
+    manual_retry_requested: false,
+    stages: [{ ...trialFixture.stages[0], id: 'predict', stage: 'predict', job_id: 'prediction-job' }],
+  }
+  const solver = {
+    ...prediction,
+    id: 'solver-evaluation',
+    kind: 'solver' as const,
+    next_stage: 'solve' as const,
+    source: {},
+    error: { message: 'Solver disconnected' },
+    stages: [],
+  }
+  vi.mocked(optimizationApi.read).mockResolvedValue(optimization)
+  vi.mocked(optimizationApi.trials).mockResolvedValue({
+    items: [{ ...trialFixture, evaluations: [prediction, solver] }],
+    total: 1,
+  })
+  const apply = vi.fn()
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const page = render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <OptimizationManagement onApplyBest={apply} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findByText('Trial 2')
+  expect(within(screen.getByLabelText('예측 최선 후보')).getByText('1')).toBeInTheDocument()
+  expect(screen.getByText('검증된 최선 후보 · Trial 1')).toBeInTheDocument()
+  expect(screen.getByText('사용 8 · 예약 0 · 잔여 0')).toBeInTheDocument()
+  expect(screen.getByText('종료 사유: Solver 실행 시도 예산 소진')).toBeInTheDocument()
+  const predictionHistory = within(screen.getByLabelText('예측 평가'))
+  expect(predictionHistory.queryByText(/Measurement/)).not.toBeInTheDocument()
+  expect(predictionHistory.getByText('Job prediction-job')).toBeInTheDocument()
+  expect(
+    within(screen.getByLabelText('실제 검증 평가')).getByRole('button', { name: '실패 단계 재시도' }),
+  ).toBeDisabled()
+  fireEvent.click(predictionHistory.getByRole('button', { name: '실패 단계 재시도' }))
+  await waitFor(() =>
+    expect(optimizationApi.retryEvaluation).toHaveBeenCalledWith(optimization.id, prediction.id, expect.any(String)),
+  )
+  expect(optimizationApi.retry).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByText('최선 Vars로 새 Candidate 열기'))
+  expect(apply.mock.calls[0][0].best_trial.variables).toEqual({ width: 3 })
+  page.unmount()
+  expect(optimizationApi.stop).not.toHaveBeenCalled()
 })
 
 it('reads one Optimization group, displays stage history, and retries only through the Optimization route', async () => {

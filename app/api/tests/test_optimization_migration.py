@@ -102,16 +102,61 @@ class OptimizationRenameMigrationTests(unittest.TestCase):
     def test_retained_data_and_hashes_survive_upgrade_and_round_trip(self):
         before = asyncio.run(self.snapshot(legacy=True))
         for _ in range(2):
-            _upgrade(self.database, "head")
+            _upgrade(self.database, "000000000021")
             self.assertEqual(asyncio.run(self.snapshot(legacy=False)), before)
             self.assertNotIn("cae_studies", asyncio.run(_table_names(self.database)))
-            _check(self.database)
             settings.db_url = _database_url(self.database)
             try:
                 command.downgrade(Config(str(API_DIR / "alembic.ini")), "000000000020")
             finally:
                 settings.db_url = ORIGINAL_DB_URL
             self.assertEqual(asyncio.run(self.snapshot(legacy=True)), before)
+        _upgrade(self.database, "head")
+        _check(self.database)
+
+    def test_evaluations_preserve_legacy_results_and_inflight_retries(self):
+        _upgrade(self.database, "000000000024")
+        before = asyncio.run(self.snapshot(legacy=False))
+        _upgrade(self.database, "head")
+        self.assertEqual(asyncio.run(self.snapshot(legacy=False)), before)
+
+        async def verify():
+            connection = await asyncpg.connect(**_connect_arguments(self.database))
+            try:
+                evaluation = json.loads(await connection.fetchval("SELECT to_jsonb(e) FROM cae_evaluations e WHERE trial_id=$1", self.ids["trial"]))
+                trial = before["cae_trials"][0]
+                self.assertEqual(evaluation["kind"], "solver")
+                self.assertEqual(evaluation["definition_hash"], "frozen-hash")
+                for field in ("state", "next_stage", "measurement_id", "result", "error", "retry_request_id", "retry_requests", "manual_retry_requested"):
+                    self.assertEqual(evaluation[field], trial[field])
+                self.assertEqual(await connection.fetchval("SELECT evaluation_id::text FROM cae_evaluation_submissions WHERE submission_id=$1",
+                                                          self.ids["submission"]), evaluation["id"])
+            finally:
+                await connection.close()
+        asyncio.run(verify())
+        settings.db_url = _database_url(self.database)
+        try:
+            command.downgrade(Config(str(API_DIR / "alembic.ini")), "000000000024")
+        finally:
+            settings.db_url = ORIGINAL_DB_URL
+        async def pending():
+            connection = await asyncpg.connect(**_connect_arguments(self.database))
+            try:
+                await connection.execute("UPDATE cae_trials SET state='pending',next_stage='calculate',manual_retry_requested=true")
+            finally:
+                await connection.close()
+        asyncio.run(pending())
+        _upgrade(self.database, "head")
+        async def retry():
+            connection = await asyncpg.connect(**_connect_arguments(self.database))
+            try:
+                row = await connection.fetchrow("SELECT state,next_stage,manual_retry_requested,retry_requests FROM cae_evaluations")
+                self.assertEqual(tuple(row[:3]), ("pending", "calculate", True))
+                self.assertEqual(json.loads(row["retry_requests"]), [self.ids["retry"]])
+            finally:
+                await connection.close()
+        asyncio.run(retry())
+        _check(self.database)
 
     def test_conflicting_metadata_aborts_without_partial_rename(self):
         async def conflict():

@@ -134,7 +134,7 @@ export async function optimizationCommand(command: string, context: CommandConte
     const configPath = path.resolve(String(options.config))
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Pick<
       OptimizationCreateRequest,
-      'name' | 'objective' | 'constraints' | 'axes' | 'max_trials' | 'max_parallel'
+      'name' | 'objective' | 'constraints' | 'axes' | 'max_trials' | 'max_parallel' | 'hybrid'
     >
     const body = {
       ...config,
@@ -170,7 +170,24 @@ export async function optimizationCommand(command: string, context: CommandConte
   if (command === 'resume') return optimizations.resume(id, { signal })
   if (command === 'delete') return optimizations.remove(id, { signal })
   if (command === 'retry') {
-    if (!options.trial) throw new CliError('optimization retry requires --trial <trial-id>.')
+    if (options.evaluation) {
+      if (options.trial) throw new CliError('Choose either --evaluation <evaluation-id> or --trial <trial-id>.')
+      const evaluation = String(options.evaluation)
+      const body = { optimization: id, evaluation }
+      const key = createHash('sha256')
+        .update(JSON.stringify([client.baseUrl, id, 'evaluation', evaluation]))
+        .digest('hex')
+      return submitRequest(
+        path.join(environment.repo, '.data/cli/optimization-requests', `${key}.json`),
+        client.baseUrl,
+        body,
+        options['request-id'] as string | undefined,
+        false,
+        (requestId) => optimizations.retryEvaluation(id, evaluation, requestId, { signal }),
+      )
+    }
+    if (!options.trial)
+      throw new CliError('optimization retry requires --evaluation <evaluation-id> or --trial <trial-id>.')
     const trial = String(options.trial)
     const body = { optimization: id, trial }
     const key = createHash('sha256')

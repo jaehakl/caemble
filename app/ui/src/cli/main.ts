@@ -38,7 +38,8 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
     submit resources: --cpu-cores N --startup-ram-mib N --gpu-count N --gpu-memory-mib N
   optimization create <artifact> --experiment <id> --config <optimization.json> [--item N] [--request-id UUID]
   optimization list [--experiment <id>] | show <id> | trials <id> | watch <id> [--timeout seconds]
-  optimization stop <id> | resume <id> | retry <id> --trial <trial-id> [--request-id UUID] | delete <id>
+  optimization stop <id> | resume <id> | delete <id>
+  optimization retry <id> --evaluation <evaluation-id> | --trial <trial-id> [--request-id UUID]
   calculation init <dir> | list --experiment <id> | pull <id> --out <dir> | check <source.js>
   calculation run <source.js> --fixture <input.json> | --result <local-run> | --measurement <id>
   calculation push <dir> --experiment <id> --measurement <id>
@@ -91,6 +92,7 @@ async function main() {
     'request-id',
     'config',
     'trial',
+    'evaluation',
     'cpu-cores',
     'startup-ram-mib',
     'gpu-count',

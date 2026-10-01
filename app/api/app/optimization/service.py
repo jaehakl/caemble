@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 
 from simulation.services.batches import job_snapshot
 from simulation.services.source_bundle import require_experiment_source_bundle
-from optimization.db import StageSubmission, Optimization, Trial
+from optimization.db import Evaluation, EvaluationSubmission, StageSubmission, Optimization, Trial
 from optimization.schemas import OptimizationCreateRequest
 from calculation.db import Calculation, CalculationExperimentRecord, CalculationSource
 from simulation.db import Experiment, ExperimentRecord
@@ -33,6 +33,8 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
 
     await serialize_events(db)
     payload = request.model_dump(mode="json")
+    if payload.get("hybrid") is None:
+        payload.pop("hybrid", None)  # Preserve existing Solver-only create receipts.
     try:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                                           allow_nan=False).encode("utf-8")).hexdigest()
@@ -84,6 +86,11 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
     definition = {"source_bundle": experiment.source_bundle, "source_hash": experiment.source_hash,
                   "result_contracts": experiment.result_contracts, "catalog_revision": catalog.meta()["catalogRevision"],
                   "catalog": runtime_catalog, "vars_schema": request.vars_schema, "calculations": frozen_calculations}
+    if request.hybrid is not None:
+        from optimization.evaluations import freeze_hybrid
+        definition["hybrid"] = await freeze_hybrid(db, request.hybrid, user.id, experiment, frozen_calculations)
+        if definition["hybrid"]["source_contracts"].get("varsSchema") != request.vars_schema:
+            raise HTTPException(409, "Model Vars schema differs from the Optimization Vars schema.")
     definition["hash"] = hashlib.sha256(json.dumps(definition, sort_keys=True, separators=(",", ":"),
                                                    ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
     settings = {"initial_vars": request.initial_vars, "axes": axes,
@@ -92,6 +99,8 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
                                 for index, item in enumerate(request.constraints)],
                 "max_trials": request.max_trials, "max_parallel": request.max_parallel,
                 "initial_step": 0.25, "min_step": 0.001}
+    if request.hybrid is not None:
+        settings["hybrid"] = request.hybrid.model_dump(mode="json")
     optimization = Optimization(user_id=user.id, experiment_id=experiment.id,
                   name=request.name.strip() if request.name and request.name.strip() else f"{experiment.name} optimization",
                   request_id=str(request.request_id), request_hash=digest, state="running", definition=definition,
@@ -102,6 +111,9 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
 
 
 async def optimization_summaries(db, optimizations: list[Optimization]) -> list[dict]:
+    from optimization.algorithm import trial_rank
+    from optimization.evaluations import solver_budget
+    from types import SimpleNamespace
     ids = [optimization.id for optimization in optimizations]
     if not ids:
         return []
@@ -139,6 +151,38 @@ async def optimization_summaries(db, optimizations: list[Optimization]) -> list[
                        "manual_retry_pending": manual_retries[optimization.id],
                        "best_trial": {"id": winner.id, "ordinal": winner.ordinal, "variables": winner.variables,
                                       "result": winner.result, "measurement_id": winner.measurement_id} if winner else None})
+        summary = result[-1]
+        evaluated = (await db.execute(select(Evaluation, Trial).join(Trial, Trial.id == Evaluation.trial_id)
+            .where(Evaluation.optimization_id == optimization.id))).all()
+        best_by_kind = {}
+        for kind in ("solver", "prediction"):
+            eligible = [(evaluation, trial) for evaluation, trial in evaluated if evaluation.kind == kind
+                        and evaluation.state == "succeeded" and evaluation.result and evaluation.result["feasible"]]
+            if eligible:
+                evaluation, trial = min(eligible, key=lambda pair: trial_rank(
+                    SimpleNamespace(result=pair[0].result, ordinal=pair[1].ordinal), optimization.settings["objective"]["direction"]))
+                best_by_kind[kind] = {"id": trial.id, "ordinal": trial.ordinal, "variables": trial.variables,
+                    "result": evaluation.result, "measurement_id": evaluation.measurement_id}
+        summary.update(best_verified_trial=best_by_kind.get("solver", summary["best_trial"]),
+                       best_predicted_trial=best_by_kind.get("prediction"), solver_budget=await solver_budget(db, optimization),
+                       termination_reason=optimization.optimizer_state.get("termination_reason"))
+        summary["best_trial"] = summary["best_verified_trial"]
+        if evaluated:
+            summary["retry_count"] = sum(len(item.retry_requests or []) for item, _ in evaluated)
+            summary["manual_retry_pending"] = any(item.manual_retry_requested for item, _ in evaluated)
+        if optimization.settings.get("hybrid"):
+            states = {}
+            for evaluation, trial in evaluated:
+                states.setdefault(trial.id, []).append(evaluation.state)
+            summary.update(succeeded=sum(all(state == "succeeded" for state in values) for values in states.values()),
+                failed=sum("failed" in values for values in states.values()),
+                cancelled=sum("cancelled" in values for values in states.values()),
+                active=sum(any(state in {"pending", "running"} for state in values) for values in states.values()))
+        children = list((await db.scalars(select(Job).where(
+            Job.artifact_metadata["optimization_id"].astext == optimization.id,
+            Job.artifact_metadata.has_key("optimization_parent")))).all())
+        summary["executions_active"] += sum(job.state in SERVER_ACTIVE_STATES for job in children)
+        summary["cleanup_pending"] |= any(job.launcher_id is not None and job.cleaned_at is None for job in children)
     return result
 
 
@@ -172,10 +216,35 @@ async def list_trials(db, optimization: Optimization, *, limit: int, offset: int
                                        "batch_id": stage.batch_id, "job_id": stage.job_id, "state": job.state if job else stage.state,
                                        "result": stage.result, "error": stage.error,
                                        "job": job_snapshot(job, measurements[stage.trial_id]) if job else None})
-    return {"total": total, "items": [{**{key: getattr(trial, key) for key in (
+    history = {"total": total, "items": [{**{key: getattr(trial, key) for key in (
         "id", "optimization_id", "ordinal", "round_index", "variables", "fingerprint", "state", "next_stage",
         "measurement_id", "result", "error", "manual_retry_requested", "created_at", "updated_at")},
         "retry_count": len(trial.retry_requests or []), "stages": grouped[trial.id]} for trial in trials]}
+    evaluations = list((await db.scalars(select(Evaluation).where(
+        Evaluation.trial_id.in_([trial.id for trial in trials])).order_by(Evaluation.created_at, Evaluation.id))).all())
+    linked = (await db.execute(select(EvaluationSubmission.evaluation_id, StageSubmission, Job)
+        .join(StageSubmission, StageSubmission.id == EvaluationSubmission.submission_id)
+        .join(Job, Job.id == StageSubmission.job_id)
+        .where(EvaluationSubmission.evaluation_id.in_([item.id for item in evaluations]))
+        .order_by(StageSubmission.created_at, StageSubmission.generation))).all()
+    by_evaluation = {item.id: [] for item in evaluations}
+    for evaluation_id, stage, job in linked:
+        by_evaluation[evaluation_id].append({"id": stage.id, "stage": stage.stage, "generation": stage.generation,
+            "batch_id": stage.batch_id, "job_id": stage.job_id, "state": job.state,
+            "result": stage.result, "error": stage.error, "job": job_snapshot(job,
+                next(item.measurement_id for item in evaluations if item.id == evaluation_id))})
+    for item in history["items"]:
+        item["evaluations"] = [{**{key: getattr(evaluation, key) for key in (
+            "id", "kind", "definition_hash", "source_hash", "source", "state", "next_stage", "measurement_id",
+            "artifact", "result", "error", "manual_retry_requested", "created_at", "updated_at")},
+            "retry_count": len(evaluation.retry_requests or []), "stages": by_evaluation[evaluation.id]}
+            for evaluation in evaluations if evaluation.trial_id == item["id"]]
+        if optimization.settings.get("hybrid") and item["evaluations"]:
+            states = [evaluation["state"] for evaluation in item["evaluations"]]
+            item["state"] = next((state for state in ("failed", "running", "pending", "cancelled") if state in states),
+                "succeeded" if any(evaluation["kind"] == "solver" and evaluation["state"] == "succeeded"
+                                   for evaluation in item["evaluations"]) else "predicted")
+    return history
 
 
 async def resume_optimization(db, optimization: Optimization) -> None:
@@ -183,6 +252,9 @@ async def resume_optimization(db, optimization: Optimization) -> None:
         return
     if optimization.state != "paused":
         raise HTTPException(409, "Wait for the Optimization to pause before resuming.")
+    if await db.scalar(select(Evaluation.id).where(Evaluation.optimization_id == optimization.id,
+        (Evaluation.state == "failed") | Evaluation.manual_retry_requested).limit(1)) is not None:
+        raise HTTPException(409, "Retry failed Evaluations and wait for completion before resuming.")
     unresolved = await db.scalar(select(Trial.id).where(Trial.optimization_id == optimization.id,
                                                        (Trial.state == "failed") | Trial.manual_retry_requested).limit(1))
     if unresolved is not None:
@@ -192,12 +264,23 @@ async def resume_optimization(db, optimization: Optimization) -> None:
                                 Job.state.in_(SERVER_ACTIVE_STATES) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1))
     if active is not None:
         raise HTTPException(409, "Wait for Optimization executions and worker cleanup before resuming.")
+    if await db.scalar(select(Job.id).where(Job.artifact_metadata["optimization_id"].astext == optimization.id,
+        Job.artifact_metadata.has_key("optimization_parent"),
+        Job.state.in_(SERVER_ACTIVE_STATES) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1)):
+        raise HTTPException(409, "Wait for Predictor cleanup before resuming.")
     optimization.state, optimization.pause_reason, optimization.finished_at, optimization.updated_at = "running", None, None, utcnow()
 
 
 async def delete_optimization(db, optimization: Optimization) -> None:
     if optimization.state not in {"paused", "completed"}:
         raise HTTPException(409, "Stop the Optimization before deleting its history.")
+    if await db.scalar(select(Evaluation.id).where(Evaluation.optimization_id == optimization.id,
+                                                  Evaluation.manual_retry_requested).limit(1)):
+        raise HTTPException(409, "Stop the manual Evaluation retry before deleting its Optimization.")
+    if await db.scalar(select(Job.id).where(Job.artifact_metadata["optimization_id"].astext == optimization.id,
+        Job.artifact_metadata.has_key("optimization_parent"),
+        Job.state.in_(SERVER_ACTIVE_STATES) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1)):
+        raise HTTPException(409, "Wait for Predictor cleanup before deleting its Optimization.")
     if await db.scalar(select(Trial.id).where(Trial.optimization_id == optimization.id, Trial.manual_retry_requested).limit(1)) is not None:
         raise HTTPException(409, "Stop the manual retry before deleting its Optimization.")
     active = await db.scalar(select(Job.id).join(StageSubmission, StageSubmission.job_id == Job.id)
@@ -238,7 +321,49 @@ async def retry_trial(db, optimization_id: str, trial_id: str, request_id: str, 
     trial = await db.scalar(select(Trial).where(Trial.optimization_id == optimization.id, Trial.id == trial_id).with_for_update())
     if trial is None:
         raise HTTPException(404, "Trial not found.")
+    if optimization.settings.get("hybrid"):
+        raise HTTPException(409, "Retry the specific Hybrid Evaluation instead of its candidate Trial.")
     await request_retry(db, optimization, trial, request_id)
+    await db.commit()
+    wake_controller()
+    return await optimization_detail(db, optimization)
+
+
+async def retry_evaluation(db, optimization_id, evaluation_id, request_id, user, catalog):
+    from optimization.controller import optimization_jobs, wake_controller
+    from optimization.evaluations import project_solver, require_solver_budget
+    from optimization.submissions import submit_stage
+
+    await serialize_events(db)
+    optimization = await require_optimization(db, optimization_id, user, lock=True)
+    evaluation = await db.scalar(select(Evaluation).where(Evaluation.id == evaluation_id,
+        Evaluation.optimization_id == optimization.id).with_for_update())
+    if evaluation is None:
+        raise HTTPException(404, "Evaluation not found.")
+    if request_id in (evaluation.retry_requests or []):
+        await db.commit()
+        return await optimization_detail(db, optimization)
+    if optimization.state not in {"paused", "completed"} or evaluation.state != "failed":
+        raise HTTPException(409, "Pause the Optimization and select a failed Evaluation to retry.")
+    jobs = [job for _, job in await optimization_jobs(db, optimization.id)]
+    jobs.extend((await db.scalars(select(Job).where(Job.artifact_metadata["optimization_id"].astext == optimization.id,
+        Job.artifact_metadata.has_key("optimization_parent")))).all())
+    if any(job.state in SERVER_ACTIVE_STATES or (job.launcher_id and job.cleaned_at is None) for job in jobs):
+        raise HTTPException(409, "Wait for previous executions and Predictor cleanup before retrying.")
+    if evaluation.next_stage == "solve":
+        await require_solver_budget(db, optimization)
+    evaluation.retry_request_id = request_id
+    evaluation.retry_requests = [*(evaluation.retry_requests or []), request_id]
+    evaluation.manual_retry_requested = True
+    evaluation.state, evaluation.error = "pending", None
+    evaluation.updated_at = utcnow()
+    optimization.state, optimization.finished_at = "paused", None
+    trial = await db.get(Trial, evaluation.trial_id)
+    project_solver(trial, evaluation)
+    # Solver retry admission and the new physical Job/reservation are one locked
+    # transaction. A repeated request returns the receipt without spending twice.
+    if evaluation.next_stage == "solve":
+        await submit_stage(db, optimization, trial, catalog, evaluation)
     await db.commit()
     wake_controller()
     return await optimization_detail(db, optimization)

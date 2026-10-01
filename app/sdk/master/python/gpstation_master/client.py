@@ -138,6 +138,7 @@ class GpStationClient:
         job_api_prefix: str = "/v1/jobs",
         rtc_configuration: RTCConfiguration | None = None,
         cookies: Mapping[str, str] | httpx.Cookies | None = None,
+        retry_before_input: bool = True,
     ) -> None:
         api_base_url = api_base_url.rstrip("/")
         if not api_base_url:
@@ -148,6 +149,7 @@ class GpStationClient:
             raise ValueError("token is required for bearer authentication")
         self._api_base_url = api_base_url
         self._token = token
+        self._retry_before_input = retry_before_input
         self._auth_mode = auth_mode
         self._job_api_prefix = _normalize_api_prefix(job_api_prefix)
         self._rtc_configuration = rtc_configuration
@@ -351,7 +353,7 @@ class GpStationClient:
                     attempt=0,
                 )
             except _RunJobAttemptError as error:
-                if error.input_sent:
+                if error.input_sent or not self._retry_before_input:
                     if on_diagnostic is not None:
                         on_diagnostic(
                             ConnectDiagnosticEvent(
@@ -701,6 +703,10 @@ class GpStationClient:
             )
         except Exception:
             pass
+
+    async def kill_job(self, job_id: str) -> None:
+        """Cancel a job through this client's configured (possibly scoped) route."""
+        await self._request(f"{self._job_api_prefix}/{quote(job_id, safe='')}/kill", method="POST")
 
     async def _wait_job_answer(self, job_id: str, timeout_seconds: float) -> JobAnswerWaitResult:
         started_at = time.perf_counter()

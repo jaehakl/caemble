@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -66,3 +66,37 @@ class StageSubmission(TimestampMixin, Base):
     state: Mapped[str] = mapped_column(Text, nullable=False, default="queued", server_default="queued")
     result: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class Evaluation(TimestampMixin, Base):
+    """An immutable evaluation identity; Trial fields remain a Solver-only compatibility view."""
+    __tablename__ = "cae_evaluations"
+    __table_args__ = (
+        UniqueConstraint("optimization_id", "fingerprint", "kind", "definition_hash", "source_hash", name="uq_cae_evaluations_identity"),
+        CheckConstraint("kind IN ('solver', 'prediction')", name="evaluation_kind"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    optimization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("cae_optimizations.id", ondelete="CASCADE"), index=True)
+    trial_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("cae_trials.id", ondelete="CASCADE"), index=True)
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    definition_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    next_stage: Mapped[str] = mapped_column(Text, nullable=False)
+    measurement_id: Mapped[int | None] = mapped_column(ForeignKey("measurements.id", ondelete="RESTRICT"), index=True)
+    artifact: Mapped[dict | None] = mapped_column(JSONB)
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[dict | None] = mapped_column(JSONB)
+    manual_retry_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    retry_request_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    retry_requests: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+
+
+class EvaluationSubmission(Base):
+    """Many evaluations may share a physical Prediction Job, counted and cancelled once."""
+    __tablename__ = "cae_evaluation_submissions"
+    evaluation_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("cae_evaluations.id", ondelete="CASCADE"), primary_key=True)
+    submission_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("cae_stage_submissions.id", ondelete="CASCADE"), primary_key=True)

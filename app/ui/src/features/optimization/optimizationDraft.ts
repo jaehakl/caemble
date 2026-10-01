@@ -10,6 +10,12 @@ export type OptimizationDraft = {
   constraints: { calculationId: string; minimum: string; maximum: string }[]
   maxTrials: number
   maxParallel: number
+  hybrid: boolean
+  modelId: string
+  modelRevision: string
+  replicaId: string
+  launcherId: string
+  maxSolverRuns: number
 }
 
 export function createOptimizationDraft(workbench: CaeWorkbenchState): OptimizationDraft {
@@ -21,5 +27,11 @@ export function createOptimizationDraft(workbench: CaeWorkbenchState): Optimizat
     constraints: [],
     maxTrials: 20,
     maxParallel: 2,
+    hybrid: false,
+    modelId: '',
+    modelRevision: '',
+    replicaId: '',
+    launcherId: '',
+    maxSolverRuns: 8,
   }
 }

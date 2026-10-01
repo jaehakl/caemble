@@ -115,6 +115,38 @@ it('requires an explicit artifact item when multiple candidates exist', async ()
   expect(fetch).toHaveBeenCalledOnce()
 })
 
+it('sends a fixed Hybrid model revision and Solver budget from configuration', async () => {
+  const hybrid = {
+    model_id: 'model',
+    model_revision: 3,
+    replica_id: 'replica',
+    launcher_id: 'launcher',
+    max_solver_runs: 8,
+  }
+  await writeFile(String(context.options.config), JSON.stringify({ ...config, hybrid }))
+  await optimizationCommand('create', context)
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).hybrid).toEqual(hybrid)
+})
+
+it('replays ambiguous Evaluation retries separately from legacy Trial retries', async () => {
+  context = { ...context, args: ['optimization-1'], options: { evaluation: 'evaluation-2' } }
+  fetch.mockRejectedValueOnce(new TypeError('response lost'))
+  await expect(optimizationCommand('retry', context)).rejects.toThrow('response lost')
+  await optimizationCommand('retry', context)
+  await optimizationCommand('retry', context)
+  const ids = fetch.mock.calls.map(([, request]) => JSON.parse(String(request?.body)).request_id)
+  expect(ids[0]).toBe(ids[1])
+  expect(ids[2]).not.toBe(ids[1])
+  expect(
+    fetch.mock.calls.every(([url]) =>
+      String(url).endsWith('/cae/optimizations/optimization-1/evaluations/evaluation-2/retry'),
+    ),
+  ).toBe(true)
+  await expect(
+    optimizationCommand('retry', { ...context, options: { trial: 'trial-1', evaluation: 'evaluation-2' } }),
+  ).rejects.toThrow('Choose either')
+})
+
 it('reuses a lost retry request and makes the next acknowledged retry explicit', async () => {
   context = { ...context, args: ['optimization-1'], options: { trial: 'trial-2' } }
   fetch.mockRejectedValueOnce(new TypeError('response lost'))

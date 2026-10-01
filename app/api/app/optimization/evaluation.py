@@ -7,10 +7,17 @@ from sqlalchemy import select
 
 from optimization.algorithm import evaluate_metrics
 from optimization.db import StageSubmission, Optimization, Trial
+from optimization.evaluations import ensure_evaluation, project_solver, submission_evaluations
 from simulation.services.uploads import validate_artifact_item
 from gpstation.db import JobRecord
 from simulation.services.material_snapshot import material_vars_hash
 from storage.service import bind_objects, download_parts, finish_upload, object_refs, owned_object, prepare_upload
+
+
+async def failed_job(db, job, packet):
+    """Record retryable admission failure in the transport's terminal transaction."""
+    if job.input.get("stage") == "predict" and packet.get("code") == "prediction-resource-wait":
+        job.artifact_metadata = {**(job.artifact_metadata or {}), "optimization_resource_wait": True}
 
 
 async def stage_record(db, job, packet, attachments):
@@ -41,6 +48,9 @@ async def complete_job(db, job, packet):
     if record is None:
         raise ValueError("Evaluation result was not recorded.")
     value = record.payload
+    evaluations = await submission_evaluations(db, submission)
+    if not evaluations:
+        evaluations = [await ensure_evaluation(db, optimization, trial)]
     if submission.stage == "build":
         item = validate_artifact_item(value.get("projection") or value["input"], optimization.definition["source_hash"])
         measurement = item["measurement"]
@@ -48,13 +58,32 @@ async def complete_job(db, job, packet):
             raise ValueError("Optimization Vars schema differs from the saved source. Reload the Experiment before starting a new Optimization.")
         if measurement["varsHash"] != material_vars_hash(trial.variables):
             raise ValueError("Built candidate Vars differ from the assigned Trial.")
+    elif submission.stage == "predict":
+        expected = {(item.trial_id, item.id): item for item in evaluations}
+        candidates = value.get("candidates", [])
+        if len(candidates) != len(expected) or {(item["candidate_id"], item["evaluation_id"]) for item in candidates} != set(expected):
+            raise ValueError("Prediction results differ from the assigned candidates.")
+        for item in candidates:
+            artifact = item.get("artifact")
+            if not isinstance(artifact, dict) or artifact.get("kind") != "caemble.object":
+                raise ValueError("Predicted BoxGrids must be retained as storage artifacts.")
+            expected[(item["candidate_id"], item["evaluation_id"])].artifact = artifact
+        provenance = value.get("provenance", {})
+        hybrid = optimization.definition["hybrid"]
+        if (provenance.get("model_id") != hybrid["model_id"] or provenance.get("revision") != hybrid["model_revision"]
+                or provenance.get("checksum") != hybrid["checksum"]):
+            raise ValueError("Prediction used another model revision or checksum.")
     else:
-        if value.get("measurement_id") != trial.measurement_id:
+        evaluation = evaluations[0]
+        if evaluation.kind == "prediction" and (value.get("evaluation_id") != evaluation.id or value.get("candidate_id") != trial.id):
+            raise ValueError("Prediction Calculation used another candidate or evaluation.")
+        if evaluation.kind == "solver" and value.get("measurement_id") != evaluation.measurement_id:
             raise ValueError("Calculation used another Measurement.")
         expected = {item["key"]: item["source_hash"] for item in optimization.definition["calculations"]}
         if {item["key"]: item["source_hash"] for item in value["calculations"]} != expected:
             raise ValueError("Calculation sources differ from the frozen Optimization definition.")
-        trial.result = evaluate_metrics(value["calculations"], optimization.settings)
+        evaluation.result = evaluate_metrics(value["calculations"], optimization.settings)
+        project_solver(trial, evaluation)
     await bind_objects(db, value, user_id=job.user_id, experiment_id=optimization.experiment_id,
                        job_id=job.id, attempt=job.attempt_count)
     optimization.optimizer_state = {**optimization.optimizer_state, "runtime_id": runtime_id}

@@ -56,6 +56,22 @@ def test_forward_relative_coordinates(tmp_path):
     assert forward["profile"]["rowCount"] == 3
 
 
+def test_batch_matches_single_and_preserves_candidate_and_model_identity(tmp_path):
+    worker = runtime(tmp_path)
+    prepared = prepare(worker)
+    inputs = [{"candidateId": f"trial-{index}", "input": {"direction": "forward", "vars": {"x": index / 4}}} for index in range(3)]
+    batch = call(worker, "model.predict_batch", instance=prepared["instance"], inputs=inputs)
+    assert len(worker.instances) == 1
+    for item, result in zip(inputs, batch["predictions"]):
+        single = call(worker, "model.predict", instance=prepared["instance"], input=item["input"])
+        assert result["candidateId"] == item["candidateId"]
+        assert result["output"] == single["output"]
+        assert result["provenance"] == {**single["provenance"], "manifestChecksum": prepared["artifact"]["manifestChecksum"]}
+    for invalid in ([], inputs * 11, [inputs[0], inputs[0]]):
+        with pytest.raises(PredictionError, match="inputs|unique"):
+            call(worker, "model.predict_batch", instance=prepared["instance"], inputs=invalid)
+
+
 def test_restart_reloads_without_dataset_or_training(tmp_path):
     worker = runtime(tmp_path)
     prepared = prepare(worker)

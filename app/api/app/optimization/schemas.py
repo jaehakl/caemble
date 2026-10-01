@@ -41,6 +41,15 @@ class OptimizationConstraint(BaseModel):
         return self
 
 
+class HybridSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_id: UUID
+    model_revision: int = Field(strict=True, ge=1)
+    replica_id: UUID
+    launcher_id: UUID
+    max_solver_runs: int = Field(default=8, strict=True, ge=1)
+
+
 class OptimizationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     request_id: UUID
@@ -54,6 +63,7 @@ class OptimizationCreateRequest(BaseModel):
     max_trials: int = Field(default=20, strict=True, ge=1)
     max_parallel: int = Field(default=2, strict=True, ge=1)
     name: str | None = Field(default=None, min_length=1)
+    hybrid: HybridSettings | None = None
 
 
 class OptimizationRetryRequest(BaseModel):

@@ -10,7 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from optimization.algorithm import next_round, trial_rank
-from optimization.db import StageSubmission, Optimization, Trial
+from optimization.db import Evaluation, StageSubmission, Optimization, Trial
+from optimization.evaluations import ensure_evaluation, project_solver, solver_budget, submission_evaluations
 from optimization.submissions import submit_stage
 from db import SessionLocal
 from gpstation.db import Job
@@ -44,6 +45,8 @@ async def cancel_optimization(db, optimization, reason="user"):
     trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == optimization.id))).all())
     for trial in trials:
         trial.manual_retry_requested = False
+    for evaluation in (await db.scalars(select(Evaluation).where(Evaluation.optimization_id == optimization.id))).all():
+        evaluation.manual_retry_requested = False
     for submission, job in await optimization_jobs(db, optimization.id):
         if job.state not in SERVER_ACTIVE_STATES:
             continue
@@ -54,6 +57,7 @@ async def cancel_optimization(db, optimization, reason="user"):
 
 
 async def request_retry(db, optimization, trial, request_id):
+    evaluation = await ensure_evaluation(db, optimization, trial)
     if trial.retry_request_id == request_id or request_id in (trial.retry_requests or []):
         return
     if optimization.state != "paused" or trial.state != "failed":
@@ -67,16 +71,29 @@ async def request_retry(db, optimization, trial, request_id):
     trial.state = "pending"
     trial.error = None
     trial.updated_at = utcnow()
+    for key in ("retry_request_id", "retry_requests", "manual_retry_requested", "state", "error", "updated_at"):
+        setattr(evaluation, key, getattr(trial, key))
 
 
-async def pause_for_failure(db, optimization, trial, message):
-    trial.state = "failed"
-    trial.manual_retry_requested = False
-    trial.error = {"message": message, "stage": trial.next_stage}
+async def pause_for_failure(db, optimization, trial, message, evaluation=None):
+    evaluation = evaluation or await ensure_evaluation(db, optimization, trial)
+    evaluation.state = "failed"
+    evaluation.manual_retry_requested = False
+    evaluation.error = {"message": message, "stage": evaluation.next_stage}
+    evaluation.updated_at = utcnow()
+    project_solver(trial, evaluation)
+    budget = await solver_budget(db, optimization)
+    if budget and budget["used"] >= budget["limit"] and evaluation.next_stage == "solve":
+        optimization.optimizer_state = {**optimization.optimizer_state, "termination_reason": "solver_budget_exhausted"}
+        return
     optimization.state = "pausing"
-    optimization.pause_reason = f"Trial {trial.ordinal} {trial.next_stage}: {message}"
+    optimization.pause_reason = f"Trial {trial.ordinal} {evaluation.next_stage}: {message}"
     for retrying in (await db.scalars(select(Trial).where(
         Trial.optimization_id == optimization.id, Trial.manual_retry_requested,
+    ))).all():
+        retrying.manual_retry_requested = False
+    for retrying in (await db.scalars(select(Evaluation).where(
+        Evaluation.optimization_id == optimization.id, Evaluation.manual_retry_requested,
     ))).all():
         retrying.manual_retry_requested = False
     # A queued sibling is already dispatchable; pausing only the controller
@@ -100,30 +117,43 @@ async def on_job_finished(db, job, result=None):
     if optimization is None or submission is None or submission.state in TERMINAL_STATES:
         return
     trial = await db.get(Trial, submission.trial_id)
+    evaluations = await submission_evaluations(db, submission)
+    if not evaluations:
+        evaluations = [await ensure_evaluation(db, optimization, trial)]
     submission.state = job.state
     submission.updated_at = utcnow()
-    if job.state == "succeeded":
-        if submission.result is None:
-            submission.result = result or {}
-        trial.next_stage = {"build": "solve", "solve": "calculate", "calculate": "complete"}[submission.stage]
-        trial.state = "succeeded" if trial.next_stage == "complete" else "pending"
-        if trial.state == "succeeded":
-            trial.manual_retry_requested = False
-            if trial.result and trial.result["feasible"]:
-                best = await db.get(Trial, optimization.best_trial_id) if optimization.best_trial_id else None
-                if best is None or trial_rank(trial, optimization.settings["objective"]["direction"]) < trial_rank(best, optimization.settings["objective"]["direction"]):
-                    optimization.best_trial_id = trial.id
-    elif job.state in {"cancelled", "killed"} and job.artifact_metadata.get("optimization_cancel_reason"):
-        trial.state = "cancelled"
-        trial.manual_retry_requested = False
-        submission.error = {"message": job.last_error, "origin": job.artifact_metadata["optimization_cancel_reason"]}
-    else:
-        await pause_for_failure(db, optimization, trial, job.last_error or "Evaluation failed.")
-        submission.error = trial.error
-    trial.updated_at = optimization.updated_at = utcnow()
+    for evaluation in evaluations:
+        trial = await db.get(Trial, evaluation.trial_id)
+        if job.state == "succeeded":
+            if submission.result is None:
+                submission.result = result or {}
+            evaluation.next_stage = {"build": "solve", "solve": "calculate", "predict": "calculate", "calculate": "complete"}[submission.stage]
+            evaluation.state = "succeeded" if evaluation.next_stage == "complete" else "pending"
+            if evaluation.state == "succeeded":
+                evaluation.manual_retry_requested = False
+        elif (job.artifact_metadata or {}).get("optimization_resource_wait"):
+            evaluation.state = "pending"
+            evaluation.error = None
+            submission.error = {"message": job.last_error, "code": "prediction-resource-wait"}
+        elif job.state in {"cancelled", "killed"} and job.artifact_metadata.get("optimization_cancel_reason"):
+            evaluation.state = "cancelled"
+            evaluation.manual_retry_requested = False
+            submission.error = {"message": job.last_error, "origin": job.artifact_metadata["optimization_cancel_reason"]}
+        else:
+            await pause_for_failure(db, optimization, trial, job.last_error or "Evaluation failed.", evaluation)
+            submission.error = evaluation.error
+        evaluation.updated_at = optimization.updated_at = utcnow()
+        project_solver(trial, evaluation)
+        if evaluation.kind == "solver" and evaluation.state == "succeeded" and evaluation.result and evaluation.result["feasible"]:
+            best = await db.get(Trial, optimization.best_trial_id) if optimization.best_trial_id else None
+            if best is None or trial_rank(trial, optimization.settings["objective"]["direction"]) < trial_rank(best, optimization.settings["objective"]["direction"]):
+                optimization.best_trial_id = trial.id
 
 
 async def reconcile_optimization(db, optimization, catalog):
+    if optimization.settings.get("hybrid"):
+        from optimization.hybrid import reconcile_hybrid
+        return await reconcile_hybrid(db, optimization, catalog)
     trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == optimization.id).order_by(Trial.ordinal))).all())
     jobs = await optimization_jobs(db, optimization.id)
     # Recovery covers a terminal Job committed before this process restarted.
@@ -185,6 +215,10 @@ async def reconcile_optimization(db, optimization, catalog):
 
 
 async def reconcile_once(catalog):
+    from optimization.predictor_jobs import reconcile_children
+    async with SessionLocal() as db:
+        await reconcile_children(db)
+        await db.commit()
     async with SessionLocal() as db:
         ids = list((await db.scalars(select(Optimization.id).where(Optimization.state != "completed").order_by(Optimization.created_at))).all())
     for optimization_id in ids:

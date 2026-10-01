@@ -202,6 +202,8 @@ async def run_worker_connection(websocket: WebSocket, job_id: str) -> None:
                     job.state = "finalizing"
                     await job_event(db, job, "job.finalizing")
                 elif kind in {"job.failed", "job.cancelled"}:
+                    if kind == "job.failed" and hasattr(handler, "failed_job"):
+                        await handler.failed_job(db, job, packet)
                     await finish_job(
                         db,
                         job,

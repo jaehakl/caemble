@@ -8,6 +8,7 @@ import { useAuth } from '@/features/auth/use-auth'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { calculationsQueryOptions } from '@/features/calculation/queryOptions'
 import { OptimizationVariables } from './OptimizationVariables'
+import { OptimizationHybridSettings } from './OptimizationHybridSettings'
 import { optimizationVariables, validateOptimizationAxes } from './variables'
 import type { OptimizationDraft } from './optimizationDraft'
 import type { useOptimizationCreation } from './useOptimizationData'
@@ -96,6 +97,13 @@ export function OptimizationSetup({
           ...(maximum === undefined ? {} : { maximum }),
         }
       })
+      if (draft.hybrid && (!draft.modelId || !draft.modelRevision || !draft.replicaId || !draft.launcherId))
+        throw new Error('저장된 kNN 모델, revision과 실행 위치를 선택하세요.')
+      if (
+        draft.hybrid &&
+        (!Number.isSafeInteger(draft.maxSolverRuns) || draft.maxSolverRuns < 1 || draft.maxSolverRuns > 10000)
+      )
+        throw new Error('Solver 실행 시도 예산은 1–10,000 사이의 정수여야 합니다.')
       const payload = {
         name: name.trim(),
         experiment_id: workbench.experimentId,
@@ -107,6 +115,17 @@ export function OptimizationSetup({
         constraints: parsedConstraints,
         max_trials: maxTrials,
         max_parallel: maxParallel,
+        ...(draft.hybrid
+          ? {
+              hybrid: {
+                model_id: draft.modelId,
+                model_revision: Number(draft.modelRevision),
+                replica_id: draft.replicaId,
+                launcher_id: draft.launcherId,
+                max_solver_runs: draft.maxSolverRuns,
+              },
+            }
+          : {}),
       }
       await creation.create(payload)
     } catch (cause) {
@@ -255,9 +274,25 @@ export function OptimizationSetup({
             제약조건 추가
           </Button>
         </fieldset>
+        <fieldset className="space-y-3 rounded-lg border p-4 text-sm">
+          <legend className="px-1 font-medium">평가 방식</legend>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={draft.hybrid}
+              onChange={(event) => updateDraft({ hybrid: event.target.checked })}
+            />
+            kNN Hybrid Optimization
+          </label>
+          {draft.hybrid && workbench.experimentId !== null ? (
+            <OptimizationHybridSettings experimentId={workbench.experimentId} draft={draft} onChange={updateDraft} />
+          ) : (
+            <p className="text-xs text-muted-foreground">모든 후보를 실제 Solver로 평가합니다.</p>
+          )}
+        </fieldset>
         <div className="grid grid-cols-2 gap-3 text-sm">
           <label className="space-y-1">
-            <span className="block">최대 평가 횟수</span>
+            <span className="block">최대 후보 수</span>
             <Input
               className="w-full"
               type="number"

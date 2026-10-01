@@ -5,6 +5,7 @@ import { optimizationApi } from '@/api/optimization'
 import type {
   Optimization,
   OptimizationCreateRequest,
+  OptimizationEvaluation,
   OptimizationSummary,
   OptimizationTrial,
 } from '@/contracts/api/optimization'
@@ -185,6 +186,12 @@ export function useOptimizationData({
       const requestId = retryRequests.current.get(key) ?? crypto.randomUUID()
       retryRequests.current.set(key, requestId)
       return action(target, () => optimizationApi.retry(target, trial.id, requestId))
+    },
+    retryEvaluation: (target: string, evaluation: OptimizationEvaluation) => {
+      const key = `${target}:evaluation:${evaluation.id}:${evaluation.retry_count}`
+      const requestId = retryRequests.current.get(key) ?? crypto.randomUUID()
+      retryRequests.current.set(key, requestId)
+      return action(target, () => optimizationApi.retryEvaluation(target, evaluation.id, requestId))
     },
   }
 }

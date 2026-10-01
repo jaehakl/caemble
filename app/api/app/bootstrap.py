@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI):
                 ("cae.simulation", recording),
                 ("cae.evaluation.build", evaluation),
                 ("cae.evaluation.calculate", evaluation),
+                ("cae.evaluation.predict", evaluation),
             ):
                 register_server_handler(
                     name, handler,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     from gpstation.routers import v1, web
     from gpstation_adapter import v1_router, web_router
     from optimization.router import router as optimization_router
+    from optimization.predictor_jobs import router as evaluation_predictor_router
     from prediction.router import router as prediction_router
     from simulation.routers import (
         demo_experiment, execution, experiment, experiment_record, measurement, recorded_data,
@@ -111,7 +113,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
     for router in (
-        auth_router, execution.router, optimization_router, storage_router, prediction_router,
+        auth_router, execution.router, optimization_router, evaluation_predictor_router, storage_router, prediction_router,
         data_router, capabilities_router, catalog_router, experiment.router,
         experiment_record.router, measurement.router, recorded_data.router,
         calculation.router, calculation_data.router, demo_experiment.router, users_router,

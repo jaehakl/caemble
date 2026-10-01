@@ -54,6 +54,13 @@ export function createOptimizationApi(client: CaembleClient) {
         { request_id: requestId },
         { ...context, csrf: 'required', validate: (value) => optimizationDetailSchema.parse(value) },
       ),
+    retryEvaluation: (id: string, evaluationId: string, requestId: string, context?: RequestContext) =>
+      client.request(
+        'post',
+        `${base}/${encodeURIComponent(id)}/evaluations/${encodeURIComponent(evaluationId)}/retry`,
+        { request_id: requestId },
+        { ...context, csrf: 'required', validate: (value) => optimizationDetailSchema.parse(value) },
+      ),
     remove: (id: string, context?: RequestContext) =>
       client.request('delete', `${base}/${encodeURIComponent(id)}`, undefined, { ...context, csrf: 'required' }),
   }

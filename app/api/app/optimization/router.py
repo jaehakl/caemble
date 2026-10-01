@@ -60,3 +60,10 @@ async def retry(optimization_id: UUID, trial_id: UUID, body: OptimizationRetryRe
 async def remove(optimization_id: UUID, db=Depends(get_db), user: UserData = Depends(authenticated)):
     await service.remove_optimization(db, str(optimization_id), user)
     return {"ok": True}
+
+
+@router.post("/{optimization_id}/evaluations/{evaluation_id}/retry")
+async def retry_evaluation(optimization_id: UUID, evaluation_id: UUID, body: OptimizationRetryRequest,
+                           request: Request, db=Depends(get_db), user: UserData = Depends(authenticated)):
+    return await service.retry_evaluation(db, str(optimization_id), str(evaluation_id), str(body.request_id), user,
+                                          request.app.state.catalog)

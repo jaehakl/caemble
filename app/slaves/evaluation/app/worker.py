@@ -12,15 +12,25 @@ async def evaluate(message: dict, attachments: list, context) -> dict:
     if attachments:
         raise ValueError("Evaluation inputs use assigned object references, not attachments.")
     stage = message["stage"]
-    if stage not in {"build", "calculate"}:
+    if stage not in {"build", "calculate", "predict", "calculate_prediction"}:
         raise ValueError("Unknown evaluation stage.")
     runtime = await asyncio.to_thread(doctor)
     if message.get("runtime_id") and message["runtime_id"] != runtime["runtime_id"]:
         raise ValueError("Evaluation runtime differs from the frozen Optimization runtime.")
     # The child receives only authored source/data; neither credentials nor job assignment.
-    keys = ("build",) if stage == "build" else ("measurement_id", "recorded_data", "calculations")
-    request = await resolve_input(context, {"stage": stage, **{key: message[key] for key in keys}})
-    result = await run_node(request, runtime, timeout=120 if stage == "build" else 30 * max(1, len(request["calculations"])))
+    calculation_prediction = stage == "calculate_prediction" or (stage == "calculate" and "prediction" in message)
+    request_stage = "calculate_prediction" if calculation_prediction else stage
+    keys = {"build": ("build",), "calculate": ("measurement_id", "recorded_data", "calculations"),
+            "predict": ("hybrid", "candidates", "record_names"),
+            "calculate_prediction": ("prediction", "calculations")}[request_stage]
+    request = await resolve_input(context, {"stage": request_stage, **{key: message[key] for key in keys}})
+    if stage == "predict":
+        from app.prediction import predict
+        result = await predict(request, context, runtime)
+    else:
+        result = await run_node(request, runtime, timeout=120 if stage == "build" else 30 * max(1, len(request["calculations"])))
+        if calculation_prediction:
+            result = {**result, "candidate_id": message["candidate_id"], "evaluation_id": message["evaluation_id"]}
     raw = json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if stage == "build":
         value = {"input": result}

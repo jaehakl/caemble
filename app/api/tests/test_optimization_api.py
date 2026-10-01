@@ -254,12 +254,7 @@ class OptimizationMigrationTests(unittest.TestCase):
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         asyncio.run(_create_database(database))
         try:
-            _upgrade(database, "head")
-            settings.db_url = _database_url(database)
-            try:
-                command.downgrade(Config(str(API_DIR / "alembic.ini")), "000000000019")
-            finally:
-                settings.db_url = ORIGINAL_DB_URL
+            _upgrade(database, "000000000019")
             _, _, experiment_id, _ = asyncio.run(_seed_owners(database))
             self.assertNotIn("cae_optimizations", asyncio.run(_table_names(database)))
             _upgrade(database, "head")

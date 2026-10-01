@@ -179,7 +179,6 @@ MINI, 초탄성 동적·고유치 해석과 접촉·연결은 지원 범위에 �
 - [실행 순서 작성](../manual/program/program-simulate.md): 여러 Task의 실행, 기록과 자원 해제를 작성합니다.
 - [Calculation 작성하기](calculation.md): 기록된 수치에서 비교 지표를 만들고 결과를 검증합니다.
 
-
 ## CLI에서 Optimization 실행
 
 저장된 Experiment ID와 기존 Build artifact를 재사용합니다. `optimization.json`에는 저장된
@@ -201,6 +200,28 @@ Calculation ID와 탐색 설정을 적습니다. 목적 Calculation은 필수이
 범위는 `min`, `max`, 고정은 `fixed`로 지정합니다. 예산 기본값은 20, 동시 진행은 2입니다.
 사전 검증 이력이 없는 Calculation도 선택할 수 있으며 첫 실제 Trial에서 스칼라 출력을 확인합니다.
 
+기본 Solver-only 방식은 그대로 사용할 수 있습니다. 저장된 kNN 모델로 후보를 예측하고 일부 후보를
+실제 해석하려면 설정에 다음 `hybrid` 객체를 추가합니다. 각 ID는 현재 Experiment의 저장 모델과
+사용 가능한 로컬 복제본·Launcher에서 확인한 실제 값으로 바꿉니다.
+
+```json
+{
+  "hybrid": {
+    "model_id": "<saved-model-id>",
+    "model_revision": 1,
+    "replica_id": "<model-replica-id>",
+    "launcher_id": "<predictor-launcher-id>",
+    "max_solver_runs": 8
+  }
+}
+```
+
+모델 revision과 checksum·Dataset 출처는 생성 시 고정됩니다. 서버가 소유권·Experiment·Record·Vars
+호환성을 검증하며 다른 revision으로 자동 대체하지 않습니다. Predictor Launcher에는 Evaluation과
+Predictor가 함께 사용할 CPU 최소 2개와 충분한 RAM이 필요합니다. Solver 예산은 실행 시도 기준으로,
+실행 전 취소한 예약은 반환하고 실행 승인 후 실패 및 Solver 재실행은 차감합니다. 빌드·예측·후처리
+재시도는 Solver 예산을 사용하지 않습니다.
+
 ```powershell
 .\caemble.cmd optimization create .work/build --experiment 7 --config optimization.json
 .\caemble.cmd optimization list --experiment 7
@@ -209,13 +230,18 @@ Calculation ID와 탐색 설정을 적습니다. 목적 Calculation은 필수이
 .\caemble.cmd optimization watch <optimization-id> --timeout 180
 .\caemble.cmd optimization stop <optimization-id>
 .\caemble.cmd optimization retry <optimization-id> --trial <trial-id>
+.\caemble.cmd optimization retry <optimization-id> --evaluation <evaluation-id>
 .\caemble.cmd optimization resume <optimization-id>
 .\caemble.cmd optimization delete <optimization-id>
 ```
 
 Artifact에 여러 항목이 있으면 생성 시 `--item <index>`를 지정합니다. 생성은 소스 hash,
 Vars schema와 초기 Vars만 읽어서 제출하며 추가 Build·Solver 사전 실행을 하지 않습니다.
-`show`에는 최선 후보와 진행 상태, `trials`에는 단계·제출·Job·재시도 이력이 포함됩니다.
+`show`에는 예측 최선 후보(`best_predicted_trial`), 실제 검증 최선 후보(`best_verified_trial`),
+Solver 예산(`solver_budget`)과 종료 사유(`termination_reason`)가 포함됩니다. 기존 `best_trial`도
+항상 검증된 후보입니다. `trials`에는 후보별 `evaluations`와 각각의 단계·제출·Job·재시도 이력이
+포함됩니다. 실패한 평가를 다시 시도할 때 `--evaluation`을 사용하고 기존 Solver-only의 `--trial`도
+유지됩니다. 두 선택자는 함께 지정할 수 없습니다. 예산이 소진되어도 Calculation 실패는 재시도할 수 있습니다.
 `watch`는 `{ "type": "snapshot", "optimization": ... }` 형식으로 2초 간격으로 관찰하며 Ctrl+C나 관찰 timeout으로 서버 실행이 중지되지 않습니다.
 완료는 종료 코드 0, 일시정지·실패는 1, 관찰 timeout은 5, Ctrl+C는 130입니다.
 
@@ -231,3 +257,48 @@ Vars schema와 초기 Vars만 읽어서 제출하며 추가 Build·Solver 사전
 응답을 잃은 요청은 같은 ID로 이어서 확인합니다. 서로 다른 요청 영수증이 충돌하거나 영수증이
 손상된 경우에는 새 요청을 자동 생성하지 않습니다. 두 파일과 요청 ID를 보존하고 서버의 접수
 상태를 확인한 뒤 복구하세요. 새 CLI는 `optimization` 명령만 제공합니다.
+
+## 작은 Box 도체 예제로 Hybrid 실행하기
+
+Catalog의 `hybrid-box-conductor`는 두 Vars인 `length`, `width`로 작은 도체의
+길이와 폭을 바꾸고 기존 DC Solver로 전류를 구합니다. 소스와 동반 Calculation의
+원본은 Catalog SQLite에 있습니다. 예제 상세에서 현재 단위·범위·고정 조건을
+확인하세요. `Current target error`는 `totalCurrent`와 목표 전류 사이의 절대 오차를
+스칼라로 반환하므로 목적 방향은 **Minimize**입니다.
+
+```powershell
+.\caemble.cmd doctor
+.\caemble.cmd catalog show examples hybrid-box-conductor
+.\caemble.cmd experiment init .work/hybrid-source --example hybrid-box-conductor
+.\caemble.cmd agent context experiment --source .work/hybrid-source
+.\caemble.cmd experiment build .work/hybrid-source --vars-mode nominal --out .work/hybrid-nominal
+.\caemble.cmd experiment test .work/hybrid-nominal --out .work/hybrid-nominal-result --timeout 180
+```
+
+학습 데이터는 실제 해석으로 준비합니다. Experiment를 서버에 저장한 뒤 Workbench에서
+각 변수의 하한·중앙·상한을 조합한 작은 Candidate 집합을 실행합니다. 처음에는 중앙과
+네 모서리의 5개 Measurement로 시작할 수 있습니다. 각 실행의 `totalCurrent` 기록과
+성공 상태를 확인하고, 해당 Measurement들로 Dataset을 만듭니다. Prediction에서
+`totalCurrent`를 선택해 Forward kNN 모델을 저장하고 모델 ID, revision, 파일 checksum,
+복제본과 Launcher를 확인합니다. 이 학습용 해석은 이후 Optimization의 Solver 예산과
+별개입니다. Dataset이나 저장 모델을 수정했다면 새 Optimization에서 새 revision을
+명시적으로 선택합니다.
+
+Optimization 설정에서 **kNN Hybrid**, 저장 모델·revision·실행 위치를 선택하고
+목적 Calculation으로 `Current target error`를 지정합니다. 첫 실행은 후보 20개,
+동시 후보 2개, Solver 시도 8회를 사용할 수 있습니다. Predictor 실행 위치에는
+Evaluation과 Predictor가 동시에 사용할 CPU 2개 이상과 충분한 RAM이 필요합니다.
+위 CLI의 `hybrid` 설정으로 같은 실행을 만들 수도 있습니다.
+
+시작 Candidate는 예측과 실제 검증을 모두 수행합니다. 이후 예측이 끝난 라운드에서
+목적값이 좋은 후보와 아직 검증한 후보에서 먼 탐색 후보를 실제로 검증합니다.
+예측 최선 후보와 검증 최선 후보의 Vars·목적값을 따로 확인하고, 최선 Vars 적용에는
+검증된 결과를 사용하세요. 실행 중 브라우저를 닫아도 서버 작업은 계속됩니다.
+다시 열거나 `optimization show`와 `optimization trials`로 같은 ID를 조회해 평가 이력,
+예산의 사용·예약·잔여 횟수와 종료 사유를 확인합니다.
+
+예제 검증 기록에는 전체 경과 시간, 학습용 Solver 호출 수, Optimization Solver 시도 수,
+예측·검증 결과와 자원 정리 완료 여부를 구분해 남깁니다. 작은 로컬 통합 검증의 기준은 실제 학습 해석 3회, Hybrid 후보 5개·Solver 예산 3회입니다. 이 구성은
+학습 데이터·고정 모델 준비부터 실제 검증과 자원 정리까지 기준 환경에서 180초 이내를 목표로 합니다. 원격 대기 시간이나 더 큰 학습 집합의 완료 시간을
+보장하는 값은 아닙니다. Calculation 실패는 저장된 예측 산출물이나 실제 Measurement에서
+재시도하므로 추가 추론이나 Solver 실행 없이 복구할 수 있습니다.
