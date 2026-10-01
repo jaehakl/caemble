@@ -2,7 +2,17 @@ import { createBrowserRouter } from 'react-router'
 import { AppShell } from '@/app/AppShell'
 import { RouteErrorPage } from '@/features/error/RouteErrorPage'
 
-export const appRoutePaths = ['index', 'showcase', 'workbench', 'doc', 'admin', 'settings', 'account', '*'] as const
+export const appRoutePaths = [
+  'index',
+  'showcase',
+  'workbench',
+  'doc',
+  'admin',
+  'settings',
+  'settings/prediction',
+  'account',
+  '*',
+] as const
 
 export function createAppRouter() {
   return createBrowserRouter([
@@ -35,6 +45,7 @@ export function createAppRouter() {
         { path: 'doc', lazy: () => import('@/routes/DocumentationRoute') },
         { path: 'admin', lazy: () => import('@/routes/AdminRoute') },
         { path: 'settings', lazy: () => import('@/routes/SettingsRoute') },
+        { path: 'settings/prediction', lazy: () => import('@/routes/PredictionFilesRoute') },
         { path: 'account', lazy: () => import('@/routes/AccountRoute') },
         { path: '*', lazy: () => import('@/routes/NotFoundRoute'), hydrateFallbackElement: <div /> },
       ],

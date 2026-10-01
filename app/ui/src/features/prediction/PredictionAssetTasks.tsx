@@ -21,15 +21,23 @@ const stages: Readonly<Record<string, string>> = {
   delete_pending: '파일 삭제 확인 대기',
 }
 
-export function PredictionAssetTasks({ manager }: Readonly<{ manager: PredictionAssetController }>) {
+export function PredictionAssetTasks({
+  manager,
+  assetId,
+}: Readonly<{ manager: PredictionAssetController; assetId?: string }>) {
   const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot)
+  const operations = state.operations.filter((operation) => !assetId || operation.asset_id === assetId)
+  const tasks = state.tasks.filter(
+    (task) =>
+      !assetId || task.key.includes(assetId) || operations.some((operation) => operation.id === task.operationId),
+  )
   return (
     <div role="tabpanel" aria-label="관리 작업" className="space-y-2">
       <p className="text-xs text-muted-foreground">
         이 화면을 닫아도 시작한 작업은 계속됩니다. 브라우저 종료로 중단되면 다시 조회하고 같은 작업을 재시도하세요.
       </p>
-      {!state.tasks.length && !state.operations.length && <p className="text-sm">관리 작업이 없습니다.</p>}
-      {state.tasks.map((task) => (
+      {!tasks.length && !operations.length && <p className="text-sm">관리 작업이 없습니다.</p>}
+      {tasks.map((task) => (
         <div key={task.id} className="space-y-1 rounded border p-2 text-xs">
           <p className="font-medium">{task.label}</p>
           <p>{task.message}</p>
@@ -50,8 +58,8 @@ export function PredictionAssetTasks({ manager }: Readonly<{ manager: Prediction
           )}
         </div>
       ))}
-      {state.operations
-        .filter((operation) => !state.tasks.some((task) => task.operationId === operation.id))
+      {operations
+        .filter((operation) => !tasks.some((task) => task.operationId === operation.id))
         .map((operation) => (
           <div key={operation.id} className="space-y-1 rounded border p-2 text-xs">
             <p className="font-medium break-words">

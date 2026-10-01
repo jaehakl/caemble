@@ -102,6 +102,21 @@ it('observes lifecycle transitions synchronously and blocks duplicate work befor
 })
 
 describe('PredictionRuntimeController', () => {
+  it('releases only the requested direction while retaining the other model in a shared session', async () => {
+    const { execution, runtime } = savedExecution()
+    const transaction = runtime.beginTransaction()
+    const forward = await runtime.loadModel(savedReference, transaction)
+    const inverse = await runtime.loadModel(
+      { ...savedReference, direction: 'inverse', modelId: 'inverse' },
+      transaction,
+    )
+    await runtime.releaseLoadedModels(['forward'])
+    expect(execution.release).toHaveBeenCalledExactlyOnceWith(forward.instance)
+    expect(runtime.cachedModel('forward')).toBeUndefined()
+    expect(runtime.cachedModel('inverse')).toBe(inverse)
+    expect(execution.dispose).not.toHaveBeenCalled()
+    runtime.dispose()
+  })
   it('loads the selected Model identity and revision even when content fingerprints match', async () => {
     const { execution, runtime } = savedExecution()
     const transaction = runtime.beginTransaction()

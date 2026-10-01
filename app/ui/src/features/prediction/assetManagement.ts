@@ -18,8 +18,10 @@ export type PredictionAssetTask = Readonly<{
   state: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
   message: string
   operationId?: string
+  experimentId?: number
 }>
 type PredictionAssetList = 'models' | 'datasets' | 'storages' | 'operations' | 'launchers'
+export type PredictionDeletionTarget = Readonly<{ modelId: string; revision?: number; storageId?: string }>
 export type PredictionAssetsSnapshot = Readonly<{
   models: readonly PredictionModelRecord[]
   datasets: readonly PredictionDatasetRecord[]
@@ -65,6 +67,9 @@ export class PredictionAssetController {
   private tasks = new Map<string, RunningTask>()
   private retries = new Map<string, () => Promise<unknown>>()
   private refreshSequence = 0
+  private deletionHandlers = new Set<(target: PredictionDeletionTarget) => Promise<void>>()
+  private viewSource?: PredictionAssetsSnapshot
+  private viewSnapshot?: PredictionAssetsSnapshot
   private client = new GpStationClient({
     apiBaseUrl: browserClient.baseUrl,
     authMode: 'cookie',
@@ -76,16 +81,47 @@ export class PredictionAssetController {
 
   constructor(
     readonly scope: string | null,
-    readonly experimentId: number | null,
+    readonly experimentId: number | null | 'all',
+    private readonly owner?: PredictionAssetController,
   ) {}
 
-  subscribe = (listener: () => void) => {
+  subscribe = (listener: () => void): (() => void) => {
+    if (this.owner) return this.owner.subscribe(listener)
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
     }
   }
-  getSnapshot = () => this.snapshot
+  getSnapshot = (): PredictionAssetsSnapshot => {
+    if (!this.owner) return this.snapshot
+    const source = this.owner.getSnapshot()
+    if (source !== this.viewSource) {
+      this.viewSource = source
+      this.viewSnapshot =
+        this.experimentId === 'all'
+          ? source
+          : {
+              ...source,
+              models: source.models.filter((item) => item.experiment_id === this.experimentId),
+              datasets: source.datasets.filter((item) => item.experiment_id === this.experimentId),
+              operations: source.operations.filter((item) => item.experiment_id === this.experimentId),
+              tasks: source.tasks.filter((item) => item.experimentId === this.experimentId),
+            }
+    }
+    return this.viewSnapshot!
+  }
+
+  registerDeletionHandler(handler: (target: PredictionDeletionTarget) => Promise<void>) {
+    const handlers = (this.owner ?? this).deletionHandlers
+    handlers.add(handler)
+    return () => {
+      handlers.delete(handler)
+    }
+  }
+
+  async prepareDeletion(target: PredictionDeletionTarget) {
+    for (const handler of (this.owner ?? this).deletionHandlers) await handler(target)
+  }
 
   private update(change: Partial<PredictionAssetsSnapshot>) {
     this.snapshot = { ...this.snapshot, ...change }
@@ -96,15 +132,18 @@ export class PredictionAssetController {
     this.update({ tasks: this.snapshot.tasks.map((task) => (task.id === id ? { ...task, ...change } : task)) })
   }
 
-  async refresh() {
+  async refresh(): Promise<void> {
+    if (this.experimentId === null) return
+    if (this.owner) return this.owner.refresh()
     if (!this.scope || !this.experimentId) return
+    const experimentId = this.experimentId === 'all' ? undefined : this.experimentId
     const sequence = ++this.refreshSequence
     this.update({ loading: true, error: null, listErrors: {} })
     const [models, datasets, storages, operations, launchers] = await Promise.allSettled([
-      predictionApi.models(this.experimentId),
-      predictionApi.datasets(this.experimentId),
+      predictionApi.models(experimentId),
+      predictionApi.datasets(experimentId),
       predictionApi.storages(),
-      predictionApi.operations(this.experimentId),
+      predictionApi.operations(experimentId),
       this.client.listLaunchers(),
     ])
     if (sequence !== this.refreshSequence) return
@@ -152,15 +191,44 @@ export class PredictionAssetController {
     })
   }
 
-  async run<T>(key: string, label: string, action: (work: PredictionAssetWork) => Promise<T>): Promise<T | undefined> {
-    if (!this.scope || this.snapshot.tasks.some((task) => task.key === key && task.state === 'running')) return
+  async run<T>(
+    key: string,
+    label: string,
+    action: (work: PredictionAssetWork) => Promise<T>,
+    experimentId?: number,
+  ): Promise<T | undefined> {
+    if (this.owner)
+      return this.owner.run(
+        key,
+        label,
+        async (work) => {
+          try {
+            return await action(work)
+          } catch (error) {
+            if (this.active && !work.signal.aborted)
+              this.onActivity?.({
+                source: 'prediction',
+                level: 'error',
+                phase: 'assets',
+                message: error instanceof Error ? error.message : String(error),
+              })
+            throw error
+          }
+        },
+        typeof this.experimentId === 'number' ? this.experimentId : experimentId,
+      )
+    if (!this.scope || !this.active || this.snapshot.tasks.some((task) => task.key === key && task.state === 'running'))
+      return
     const id = crypto.randomUUID()
     const task: RunningTask = { abort: new AbortController(), executions: new Map(), jobIds: new Set() }
     this.tasks.set(id, task)
     this.update({
-      tasks: [{ id, key, label, state: 'running' as const, message: '준비 중' }, ...this.snapshot.tasks].slice(0, 30),
+      tasks: [
+        { id, key, label, experimentId, state: 'running' as const, message: '준비 중' },
+        ...this.snapshot.tasks,
+      ].slice(0, 100),
     })
-    this.retries.set(id, () => this.run(key, label, action))
+    this.retries.set(id, () => this.run(key, label, action, experimentId))
     const work: PredictionAssetWork = {
       id,
       signal: task.abort.signal,
@@ -168,7 +236,7 @@ export class PredictionAssetController {
       operation: (operation) => {
         task.operationId = operation.id
         task.operationState = operation.state
-        this.updateTask(id, { operationId: operation.id })
+        this.updateTask(id, { operationId: operation.id, experimentId: operation.experiment_id ?? experimentId })
         this.update({ operations: [operation, ...this.snapshot.operations.filter((item) => item.id !== operation.id)] })
       },
       connect: async (launcherId, preparation = false) => {
@@ -235,7 +303,8 @@ export class PredictionAssetController {
     }
   }
 
-  async cancelTask(id: string) {
+  async cancelTask(id: string): Promise<void> {
+    if (this.owner) return this.owner.cancelTask(id)
     const task = this.tasks.get(id)
     if (!task) return
     // Fence registration before terminating this management job. Inference has its own session.
@@ -258,7 +327,8 @@ export class PredictionAssetController {
     await Promise.allSettled([...task.jobIds].map((jobId) => this.client.cancelJob(jobId)))
   }
 
-  async cancelOperation(id: string) {
+  async cancelOperation(id: string): Promise<void> {
+    if (this.owner) return this.owner.cancelOperation(id)
     const task = [...this.tasks].find(([, item]) => item.operationId === id)
     if (task) await this.cancelTask(task[0])
     else {
@@ -274,11 +344,13 @@ export class PredictionAssetController {
     await this.refresh()
   }
 
-  retryTask(id: string) {
+  retryTask(id: string): Promise<unknown> | undefined {
+    if (this.owner) return this.owner.retryTask(id)
     return this.retries.get(id)?.()
   }
 
-  async disconnectOwner() {
+  async disconnectOwner(): Promise<void> {
+    if (this.owner) return this.owner.disconnectOwner()
     this.active = false
     for (const task of this.tasks.values()) {
       task.abort.abort()
@@ -286,6 +358,27 @@ export class PredictionAssetController {
       await Promise.allSettled([...task.jobIds].map((jobId) => this.client.cancelJob(jobId)))
     }
   }
+}
+
+const accountControllers = new Map<string, PredictionAssetController>()
+export function predictionAssetView(scope: string | null, experimentId: number | null | 'all') {
+  if (!scope) return new PredictionAssetController(null, experimentId)
+  let owner = accountControllers.get(scope)
+  if (!owner) {
+    owner = new PredictionAssetController(scope, 'all')
+    accountControllers.set(scope, owner)
+  }
+  return new PredictionAssetController(scope, experimentId, owner)
+}
+
+export async function disconnectPredictionOwner(scope: string) {
+  const owner = accountControllers.get(scope)
+  accountControllers.delete(scope)
+  await owner?.disconnectOwner()
+}
+
+export async function retainPredictionOwner(scope: string | null) {
+  await Promise.all([...accountControllers.keys()].filter((key) => key !== scope).map(disconnectPredictionOwner))
 }
 
 export function predictionReplicaStatus(

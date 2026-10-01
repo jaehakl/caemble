@@ -7,7 +7,11 @@ import type { PredictionSetup } from './usePredictionModels'
 import type { PredictionDirection } from './types'
 import { predictionReplicaStatus, type PredictionAssetController } from './assetManagement'
 import { modelExecutionRoutes, preferredModelRoute, setupUsingSavedModel } from './remoteAssets'
-import { startPredictionAssetOperation, verifyPredictionReplica } from './assetOperations'
+import {
+  retryPredictionAssetOperation,
+  startPredictionAssetOperation,
+  verifyPredictionReplica,
+} from './assetOperations'
 
 export function PredictionModelManager({
   manager,
@@ -71,13 +75,15 @@ export function PredictionModelManager({
   )
 }
 
-function ModelDetail({
+export function ModelDetail({
   manager,
   model,
   setup,
   onChange,
   onUse,
   onNewVersion,
+  initialRevision,
+  managementOnly = false,
 }: Readonly<{
   manager: PredictionAssetController
   model: PredictionModelRecord
@@ -85,13 +91,16 @@ function ModelDetail({
   onChange: (setup: PredictionSetup) => void
   onUse: (setup: PredictionSetup, direction?: PredictionDirection) => void
   onNewVersion: (model: PredictionModelRecord) => void
+  initialRevision?: number
+  managementOnly?: boolean
 }>) {
   const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot)
   const selected = setup.models?.[model.direction]
   const [revisionNumber, setRevisionNumber] = useState(
-    selected?.modelId === model.id
-      ? selected.modelRevision
-      : model.current_revision || model.revisions[0]?.revision || 1,
+    initialRevision ??
+      (selected?.modelId === model.id
+        ? selected.modelRevision
+        : model.current_revision || model.revisions[0]?.revision || 1),
   )
   const [name, setName] = useState(model.name)
   const [routeKey, setRouteKey] = useState('')
@@ -219,6 +228,7 @@ function ModelDetail({
         <select
           className="mt-1 w-full rounded border bg-background p-2"
           aria-label="모델 버전"
+          disabled={managementOnly}
           value={revisionNumber}
           onChange={(event) => {
             setRevisionNumber(Number(event.target.value))
@@ -241,24 +251,26 @@ function ModelDetail({
         {dataset?.name ?? '학습 데이터'} r{revision.dataset_revision}. 저장 모델은 해당 버전의 설정과 데이터를
         사용합니다.
       </p>
-      <label className="block text-sm">
-        실행 위치
-        <select
-          className="mt-1 w-full rounded border bg-background p-2"
-          aria-label="모델 실행 위치"
-          value={selectedRoute ? `${selectedRoute.replicaId}:${selectedRoute.launcherId}` : ''}
-          onChange={(event) => setRouteKey(event.target.value)}
-        >
-          <option value="">실행 위치 선택</option>
-          {routes.map((route) => (
-            <option key={`${route.replicaId}:${route.launcherId}`} value={`${route.replicaId}:${route.launcherId}`}>
-              {route.name} ·{' '}
-              {state.launchers.find((item) => item.id === route.launcherId)?.launcher_name ?? '등록된 장비'} ·{' '}
-              {route.connected ? '연결 가능' : '오프라인'}
-            </option>
-          ))}
-        </select>
-      </label>
+      {!managementOnly && (
+        <label className="block text-sm">
+          실행 위치
+          <select
+            className="mt-1 w-full rounded border bg-background p-2"
+            aria-label="모델 실행 위치"
+            value={selectedRoute ? `${selectedRoute.replicaId}:${selectedRoute.launcherId}` : ''}
+            onChange={(event) => setRouteKey(event.target.value)}
+          >
+            <option value="">실행 위치 선택</option>
+            {routes.map((route) => (
+              <option key={`${route.replicaId}:${route.launcherId}`} value={`${route.replicaId}:${route.launcherId}`}>
+                {route.name} ·{' '}
+                {state.launchers.find((item) => item.id === route.launcherId)?.launcher_name ?? '등록된 장비'} ·{' '}
+                {route.connected ? '연결 가능' : '오프라인'}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {routes.length === 0 && (
         <p className="text-sm">
           {backups.length
@@ -266,35 +278,37 @@ function ModelDetail({
             : '실행할 복사본이 없습니다. 저장 파일을 확인하거나 백업에서 복원하세요.'}
         </p>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          disabled={!active || revision.state !== 'ready' || !selectedRoute}
-          onClick={useModel}
-        >
-          이 모델 사용
-        </Button>
-        {selected?.modelId === model.id && (
+      {!managementOnly && (
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
-            variant="outline"
             size="sm"
-            onClick={() => {
-              const models = { ...setup.models }
-              const nextRoutes = { ...setup.routes }
-              delete models[model.direction]
-              delete nextRoutes[model.direction]
-              onChange({ ...setup, models, routes: nextRoutes })
-            }}
+            disabled={!active || revision.state !== 'ready' || !selectedRoute}
+            onClick={useModel}
           >
-            선택 해제
+            이 모델 사용
           </Button>
-        )}
-        <Button type="button" variant="outline" size="sm" disabled={!active} onClick={() => onNewVersion(model)}>
-          새 버전 만들기
-        </Button>
-      </div>
+          {selected?.modelId === model.id && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const models = { ...setup.models }
+                const nextRoutes = { ...setup.routes }
+                delete models[model.direction]
+                delete nextRoutes[model.direction]
+                onChange({ ...setup, models, routes: nextRoutes })
+              }}
+            >
+              선택 해제
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" disabled={!active} onClick={() => onNewVersion(model)}>
+            새 버전 만들기
+          </Button>
+        </div>
+      )}
       <details>
         <summary className="cursor-pointer text-sm">저장된 설정·ID·checksum</summary>
         <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-2 text-xs break-all whitespace-pre-wrap">
@@ -324,44 +338,59 @@ function ModelDetail({
               <div className="space-y-1 rounded border p-2 text-xs" key={replica.id}>
                 <p className="font-medium break-words">{storage?.name ?? '등록된 저장소'}</p>
                 <p>{predictionReplicaStatus(replica, storage)}</p>
+                {replica.deletion && <p role="status">{replica.deletion.message}</p>}
                 <p className="text-muted-foreground">
                   마지막 확인: {replica.checked_at ? new Date(replica.checked_at).toLocaleString() : '미확인'}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {storage?.kind === 'predictor_local' && (
+                  {replica.state === 'deleting' && replica.delete_id ? (
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() =>
-                        void verifyPredictionReplica(manager, 'model', model.id, revisionNumber, replica.id)
-                      }
+                      onClick={() => void retryPredictionAssetOperation(manager, replica.delete_id!)}
                     >
-                      파일 확인
+                      삭제 상태 확인·계속
                     </Button>
+                  ) : (
+                    <>
+                      {active && storage?.kind === 'predictor_local' && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            void verifyPredictionReplica(manager, 'model', model.id, revisionNumber, replica.id)
+                          }
+                        >
+                          파일 확인
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!active}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `${storage?.name ?? '이 저장 위치'}에서 ${model.name} r${revisionNumber} 복사본을 제거할까요? 다른 검증된 복사본 ${others}개.${others === 0 ? ' 마지막 확인된 복사본일 수 있습니다.' : ''} 사용 중이면 해제 후 삭제하며 오프라인 파일은 확인 대기로 남습니다.`,
+                            )
+                          )
+                            return
+                          void startPredictionAssetOperation(manager, {
+                            kind: 'delete_replica',
+                            asset_kind: 'model',
+                            asset_id: model.id,
+                            revision: revisionNumber,
+                            replica_id: replica.id,
+                          })
+                        }}
+                      >
+                        이 위치에서 제거
+                      </Button>
+                    </>
                   )}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          `${storage?.name ?? '이 저장 위치'}에서 ${model.name} r${revisionNumber} 복사본을 제거할까요? 다른 검증된 복사본 ${others}개.${others === 0 ? ' 마지막 확인된 복사본일 수 있습니다.' : ''} 사용 중이면 해제 후 삭제하며 오프라인 파일은 확인 대기로 남습니다.`,
-                        )
-                      )
-                        return
-                      void startPredictionAssetOperation(manager, {
-                        kind: 'delete_replica',
-                        asset_kind: 'model',
-                        asset_id: model.id,
-                        revision: revisionNumber,
-                        replica_id: replica.id,
-                      })
-                    }}
-                  >
-                    이 위치에서 제거
-                  </Button>
                 </div>
               </div>
             )
@@ -519,14 +548,16 @@ function ModelDetail({
                   >
                     복원
                   </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={!restoreLauncherId}
-                    onClick={() => void restore(backup.id, true)}
-                  >
-                    복원하고 사용
-                  </Button>
+                  {!managementOnly && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!restoreLauncherId}
+                      onClick={() => void restore(backup.id, true)}
+                    >
+                      복원하고 사용
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
@@ -544,6 +575,10 @@ function ModelDetail({
           variant="destructive"
           size="sm"
           onClick={() => {
+            if (model.delete_id) {
+              void retryPredictionAssetOperation(manager, model.delete_id)
+              return
+            }
             if (
               !window.confirm(
                 `${model.name}의 모든 revision과 모든 모델 백업을 삭제할까요? 마지막 모델 복사본도 삭제됩니다. 학습 데이터는 별도로 보존됩니다.`,
@@ -558,7 +593,7 @@ function ModelDetail({
             })
           }}
         >
-          모델 전체 삭제 요청
+          {model.delete_id ? '모델 전체 삭제 상태 확인·계속' : '모델 전체 삭제 요청'}
         </Button>
       </details>
       {message && (

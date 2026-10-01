@@ -27,6 +27,7 @@ TERMINAL = {"completed", "cancelled"}
 def operation_view(row):
     details = row.details
     return {"id": row.id, "request_id": row.request_id, "kind": row.kind, "state": row.state,
+        "experiment_id": row.experiment_id,
         "stage": row.stage, "asset_kind": row.asset_kind, "asset_id": row.asset_id,
         "revision": row.revision, "source_replica_id": details.get("source_replica_id"),
         "target_storage_id": details.get("target_storage_id"), "target_launcher_id": details.get("target_launcher_id"),
@@ -36,6 +37,12 @@ def operation_view(row):
 
 
 async def owned_operation(db, identity, user_id):
+    # All mutations lock the asset before its operations, including child deletions.
+    current = await db.scalar(select(Operation).where(Operation.id == str(identity), Operation.user_id == user_id))
+    if current is None:
+        raise HTTPException(404, "Prediction operation not found.")
+    await owned(db, PredictionModel if current.asset_kind == "model" else Dataset,
+        current.asset_id, user_id, active=False)
     row = await db.scalar(select(Operation).where(Operation.id == str(identity), Operation.user_id == user_id).with_for_update())
     if row is None:
         raise HTTPException(404, "Prediction operation not found.")
@@ -56,7 +63,12 @@ async def list_operations(db, user_id, experiment_id=None):
         query = query.where(Operation.experiment_id == experiment_id)
     rows = (await db.scalars(query.order_by(Operation.created_at.desc()).limit(100))).all()
     for row in rows:
+        if row.kind.startswith("delete_") and row.state != "completed":
+            row = await owned_operation(db, row.id, user_id)
+            await finish_deletion(db, row)
+            await db.commit()
         await expire_operation(db, row)
+    await db.commit()
     return {"items": [operation_view(row) for row in rows]}
 
 
@@ -155,16 +167,20 @@ async def begin_deletion(db, operation, asset, body):
         copies = list((await db.scalars(select(Replica).where(field == asset.id, Replica.state != "deleted"))).all())
     # A compute instance may drain after deletion is queued. A transfer that
     # would publish a new copy must finish or be cancelled before a tombstone.
+    dependencies = set()
     for copy in copies:
         if copy.state == "deleting" and copy.delete_id != operation.id:
-            raise HTTPException(409, {"message": "Finish the pending copy deletion before requesting another deletion.",
-                "operation_id": copy.delete_id})
+            if body.kind != "delete_asset":
+                raise HTTPException(409, {"message": "Continue the existing copy deletion.", "operation_id": copy.delete_id})
+            dependencies.add(copy.delete_id)
         await assert_copy_idle(db, copy, operation_id=operation.id, execution_leases=False)
-    operation.details = {**operation.details, "replica_ids": [copy.id for copy in copies]}
+    operation.details = {**operation.details, "replica_ids": [copy.id for copy in copies],
+        "waiting_operation_ids": sorted(dependencies)}
     if body.kind == "delete_asset":
         asset.state, asset.delete_id = "deleting", operation.id
     for copy in copies:
-        storage = await db.get(PredictionStorage, copy.storage_id)
+        if copy.state == "deleting" and copy.delete_id != operation.id:
+            continue
         copy.delete_id = operation.id
         copy.state = "deleting"
     operation.state, operation.stage = "pending", "deleting"
@@ -176,7 +192,7 @@ async def process_cloud_deletions(db, operation):
     from storage.service import bucket_client, part_key
     for copy in await deletion_replicas(db, operation):
         storage = await db.get(PredictionStorage, copy.storage_id)
-        if copy.state != "deleting" or storage.kind == "predictor_local":
+        if copy.state != "deleting" or copy.delete_id != operation.id or storage.kind == "predictor_local":
             continue
         try:
             await assert_copy_idle(db, copy, operation_id=operation.id)
@@ -223,6 +239,7 @@ async def process_cloud_deletions(db, operation):
 
 
 async def finish_deletion(db, operation):
+    await db.flush()
     copies = await deletion_replicas(db, operation)
     if any(copy.state != "deleted" for copy in copies):
         return
@@ -234,6 +251,13 @@ async def finish_deletion(db, operation):
             await db.execute(delete(DatasetObject).where(DatasetObject.dataset_id == asset.id))
             await db.execute(update(DatasetRevision).where(DatasetRevision.dataset_id == asset.id).values(payload=None))
     operation.state, operation.stage, operation.completed_at = "completed", "completed", utcnow()
+    operation.error, operation.updated_at = None, utcnow()
+    if operation.kind == "delete_replica":
+        parents = (await db.scalars(select(Operation).where(Operation.asset_id == operation.asset_id,
+            Operation.user_id == operation.user_id, Operation.kind == "delete_asset",
+            Operation.state != "completed"))).all()
+        for parent in parents:
+            await finish_deletion(db, parent)
 
 
 async def create_operation(db, body, user_id):
@@ -245,7 +269,11 @@ async def create_operation(db, body, user_id):
         if previous.user_id != user_id or previous.request_hash != request_hash:
             raise HTTPException(409, "Operation ID was used with another request.")
         return await operation_response(db, previous)
-    asset = await owned(db, PredictionModel if body.asset_kind == "model" else Dataset, body.asset_id, user_id)
+    asset = await owned(db, PredictionModel if body.asset_kind == "model" else Dataset,
+        body.asset_id, user_id, active=body.kind != "delete_asset")
+    if body.kind == "delete_asset" and asset.delete_id:
+        existing = await owned_operation(db, asset.delete_id, user_id)
+        return await operation_response(db, existing)
     details = body.model_dump(mode="json", exclude={"request_id", "kind", "asset_kind", "asset_id", "revision"})
     operation = Operation(id=identity, user_id=user_id, request_id=identity, request_hash=request_hash,
         kind=body.kind, asset_kind=body.asset_kind, asset_id=asset.id, revision=body.revision,
@@ -395,6 +423,8 @@ async def transfer_manifest(db, row):
     if row.kind in {"verify", "delete_replica", "delete_asset"}:
         operation["replicas"] = []
         for copy in await deletion_replicas(db, row):
+            if row.kind.startswith("delete_") and copy.delete_id != row.id:
+                continue
             entry = {**replica_view(copy), "revision": copy.revision, "blocked": False}
             if row.kind.startswith("delete_"):
                 try:

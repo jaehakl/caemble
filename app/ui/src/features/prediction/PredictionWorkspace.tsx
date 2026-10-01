@@ -224,7 +224,6 @@ export function PredictionWorkspace({
   const [predictionRefreshRevision, setPredictionRefreshRevision] = useState(0)
   const handledPredictionRefreshRevision = useRef(0)
   const [setupOpen, setSetupOpen] = useState(false)
-  const [remoteConnected, setRemoteConnected] = useState<Partial<Record<PredictionDirection, boolean>>>({})
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailsDirection, setDetailsDirection] = useState<PredictionDirection>('forward')
   const [setupBusyAction, setSetupBusyAction] = useState<PredictionSetupBusyAction>(null)
@@ -250,6 +249,13 @@ export function PredictionWorkspace({
   const experimentIdRef = useRef(experimentId)
   const queryScope = usePrivateQueryScope()
   const assets = usePredictionAssets(authenticated ? queryScope : null, experimentId, onActivity)
+  const [deletionBlocks, setDeletionBlocks] = useState<Partial<Record<PredictionDirection, string>>>({})
+  const deletionBlocksRef = useRef(deletionBlocks)
+  deletionBlocksRef.current = deletionBlocks
+  const forwardDeletionBlocked =
+    deletionBlocks.forward === predictionFingerprint([setup.models?.forward, setup.routes?.forward])
+  const inverseDeletionBlocked =
+    deletionBlocks.inverse === predictionFingerprint([setup.models?.inverse, setup.routes?.inverse])
   assets.currentSelectionKey = predictionFingerprint([setup, setupDraft, direction])
   const selectionMeasurementRef = useRef(workbench.selectionContext?.measurementId ?? null)
   selectionMeasurementRef.current = workbench.selectionContext?.measurementId ?? null
@@ -272,18 +278,6 @@ export function PredictionWorkspace({
               onWarning: (message) =>
                 onActivity?.({ source: 'prediction', level: 'warning', phase: 'assets', message }),
               onState: (state, message) => {
-                setRemoteConnected((previous) => ({
-                  ...previous,
-                  ...Object.fromEntries(
-                    (['forward', 'inverse'] as const)
-                      .filter(
-                        (item) =>
-                          next.routes?.[item]?.launcherId === route.launcherId &&
-                          next.routes?.[item]?.storageId === route.storageId,
-                      )
-                      .map((item) => [item, state === 'connected']),
-                  ),
-                }))
                 if (state === 'failed' && message)
                   onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
               },
@@ -873,6 +867,7 @@ export function PredictionWorkspace({
       const document = experimentDocumentRef.current
       if (
         !predictionEnabled ||
+        deletionBlocksRef.current.forward === predictionFingerprint([setup.models?.forward, setup.routes?.forward]) ||
         lifecycleRef.current.freshnessPending ||
         lifecycleRef.current.dataStale ||
         !context ||
@@ -972,6 +967,7 @@ export function PredictionWorkspace({
     async (targets: Readonly<Record<number, CalculationDataOutput>>) => {
       if (
         !predictionEnabled ||
+        deletionBlocksRef.current.inverse === predictionFingerprint([setup.models?.inverse, setup.routes?.inverse]) ||
         lifecycleRef.current.freshnessPending ||
         lifecycleRef.current.dataStale ||
         !context ||
@@ -1005,7 +1001,11 @@ export function PredictionWorkspace({
         dispatchResults({ type: 'inverse-completed', result, fingerprint: nextFingerprint })
         setGuideProgress((current) => ({ ...current, inverse: true }))
         rememberProfile(model.profile, model.fingerprint)
-        if (setup.executionId === 'remote-knn' && !setup.models?.forward) {
+        if (
+          setup.executionId === 'remote-knn' &&
+          (!setup.models?.forward ||
+            deletionBlocksRef.current.forward === predictionFingerprint([setup.models?.forward, setup.routes?.forward]))
+        ) {
           dispatchResults({ type: 'surrogate-failed' })
           setStatus(
             'Inverse 완료 · Target과 실제 결과를 Save & Run으로 비교할 수 있습니다. Re-predicted에는 Forward 모델이 필요합니다.',
@@ -1172,6 +1172,8 @@ export function PredictionWorkspace({
   )
 
   const validationDisabledReason = useMemo(() => {
+    if (direction === 'forward' ? forwardDeletionBlocked : inverseDeletionBlocked)
+      return '선택한 모델 파일의 삭제를 요청했습니다. 다른 복사본을 선택하거나 복원하세요.'
     if (!predictionEnabled) return activationMessage
     if (!authenticated) return '로그인 후 검증할 수 있습니다.'
     if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
@@ -1202,6 +1204,8 @@ export function PredictionWorkspace({
       return '현재 Vars가 최신 Inverse 결과가 아닙니다.'
     return undefined
   }, [
+    forwardDeletionBlocked,
+    inverseDeletionBlocked,
     authenticated,
     predictionEnabled,
     busy,
@@ -1958,6 +1962,20 @@ export function PredictionWorkspace({
   const applySetup = useCallback(
     (requested?: PredictionSetup, requestedDirection?: PredictionDirection) => {
       const next = requested ?? setupDraft
+      for (const item of ['forward', 'inverse'] as const) {
+        const reference = next.models?.[item]
+        const route = next.routes?.[item]
+        if (!reference || !route) continue
+        const copy = assets
+          .getSnapshot()
+          .models.find((model) => model.id === reference.modelId)
+          ?.revisions.find((revision) => revision.revision === reference?.modelRevision)
+          ?.replicas.find((replica) => replica.storage_id === route?.storageId)
+        if (copy && ['present', 'unverified'].includes(copy.state)) {
+          deletionBlocksRef.current = { ...deletionBlocksRef.current, [item]: undefined }
+          setDeletionBlocks((previous) => ({ ...previous, [item]: undefined }))
+        }
+      }
       if (!requested && setupDraftError) {
         toast.error(setupDraftError)
         return
@@ -2002,6 +2020,7 @@ export function PredictionWorkspace({
     },
     [
       authenticated,
+      assets,
       cancelCurrent,
       clearModelCaches,
       configureExecutions,
@@ -2018,6 +2037,28 @@ export function PredictionWorkspace({
       setupDraft,
       setupDraftError,
     ],
+  )
+
+  useEffect(
+    () =>
+      assets.registerDeletionHandler(async (target) => {
+        const affected = (['forward', 'inverse'] as const).filter((item) => {
+          const model = setup.models?.[item]
+          return (
+            model?.modelId === target.modelId &&
+            (target.revision === undefined || model.modelRevision === target.revision) &&
+            (target.storageId === undefined || setup.routes?.[item]?.storageId === target.storageId)
+          )
+        })
+        if (!affected.length) return
+        const blocks = { ...deletionBlocksRef.current }
+        for (const item of affected) blocks[item] = predictionFingerprint([setup.models?.[item], setup.routes?.[item]])
+        deletionBlocksRef.current = blocks
+        setDeletionBlocks(blocks)
+        await runtime.releaseLoadedModels(affected)
+        finishOperation({ status: '선택한 복사본의 사용을 해제했습니다. 삭제 확인을 진행합니다.' })
+      }),
+    [assets, setup, runtime, finishOperation],
   )
 
   useEffect(() => {
@@ -2409,21 +2450,6 @@ export function PredictionWorkspace({
             setup={setupDraft}
             onChange={setSetupDraft}
             onActivity={onActivity}
-            onReconnect={() => {
-              cancelCurrent()
-              runtime.resetExecution()
-              clearModelCaches()
-              dispatchResults({ type: 'predictions-invalidated' })
-              setStatus('선택한 저장 모델로 Prediction에 다시 연결합니다.')
-            }}
-            loadedDirections={(['forward', 'inverse'] as const).filter(
-              (item) => remoteConnected[item] && Boolean(runtime.cachedModel(item)),
-            )}
-            onBeforeDelete={async () => {
-              await runtime.releaseLoadedModels()
-              cancelCurrent(true)
-              clearModelCaches()
-            }}
           />
         }
         applyDisabled={Boolean(setupDraftError) || dataStale || freshnessPending || validating}

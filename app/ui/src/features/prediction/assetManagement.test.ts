@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PredictionOperation } from '@/contracts/api/prediction'
-import { PredictionAssetController } from './assetManagement'
+import { PredictionAssetController, predictionAssetView, disconnectPredictionOwner } from './assetManagement'
 
 const mocks = vi.hoisted(() => ({
   models: vi.fn(),
@@ -61,6 +61,37 @@ beforeEach(() => {
 })
 
 describe('Prediction asset task ownership', () => {
+  it('shares account tasks across views but keeps Experiment lists and selection tokens independent', async () => {
+    const account = predictionAssetView('account-view-test', 'all')
+    const first = predictionAssetView('account-view-test', 12)
+    const second = predictionAssetView('account-view-test', 99)
+    mocks.models.mockResolvedValue([
+      { id: 'a', experiment_id: 12 },
+      { id: 'b', experiment_id: 99 },
+    ])
+    await account.refresh()
+    expect(mocks.models).toHaveBeenCalledWith(undefined)
+    expect(first.getSnapshot().models.map((item) => item.id)).toEqual(['a'])
+    expect(second.getSnapshot().models.map((item) => item.id)).toEqual(['b'])
+    first.currentSelectionKey = 'first'
+    second.currentSelectionKey = 'second'
+    const release = vi.fn().mockResolvedValue(undefined)
+    const unregister = first.registerDeletionHandler(release)
+    await account.prepareDeletion({ modelId: 'a', revision: 1, storageId: 'storage' })
+    expect(release).toHaveBeenCalledWith({ modelId: 'a', revision: 1, storageId: 'storage' })
+    const pending = deferred<void>()
+    const work = first.run('copy', '복사본 제거', () => pending.promise)
+    first.active = false
+    expect(account.getSnapshot().tasks[0].state).toBe('running')
+    pending.resolve()
+    await work
+    expect(account.getSnapshot().tasks[0].state).toBe('succeeded')
+    expect(second.getSnapshot().tasks).toEqual([])
+    expect(first.currentSelectionKey).toBe('first')
+    expect(second.currentSelectionKey).toBe('second')
+    unregister()
+    await disconnectPredictionOwner('account-view-test')
+  })
   it('lists metadata without starting a Predictor process', async () => {
     const manager = new PredictionAssetController('owner', 12)
     await manager.refresh()

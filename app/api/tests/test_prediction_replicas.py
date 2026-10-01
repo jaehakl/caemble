@@ -30,6 +30,72 @@ from settings import settings
 
 
 class PredictionReplicaTests(fixtures.PredictionAssetsTests):
+    async def test_remove_last_copy_refresh_then_delete_model_without_launcher(self):
+        async with self.sessions() as db:
+            _, model = await self.ready_model(db)
+            copy = model['revisions'][0]['replicas'][0]
+            deleting = await operations.create_operation(db, OperationCreate(request_id=uuid4(), kind='delete_replica',
+                asset_id=model['id'], revision=1, replica_id=copy['id']), self.owner)
+        async with self.sessions() as db:
+            operation = await operations.owned_operation(db, deleting['id'], self.owner)
+            await operations.complete_operation(db, operation, OperationComplete(replica_id=copy['id']))
+        async with self.sessions() as db:
+            listed = (await list_models(db, self.owner))['items'][0]
+            self.assertEqual(listed['state'], 'active')
+            self.assertEqual(listed['current_revision'], 1)
+            self.assertEqual(listed['revisions'][0]['replicas'], [])
+            await db.execute(update(Launcher).where(Launcher.id == self.launcher_id).values(status='offline', disconnected_at=utcnow()))
+            await db.commit()
+            request = OperationCreate(request_id=uuid4(), kind='delete_asset', asset_id=model['id'])
+            deleted = await operations.create_operation(db, request, self.owner)
+            self.assertEqual(deleted['state'], 'completed')
+            self.assertNotIn('grant', deleted)
+            self.assertEqual((await operations.create_operation(db, request, self.owner))['id'], deleted['id'])
+            self.assertEqual((await list_models(db, self.owner))['items'], [])
+
+    async def test_whole_model_waits_for_existing_copy_deletion_without_stealing_grant(self):
+        async with self.sessions() as db:
+            _, model = await self.ready_model(db)
+            copy = model['revisions'][0]['replicas'][0]
+            child = await operations.create_operation(db, OperationCreate(request_id=uuid4(), kind='delete_replica',
+                asset_id=model['id'], revision=1, replica_id=copy['id']), self.owner)
+            parent = await operations.create_operation(db, OperationCreate(request_id=uuid4(), kind='delete_asset',
+                asset_id=model['id']), self.owner)
+            self.assertEqual(parent['details']['waiting_operation_ids'], [child['id']])
+            self.assertEqual((await db.get(Replica, copy['id'])).delete_id, child['id'])
+            self.assertEqual((await operations.transfer_manifest(db, await db.get(Operation, parent['id'])))['operation']['replicas'], [])
+            repeated = await operations.create_operation(db, OperationCreate(request_id=uuid4(), kind='delete_asset',
+                asset_id=model['id']), self.owner)
+            self.assertEqual(repeated['id'], parent['id'])
+        async with self.sessions() as db:
+            await operations.complete_operation(db, await operations.owned_operation(db, child['id'], self.owner),
+                OperationComplete(replica_id=copy['id']))
+        async with self.sessions() as db:
+            self.assertEqual((await db.get(Operation, parent['id'])).state, 'completed')
+            self.assertEqual((await list_models(db, self.owner))['items'], [])
+            with self.assertRaises(HTTPException):
+                await operations.owned_operation(db, parent['id'], self.other)
+
+    async def test_pending_copy_reports_offline_and_in_use_separately(self):
+        async with self.sessions() as db:
+            _, model = await self.ready_model(db)
+            copy = model['revisions'][0]['replicas'][0]
+            job = Job(id=str(uuid4()), user_id=self.owner, launcher_id=self.launcher_id, slave_app_id='predictor',
+                handler_type='prediction.session', job_mode='webrtc', state='running')
+            db.add(job)
+            await db.commit()
+            lease = ModelLeaseRequest(job_id=job.id, revision=1, replica_id=copy['id'])
+            await lease_model(db, model['id'], lease, self.owner)
+            await operations.create_operation(db, OperationCreate(request_id=uuid4(), kind='delete_replica',
+                asset_id=model['id'], revision=1, replica_id=copy['id']), self.owner)
+            listed = (await list_models(db, self.owner))['items'][0]
+            self.assertEqual(listed['revisions'][0]['replicas'][0]['deletion']['reason'], 'in_use')
+            await lease_model(db, model['id'], lease, self.owner, release=True)
+            await db.execute(update(Launcher).where(Launcher.id == self.launcher_id).values(status='offline', disconnected_at=utcnow()))
+            await db.commit()
+            listed = (await list_models(db, self.owner))['items'][0]
+            self.assertEqual(listed['revisions'][0]['replicas'][0]['deletion']['reason'], 'offline')
+
     async def ready_model(self, db):
         dataset = await freeze_dataset(db, self.selection(), self.owner)
         request = self.model_request(dataset)

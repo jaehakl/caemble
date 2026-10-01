@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   reconcile: vi.fn(),
   registerArtifact: vi.fn(),
   startOperation: vi.fn(),
+  retryOperation: vi.fn(),
   hello: {} as Record<string, unknown>,
 }))
 
@@ -77,7 +78,7 @@ vi.mock('./remoteAssets', async (original) => ({
 vi.mock('./assetOperations', () => ({
   startPredictionAssetOperation: mocks.startOperation,
   verifyPredictionReplica: vi.fn(),
-  retryPredictionAssetOperation: vi.fn(),
+  retryPredictionAssetOperation: mocks.retryOperation,
 }))
 
 const launcherId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'
@@ -264,6 +265,34 @@ beforeEach(() => {
 })
 
 describe('model-first Prediction management', () => {
+  it('shows the pending deletion reason and continues the existing operation instead of deleting again', async () => {
+    const saved = model('inverse')
+    mocks.models.mockResolvedValue([
+      {
+        ...saved,
+        revisions: saved.revisions.map((revision) => ({
+          ...revision,
+          replicas: [
+            {
+              ...revision.replicas[0],
+              state: 'deleting',
+              delete_id: operationId,
+              deletion: { operation_id: operationId, reason: 'in_use', message: '다른 세션에서 사용 중입니다.' },
+            },
+          ],
+        })),
+      },
+    ])
+    const { manager } = await show()
+    fireEvent.click(screen.getByRole('button', { name: /inverse saved/ }))
+    expect(screen.getByText('다른 세션에서 사용 중입니다.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '파일 확인' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '이 위치에서 제거' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '삭제 상태 확인·계속' }))
+    expect(mocks.retryOperation).toHaveBeenCalledWith(manager, operationId)
+    expect(mocks.startOperation).not.toHaveBeenCalled()
+  })
+
   it.each(['failed', 'empty'])(
     'requires an explicit Dataset choice when the selected Dataset list is %s',
     async (state) => {

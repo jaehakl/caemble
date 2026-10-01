@@ -145,6 +145,122 @@ beforeEach(() => {
 })
 
 describe('Prediction management wire orchestration', () => {
+  it('keeps child deletion grants and removes other copies even when a child response is lost', async () => {
+    const childId = '55555555-5555-4555-8555-555555555555'
+    const otherId = '66666666-6666-4666-8666-666666666666'
+    const parent = operation({ kind: 'delete_asset', details: { waiting_operation_ids: [childId] } })
+    const child = operation({
+      id: childId,
+      kind: 'delete_replica',
+      details: { replica_id: sourceReplicaId },
+      grant: { ...grant, operation_id: childId, token: 'child-token' },
+    })
+    mocks.models.mockResolvedValue([
+      {
+        ...model,
+        revisions: [
+          {
+            ...model.revisions[0],
+            replicas: [
+              { ...model.revisions[0].replicas[0], state: 'deleting', delete_id: childId },
+              {
+                ...model.revisions[0].replicas[0],
+                id: otherId,
+                storage_id: 'other-storage',
+                state: 'deleting',
+                delete_id: operationId,
+              },
+            ],
+          },
+        ],
+      },
+    ])
+    mocks.storages.mockResolvedValue([
+      storage,
+      {
+        ...storage,
+        storage_id: 'other-storage',
+        accesses: [{ launcher_id: 'other', connected: true, checked_at: null }],
+      },
+    ])
+    mocks.createOperation.mockResolvedValue(parent)
+    mocks.operation.mockImplementation(async (id: string) => (id === childId ? child : parent))
+    mocks.retryOperation.mockResolvedValue(child)
+    mocks.command.mockRejectedValueOnce(new Error('삭제 응답 유실')).mockResolvedValue({})
+    const controller = await manager()
+    await startPredictionAssetOperation(controller, { kind: 'delete_asset', asset_kind: 'model', asset_id: modelId })
+    expect(mocks.command).toHaveBeenCalledWith(
+      'source',
+      'artifact.remove',
+      expect.objectContaining({ operationId: childId, grant: child.grant }),
+    )
+    expect(mocks.command).toHaveBeenCalledWith(
+      'other',
+      'artifact.remove',
+      expect.objectContaining({ operationId, replicaId: otherId, grant }),
+    )
+    expect(mocks.interruptOperation).toHaveBeenCalledWith(childId, expect.stringContaining('삭제 응답 유실'))
+    expect(controller.getSnapshot().tasks[0].state).toBe('failed')
+  })
+
+  it('awaits the exact local instance release before recording a deletion', async () => {
+    const controller = await manager()
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const handler = vi.fn(() => ready)
+    controller.registerDeletionHandler(handler)
+    mocks.createOperation.mockResolvedValue(
+      operation({ kind: 'delete_replica', details: { replica_id: sourceReplicaId } }),
+    )
+    const deleting = startPredictionAssetOperation(controller, {
+      kind: 'delete_replica',
+      asset_kind: 'model',
+      asset_id: modelId,
+      revision: 2,
+      replica_id: sourceReplicaId,
+    })
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({ modelId, revision: 2, storageId: 'source-storage' }))
+    expect(mocks.createOperation).not.toHaveBeenCalled()
+    release()
+    await deleting
+    expect(mocks.createOperation).toHaveBeenCalledOnce()
+  })
+
+  it('continues a persisted copy deletion using its original ID, without creating a second request', async () => {
+    const controller = await manager()
+    const pending = operation({
+      kind: 'delete_replica',
+      state: 'interrupted',
+      details: { replica_id: sourceReplicaId },
+    })
+    mocks.operation.mockResolvedValueOnce(pending).mockResolvedValue(operation({ ...pending, state: 'completed' }))
+    mocks.retryOperation.mockResolvedValue({ ...pending, state: 'pending' })
+    await retryPredictionAssetOperation(controller, operationId)
+    expect(mocks.createOperation).not.toHaveBeenCalled()
+    expect(mocks.retryOperation).toHaveBeenCalledWith(operationId, {}, expect.anything())
+    expect(mocks.command).toHaveBeenCalledWith(
+      'source',
+      'artifact.remove',
+      expect.objectContaining({ operationId, replicaId: sourceReplicaId }),
+    )
+    expect(controller.getSnapshot().tasks[0].state).toBe('succeeded')
+  })
+
+  it('completes deletion of a model with no copies without connecting a Predictor', async () => {
+    mocks.models.mockResolvedValue([
+      { ...model, revisions: model.revisions.map((revision) => ({ ...revision, replicas: [] })) },
+    ])
+    mocks.createOperation.mockResolvedValue(operation({ kind: 'delete_asset', state: 'completed', grant: undefined }))
+    await startPredictionAssetOperation(await manager(), {
+      kind: 'delete_asset',
+      asset_kind: 'model',
+      asset_id: modelId,
+    })
+    expect(mocks.inspect).not.toHaveBeenCalled()
+    expect(mocks.command).not.toHaveBeenCalled()
+  })
   it('validates scoped grant metadata without exposing model bytes', () => {
     expect(predictionOperationSchema.parse(operation()).grant?.token).toBe('operation-token')
     expect(() =>

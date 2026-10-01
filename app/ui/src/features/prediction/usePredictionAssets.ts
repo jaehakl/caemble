@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
-import { PredictionAssetController } from './assetManagement'
+import { predictionAssetView, disconnectPredictionOwner } from './assetManagement'
 
 export function usePredictionAssets(
   scope: string | null,
-  experimentId: number | null,
+  experimentId: number | null | 'all',
   onActivity?: RuntimeActivityCallback,
 ) {
-  const manager = useMemo(() => new PredictionAssetController(scope, experimentId), [scope, experimentId])
+  const manager = useMemo(() => predictionAssetView(scope, experimentId), [scope, experimentId])
   const previous = useRef(manager)
   const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot)
   useEffect(() => {
-    if (previous.current.scope !== manager.scope) void previous.current.disconnectOwner()
+    if (previous.current.scope && previous.current.scope !== manager.scope)
+      void disconnectPredictionOwner(previous.current.scope)
     previous.current = manager
     manager.onActivity = onActivity
   }, [manager, onActivity])

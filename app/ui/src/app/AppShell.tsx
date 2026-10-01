@@ -8,6 +8,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router'
+import { useEffect } from 'react'
+import { retainPredictionOwner } from '@/features/prediction/assetManagement'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/features/auth/use-auth'
 import { cn } from '@/lib/utils'
@@ -30,6 +32,9 @@ const navigationItems: readonly NavigationItem[] = [
 
 export function AppShell() {
   const auth = useAuth()
+  useEffect(() => {
+    if (!auth.isPending) void retainPredictionOwner(auth.isAuthenticated ? auth.queryScope : null)
+  }, [auth.isPending, auth.isAuthenticated, auth.queryScope])
   const admin = Boolean(auth.user?.roles.includes('admin'))
 
   return (

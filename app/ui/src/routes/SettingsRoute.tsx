@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { useAuth } from '@/features/auth/use-auth'
 import { CaeBatchPanel } from '@/features/cae/CaeBatchPanel'
@@ -30,6 +30,9 @@ export function SettingsPage() {
     <main className="flex h-full min-h-0 flex-col overflow-hidden bg-muted/20 text-foreground">
       <header className="flex h-12 shrink-0 items-center border-b bg-background px-4">
         <h1 className="font-semibold">Setting</h1>
+        <Link to="/settings/prediction" className="ml-auto text-sm underline">
+          모델 파일 관리
+        </Link>
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-3 xl:overflow-hidden">
         <section className="min-h-[32rem] overflow-hidden rounded-lg border bg-background xl:min-h-0">

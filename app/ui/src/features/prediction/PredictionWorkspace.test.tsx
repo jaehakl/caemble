@@ -16,6 +16,8 @@ import type { PredictionRecordedPreview, PredictionSetup } from './usePrediction
 import { PredictionTrainingChangedError } from './trainingSnapshot'
 import { persistPredictionSetup } from './setupPersistence'
 import { defaultPredictionSetup } from './usePredictionModels'
+import { PredictionRuntimeController } from './usePredictionController'
+import type { PredictionDeletionTarget } from './assetManagement'
 
 const mocks = vi.hoisted(() => ({
   manageable: true,
@@ -24,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   calculateMeasurement: vi.fn(),
   calculateMissing: () => {},
   applySavedSetup: (_setup: PredictionSetup, _direction?: 'forward' | 'inverse') => {},
+  deleteTarget: undefined as ((target: PredictionDeletionTarget) => Promise<void>) | undefined,
   calculationSource: 'calculation-source',
   contextFingerprint: 'before',
   forwardOutputs: vi.fn(),
@@ -73,7 +76,18 @@ vi.mock('./client', () => ({
   PredictionWorkerRestartError: class extends Error {},
 }))
 vi.mock('./diagnostics', () => ({ emitPredictionCohortDiagnostics: () => undefined }))
-vi.mock('./usePredictionAssets', () => ({ usePredictionAssets: () => ({ currentSelectionKey: '' }) }))
+vi.mock('./usePredictionAssets', () => ({
+  usePredictionAssets: () => ({
+    currentSelectionKey: '',
+    getSnapshot: () => ({ models: [] }),
+    registerDeletionHandler: (handler: (target: PredictionDeletionTarget) => Promise<void>) => {
+      mocks.deleteTarget = handler
+      return () => {
+        if (mocks.deleteTarget === handler) mocks.deleteTarget = undefined
+      }
+    },
+  }),
+}))
 vi.mock('./PredictionModelSummary', () => ({ PredictionModelSummary: () => null }))
 vi.mock('./RemotePredictionSettings', () => ({ RemotePredictionSettings: () => null }))
 vi.mock('./predictionContextData', () => ({
@@ -852,6 +866,35 @@ function inverseOnlySetup(): PredictionSetup {
     },
   }
 }
+
+it('preserves the Target and actual comparison when deletion releases this Inverse copy and blocks reuse', async () => {
+  const setup = inverseOnlySetup()
+  persistPredictionSetup('user:test', 10, setup)
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  const release = vi.spyOn(PredictionRuntimeController.prototype, 'releaseLoadedModels')
+  await renderWorkspace(false, false)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Target' }))
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true })),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18'))
+  await act(async () =>
+    mocks.deleteTarget!({
+      modelId: setup.models!.inverse!.modelId,
+      revision: 3,
+      storageId: setup.routes!.inverse!.storageId,
+    }),
+  )
+  expect(release).toHaveBeenCalledWith(['inverse'])
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18')
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: false }))
+  mocks.predictInverse.mockClear()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  expect(mocks.predictInverse).not.toHaveBeenCalled()
+  release.mockRestore()
+})
 
 it('uses explicit Targets and validates Inverse without loading or predicting Forward', async () => {
   persistPredictionSetup('user:test', 10, inverseOnlySetup())

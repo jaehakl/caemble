@@ -585,13 +585,14 @@ export class PredictionRuntimeController {
     }
   }
 
-  async releaseLoadedModels() {
+  async releaseLoadedModels(directions: readonly PredictionDirection[] = ['forward', 'inverse']) {
     this.invalidateTransaction()
-    const loaded = [...this.modelOwners.entries()]
-    this.modelOwners.clear()
-    this.modelCache = {}
-    this.modelRevision.forward += 1
-    this.modelRevision.inverse += 1
+    const loaded = [...this.modelOwners.entries()].filter(([model]) => directions.includes(model.profile.direction))
+    for (const [model] of loaded) this.modelOwners.delete(model)
+    for (const direction of directions) {
+      delete this.modelCache[direction]
+      this.modelRevision[direction] += 1
+    }
     await Promise.all(loaded.map(([model, owner]) => owner.release(model.instance)))
   }
 

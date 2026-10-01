@@ -13,11 +13,16 @@ import {
 
 export function createPredictionApi(client: CaembleClient) {
   return {
-    datasets: (experimentId: number, context?: RequestContext) =>
-      client.request('get', `/prediction/datasets?experiment_id=${experimentId}`, undefined, {
-        ...context,
-        validate: (value) => z.object({ items: z.array(predictionDatasetSchema) }).parse(value).items,
-      }),
+    datasets: (experimentId?: number, context?: RequestContext) =>
+      client.request(
+        'get',
+        `/prediction/datasets${experimentId === undefined ? '' : `?experiment_id=${experimentId}`}`,
+        undefined,
+        {
+          ...context,
+          validate: (value) => z.object({ items: z.array(predictionDatasetSchema) }).parse(value).items,
+        },
+      ),
     createDataset: (body: PredictionDatasetSelection, context?: RequestContext) =>
       client.request('post', '/prediction/datasets', body, {
         ...context,
@@ -50,11 +55,16 @@ export function createPredictionApi(client: CaembleClient) {
         {},
         { csrf: 'required' },
       ),
-    models: (experimentId: number, context?: RequestContext) =>
-      client.request('get', `/prediction/models?experiment_id=${experimentId}`, undefined, {
-        ...context,
-        validate: (value) => z.object({ items: z.array(predictionModelSchema) }).parse(value).items,
-      }),
+    models: (experimentId?: number, context?: RequestContext) =>
+      client.request(
+        'get',
+        `/prediction/models${experimentId === undefined ? '' : `?experiment_id=${experimentId}`}`,
+        undefined,
+        {
+          ...context,
+          validate: (value) => z.object({ items: z.array(predictionModelSchema) }).parse(value).items,
+        },
+      ),
     reserve: (body: PredictionModelReservation, context?: RequestContext) =>
       client.request('post', '/prediction/models/reserve', body, {
         ...context,
@@ -87,11 +97,16 @@ export function createPredictionApi(client: CaembleClient) {
         ...context,
         validate: (value) => z.object({ items: z.array(predictionStorageSchema) }).parse(value).items,
       }),
-    operations: (experimentId: number, context?: RequestContext) =>
-      client.request('get', `/prediction/operations?experiment_id=${experimentId}`, undefined, {
-        ...context,
-        validate: (value) => z.object({ items: z.array(predictionOperationSchema) }).parse(value).items,
-      }),
+    operations: (experimentId?: number, context?: RequestContext) =>
+      client.request(
+        'get',
+        `/prediction/operations${experimentId === undefined ? '' : `?experiment_id=${experimentId}`}`,
+        undefined,
+        {
+          ...context,
+          validate: (value) => z.object({ items: z.array(predictionOperationSchema) }).parse(value).items,
+        },
+      ),
     operation: (id: string, context?: RequestContext) =>
       client.request('get', `/prediction/operations/${encodeURIComponent(id)}`, undefined, {
         ...context,

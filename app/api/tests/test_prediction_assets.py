@@ -59,7 +59,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.engine = create_async_engine(make_async_db_url(_database_url(self.database)))
-        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False, autoflush=False)
         self.owner, self.other, self.launcher_id, self.storage_id = (str(uuid4()) for _ in range(4))
         self.signing = patch.object(settings, "JWT_SECRET", "prediction-disposable-test-secret")
         self.signing.start()

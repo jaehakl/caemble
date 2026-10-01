@@ -27,11 +27,8 @@ export type PredictionAssetSettingsProps = Readonly<{
   onUse?: (setup: PredictionSetup, direction?: PredictionDirection) => void
   manager: PredictionAssetController
   direction?: PredictionDirection
-  onBeforeDelete?: () => Promise<void>
   onActivity?: RuntimeActivityCallback
   onBusyChange?: (busy: boolean) => void
-  loadedDirections?: readonly PredictionDirection[]
-  onReconnect?: () => void
 }>
 
 export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
@@ -138,6 +135,9 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
             >
               목록 새로고침
             </Button>
+            <a href="/settings/prediction" target="_blank" rel="noreferrer" className="text-sm underline">
+              모든 모델 파일 관리 ↗
+            </a>
           </div>
           {state.error && (
             <p role="alert" className="text-sm whitespace-pre-line text-destructive">

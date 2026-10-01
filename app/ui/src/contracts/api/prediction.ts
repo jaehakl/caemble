@@ -15,6 +15,13 @@ export const predictionReplicaSchema = z.object({
   checked_at: z.string().nullable(),
   verified_at: z.string().nullable(),
   delete_id: id.nullable(),
+  deletion: z
+    .object({
+      operation_id: id,
+      reason: z.enum(['in_use', 'transfer', 'offline', 'interrupted', 'awaiting_confirmation']),
+      message: z.string(),
+    })
+    .optional(),
 })
 export const predictionStorageSchema = z.object({
   storage_id: predictionLocationIdSchema,
@@ -101,6 +108,7 @@ export const predictionOperationGrantSchema = z.object({
 })
 export const predictionOperationSchema = z.object({
   id,
+  experiment_id: z.number().int().positive().optional(),
   request_id: id,
   kind: z.string(),
   state: z.string(),

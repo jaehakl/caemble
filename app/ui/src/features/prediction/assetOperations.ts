@@ -36,6 +36,18 @@ export function startPredictionAssetOperation(
     `${request.kind}:${request.asset_id}:${request.revision ?? 'all'}:${request.replica_id ?? ''}`,
     label,
     async (work) => {
+      if (body.kind.startsWith('delete_') && body.asset_kind === 'model') {
+        const replica = manager
+          .getSnapshot()
+          .models.find((item) => item.id === body.asset_id)
+          ?.revisions.flatMap((item) => item.replicas)
+          .find((item) => item.id === body.replica_id)
+        await manager.prepareDeletion({
+          modelId: body.asset_id,
+          revision: body.revision,
+          storageId: replica?.storage_id,
+        })
+      }
       if (submitted) {
         try {
           const current = await predictionApi.operation(body.request_id, { signal: work.signal })
@@ -67,12 +79,26 @@ export function startPredictionAssetOperation(
   )
 }
 
-export function retryPredictionAssetOperation(manager: PredictionAssetController, operation: PredictionOperation) {
-  return manager.run(`operation:${operation.id}`, '작업 다시 시도', async (work) => {
-    const current = await predictionApi.operation(operation.id, { signal: work.signal })
-    if (['completed', 'succeeded'].includes(current.state)) {
-      work.operation(current)
-      return current
+export function retryPredictionAssetOperation(
+  manager: PredictionAssetController,
+  requested: PredictionOperation | string,
+) {
+  const identity = typeof requested === 'string' ? requested : requested.id
+  return manager.run(`operation:${identity}`, '작업 상태 확인·계속', async (work) => {
+    const operation = await predictionApi.operation(identity, { signal: work.signal })
+    work.operation(operation)
+    if (['completed', 'succeeded'].includes(operation.state)) return operation
+    if (operation.kind.startsWith('delete_') && operation.asset_kind === 'model') {
+      const replica = manager
+        .getSnapshot()
+        .models.find((item) => item.id === operation.asset_id)
+        ?.revisions.flatMap((item) => item.replicas)
+        .find((item) => item.id === operation.details.replica_id)
+      await manager.prepareDeletion({
+        modelId: operation.asset_id,
+        revision: operation.revision ?? undefined,
+        storageId: replica?.storage_id,
+      })
     }
     const launcherId =
       operation.kind === 'restore' || operation.kind === 'prepare' || operation.kind === 'verify'
@@ -230,6 +256,22 @@ async function executePredictionAssetOperation(
       { requestId: crypto.randomUUID(), signal: work.signal },
     )
   } else if (operation.kind === 'delete_replica' || operation.kind === 'delete_asset') {
+    const failures: string[] = []
+    for (const identity of (operation.details.waiting_operation_ids ?? []) as string[]) {
+      try {
+        const child = await predictionApi.operation(identity, { signal: work.signal })
+        if (!['completed', 'succeeded'].includes(child.state)) {
+          const next = await predictionApi.retryOperation(identity, {}, { signal: work.signal })
+          await executePredictionAssetOperation(manager, next, work)
+        }
+      } catch (error) {
+        work.signal.throwIfAborted()
+        const message = error instanceof Error ? error.message : String(error)
+        failures.push(message)
+        await predictionApi.interruptOperation(identity, message).catch(() => undefined)
+      }
+    }
+    work.operation(operation)
     const state = manager.getSnapshot()
     const asset =
       operation.asset_kind === 'model'
@@ -241,15 +283,16 @@ async function executePredictionAssetOperation(
       ) ?? []
     for (const replica of replicas) {
       if (operation.kind === 'delete_replica' && replica.id !== operation.details.replica_id) continue
+      if (replica.delete_id && replica.delete_id !== operation.id) continue
       if (replica.state === 'deleted') continue
       const storage = state.storages.find((item) => item.storage_id === replica.storage_id)
       if (storage?.kind !== 'predictor_local') continue
       const access = storage.accesses.find((item) => item.connected)
       if (!access) continue // Server retains delete_pending until this location is reachable.
-      const remote = await work.connect(access.launcher_id)
-      if (remote.hello!.storageId !== replica.storage_id) continue
-      work.progress(`${storage.name} 파일 삭제 확인 중`)
       try {
+        const remote = await work.connect(access.launcher_id)
+        if (remote.hello!.storageId !== replica.storage_id) throw new Error('등록된 저장소와 실제 저장소가 다릅니다.')
+        work.progress(`${storage.name} 파일 삭제 확인 중`)
         await remote.command(
           'artifact.remove',
           {
@@ -263,10 +306,13 @@ async function executePredictionAssetOperation(
           { requestId: crypto.randomUUID(), signal: work.signal },
         )
       } catch (error) {
-        if (!(error instanceof RemotePredictionError) || error.code !== 'copy-in-use') throw error
-        work.progress(`${storage.name} 사용 종료 후 삭제 확인 대기`)
+        work.signal.throwIfAborted()
+        if (error instanceof RemotePredictionError && error.code === 'copy-in-use')
+          work.progress(`${storage.name} 사용 종료 후 삭제 확인 대기`)
+        else failures.push(`${storage.name}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
+    if (failures.length) throw new Error(failures.join('\n'))
   } else throw new Error('이 작업은 자산 상세에서 저장 파일을 확인한 뒤 다시 시도하세요.')
   const result = await predictionApi.operation(operation.id, { signal: work.signal })
   work.operation(result)
@@ -281,9 +327,11 @@ async function resumePreparedModel(
   if (!operation.target_launcher_id) throw new Error('모델을 준비하던 장비를 확인할 수 없습니다.')
   const remote = await work.connect(operation.target_launcher_id, true)
   if (remote.hello!.storageId !== operation.target_storage_id) throw new Error('모델 준비 저장소가 변경되었습니다.')
-  const model = (await predictionApi.models(manager.experimentId!, { signal: work.signal })).find(
-    (item) => item.id === operation.asset_id,
-  )
+  const model = (
+    await predictionApi.models(typeof manager.experimentId === 'number' ? manager.experimentId : undefined, {
+      signal: work.signal,
+    })
+  ).find((item) => item.id === operation.asset_id)
   const revision = model?.revisions.find((item) => item.revision === operation.revision)
   if (!model || !revision || revision.state !== 'reserved')
     throw new Error('이 준비 작업은 더 이상 유효하지 않습니다. 모델 목록을 확인하세요.')
@@ -307,9 +355,11 @@ async function resumePreparedModel(
     })
     .passthrough()
     .parse(revision.definition)
-  const dataset = (await predictionApi.datasets(manager.experimentId!, { signal: work.signal })).find(
-    (item) => item.id === revision.dataset_id,
-  )
+  const dataset = (
+    await predictionApi.datasets(typeof manager.experimentId === 'number' ? manager.experimentId : undefined, {
+      signal: work.signal,
+    })
+  ).find((item) => item.id === revision.dataset_id)
   const source = dataset?.revisions.find((item) => item.revision === revision.dataset_revision)
   if (!dataset || !source?.payload_available)
     throw new Error(

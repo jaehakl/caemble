@@ -32,7 +32,35 @@ async def revision_replicas(db, kind, identity, revision):
     field = Replica.model_id if kind == "model" else Replica.dataset_id
     rows = (await db.scalars(select(Replica).where(field == identity, Replica.revision == revision,
         Replica.state != "deleted").order_by(Replica.storage_id))).all()
-    return [replica_view(row) for row in rows]
+    result = []
+    for row in rows:
+        view = replica_view(row)
+        if row.state == "deleting" and row.delete_id:
+            from prediction.operations import assert_copy_idle
+            from prediction.db import Operation, StorageAccess
+            from gpstation.db import Launcher
+            operation = await db.get(Operation, row.delete_id)
+            reason, message = "awaiting_confirmation", "파일 삭제 확인을 기다리고 있습니다."
+            storage = await db.get(PredictionStorage, row.storage_id)
+            try:
+                await assert_copy_idle(db, row, operation_id=row.delete_id)
+            except HTTPException as error:
+                reason = "transfer" if "transfer" in str(error.detail).lower() else "in_use"
+                message = ("전송 작업이 이 복사본을 사용 중입니다." if reason == "transfer"
+                    else "예측 세션이 이 복사본을 사용 중입니다. 사용 해제 후 삭제를 계속하세요.")
+            else:
+                if operation and operation.state == "interrupted":
+                    reason, message = "interrupted", (operation.error or {}).get("message") or "삭제 확인이 중단되었습니다."
+                if storage and storage.kind == "predictor_local":
+                    connected = await db.scalar(select(Launcher.id).join(StorageAccess,
+                        StorageAccess.launcher_id == Launcher.id).where(StorageAccess.storage_id == row.storage_id,
+                        Launcher.user_id == storage.user_id, Launcher.disconnected_at.is_(None),
+                        Launcher.status.in_(["ready", "busy"])).limit(1))
+                    if not connected:
+                        reason, message = "offline", "장비가 오프라인입니다. 연결 후 삭제를 계속하세요."
+            view["deletion"] = {"operation_id": row.delete_id, "reason": reason, "message": message}
+        result.append(view)
+    return result
 
 
 async def put_replica(db, kind, identity, revision, storage_id, *, artifact=None, state="present", object_id=None,
