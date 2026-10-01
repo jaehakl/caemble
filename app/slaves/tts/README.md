@@ -30,7 +30,7 @@ check voice quality. To include actual synthesis in the automated tests, set
 Use a separate GPStation session with `slaveAppId: "tts"`,
 `handlerType: "ai.kokoro.synthesis"`, and CPU resources (`gpuCount: 0`). Do not
 send this handler to the existing `ai` session. Recommended launcher resource
-configuration in `.data/resources.toml`:
+configuration in `app/launcher/resources.toml`:
 
 ```toml
 [defaults.tts]

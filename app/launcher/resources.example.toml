@@ -1,4 +1,4 @@
-# Copy to .data/resources.toml, or set CAEMBLE_RESOURCES_FILE.
+# Copy to resources.toml in this directory, or set CAEMBLE_RESOURCES_FILE.
 # Omitted CPU/RAM budgets use half the available CPUs/physical RAM.
 # cpu_cores = 12
 # ram_budget_bytes = 68719476736

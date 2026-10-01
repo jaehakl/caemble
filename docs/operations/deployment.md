@@ -264,7 +264,9 @@ poetry run launcher
 
 한 launcher는 CPU·RAM·GPU 예산 안에서 여러 slave 인스턴스를 실행한다. 인스턴스당 활성 Job은
 하나이며 attempt마다 새 프로세스를 만든다. `app/launcher/resources.example.toml`을
-`.data/resources.toml`로 복사하거나 `CAEMBLE_RESOURCES_FILE`로 정책 파일을 지정한다.
+같은 폴더의 `resources.toml`로 복사하거나 `CAEMBLE_RESOURCES_FILE`로 정책 파일을 지정한다.
+환경변수로 지정한 경로가 우선하며, 기본 경로는 실행 위치와 무관하게 launcher 폴더를 기준으로 한다.
+기존 `.data/resources.toml`은 같은 폴더의 `resources.toml`이 없을 때만 호환용으로 읽는다.
 생략한 CPU·RAM 예산은 각각 가용 논리 CPU와 물리 RAM의 절반이다. 앱·handler 기본값과
 API/CLI override, RAM 여유 계산 및 GPU 배타 할당은 [worker 운영 안내](workers.md)를 따른다.
 Launchers 화면은 예산과 인스턴스 상태를 표시하며 설정 파일은 장비에서 편집한다.

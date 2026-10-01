@@ -82,10 +82,15 @@ are unavailable and start automatically after earlier instances finish cleanup.
 ## Launcher resource policy
 
 Copy `app/launcher/resources.example.toml` to
-`app/launcher/.data/resources.toml`, or select a file with
+`app/launcher/resources.toml` in the same directory, or select a file with
 `CAEMBLE_RESOURCES_FILE`. Restart the launcher after editing it. The Launchers
 page displays budgets, reservations, running instances and waiting reasons;
 configuration is edited on the launcher machine.
+
+The default path is relative to the launcher installation, regardless of the
+current working directory. `CAEMBLE_RESOURCES_FILE` takes precedence. For existing
+installations, `.data/resources.toml` is still read when `resources.toml` is absent;
+when both exist, the file beside `resources.example.toml` wins.
 
 If the file omits `cpu_cores`, an existing `CAEMBLE_CAE_CPU_BUDGET` launcher
 setting supplies the total launcher CPU budget. An explicit policy-file value

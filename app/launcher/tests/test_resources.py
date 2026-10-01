@@ -4,6 +4,40 @@ import pytest
 from pydantic import ValidationError
 
 from app.resources import GIB, ResourceLedger, ResourcePolicy
+from app import settings as launcher_settings
+
+
+@pytest.mark.parametrize("has_current,has_legacy", [(False, False), (True, False), (False, True), (True, True)])
+def test_resource_file_selection_preserves_legacy_settings_and_ignores_cwd(tmp_path, monkeypatch, has_current, has_legacy):
+    launcher_root = tmp_path / "launcher"
+    (launcher_root / ".data").mkdir(parents=True)
+    current = launcher_root / "resources.toml"
+    legacy = launcher_root / ".data" / "resources.toml"
+    if has_current:
+        current.write_text("[defaults.ai]\ngpu_count = 1\n", encoding="utf-8")
+    if has_legacy:
+        legacy.write_text("[defaults.ai]\ngpu_count = 2\n", encoding="utf-8")
+    monkeypatch.setattr(launcher_settings, "APP_ROOT", launcher_root)
+    monkeypatch.delenv("CAEMBLE_RESOURCES_FILE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    settings = launcher_settings.LauncherSettings(_env_file=None, api_url="http://localhost", access_token="fixture")
+    expected = legacy if has_legacy and not has_current else current
+    assert settings.resources_file == expected
+    if has_current or has_legacy:
+        policy = ResourcePolicy.load(settings.resources_file, None)
+        assert policy.defaults["ai"]["gpu_count"] == (1 if has_current else 2)
+
+
+def test_explicit_resource_file_overrides_default(tmp_path, monkeypatch):
+    current = tmp_path / "resources.toml"
+    current.write_text("[defaults.ai]\ngpu_count = 1\n", encoding="utf-8")
+    explicit = tmp_path / "custom.toml"
+    explicit.write_text("[defaults.ai]\ngpu_count = 2\n", encoding="utf-8")
+    monkeypatch.setattr(launcher_settings, "APP_ROOT", tmp_path)
+    monkeypatch.setenv("CAEMBLE_RESOURCES_FILE", str(explicit))
+    settings = launcher_settings.LauncherSettings(_env_file=None, api_url="http://localhost", access_token="fixture")
+    assert settings.resources_file == explicit
+    assert ResourcePolicy.load(settings.resources_file, None).defaults["ai"]["gpu_count"] == 2
 
 
 def ledger(ram=8 * GIB):

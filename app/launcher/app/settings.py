@@ -13,6 +13,14 @@ ENV_FILE = APP_ROOT / ".env"
 DEFAULT_RTC_ICE_SERVERS_JSON = '[{"urls":"stun:stun.l.google.com:19302"}]'
 
 
+def default_resources_file() -> Path:
+    path = APP_ROOT / "resources.toml"
+    legacy_path = APP_ROOT / ".data" / "resources.toml"
+    if not path.exists() and legacy_path.is_file():
+        return legacy_path
+    return path
+
+
 class LauncherSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
@@ -25,7 +33,7 @@ class LauncherSettings(BaseSettings):
         validation_alias=AliasChoices("CAEMBLE_API_URL", "GPSTATION_V1_API_URL"),
     )
     cae_cpu_budget: int | None = Field(default=None, gt=0, validation_alias="CAEMBLE_CAE_CPU_BUDGET")
-    resources_file: Path = Field(default=APP_ROOT / ".data" / "resources.toml", validation_alias="CAEMBLE_RESOURCES_FILE")
+    resources_file: Path = Field(default_factory=default_resources_file, validation_alias="CAEMBLE_RESOURCES_FILE")
     state_dir: Path = Field(default=APP_ROOT / ".data" / "launcher", validation_alias="CAEMBLE_LAUNCHER_STATE_DIR")
     control_grace_seconds: float = Field(default=30, gt=0, validation_alias="CAEMBLE_CONTROL_GRACE_SECONDS")
     access_token: str = Field(

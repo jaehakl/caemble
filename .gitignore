@@ -50,6 +50,7 @@ Thumbs.db
 .models/
 **/.models/
 app/slaves/ai/models.toml
+app/launcher/resources.toml
 app/slaves/ai/voicevox_runtime/
 app/slaves/ai/models/
 app/slaves/ai/cache/
