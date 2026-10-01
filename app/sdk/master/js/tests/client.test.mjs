@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GpStationClient } from '../dist/client.js';
 
+for (const authMode of ['cookie', 'bearer', undefined]) {
+  test(`listLaunchers uses ${authMode ?? 'default bearer'} authentication and endpoint`, async (context) => {
+    const launchers = [{ id: 'fixture-launcher', slave_app_ids: ['predictor'] }];
+    context.mock.method(globalThis, 'fetch', async (url, init) => {
+      assert.equal(url, `http://localhost/api/${authMode === 'cookie' ? 'web' : 'v1'}/launchers`);
+      assert.equal(init.method ?? 'GET', 'GET');
+      assert.equal(init.credentials, authMode === 'cookie' ? 'include' : undefined);
+      assert.equal(init.headers.get('Authorization'), authMode === 'cookie' ? null : 'Bearer fixture');
+      return Response.json(launchers);
+    });
+    const client = new GpStationClient({ apiBaseUrl: 'http://localhost/api/', authMode, token: 'fixture' });
+    assert.deepEqual(await client.listLaunchers(), launchers);
+    assert.equal(globalThis.fetch.mock.calls.length, 1);
+  });
+}
+
 class OfferPeer extends EventTarget {
   iceGatheringState = 'complete';
   iceConnectionState = 'new';

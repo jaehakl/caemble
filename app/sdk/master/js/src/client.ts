@@ -107,7 +107,7 @@ export class GpStationClient {
   }
 
   async listLaunchers(): Promise<LauncherView[]> {
-    return this.request<LauncherView[]>('/v1/launchers');
+    return this.request<LauncherView[]>(this.authMode === 'cookie' ? '/web/launchers' : '/v1/launchers');
   }
 
   /** Cancel the execution through its owner; closing WebRTC alone is not cleanup proof. */

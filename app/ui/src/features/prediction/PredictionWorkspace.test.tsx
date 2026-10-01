@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useCallback, useState, type PropsWithChildren } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
@@ -14,9 +14,12 @@ import {
 } from './PredictionWorkspace'
 import type { PredictionRecordedPreview } from './usePredictionModels'
 import { PredictionTrainingChangedError } from './trainingSnapshot'
+import { persistPredictionSetup } from './setupPersistence'
+import { defaultPredictionSetup } from './usePredictionModels'
 
 const mocks = vi.hoisted(() => ({
   manageable: true,
+  queryScope: 'user:test',
   predictionOnly: false,
   calculateMeasurement: vi.fn(),
   calculateMissing: () => {},
@@ -32,11 +35,12 @@ const mocks = vi.hoisted(() => ({
   runCandidates: vi.fn(),
   nextSample: vi.fn(),
   acceptSample: vi.fn(),
+  workerCreated: vi.fn(),
   actual: null as CalculationDataOutput | null,
   actualSource: 'calculation-source',
 }))
 
-vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'user:test' }))
+vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => mocks.queryScope }))
 vi.mock('@/lib/calculation', () => ({ calculationSourceHash: async () => 'calculation-source' }))
 vi.mock('../experiment/queryOptions', () => ({
   availableExperimentsQueryOptions: () => ({
@@ -46,6 +50,9 @@ vi.mock('../experiment/queryOptions', () => ({
 }))
 vi.mock('./client', () => ({
   PredictionWorkerClient: class {
+    constructor() {
+      mocks.workerCreated()
+    }
     epoch = 0
     cancelPending() {
       return false
@@ -129,15 +136,36 @@ vi.mock('./PredictionPanels', () => ({
   PredictionSetupDialog: ({
     calculateMissingDisabled,
     onCalculateMissing,
+    open,
+    applyDisabled,
+    onApply,
+    onCancel,
+    onReload,
   }: {
     calculateMissingDisabled: boolean
     onCalculateMissing: () => void
+    open: boolean
+    applyDisabled: boolean
+    onApply: () => void
+    onCancel: () => void
+    onReload: () => void
   }) => {
     mocks.calculateMissing = onCalculateMissing
     return (
-      <button disabled={calculateMissingDisabled} onClick={onCalculateMissing}>
-        Calculate missing
-      </button>
+      <>
+        <button disabled={calculateMissingDisabled} onClick={onCalculateMissing}>
+          Calculate missing
+        </button>
+        {open && (
+          <>
+            <button disabled={applyDisabled} onClick={onApply}>
+              Apply settings
+            </button>
+            <button onClick={onCancel}>Cancel settings</button>
+            <button onClick={onReload}>Reload data</button>
+          </>
+        )}
+      </>
     )
   },
   PredictionVarsPane: ({ onVarsChange }: { onVarsChange: (vars: { x: number }) => void }) => (
@@ -235,11 +263,21 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
       </button>
       <button onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'cancel' })}>Cancel</button>
       <button onClick={() => setActive(false)}>Leave Prediction</button>
+      <button onClick={() => setActive(true)}>Return to Prediction</button>
+      <button onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'settings' })}>Settings</button>
       <button onClick={() => setDataReadable(false)}>Lose access</button>
       <button onClick={() => setDataReadable(true)}>Regain access</button>
       <button onClick={() => setCommand({ id: (command?.id ?? 0) + 1, type: 'details' })}>Details</button>
       <div ref={setVarsContainer} />
       <button onClick={() => setExperimentId(11)}>Change Experiment</button>
+      <button
+        onClick={() => {
+          mocks.queryScope = 'user:other'
+          setCommand({ id: (command?.id ?? 0) + 1, type: 'details' })
+        }}
+      >
+        Change User
+      </button>
       <PredictionWorkspace
         active={active}
         authenticated
@@ -256,7 +294,7 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
   )
 }
 
-async function renderWorkspace(deferCandidateEvaluation = false) {
+async function renderWorkspace(deferCandidateEvaluation = false, applySettings = true) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: PropsWithChildren) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -264,10 +302,20 @@ async function renderWorkspace(deferCandidateEvaluation = false) {
   await act(async () => {
     render(<TestWorkspace deferCandidateEvaluation={deferCandidateEvaluation} />, { wrapper })
   })
+  if (applySettings) {
+    await screen.findByTestId('calculation-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }))
+  }
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  mocks.queryScope = 'user:test'
   mocks.viewerState.mockReset()
+  mocks.chromeState.mockReset()
+  mocks.workerCreated.mockReset()
   mocks.manageable = true
   mocks.predictionOnly = false
   mocks.calculateMeasurement.mockReset()
@@ -287,7 +335,7 @@ beforeEach(() => {
     mocks.contextFingerprint = 'after'
     return { measurementId: 2 }
   })
-  mocks.loadContextData.mockImplementation(async () => ({
+  mocks.loadContextData.mockImplementation(async ({ experimentId }) => ({
     analysis: { fingerprint: mocks.contextFingerprint, items: [] },
     calculations: [
       {
@@ -301,13 +349,113 @@ beforeEach(() => {
         experiment_record_ids: [],
       },
     ],
-    experimentId: 10,
+    experimentId,
     experimentRecords: [],
     fingerprint: mocks.contextFingerprint,
     measurements: [{ id: 1, vars: { x: 1 }, recorded_at: '2026-09-08T00:00:00Z' }],
   }))
   mocks.loadContextFingerprint.mockImplementation(async () => mocks.contextFingerprint)
 })
+
+it.each([false, true])('does not activate Browser from entry or restored settings (%s)', async (restored) => {
+  if (restored) persistPredictionSetup('user:test', 10, { ...defaultPredictionSetup, calculationIds: [1] })
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Reload data' }))
+  await waitFor(() => expect(mocks.loadContextData).toHaveBeenCalledTimes(2))
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel settings' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Vars' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  fireEvent.focus(window)
+  await act(async () => undefined)
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+  expect(mocks.predictInverse).not.toHaveBeenCalled()
+  expect(mocks.workerCreated).not.toHaveBeenCalled()
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      status: 'Prediction Settings에서 설정을 적용하세요.',
+      canValidate: false,
+      canSample: false,
+    }),
+  )
+})
+
+it('keeps Browser active across tab changes and refreshes changed Vars', async () => {
+  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+  await renderWorkspace()
+  await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledOnce())
+  fireEvent.click(screen.getByRole('button', { name: 'Leave Prediction' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Return to Prediction' }))
+  await act(async () => undefined)
+  expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Vars' }))
+  await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledTimes(2))
+})
+
+it('restores Browser settings without activation after a fresh mount', async () => {
+  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+  await renderWorkspace()
+  await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledOnce())
+  cleanup()
+  mocks.forwardOutputs.mockClear()
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  await act(async () => undefined)
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      status: 'Prediction Settings에서 설정을 적용하세요.',
+    }),
+  )
+})
+
+it('starts the selected Inverse direction only after settings are applied', async () => {
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 20))
+  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  expect(mocks.predictInverse).not.toHaveBeenCalled()
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }))
+  await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledOnce())
+  await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledOnce())
+})
+
+it.each(['Change Experiment', 'Change User'])(
+  'requires reapplication after %s and ignores late prediction',
+  async (action) => {
+    let finish!: (value: ReturnType<typeof predictionResult>) => void
+    mocks.forwardOutputs.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    await renderWorkspace()
+    await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await waitFor(() => expect(mocks.loadContextData).toHaveBeenCalledTimes(2))
+    await act(async () => finish(predictionResult('forward', 10)))
+    expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
+    expect(mocks.viewerState).toHaveBeenLastCalledWith(null)
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: 'Prediction Settings에서 설정을 적용하세요.',
+        canValidate: false,
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled())
+    mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 12))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }))
+    await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledTimes(2))
+  },
+)
 
 it('reloads changed training inputs before retrying Forward', async () => {
   mocks.forwardOutputs.mockRejectedValueOnce(new PredictionTrainingChangedError()).mockImplementation(async () => {
@@ -533,7 +681,7 @@ it('blocks validation, sampling and missing-data writes without persistent Exper
   mocks.manageable = false
   mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
   await renderWorkspace()
-  await screen.findByTestId('calculation-1')
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
   expect(screen.getByRole('button', { name: 'Calculate missing' })).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
   fireEvent.click(screen.getByRole('button', { name: 'Sample' }))
@@ -597,7 +745,7 @@ it.each(['Cancel', 'Leave Prediction', 'Change Experiment'])(
 )
 
 it.each(['immediate', 'delayed'] as const)(
-  'starts Forward once after an %s initial freshness check',
+  'waits for explicit application after an %s initial freshness check',
   async (timing) => {
     let finishCheck!: (fingerprint: string) => void
     const checked = new Promise<string>((resolve) => {
@@ -607,12 +755,16 @@ it.each(['immediate', 'delayed'] as const)(
     mocks.loadContextFingerprint.mockReturnValue(checked)
     mocks.forwardOutputs.mockImplementation(() => new Promise(() => {}))
 
-    await renderWorkspace()
+    await renderWorkspace(false, false)
     await waitFor(() => expect(mocks.loadContextFingerprint).toHaveBeenCalled())
     if (timing === 'delayed') {
       expect(mocks.forwardOutputs).not.toHaveBeenCalled()
       await act(async () => finishCheck('before'))
     }
+    expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }))
     await waitFor(() => expect(mocks.forwardOutputs).toHaveBeenCalledOnce())
     await act(async () => undefined)
     expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
