@@ -191,11 +191,16 @@ async def download_parts(db, ref: dict):
 
 
 async def cleanup_objects(db):
+    from prediction.db import DatasetObject
     cutoff = utcnow() - timedelta(hours=24)
     rows = (await db.scalars(select(StorageObject).where(StorageObject.updated_at < cutoff)
                             .order_by(StorageObject.updated_at).limit(100).with_for_update(skip_locked=True))).all()
     doomed = []
     for row in rows:
+        retained = await db.scalar(select(DatasetObject.object_id).where(DatasetObject.object_id == row.id).limit(1))
+        if retained is not None and row.user_id is not None and not row.deleting:
+            row.updated_at = utcnow()
+            continue
         alive = row.bound and row.user_id is not None and row.experiment_id is not None
         if row.purpose in {"measurement", "record", "calculation"}:
             alive = alive and row.measurement_id is not None

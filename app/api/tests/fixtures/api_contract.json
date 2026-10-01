@@ -4823,6 +4823,980 @@
             }
           }
         }
+      },
+      "/prediction/datasets": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "List Datasets",
+          "operationId": "list_datasets_prediction_datasets_get",
+          "parameters": [
+            {
+              "name": "experiment_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Experiment Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Create Dataset",
+          "operationId": "create_dataset_prediction_datasets_post",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetSelection"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/local": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Register Local Dataset",
+          "operationId": "register_local_dataset_prediction_datasets_local_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalDatasetRegistration"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/sync": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Sync Dataset",
+          "operationId": "sync_dataset_prediction_datasets__dataset_id__sync_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetSelection"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/grants": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Dataset Grant",
+          "operationId": "dataset_grant_prediction_datasets__dataset_id__grants_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetGrantRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/revisions/{revision}/manifest": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Dataset Manifest",
+          "operationId": "dataset_manifest_prediction_datasets__dataset_id__revisions__revision__manifest_get",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            },
+            {
+              "name": "revision",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "title": "Revision"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/grants/{grant_id}/release": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Release Dataset Grant",
+          "operationId": "release_dataset_grant_prediction_datasets__dataset_id__grants__grant_id__release_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            },
+            {
+              "name": "grant_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Grant Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/revisions/{revision}/objects/{object_id}": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Dataset Object",
+          "operationId": "dataset_object_prediction_datasets__dataset_id__revisions__revision__objects__object_id__get",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            },
+            {
+              "name": "revision",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "title": "Revision"
+              }
+            },
+            {
+              "name": "object_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Object Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/delete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Delete Dataset",
+          "operationId": "delete_dataset_prediction_datasets__dataset_id__delete_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/delete/complete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Complete Dataset Delete",
+          "operationId": "complete_dataset_delete_prediction_datasets__dataset_id__delete_complete_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "List Models",
+          "operationId": "list_models_prediction_models_get",
+          "parameters": [
+            {
+              "name": "experiment_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Experiment Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/reserve": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Reserve Model",
+          "operationId": "reserve_model_prediction_models_reserve_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelReserve"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/{model_id}/revisions/{revision}/complete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Complete Model",
+          "operationId": "complete_model_prediction_models__model_id__revisions__revision__complete_post",
+          "parameters": [
+            {
+              "name": "model_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Model Id"
+              }
+            },
+            {
+              "name": "revision",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "title": "Revision"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelComplete"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/{model_id}/delete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Delete Model",
+          "operationId": "delete_model_prediction_models__model_id__delete_post",
+          "parameters": [
+            {
+              "name": "model_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Model Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/{model_id}/leases": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Lease Model",
+          "operationId": "lease_model_prediction_models__model_id__leases_post",
+          "parameters": [
+            {
+              "name": "model_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Model Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelLeaseRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/{model_id}/leases/release": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Release Model Lease",
+          "operationId": "release_model_lease_prediction_models__model_id__leases_release_post",
+          "parameters": [
+            {
+              "name": "model_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Model Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelLeaseRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/{model_id}/delete/complete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Complete Model Delete",
+          "operationId": "complete_model_delete_prediction_models__model_id__delete_complete_post",
+          "parameters": [
+            {
+              "name": "model_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Model Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/storages": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "List Storages",
+          "operationId": "list_storages_prediction_storages_get",
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            }
+          }
+        },
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Register Storage",
+          "operationId": "register_storage_prediction_storages_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageRegistration"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/revisions/{revision}/grant/renew": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Renew Dataset Grant",
+          "operationId": "renew_dataset_grant_prediction_datasets__dataset_id__revisions__revision__grant_renew_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            },
+            {
+              "name": "revision",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "integer",
+                "title": "Revision"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "components": {
@@ -7527,6 +8501,18 @@
                   "type": "null"
                 }
               ]
+            },
+            "target_launcher_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Launcher Id"
             }
           },
           "type": "object",
@@ -7768,6 +8754,17 @@
                 }
               ],
               "title": "Updated At"
+            },
+            "target_launcher_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Launcher Id"
             }
           },
           "type": "object",
@@ -10070,6 +11067,446 @@
             "type"
           ],
           "title": "ValidationError"
+        },
+        "ArtifactFile": {
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Name"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Sha256"
+            },
+            "byteLength": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Bytelength"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "name",
+            "sha256",
+            "byteLength"
+          ],
+          "title": "ArtifactFile"
+        },
+        "DatasetGrantRequest": {
+          "properties": {
+            "revision": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Revision"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "revision"
+          ],
+          "title": "DatasetGrantRequest"
+        },
+        "DatasetSelection": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name"
+            },
+            "experiment_id": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Experiment Id"
+            },
+            "source_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Source Hash"
+            },
+            "vars_schema": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Vars Schema"
+            },
+            "record_ids": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array",
+              "title": "Record Ids"
+            },
+            "calculation_ids": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array",
+              "title": "Calculation Ids"
+            },
+            "rules": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array",
+              "title": "Rules"
+            },
+            "result_contracts": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Result Contracts"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id",
+            "name",
+            "experiment_id",
+            "source_hash",
+            "vars_schema"
+          ],
+          "title": "DatasetSelection"
+        },
+        "DeleteRequest": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "storage_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Storage Id"
+            },
+            "launcher_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Launcher Id"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "title": "DeleteRequest"
+        },
+        "LocalDatasetRegistration": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "dataset_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Dataset Id"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Revision"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name"
+            },
+            "experiment_id": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Experiment Id"
+            },
+            "source_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Source Hash"
+            },
+            "fingerprint": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "title": "Fingerprint"
+            },
+            "manifest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Manifest Sha256"
+            },
+            "storage_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Storage Id"
+            },
+            "launcher_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Launcher Id"
+            },
+            "sample_count": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Sample Count"
+            },
+            "source_contracts": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Source Contracts"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id",
+            "dataset_id",
+            "revision",
+            "name",
+            "experiment_id",
+            "source_hash",
+            "fingerprint",
+            "manifest_sha256",
+            "storage_id",
+            "launcher_id",
+            "sample_count",
+            "source_contracts"
+          ],
+          "title": "LocalDatasetRegistration"
+        },
+        "ModelComplete": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "manifest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Manifest Sha256"
+            },
+            "files": {
+              "items": {
+                "$ref": "#/components/schemas/ArtifactFile"
+              },
+              "type": "array",
+              "minItems": 1,
+              "title": "Files"
+            },
+            "profile": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Profile"
+            },
+            "input_layouts": {
+              "title": "Input Layouts"
+            },
+            "output_layouts": {
+              "title": "Output Layouts"
+            },
+            "format_version": {
+              "type": "integer",
+              "const": 1,
+              "title": "Format Version",
+              "default": 1
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id",
+            "manifest_sha256",
+            "files",
+            "profile",
+            "input_layouts",
+            "output_layouts"
+          ],
+          "title": "ModelComplete"
+        },
+        "ModelLeaseRequest": {
+          "properties": {
+            "job_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Revision"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "job_id",
+            "revision"
+          ],
+          "title": "ModelLeaseRequest"
+        },
+        "ModelReserve": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "model_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Id"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name"
+            },
+            "direction": {
+              "type": "string",
+              "enum": [
+                "forward",
+                "inverse"
+              ],
+              "title": "Direction"
+            },
+            "dataset_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Dataset Id"
+            },
+            "dataset_revision": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Dataset Revision"
+            },
+            "definition": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Definition"
+            },
+            "storage_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Storage Id"
+            },
+            "launcher_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Launcher Id"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id",
+            "name",
+            "direction",
+            "dataset_id",
+            "dataset_revision",
+            "definition",
+            "storage_id",
+            "launcher_id"
+          ],
+          "title": "ModelReserve"
+        },
+        "StorageRegistration": {
+          "properties": {
+            "storage_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Storage Id"
+            },
+            "launcher_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Launcher Id"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "storage_id",
+            "launcher_id",
+            "name"
+          ],
+          "title": "StorageRegistration"
         }
       }
     }
@@ -10837,6 +12274,146 @@
         "POST"
       ],
       "kill_job"
+    ],
+    [
+      "/prediction/datasets",
+      [
+        "GET"
+      ],
+      "list_datasets"
+    ],
+    [
+      "/prediction/datasets",
+      [
+        "POST"
+      ],
+      "create_dataset"
+    ],
+    [
+      "/prediction/datasets/local",
+      [
+        "POST"
+      ],
+      "register_local_dataset"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/sync",
+      [
+        "POST"
+      ],
+      "sync_dataset"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/grants",
+      [
+        "POST"
+      ],
+      "dataset_grant"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/revisions/{revision}/manifest",
+      [
+        "GET"
+      ],
+      "dataset_manifest"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/grants/{grant_id}/release",
+      [
+        "POST"
+      ],
+      "release_dataset_grant"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/revisions/{revision}/objects/{object_id}",
+      [
+        "GET"
+      ],
+      "dataset_object"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/delete",
+      [
+        "POST"
+      ],
+      "delete_dataset"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/delete/complete",
+      [
+        "POST"
+      ],
+      "complete_dataset_delete"
+    ],
+    [
+      "/prediction/models",
+      [
+        "GET"
+      ],
+      "list_models"
+    ],
+    [
+      "/prediction/models/reserve",
+      [
+        "POST"
+      ],
+      "reserve_model"
+    ],
+    [
+      "/prediction/models/{model_id}/revisions/{revision}/complete",
+      [
+        "POST"
+      ],
+      "complete_model"
+    ],
+    [
+      "/prediction/models/{model_id}/delete",
+      [
+        "POST"
+      ],
+      "delete_model"
+    ],
+    [
+      "/prediction/models/{model_id}/leases",
+      [
+        "POST"
+      ],
+      "lease_model"
+    ],
+    [
+      "/prediction/models/{model_id}/leases/release",
+      [
+        "POST"
+      ],
+      "release_model_lease"
+    ],
+    [
+      "/prediction/models/{model_id}/delete/complete",
+      [
+        "POST"
+      ],
+      "complete_model_delete"
+    ],
+    [
+      "/prediction/storages",
+      [
+        "GET"
+      ],
+      "list_storages"
+    ],
+    [
+      "/prediction/storages",
+      [
+        "POST"
+      ],
+      "register_storage"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/revisions/{revision}/grant/renew",
+      [
+        "POST"
+      ],
+      "renew_dataset_grant"
     ]
   ],
   "tables": {
@@ -10854,7 +12431,7 @@
     "sessions": "\nCREATE TABLE sessions (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tsession_id_hash BYTEA NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tlast_seen_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tip INET, \n\tuser_agent TEXT, \n\trevoked_at TIMESTAMP WITH TIME ZONE, \n\tCONSTRAINT pk_sessions PRIMARY KEY (id), \n\tCONSTRAINT uq_sessions_session_id_hash UNIQUE (session_id_hash), \n\tCONSTRAINT fk_sessions_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
     "user_roles": "\nCREATE TABLE user_roles (\n\tuser_id UUID NOT NULL, \n\trole_id INTEGER NOT NULL, \n\tCONSTRAINT pk_user_roles PRIMARY KEY (user_id, role_id), \n\tCONSTRAINT uq_user_roles_user_id_role_id UNIQUE (user_id, role_id), \n\tCONSTRAINT fk_user_roles_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_user_roles_role_id_roles FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE\n)\n\n",
     "experiments": "\nCREATE TABLE experiments (\n\tid SERIAL NOT NULL, \n\tuser_id UUID NOT NULL, \n\tnamespace TEXT NOT NULL, \n\trepository_slug TEXT NOT NULL, \n\texperiment_key TEXT NOT NULL, \n\tversion_major INTEGER NOT NULL, \n\tversion_minor INTEGER NOT NULL, \n\tversion_patch INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdescription TEXT, \n\tsource_bundle JSONB NOT NULL, \n\tresult_contracts JSONB, \n\tthumbnail_url TEXT, \n\tinitial_measurement_id INTEGER, \n\tviewer_defaults JSONB, \n\tsource_hash TEXT NOT NULL, \n\tcode_embedding VECTOR(768), \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_experiments PRIMARY KEY (id), \n\tCONSTRAINT uq_experiments_coordinate_semver UNIQUE (namespace, repository_slug, experiment_key, version_major, version_minor, version_patch), \n\tCONSTRAINT fk_experiments_namespace_user_id_experiment_namespaces FOREIGN KEY(namespace, user_id) REFERENCES experiment_namespaces (namespace, user_id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_experiments_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
-    "jobs": "\nCREATE TABLE jobs (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tlauncher_id UUID, \n\thandler_type TEXT NOT NULL, \n\tslave_app_id TEXT NOT NULL, \n\tjob_mode TEXT DEFAULT 'webrtc' NOT NULL, \n\tbatch_id UUID, \n\titem_index BIGINT, \n\tinput JSONB, \n\tartifact_metadata JSONB, \n\tworker_token_hash TEXT, \n\tattempt_id UUID, \n\tinstance_id TEXT, \n\treservation_id TEXT, \n\tboot_id TEXT, \n\tresources JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tallocation JSONB, \n\texecution_phase TEXT, \n\tcleanup_state TEXT, \n\twaiting_reason TEXT, \n\tcleaned_at TIMESTAMP WITH TIME ZONE, \n\toffer JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tanswer JSONB, \n\tprogress JSONB DEFAULT '[]'::jsonb NOT NULL, \n\tstate TEXT DEFAULT 'queued' NOT NULL, \n\tassigned_at TIMESTAMP WITH TIME ZONE, \n\tanswer_ready_at TIMESTAMP WITH TIME ZONE, \n\tstarted_at TIMESTAMP WITH TIME ZONE, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcancel_requested_at TIMESTAMP WITH TIME ZONE, \n\tlast_error TEXT, \n\tattempt_count INTEGER DEFAULT 0 NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_jobs PRIMARY KEY (id), \n\tCONSTRAINT uq_jobs_batch_item UNIQUE (batch_id, item_index), \n\tCONSTRAINT fk_jobs_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_jobs_launcher_id_launchers FOREIGN KEY(launcher_id) REFERENCES launchers (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_jobs_batch_id_job_batches FOREIGN KEY(batch_id) REFERENCES job_batches (id) ON DELETE CASCADE\n)\n\n",
+    "jobs": "\nCREATE TABLE jobs (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tlauncher_id UUID, \n\ttarget_launcher_id UUID, \n\thandler_type TEXT NOT NULL, \n\tslave_app_id TEXT NOT NULL, \n\tjob_mode TEXT DEFAULT 'webrtc' NOT NULL, \n\tbatch_id UUID, \n\titem_index BIGINT, \n\tinput JSONB, \n\tartifact_metadata JSONB, \n\tworker_token_hash TEXT, \n\tattempt_id UUID, \n\tinstance_id TEXT, \n\treservation_id TEXT, \n\tboot_id TEXT, \n\tresources JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tallocation JSONB, \n\texecution_phase TEXT, \n\tcleanup_state TEXT, \n\twaiting_reason TEXT, \n\tcleaned_at TIMESTAMP WITH TIME ZONE, \n\toffer JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tanswer JSONB, \n\tprogress JSONB DEFAULT '[]'::jsonb NOT NULL, \n\tstate TEXT DEFAULT 'queued' NOT NULL, \n\tassigned_at TIMESTAMP WITH TIME ZONE, \n\tanswer_ready_at TIMESTAMP WITH TIME ZONE, \n\tstarted_at TIMESTAMP WITH TIME ZONE, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcancel_requested_at TIMESTAMP WITH TIME ZONE, \n\tlast_error TEXT, \n\tattempt_count INTEGER DEFAULT 0 NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_jobs PRIMARY KEY (id), \n\tCONSTRAINT uq_jobs_batch_item UNIQUE (batch_id, item_index), \n\tCONSTRAINT fk_jobs_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_jobs_launcher_id_launchers FOREIGN KEY(launcher_id) REFERENCES launchers (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_jobs_batch_id_job_batches FOREIGN KEY(batch_id) REFERENCES job_batches (id) ON DELETE CASCADE\n)\n\n",
     "cae_batches": "\nCREATE TABLE cae_batches (\n\tbatch_id UUID NOT NULL, \n\texperiment_id INTEGER, \n\tspec JSONB NOT NULL, \n\tCONSTRAINT pk_cae_batches PRIMARY KEY (batch_id), \n\tCONSTRAINT fk_cae_batches_batch_id_job_batches FOREIGN KEY(batch_id) REFERENCES job_batches (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_batches_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE CASCADE\n)\n\n",
     "cae_optimizations": "\nCREATE TABLE cae_optimizations (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tstate TEXT DEFAULT 'running' NOT NULL, \n\tpause_reason TEXT, \n\tdefinition JSONB NOT NULL, \n\tsettings JSONB NOT NULL, \n\toptimizer_state JSONB DEFAULT '{}'::jsonb NOT NULL, \n\tbest_trial_id UUID, \n\tfinished_at TIMESTAMP WITH TIME ZONE, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_cae_optimizations PRIMARY KEY (id), \n\tCONSTRAINT uq_cae_optimizations_request UNIQUE (user_id, request_id), \n\tCONSTRAINT fk_cae_optimizations_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_optimizations_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE RESTRICT\n)\n\n",
     "cae_upload_chunks": "\nCREATE TABLE cae_upload_chunks (\n\tjob_id UUID NOT NULL, \n\tchunk_index INTEGER NOT NULL, \n\tsha256 TEXT NOT NULL, \n\tdata BYTEA NOT NULL, \n\tCONSTRAINT pk_cae_upload_chunks PRIMARY KEY (job_id, chunk_index), \n\tCONSTRAINT fk_cae_upload_chunks_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n",
@@ -10875,7 +12452,16 @@
     "calculation_data": "\nCREATE TABLE calculation_data (\n\tid SERIAL NOT NULL, \n\tcalculation_id INTEGER NOT NULL, \n\tmeasurement_id INTEGER NOT NULL, \n\tdata JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_calculation_data PRIMARY KEY (id), \n\tCONSTRAINT uq_calculation_data_calculation_id_measurement_id UNIQUE (calculation_id, measurement_id), \n\tCONSTRAINT fk_calculation_data_calculation_id_calculations FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_calculation_data_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE CASCADE\n)\n\n",
     "calculation_experiment_records": "\nCREATE TABLE calculation_experiment_records (\n\tcalculation_id INTEGER NOT NULL, \n\texperiment_record_id INTEGER NOT NULL, \n\tCONSTRAINT pk_calculation_experiment_records PRIMARY KEY (calculation_id, experiment_record_id), \n\tCONSTRAINT fk_calc_records_calculation FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_calc_records_record FOREIGN KEY(experiment_record_id) REFERENCES experiment_records (id) ON DELETE CASCADE\n)\n\n",
     "calculation_legacy_metadata": "\nCREATE TABLE calculation_legacy_metadata (\n\tcalculation_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdescription TEXT, \n\tCONSTRAINT pk_calculation_legacy_metadata PRIMARY KEY (calculation_id), \n\tCONSTRAINT fk_calculation_legacy_metadata_calculation_id_calculations FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE CASCADE\n)\n\n",
-    "storage_objects": "\nCREATE TABLE storage_objects (\n\tid UUID NOT NULL, \n\tuser_id UUID, \n\texperiment_id INTEGER, \n\tmeasurement_id INTEGER, \n\tcalculation_id INTEGER, \n\tcalculation_data_id INTEGER, \n\tjob_id UUID, \n\tattempt INTEGER, \n\tpurpose TEXT NOT NULL, \n\tmanifest JSONB NOT NULL, \n\tready BOOLEAN DEFAULT 'false' NOT NULL, \n\tbound BOOLEAN DEFAULT 'false' NOT NULL, \n\tdeleting BOOLEAN DEFAULT 'false' NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_storage_objects PRIMARY KEY (id), \n\tCONSTRAINT fk_storage_objects_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_calculation_id_calculations FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_calculation_data_id_calculation_data FOREIGN KEY(calculation_data_id) REFERENCES calculation_data (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE SET NULL\n)\n\n"
+    "storage_objects": "\nCREATE TABLE storage_objects (\n\tid UUID NOT NULL, \n\tuser_id UUID, \n\texperiment_id INTEGER, \n\tmeasurement_id INTEGER, \n\tcalculation_id INTEGER, \n\tcalculation_data_id INTEGER, \n\tjob_id UUID, \n\tattempt INTEGER, \n\tpurpose TEXT NOT NULL, \n\tmanifest JSONB NOT NULL, \n\tready BOOLEAN DEFAULT 'false' NOT NULL, \n\tbound BOOLEAN DEFAULT 'false' NOT NULL, \n\tdeleting BOOLEAN DEFAULT 'false' NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_storage_objects PRIMARY KEY (id), \n\tCONSTRAINT fk_storage_objects_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_calculation_id_calculations FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_calculation_data_id_calculation_data FOREIGN KEY(calculation_data_id) REFERENCES calculation_data (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE SET NULL\n)\n\n",
+    "prediction_datasets": "\nCREATE TABLE prediction_datasets (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tsource_kind TEXT NOT NULL, \n\tselection JSONB NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\tstorage_id UUID, \n\tlauncher_id UUID, \n\tdelete_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_datasets PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_datasets_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_dataset_revisions": "\nCREATE TABLE prediction_dataset_revisions (\n\tdataset_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tfingerprint TEXT NOT NULL, \n\tsummary JSONB NOT NULL, \n\tpayload JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_revisions PRIMARY KEY (dataset_id, revision), \n\tCONSTRAINT uq_prediction_dataset_revisions_dataset_id UNIQUE (dataset_id, request_id), \n\tCONSTRAINT fk_prediction_dataset_revisions_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_dataset_requests": "\nCREATE TABLE prediction_dataset_requests (\n\tdataset_id UUID NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\trevision INTEGER NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_requests PRIMARY KEY (dataset_id, request_id), \n\tCONSTRAINT fk_prediction_dataset_requests_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_dataset_objects": "\nCREATE TABLE prediction_dataset_objects (\n\tdataset_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\tobject_id UUID NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_objects PRIMARY KEY (dataset_id, revision, object_id), \n\tCONSTRAINT fk_prediction_dataset_objects_dataset_id_prediction_dat_d7b4 FOREIGN KEY(dataset_id, revision) REFERENCES prediction_dataset_revisions (dataset_id, revision) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_dataset_objects_object_id_storage_objects FOREIGN KEY(object_id) REFERENCES storage_objects (id) ON DELETE RESTRICT\n)\n\n",
+    "prediction_dataset_grants": "\nCREATE TABLE prediction_dataset_grants (\n\tid UUID NOT NULL, \n\tdataset_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_grants PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_dataset_grants_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_models": "\nCREATE TABLE prediction_models (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdirection TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\tstorage_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tdelete_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_models PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_models_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_model_revisions": "\nCREATE TABLE prediction_model_revisions (\n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tdataset_id UUID NOT NULL, \n\tdataset_revision INTEGER NOT NULL, \n\tdataset_fingerprint TEXT NOT NULL, \n\tdefinition JSONB NOT NULL, \n\tsource_contracts JSONB NOT NULL, \n\tartifact JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_model_revisions PRIMARY KEY (model_id, revision), \n\tCONSTRAINT uq_prediction_model_revisions_model_id UNIQUE (model_id, request_id), \n\tCONSTRAINT fk_prediction_model_revisions_model_id_prediction_models FOREIGN KEY(model_id) REFERENCES prediction_models (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_model_revisions_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE RESTRICT\n)\n\n",
+    "prediction_storages": "\nCREATE TABLE prediction_storages (\n\tstorage_id UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tname TEXT NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_storages PRIMARY KEY (storage_id), \n\tCONSTRAINT fk_prediction_storages_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_model_leases": "\nCREATE TABLE prediction_model_leases (\n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\tjob_id UUID NOT NULL, \n\tCONSTRAINT pk_prediction_model_leases PRIMARY KEY (model_id, revision, job_id), \n\tCONSTRAINT fk_prediction_model_leases_model_id_prediction_models FOREIGN KEY(model_id) REFERENCES prediction_models (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_model_leases_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n"
   },
   "indexes": [
     "CREATE INDEX idx_api_keys_user_id ON api_keys (user_id)",
@@ -10909,6 +12495,13 @@
     "CREATE INDEX ix_launchers_user_id ON launchers (user_id)",
     "CREATE INDEX ix_measurements_experiment_id ON measurements (experiment_id)",
     "CREATE INDEX ix_measurements_user_id_updated_at ON measurements (user_id, updated_at)",
+    "CREATE INDEX ix_prediction_dataset_grants_dataset_id ON prediction_dataset_grants (dataset_id)",
+    "CREATE INDEX ix_prediction_dataset_objects_object_id ON prediction_dataset_objects (object_id)",
+    "CREATE INDEX ix_prediction_datasets_experiment_id ON prediction_datasets (experiment_id)",
+    "CREATE INDEX ix_prediction_datasets_user_id ON prediction_datasets (user_id)",
+    "CREATE INDEX ix_prediction_models_experiment_id ON prediction_models (experiment_id)",
+    "CREATE INDEX ix_prediction_models_user_id ON prediction_models (user_id)",
+    "CREATE INDEX ix_prediction_storages_user_id ON prediction_storages (user_id)",
     "CREATE INDEX ix_recorded_data_experiment_record_id ON recorded_data (experiment_record_id)",
     "CREATE INDEX ix_recorded_data_measurement_id ON recorded_data (measurement_id)",
     "CREATE INDEX ix_storage_objects_calculation_data_id ON storage_objects (calculation_data_id)",

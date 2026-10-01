@@ -607,7 +607,23 @@ async def run_worker_job_session(
                 log(f"job finish received: id={job_id}")
                 return
             if call_task in done:
-                await run_worker_job_call(app, base_context, channel, state, call_task.result())
+                active_call = asyncio.create_task(
+                    run_worker_job_call(app, base_context, channel, state, call_task.result())
+                )
+                connection_closed = asyncio.create_task(state.closed_event.wait())
+                try:
+                    completed, _ = await asyncio.wait(
+                        {active_call, connection_closed}, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if connection_closed in completed:
+                        raise RuntimeError(f"peer connection closed during job call: {job_id}")
+                    await active_call
+                finally:
+                    # Handler cleanup owns children/resources. Await it before job.cleaned.
+                    for task in (active_call, connection_closed):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(active_call, connection_closed, return_exceptions=True)
         finally:
             for task in (call_task, finish_task, closed_task):
                 if not task.done():

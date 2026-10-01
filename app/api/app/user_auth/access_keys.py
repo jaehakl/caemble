@@ -17,7 +17,7 @@ from user_auth.session import user_data
 
 CAEMBLE_RESOURCES = {
     "client", "cae", "catalog", "experiment", "experiment_record", "measurement",
-    "recorded_data", "calculation", "calculation_data", "data",
+    "recorded_data", "calculation", "calculation_data", "data", "prediction",
 }
 
 ALLOWED_ACCESS_KEY_SCOPES = {"client", "launcher", "caemble"}

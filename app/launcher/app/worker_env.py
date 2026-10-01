@@ -13,7 +13,8 @@ def json_line(message: dict[str, Any]) -> bytes:
     return (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def subprocess_env(settings: LauncherSettings, execution: dict[str, Any] | None = None) -> dict[str, str]:
+def subprocess_env(settings: LauncherSettings, execution: dict[str, Any] | None = None,
+                   *, owner_id: str | None = None) -> dict[str, str]:
     inherited_names = (
         "PATH",
         "PATHEXT",
@@ -42,6 +43,11 @@ def subprocess_env(settings: LauncherSettings, execution: dict[str, Any] | None 
     env = {name: os.environ[name] for name in inherited_names if name in os.environ}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    if owner_id is not None:
+        env["CAEMBLE_PREDICTOR_OWNER_ID"] = owner_id
+        env["CAEMBLE_PREDICTOR_API_URL"] = settings.api_url.rstrip("/")
+    if settings.predictor_storage_root is not None:
+        env["CAEMBLE_PREDICTOR_STORAGE_ROOT"] = str(settings.predictor_storage_root.expanduser().resolve())
     if settings.cae_cpu_budget is not None:
         env["CAEMBLE_CAE_CPU_BUDGET"] = str(settings.cae_cpu_budget)
     env["GPSTATION_V1_RTC_ICE_SERVERS_JSON"] = settings.rtc_ice_servers_json

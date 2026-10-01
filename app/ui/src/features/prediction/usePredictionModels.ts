@@ -11,7 +11,13 @@ import { buildCalculationRecordedData } from '../calculation/calculationRecorded
 import { predictionFingerprint } from './data'
 import { emitPredictionQueryDiagnostics } from './diagnostics'
 import { calculationOutputContract } from './metrics'
-import type { PredictionAlgorithm, PredictionExecutionResult, PredictionModelProfile } from './execution'
+import type {
+  PredictionAlgorithm,
+  PredictionExecutionResult,
+  PredictionModelProfile,
+  SavedPredictionModel,
+} from './execution'
+import { assertSavedPredictionCompatible } from './savedModels'
 import { loadTrainingSnapshot } from './trainingSnapshot'
 import type { PredictionContext, SavedPredictionCalculation } from './predictionContextData'
 import {
@@ -37,6 +43,9 @@ export type PredictionSetup = Readonly<{
   calculationIds: readonly number[]
   algorithm: PredictionAlgorithm
   executionId: string
+  launcherId?: string
+  datasetId?: string
+  models?: Readonly<Partial<Record<'forward' | 'inverse', SavedPredictionModel>>>
 }>
 
 export const defaultPredictionSetup: PredictionSetup = Object.freeze({
@@ -133,6 +142,14 @@ export function usePredictionModels({
       if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.executionAvailable)
         throw new Error('Inverse 모델 context가 준비되지 않았습니다.')
       if (!setup.calculationIds.length) throw new Error('Inverse에 사용할 Calculation을 선택하세요.')
+      if (setup.executionId === 'remote-knn') {
+        const reference = setup.models?.inverse
+        if (!reference) throw new Error('Inverse 저장 모델을 선택하거나 만드세요.')
+        assertSavedPredictionCompatible(reference, context, varsSchema, [], setup.calculationIds)
+        const model = await runtime.loadModel(reference, transaction)
+        onProfile(model.profile, model.fingerprint)
+        return model
+      }
       const key = predictionFingerprint([context.fingerprint, setup.calculationIds, varsSchema])
       const snapshot = await runtime.trainingSnapshot(
         'inverse',

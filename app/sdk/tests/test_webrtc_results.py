@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -13,7 +14,7 @@ from sdk.slave.channel import (
     decode_binary_frame,
     send_job_result,
 )
-from sdk.slave.worker import WorkerJobPeerState, run_worker_job_call
+from sdk.slave.worker import WorkerJobPeerState, run_worker_job_call, run_worker_job_session
 
 
 class FakeDataChannel:
@@ -156,3 +157,43 @@ async def test_worker_returns_job_error_when_result_manifest_cannot_fit() -> Non
     assert error["id"] == "call-4"
     assert error["code"] == "job_result_control_frame_too_large"
     assert "after payload attachment fallback" in error["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disconnect", [True, False])
+async def test_interrupted_active_call_waits_for_handler_cleanup(disconnect):
+    app = SlaveApp()
+    started, cleaning, cleaned = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    @app.handler("prepare")
+    async def prepare(*_):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await cleaned.wait()
+
+    state = WorkerJobPeerState()
+    state.call_queue.put_nowait({"id": "call", "type": "prepare", "payload": {}})
+    session = asyncio.create_task(run_worker_job_session(
+        app, SlaveContext(session_id="session", ttl_seconds=0), FakeDataChannel(), state, "job",
+    ))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        if disconnect:
+            state.closed_event.set()
+        else:
+            session.cancel()
+        await asyncio.wait_for(cleaning.wait(), 1)
+        assert not session.done()
+        assert state.call_in_progress
+        cleaned.set()
+        with pytest.raises(RuntimeError if disconnect else asyncio.CancelledError):
+            await asyncio.wait_for(session, 1)
+        assert not state.call_in_progress
+    finally:
+        cleaned.set()
+        if not session.done():
+            session.cancel()
+        await asyncio.gather(session, return_exceptions=True)

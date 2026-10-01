@@ -52,6 +52,7 @@ class WorkerManager:
         self.installation_id = journal.data["installation_id"] if journal else str(uuid4())
         self.boot_id = str(uuid4())
         self.launcher_id: str | None = None
+        self.owner_id: str | None = None
         self.instances: dict[str, ManagedWorker] = {}
         self.receipts: dict[str, dict[str, Any]] = dict(journal.data["cleanup_receipts"]) if journal else {}
         self.completed: dict[str, dict[str, Any]] = {}
@@ -165,7 +166,8 @@ class WorkerManager:
             worker.container = self.container_factory()
             worker.process = await worker.container.start(
                 [str(app.python_executable), "-m", "sdk.slave.bootstrap", "--module", app.module, "--worker"],
-                env=subprocess_env(self.settings, {"identity": worker.identity, "allocation": worker.allocation}),
+                env=subprocess_env(self.settings, {"identity": worker.identity, "allocation": worker.allocation},
+                                   owner_id=self.owner_id),
                 cwd=app.project_dir, cpu_ids=worker.allocation["cpu_ids"],
             )
             self.persist_worker(worker)

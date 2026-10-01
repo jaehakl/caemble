@@ -11,6 +11,7 @@ import {
   type PredictionRecordProfile,
   type PredictionRequest,
   type PreparedPredictionModel,
+  type SavedPredictionModel,
 } from './execution'
 import type { TrainingSnapshot } from './trainingSnapshot'
 import {
@@ -86,6 +87,46 @@ export class PredictionRuntimeController {
 
   get trainingPolicy() {
     return this.execution?.trainingPolicy
+  }
+
+  get executionLocation() {
+    return this.execution?.location ?? 'browser'
+  }
+
+  async loadModel(reference: SavedPredictionModel, transaction: number) {
+    const execution = this.execution
+    if (!execution?.load) throw new Error('선택한 실행 위치는 저장 모델 로드를 지원하지 않습니다.')
+    const cached = this.modelCache[reference.direction]
+    if (
+      cached?.fingerprint === reference.fingerprint &&
+      cached.provenance?.modelId === reference.modelId &&
+      cached.provenance.modelRevision === reference.modelRevision &&
+      this.modelIsCurrent(cached)
+    )
+      return cached
+    const revision = ++this.modelRevision[reference.direction]
+    if (cached) this.releaseModel(cached)
+    delete this.modelCache[reference.direction]
+    const model = await this.request(
+      transaction,
+      (owner, request) => owner.load!(reference, request),
+      (owner, late) => {
+        void owner.release(late.instance).catch(() => undefined)
+      },
+    )
+    if (
+      !this.transactionIsCurrent(transaction) ||
+      this.execution !== execution ||
+      revision !== this.modelRevision[reference.direction] ||
+      model.fingerprint !== reference.fingerprint ||
+      model.profile.direction !== reference.direction
+    ) {
+      void execution.release(model.instance).catch(() => undefined)
+      throw new DOMException('Stale Prediction model', 'AbortError')
+    }
+    this.modelOwners.set(model, execution)
+    this.modelCache[reference.direction] = model
+    return model
   }
 
   setExecution(createExecution: () => PredictionExecution) {
@@ -481,6 +522,16 @@ export class PredictionRuntimeController {
     this.modelRevision.inverse += 1
     for (const model of this.modelOwners.keys()) this.releaseModel(model)
     this.modelCache = {}
+  }
+
+  async releaseLoadedModels() {
+    this.invalidateTransaction()
+    const loaded = [...this.modelOwners.entries()]
+    this.modelOwners.clear()
+    this.modelCache = {}
+    this.modelRevision.forward += 1
+    this.modelRevision.inverse += 1
+    await Promise.all(loaded.map(([model, owner]) => owner.release(model.instance)))
   }
 
   cancelCurrent({ cancelCalculationData, cancelMeasurement, samplingActive }: CancelResourcesOptions) {

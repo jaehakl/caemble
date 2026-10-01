@@ -50,6 +50,7 @@ async def web_create_job(
         slave_app_id=body.slave_app_id,
         offer=body.offer,
         resources=body.resources.model_dump(exclude_none=True) if body.resources else {},
+        target_launcher_id=str(body.target_launcher_id) if body.target_launcher_id else None,
     )
     return JobCreateResult(
         job=job_to_data(job),
@@ -93,6 +94,7 @@ async def v1_create_job(
         slave_app_id=body.slave_app_id,
         offer=body.offer,
         resources=body.resources.model_dump(exclude_none=True) if body.resources else {},
+        target_launcher_id=str(body.target_launcher_id) if body.target_launcher_id else None,
     )
     return JobCreateResult(
         job=job_to_data(job),

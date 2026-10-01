@@ -1,7 +1,7 @@
 import type { CalculationDataOutput } from '@/api'
 import type { PredictionDirection, PredictionNeighbor, PredictionTensorLayout } from './knn'
 import type { PredictionValidationMetric } from './metrics'
-import type { PredictionExecutionResult, PredictionModelProfile } from './execution'
+import type { PredictionExecutionResult, PredictionModelProfile, PredictionProvenance } from './execution'
 import type { PredictionForwardRecordProfile } from './usePredictionController'
 
 type ForwardRefreshFailure = Readonly<{
@@ -36,6 +36,7 @@ export type ValidationResult = Readonly<{
   sourceIdentity: string
   summary: string
   transactionId: number
+  modelProvenance?: Partial<Record<PredictionDirection, PredictionProvenance>>
 }>
 
 type Outputs = Readonly<Record<number, CalculationDataOutput>>
@@ -46,6 +47,7 @@ export type PredictionResults = Readonly<{
   surrogateValues: Outputs
   surrogateErrors: Errors
   neighborsByDirection: Partial<Record<PredictionDirection, readonly PredictionNeighbor[]>>
+  provenanceByDirection: Partial<Record<PredictionDirection, PredictionProvenance>>
   profiles: Partial<Record<PredictionDirection, PredictionModelProfile>>
   forwardRecordProfiles: readonly PredictionForwardRecordProfile[]
   lastResult: PredictionExecutionResult | null
@@ -61,6 +63,7 @@ export const initialPredictionResults: PredictionResults = {
   surrogateErrors: {},
   neighborsByDirection: {},
   profiles: {},
+  provenanceByDirection: {},
   forwardRecordProfiles: [],
   lastResult: null,
   forwardVarsFingerprint: null,
@@ -85,7 +88,7 @@ type PredictionResultsAction =
     }
   | { type: 'forward-failed'; fingerprint: string; message: string }
   | { type: 'inverse-completed'; result: PredictionExecutionResult; fingerprint: string }
-  | { type: 'surrogate-completed'; values: Outputs; errors: Errors }
+  | { type: 'surrogate-completed'; values: Outputs; errors: Errors; provenance?: PredictionProvenance }
   | { type: 'surrogate-failed' }
   | { type: 'candidate-edited'; direction: PredictionDirection }
   | { type: 'validation-cleared' | 'sampling-started' | 'setup-applied' | 'target-initialization-started' }
@@ -124,6 +127,7 @@ export function predictionResultsReducer(state: PredictionResults, action: Predi
         surrogateErrors: {},
         neighborsByDirection: { ...state.neighborsByDirection, forward: action.result.knn?.neighbors ?? [] },
         lastResult: action.result,
+        provenanceByDirection: { ...state.provenanceByDirection, [action.result.direction]: action.result.provenance },
         forwardVarsFingerprint: action.failure ? null : action.fingerprint,
         forwardFailure: action.failure ? { fingerprint: action.fingerprint, message: action.failure } : null,
         inverseVarsFingerprint: null,
@@ -137,9 +141,15 @@ export function predictionResultsReducer(state: PredictionResults, action: Predi
         forwardVarsFingerprint: null,
         neighborsByDirection: { ...state.neighborsByDirection, inverse: action.result.knn?.neighbors ?? [] },
         lastResult: action.result,
+        provenanceByDirection: { ...state.provenanceByDirection, [action.result.direction]: action.result.provenance },
       }
     case 'surrogate-completed':
-      return { ...state, surrogateValues: action.values, surrogateErrors: action.errors }
+      return {
+        ...state,
+        surrogateValues: action.values,
+        surrogateErrors: action.errors,
+        provenanceByDirection: { ...state.provenanceByDirection, forward: action.provenance },
+      }
     case 'surrogate-failed':
       return { ...state, surrogateValues: {}, surrogateErrors: {} }
     case 'candidate-edited':

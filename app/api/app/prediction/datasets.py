@@ -1,0 +1,244 @@
+"""Freeze native server data without hydrating tensors in the browser."""
+from copy import deepcopy
+from uuid import uuid5
+
+from fastapi import HTTPException
+from sqlalchemy import delete, select, update
+
+from calculation.db import Calculation, CalculationData, CalculationExperimentRecord, CalculationSource
+from prediction.common import IDENTITY_NAMESPACE, connected_storage, digest, lock_identity, owned, require_dataset_idle
+from prediction.db import Dataset, DatasetObject, DatasetRequest, DatasetRevision
+from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
+from storage.service import object_refs, reference
+from storage.db import StorageObject
+
+
+def content_identity(value):
+    """Storage relocation never changes the identity of the contained bytes."""
+    if isinstance(value, dict):
+        if value.get("kind") == "caemble.object":
+            return {key: content_identity(member) for key, member in value.items() if key != "id"}
+        return {key: content_identity(member) for key, member in value.items()}
+    if isinstance(value, list):
+        return [content_identity(member) for member in value]
+    return value
+
+
+async def source_experiment(db, experiment_id, source_hash, user_id):
+    experiment = await db.scalar(select(Experiment).where(
+        Experiment.id == experiment_id, Experiment.user_id == user_id).with_for_update(read=True))
+    if experiment is None:
+        raise HTTPException(404, "Owned source Experiment not found.")
+    if experiment.source_hash != source_hash:
+        raise HTTPException(409, "Experiment source changed. Reload it before freezing training data.")
+    return experiment
+
+
+async def capture(db, selection, user_id):
+    experiment = await source_experiment(db, selection.experiment_id, selection.source_hash, user_id)
+    if experiment.result_contracts is not None and experiment.result_contracts != selection.result_contracts:
+        raise HTTPException(409, "Prediction result contracts differ from the saved Experiment.")
+    records = list((await db.scalars(select(ExperimentRecord).where(
+        ExperimentRecord.experiment_id == experiment.id, ExperimentRecord.id.in_(selection.record_ids)
+    ).order_by(ExperimentRecord.id).with_for_update(read=True))).all())
+    if {row.id for row in records} != set(selection.record_ids):
+        raise HTTPException(422, "Selected Records do not belong to this Experiment.")
+    source_ids = select(Calculation.source_id).where(Calculation.id.in_(selection.calculation_ids), Calculation.experiment_id == experiment.id)
+    await db.scalars(select(CalculationSource).where(CalculationSource.id.in_(source_ids)).order_by(
+        CalculationSource.id).with_for_update(read=True))
+    calculations = list((await db.scalars(select(Calculation).where(
+        Calculation.id.in_(selection.calculation_ids), Calculation.experiment_id == experiment.id
+    ).order_by(Calculation.id).with_for_update(read=True))).all())
+    if {row.id for row in calculations} != set(selection.calculation_ids):
+        raise HTTPException(422, "Selected Calculations do not belong to this Experiment.")
+    if any(row.contract_status != "ready" or row.validated_source_revision != row.source.revision for row in calculations):
+        raise HTTPException(409, "Preflight selected Calculations before freezing their data.")
+    measurements = list((await db.scalars(select(Measurement).where(
+        Measurement.experiment_id == experiment.id, Measurement.user_id == user_id,
+        Measurement.recorded_at.is_not(None)
+    ).order_by(Measurement.id).with_for_update(read=True))).all())
+    measurement_ids = [row.id for row in measurements]
+    recorded = list((await db.scalars(select(RecordedData).where(
+        RecordedData.measurement_id.in_(measurement_ids), RecordedData.experiment_record_id.in_(selection.record_ids),
+        RecordedData.user_id == user_id
+    ).order_by(RecordedData.measurement_id, RecordedData.experiment_record_id).with_for_update(read=True))).all())
+    calculation_data = list((await db.scalars(select(CalculationData).where(
+        CalculationData.measurement_id.in_(measurement_ids), CalculationData.calculation_id.in_(selection.calculation_ids)
+    ).order_by(CalculationData.measurement_id, CalculationData.calculation_id).with_for_update(read=True))).all())
+    links = (await db.execute(select(CalculationExperimentRecord).where(
+        CalculationExperimentRecord.calculation_id.in_(selection.calculation_ids)))).scalars().all()
+    record_map = {row.id: row for row in records}
+    if any(row.data is None for row in recorded):
+        raise HTTPException(422, "Prediction requires native RecordedData, not external data URLs.")
+    payload = {
+        "kind": "caemble.prediction.dataset", "version": 1, "experimentId": experiment.id,
+        "sourceHash": experiment.source_hash, "representationVersion": "prediction-raw-input-v1",
+        "varsSchema": selection.vars_schema, "rules": selection.rules, "resultContracts": selection.result_contracts,
+        "measurements": [{"id": row.id, "experiment_id": row.experiment_id, "vars": row.vars} for row in measurements],
+        "records": [{"id": row.id, "experiment_id": row.experiment_id, "name": row.name,
+            "quantity_kind": row.quantity_kind, "tensor_order": row.tensor_order, "dtype": row.dtype,
+            "data_schema": row.data_schema, "contract_hash": row.contract_hash} for row in records],
+        "recorded": [{"id": row.id, "measurement_id": row.measurement_id,
+            "experiment_record_id": row.experiment_record_id, "data": row.data,
+            "name": record_map[row.experiment_record_id].name,
+            "dtype": record_map[row.experiment_record_id].dtype,
+            "quantity_kind": record_map[row.experiment_record_id].quantity_kind,
+            "tensor_order": record_map[row.experiment_record_id].tensor_order,
+            "data_schema": record_map[row.experiment_record_id].data_schema} for row in recorded],
+        "calculations": [{"id": row.id, "experiment_id": row.experiment_id, "name": row.name,
+            "source_hash": row.source_hash, "source_code": row.source_code, "source_revision": row.source_revision,
+            "revision": row.revision, "output_layout": row.output_layout, "contract_status": row.contract_status,
+            "experiment_record_ids": sorted(link.experiment_record_id for link in links if link.calculation_id == row.id)} for row in calculations],
+        "calculationData": [{"id": row.id, "measurement_id": row.measurement_id,
+            "calculation_id": row.calculation_id, "data": row.data} for row in calculation_data],
+    }
+    # Check every dependency before publishing. Retention pins are committed in the
+    # same transaction, so source deletion cannot race the object cleanup sweep.
+    for ref in sorted({ref["id"]: ref for ref in object_refs(payload)}.values(), key=lambda value: value["id"]):
+        stored = await db.scalar(select(StorageObject).where(StorageObject.id == ref["id"]).with_for_update())
+        if (stored is None or stored.user_id != user_id or not stored.ready or stored.deleting
+                or stored.experiment_id != experiment.id or reference(stored) != ref):
+            raise HTTPException(409, "A Dataset source object is missing, changed, or being removed.")
+    return deepcopy(payload)
+
+
+def source_contracts(payload):
+    contracts = deepcopy({key: payload[key] for key in ("experimentId", "sourceHash", "varsSchema", "records", "rules", "resultContracts")})
+    contracts["calculations"] = []
+    for source in payload["calculations"]:
+        calculation = {key: source[key] for key in ("id", "name", "source_hash", "source_revision", "revision", "contract_status", "experiment_record_ids")}
+        layout = source.get("output_layout")
+        if layout:
+            calculation["output_layout"] = {"dtype": layout["dtype"], "shape": layout["shape"], "axes": [
+                {"name": axis["name"], "unit": axis.get("unit"),
+                    "length": axis["ticks"].get("length") if isinstance(axis["ticks"], dict) else len(axis["ticks"])}
+                for axis in layout["axes"]]}
+        contracts["calculations"].append(calculation)
+    return contracts
+
+
+async def dataset_view(db, row):
+    revisions = list((await db.scalars(select(DatasetRevision).where(
+        DatasetRevision.dataset_id == row.id).order_by(DatasetRevision.revision.desc()))).all())
+    return {"id": row.id, "name": row.name, "experiment_id": row.experiment_id, "source_kind": row.source_kind,
+        "state": row.state, "current_revision": row.current_revision, "storage_id": row.storage_id,
+        "launcher_id": row.launcher_id, "delete_id": row.delete_id,
+        "revisions": [{"revision": item.revision, "fingerprint": item.fingerprint, **item.summary,
+            "payload_available": row.state == "active" and item.revision == row.current_revision,
+            "created_at": item.created_at} for item in revisions]}
+
+
+async def list_datasets(db, user_id, experiment_id=None):
+    query = select(Dataset).where(Dataset.user_id == user_id, Dataset.state != "deleted")
+    if experiment_id is not None:
+        query = query.where(Dataset.experiment_id == experiment_id)
+    rows = (await db.scalars(query.order_by(Dataset.created_at.desc()))).all()
+    return {"items": [await dataset_view(db, row) for row in rows]}
+
+
+async def freeze_dataset(db, selection, user_id, dataset_id=None):
+    identity = str(dataset_id) if dataset_id else str(uuid5(IDENTITY_NAMESPACE, f"{user_id}/dataset/{selection.request_id}"))
+    await lock_identity(db, identity)
+    row = await db.get(Dataset, identity)
+    if row is not None:
+        row = await owned(db, Dataset, identity, user_id)
+    request_hash = digest(selection.model_dump(mode="json"))
+    if row is not None:
+        previous = await db.get(DatasetRequest, (row.id, str(selection.request_id)))
+        if previous is not None:
+            if previous.request_hash != request_hash:
+                raise HTTPException(409, "Dataset request ID was already used for another selection.")
+            return await dataset_view(db, row)
+        if row.source_kind != "server" or row.experiment_id != selection.experiment_id:
+            raise HTTPException(409, "Dataset source cannot be replaced by another Experiment or storage.")
+        if selection.expected_revision != row.current_revision:
+            raise HTTPException(409, "Dataset changed. Reload before synchronizing.")
+        await require_dataset_idle(db, identity)
+    elif dataset_id:
+        raise HTTPException(404, "Dataset not found.")
+    payload = await capture(db, selection, user_id)
+    fingerprint = "sha256:" + digest(content_identity(payload))
+    if row is None:
+        row = Dataset(id=identity, user_id=user_id, experiment_id=selection.experiment_id,
+            name=selection.name.strip(), state="active", source_kind="server", selection={}, current_revision=0)
+        db.add(row)
+        await db.flush()
+    elif row.current_revision:
+        current = await db.get(DatasetRevision, (identity, row.current_revision))
+        if current.fingerprint == fingerprint:
+            db.add(DatasetRequest(dataset_id=identity, request_id=str(selection.request_id),
+                request_hash=request_hash, revision=row.current_revision))
+            await db.commit()
+            return await dataset_view(db, row)
+    revision = row.current_revision + 1
+    payload.update(datasetId=identity, revision=revision, fingerprint=fingerprint)
+    summary = {"sample_count": len(payload["measurements"]), "record_count": len(payload["recorded"]),
+        "calculation_data_count": len(payload["calculationData"]), "source_hash": selection.source_hash,
+        "source_contracts": source_contracts(payload)}
+    db.add(DatasetRevision(dataset_id=identity, revision=revision, request_id=str(selection.request_id),
+        request_hash=request_hash, fingerprint=fingerprint, summary=summary, payload=payload))
+    db.add(DatasetRequest(dataset_id=identity, request_id=str(selection.request_id), request_hash=request_hash, revision=revision))
+    await db.flush()
+    for object_id in {ref["id"] for ref in object_refs(payload)}:
+        db.add(DatasetObject(dataset_id=identity, revision=revision, object_id=object_id))
+    await db.flush()
+    # Only the latest Dataset retains payload. Old model artifacts contain their
+    # own samples and never need these retired Dataset payloads to reload.
+    await db.execute(delete(DatasetObject).where(DatasetObject.dataset_id == identity, DatasetObject.revision != revision))
+    await db.execute(update(DatasetRevision).where(DatasetRevision.dataset_id == identity,
+        DatasetRevision.revision != revision).values(payload=None))
+    row.name, row.current_revision = selection.name.strip(), revision
+    row.selection = selection.model_dump(mode="json", exclude={"request_id", "expected_revision", "name"})
+    await db.commit()
+    return await dataset_view(db, row)
+
+
+async def register_local_dataset(db, body, user_id):
+    await connected_storage(db, body.storage_id, body.launcher_id, user_id)
+    identity = str(body.dataset_id)
+    await lock_identity(db, identity)
+    row = await db.get(Dataset, identity)
+    # Reconciliation can issue a new HTTP request while reporting the same
+    # immutable local revision. Its location/content, not a retry nonce, wins.
+    request_hash = digest(body.model_dump(mode="json", exclude={"request_id", "expected_revision"}))
+    if row is not None:
+        row = await owned(db, Dataset, identity, user_id)
+        old = await db.get(DatasetRevision, (identity, body.revision))
+        if old is not None:
+            if old.request_hash != request_hash:
+                raise HTTPException(409, "Local Dataset revision cannot be replaced.")
+            return await dataset_view(db, row)
+        if (row.source_kind != "local" or row.storage_id != str(body.storage_id)
+                or row.experiment_id != body.experiment_id or body.expected_revision != row.current_revision
+                or body.revision != row.current_revision + 1):
+            raise HTTPException(409, "Local Dataset changed. Reload before synchronizing.")
+    else:
+        if body.revision != 1 or body.expected_revision is not None:
+            raise HTTPException(409, "A new local Dataset starts at revision 1.")
+        row = Dataset(id=identity, user_id=user_id, experiment_id=body.experiment_id,
+            name=body.name, state="active", source_kind="local", selection={}, current_revision=0,
+            storage_id=str(body.storage_id), launcher_id=str(body.launcher_id))
+        db.add(row)
+        await db.flush()
+    await source_experiment(db, body.experiment_id, body.source_hash, user_id)
+    contracts = body.source_contracts
+    if contracts.get("experimentId") != body.experiment_id or contracts.get("sourceHash") != body.source_hash:
+        raise HTTPException(422, "Local Dataset contracts must identify their native Experiment and source hash.")
+    for key, table in (("records", ExperimentRecord), ("calculations", Calculation)):
+        entries = contracts.get(key, [])
+        if not isinstance(entries, list) or any(not isinstance(entry, dict) or type(entry.get("id")) is not int for entry in entries):
+            raise HTTPException(422, "Local Dataset source contracts must contain native integer IDs.")
+        ids = {entry["id"] for entry in entries}
+        found = set((await db.scalars(select(table.id).where(table.id.in_(ids), table.experiment_id == body.experiment_id))).all())
+        if ids != found:
+            raise HTTPException(422, "Local Dataset source contracts belong to another Experiment or were removed.")
+    summary = {"sample_count": body.sample_count, "source_hash": body.source_hash,
+        "manifest_sha256": body.manifest_sha256, "source_contracts": body.source_contracts}
+    db.add(DatasetRevision(dataset_id=identity, revision=body.revision, request_id=str(body.request_id),
+        request_hash=request_hash, fingerprint=body.fingerprint, summary=summary,
+        payload={"sourceContracts": body.source_contracts}))
+    await db.execute(update(DatasetRevision).where(DatasetRevision.dataset_id == identity,
+        DatasetRevision.revision != body.revision).values(payload=None))
+    row.current_revision, row.name = body.revision, body.name
+    await db.commit()
+    return await dataset_view(db, row)

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Any
 from urllib.parse import urlparse, urlunparse
+from fastapi import HTTPException
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,7 @@ def job_to_data(job: Job) -> JobData:
         progress=list(job.progress or []),
         state=job.state,
         launcher_id=str(job.launcher_id) if job.launcher_id else None,
+        target_launcher_id=job.target_launcher_id,
         assigned_at=job.assigned_at,
         answer_ready_at=job.answer_ready_at,
         started_at=job.started_at,
@@ -68,12 +70,21 @@ class JobService:
         slave_app_id: str,
         offer: dict[str, Any],
         resources: dict | None = None,
+        target_launcher_id: str | None = None,
     ) -> Job:
+        if target_launcher_id is not None:
+            target = await db.get(Launcher, target_launcher_id)
+            if target is None or target.user_id != user_id:
+                raise HTTPException(404, "Target launcher not found.")
+            if (slave_app_id not in target.slave_app_ids
+                    or (target.job_modes or {}).get(slave_app_id, "webrtc") != "webrtc"):
+                raise HTTPException(422, "Target launcher does not support this WebRTC application.")
         job = Job(
             user_id=user_id,
             handler_type=handler_type,
             slave_app_id=slave_app_id,
             offer=offer,
+            target_launcher_id=target_launcher_id,
             state="queued",
             progress=[], resources=resources or {}, attempt_count=1, attempt_id=str(uuid.uuid4()),
         )
@@ -187,6 +198,7 @@ class JobService:
                 defer(Job.progress), defer(Job.answer), defer(Job.offer))
             .outerjoin(JobBatch, JobBatch.id == Job.batch_id)
             .join(Launcher, and_(Launcher.user_id == Job.user_id,
+                or_(Job.target_launcher_id.is_(None), Job.target_launcher_id == Launcher.id),
                 Launcher.slave_app_ids.op("?")(Job.slave_app_id),
                 func.coalesce(Launcher.job_modes.op("->>")(Job.slave_app_id), "webrtc") == Job.job_mode,
                 or_(func.coalesce(Job.input["storage_version"].astext, "0") != "1",

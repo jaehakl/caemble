@@ -1,7 +1,75 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { PredictionInstanceInvalidatedError } from './execution'
+import {
+  PredictionInstanceInvalidatedError,
+  type PredictionExecution,
+  type PreparedPredictionModel,
+  type SavedPredictionModel,
+} from './execution'
 import { PredictionRuntimeController, usePredictionController } from './usePredictionController'
+
+const savedReference: SavedPredictionModel = {
+  modelId: 'model-a',
+  modelRevision: 1,
+  datasetId: 'dataset-a',
+  datasetRevision: 2,
+  direction: 'forward',
+  fingerprint: 'same-content',
+  storageId: 'storage',
+  launcherId: 'launcher',
+}
+
+function savedExecution() {
+  let loaded = 0
+  const execution: PredictionExecution = {
+    id: 'remote-knn',
+    location: 'remote',
+    sessionId: 'session',
+    implementationVersion: 'test',
+    preprocessingVersion: 'test',
+    algorithms: ['knn'],
+    directions: ['forward', 'inverse'],
+    prepare: vi.fn(),
+    predict: vi.fn(),
+    cancel: vi.fn(),
+    dispose: vi.fn(),
+    release: vi.fn(async () => undefined),
+    load: vi.fn(async (reference): Promise<PreparedPredictionModel> => ({
+      fingerprint: reference.fingerprint,
+      provenance: {
+        modelId: reference.modelId,
+        modelRevision: reference.modelRevision,
+        datasetId: reference.datasetId,
+        datasetRevision: reference.datasetRevision,
+      },
+      instance: { executionId: 'remote-knn', sessionId: 'session', generation: 1, handle: `loaded-${++loaded}` },
+      profile: {
+        direction: reference.direction,
+        rowCount: 1,
+        inputLayouts: [],
+        inputSize: 1,
+        outputSize: 1,
+        includedMeasurementIds: [1],
+        warningMeasurementIds: [],
+        diagnostics: [],
+        omittedDiagnosticGroups: 0,
+        excluded: {
+          'missing-block': 0,
+          'extra-block': 0,
+          'invalid-tensor': 0,
+          'fixed-layout-mismatch': 0,
+          'layout-mismatch': 0,
+        },
+      },
+      errors: {},
+      recordProfiles: [],
+      rules: [],
+    })),
+  }
+  const runtime = new PredictionRuntimeController(() => execution)
+  runtime.start()
+  return { execution, runtime }
+}
 
 it('observes lifecycle transitions synchronously and blocks duplicate work before rendering', () => {
   const start = vi.spyOn(PredictionRuntimeController.prototype, 'start').mockImplementation(() => undefined)
@@ -36,6 +104,70 @@ it('observes lifecycle transitions synchronously and blocks duplicate work befor
 })
 
 describe('PredictionRuntimeController', () => {
+  it('loads the selected Model identity and revision even when content fingerprints match', async () => {
+    const { execution, runtime } = savedExecution()
+    const transaction = runtime.beginTransaction()
+    const first = await runtime.loadModel(savedReference, transaction)
+    expect(await runtime.loadModel(savedReference, transaction)).toBe(first)
+    const anotherModel = { ...savedReference, modelId: 'model-b' }
+    const second = await runtime.loadModel(anotherModel, transaction)
+    const anotherRevision = { ...anotherModel, modelRevision: 2 }
+    const third = await runtime.loadModel(anotherRevision, transaction)
+    expect(second.provenance?.modelId).toBe('model-b')
+    expect(third.provenance?.modelRevision).toBe(2)
+    expect(await runtime.loadModel(anotherRevision, transaction)).toBe(third)
+    expect(execution.load).toHaveBeenCalledTimes(3)
+    expect(execution.release).toHaveBeenNthCalledWith(1, first.instance)
+    expect(execution.release).toHaveBeenNthCalledWith(2, second.instance)
+    expect(runtime.modelIsCurrent(first)).toBe(false)
+    expect(runtime.cachedForwardModel()).toBe(third)
+    runtime.dispose()
+  })
+
+  it('awaits both Forward and Inverse release acknowledgements before allowing delete intent', async () => {
+    const { execution, runtime } = savedExecution()
+    const transaction = runtime.beginTransaction()
+    const forward = await runtime.loadModel(savedReference, transaction)
+    const inverse = await runtime.loadModel(
+      { ...savedReference, direction: 'inverse', modelId: 'inverse-model' },
+      transaction,
+    )
+    const acknowledgements: Array<() => void> = []
+    vi.mocked(execution.release).mockImplementation(
+      () => new Promise<void>((resolve) => acknowledgements.push(resolve)),
+    )
+    const deleteIntent = vi.fn()
+    const deletion = runtime.releaseLoadedModels().then(() => {
+      runtime.cancelCurrent({ cancelCalculationData: vi.fn(), cancelMeasurement: vi.fn(), samplingActive: false })
+      deleteIntent()
+    })
+    expect(execution.release).toHaveBeenCalledWith(forward.instance)
+    expect(execution.release).toHaveBeenCalledWith(inverse.instance)
+    expect(runtime.transactionIsCurrent(transaction)).toBe(false)
+    expect(runtime.cachedModel('forward')).toBeUndefined()
+    expect(runtime.cachedModel('inverse')).toBeUndefined()
+    expect(deleteIntent).not.toHaveBeenCalled()
+    acknowledgements[0]()
+    await Promise.resolve()
+    expect(deleteIntent).not.toHaveBeenCalled()
+    acknowledgements[1]()
+    await deletion
+    expect(deleteIntent).toHaveBeenCalledOnce()
+    runtime.dispose()
+  })
+
+  it('does not start delete intent when a loaded Model release fails', async () => {
+    const { execution, runtime } = savedExecution()
+    await runtime.loadModel(savedReference, runtime.beginTransaction())
+    vi.mocked(execution.release).mockRejectedValueOnce(new Error('release acknowledgement unavailable'))
+    const deleteIntent = vi.fn()
+    await expect(runtime.releaseLoadedModels().then(deleteIntent)).rejects.toThrow(
+      'release acknowledgement unavailable',
+    )
+    expect(deleteIntent).not.toHaveBeenCalled()
+    runtime.dispose()
+  })
+
   it('invalidates every in-flight revision and releases owned resources on cancel', () => {
     const runtime = new PredictionRuntimeController()
     const load = runtime.beginLoad()

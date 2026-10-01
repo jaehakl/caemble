@@ -21,11 +21,11 @@ import {
   type PredictionModelInstance,
   type PredictionModelProfile,
   type PredictionRequest,
+  type PredictionPreparationInput,
   type PreparedPredictionModel,
 } from './execution'
 import type { PredictionNumericDtype, PredictionTrainingRow } from './knn'
 import type { PredictionWorkerModelProfile } from './protocol'
-import type { TrainingSnapshot } from './trainingSnapshot'
 
 type WorkerModel = Readonly<{
   modelId: string
@@ -133,9 +133,10 @@ export class BrowserPredictionExecution implements PredictionExecution {
   readonly id = 'browser-knn'
   readonly location = 'browser'
   readonly implementationVersion = 'knn-v1'
-  readonly preprocessingVersion = 'box-relative-v1'
+  readonly preprocessingVersion = 'box-relative-v2'
   readonly algorithms = Object.freeze(['knn'] as const)
   readonly directions = Object.freeze(['forward', 'inverse'] as const)
+  readonly representations = Object.freeze(['box-relative-v2', 'calculation-ordinal-v1'])
   readonly trainingPolicy = browserPredictionTrainingPolicy
   private readonly sessionKey = crypto.randomUUID()
   private readonly models = new Map<string, BrowserModel>()
@@ -198,7 +199,12 @@ export class BrowserPredictionExecution implements PredictionExecution {
     }
   }
 
-  async prepare(snapshot: TrainingSnapshot, definition: PredictionModelDefinition, request: PredictionRequest) {
+  async prepare(
+    snapshot: PredictionPreparationInput,
+    definition: PredictionModelDefinition,
+    request: PredictionRequest,
+  ) {
+    if ('kind' in snapshot) throw new Error('브라우저 Prediction은 메모리 snapshot을 사용합니다.')
     let completed: PreparedPredictionModel | null = null
     return this.run(request, async (active) => {
       if (definition.algorithm.kind !== 'knn') throw new Error('브라우저 Prediction은 kNN만 지원합니다.')

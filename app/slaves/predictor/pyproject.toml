@@ -1,0 +1,22 @@
+[project]
+name = "caemble-predictor-slave"
+version = "0.1.0"
+description = "Persistent CPU kNN Prediction worker"
+requires-python = ">=3.11,<3.15"
+dependencies = ["caemble-runtime-sdk[slave]", "numpy>=1.26,<3"]
+
+[tool.poetry]
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+caemble-runtime-sdk = { path = "../../sdk", develop = true, extras = ["slave"] }
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8,<10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

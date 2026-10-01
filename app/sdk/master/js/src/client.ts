@@ -110,6 +110,11 @@ export class GpStationClient {
     return this.request<LauncherView[]>('/v1/launchers');
   }
 
+  /** Cancel the execution through its owner; closing WebRTC alone is not cleanup proof. */
+  async cancelJob(jobId: string): Promise<void> {
+    await this.request<{ ok: boolean }>(`${this.jobApiPrefix}/${encodeURIComponent(jobId)}/kill`, { method: 'POST' });
+  }
+
   prewarmJobConnection(options: JobConnectionPrewarmOptions = {}): void {
     const slaveAppId = options.slaveAppId ?? 'ai';
     const rtcConfig = rtcConfigWithDefaults(options.rtcConfig ?? this.rtcConfig);
@@ -277,6 +282,7 @@ export class GpStationClient {
           handler_type: handlerType,
           slave_app_id: slaveAppId,
           ...(options.resources ? { resources: options.resources } : {}),
+          ...(options.targetLauncherId ? { target_launcher_id: options.targetLauncherId } : {}),
           offer: {
             type: 'offer',
             sdp: peerConnection.localDescription.sdp,
@@ -362,7 +368,7 @@ export class GpStationClient {
       return;
     }
     try {
-      await this.request<{ ok: boolean }>(`${this.jobApiPrefix}/${encodeURIComponent(jobId)}/kill`, { method: 'POST' });
+      await this.cancelJob(jobId);
     } catch {
       // Best-effort cleanup only; the retry path should still surface its own result.
     }

@@ -715,11 +715,14 @@ const metadataCohort = selectPredictionCohort({
     ),
   ],
 })
-assert.deepEqual(metadataCohort.summary.includedMeasurementIds, [1, 2])
-assert.deepEqual(metadataCohort.summary.warningMeasurementIds, [2])
-for (const fieldPath of ['dtype', 'tensorOrder', 'unit', 'quantityKind', 'dataSchemaSignature', 'axes.length']) {
-  assert.ok(metadataCohort.summary.diagnostics.some((diagnostic) => diagnostic.fieldPath === fieldPath))
-}
+assert.deepEqual(metadataCohort.summary.includedMeasurementIds, [1])
+assert.deepEqual(metadataCohort.summary.warningMeasurementIds, [])
+assert.equal(metadataCohort.summary.excluded['layout-mismatch'], 1)
+assert.ok(
+  metadataCohort.summary.diagnostics.some(
+    (diagnostic) => diagnostic.disposition === 'excluded' && diagnostic.measurementIds.includes(2),
+  ),
+)
 
 const shapeCohort = selectPredictionCohort({
   direction: 'inverse',
@@ -777,19 +780,28 @@ const queryModel = buildPredictionKnnModel({
   outputKeys: ['v'],
   rows: [row(1, [layoutB], [scalar('v', 1)]), row(2, [layoutA], [scalar('v', 2)])],
 })
+assert.throws(
+  () =>
+    predictWithKnn(queryModel, [
+      {
+        layout: {
+          key: 'target',
+          dtype: 'float32',
+          shape: [2],
+          axes: [{ name: 'renamed', ticks: ['a', 'b'], unit: 'index' }],
+          unit: 'other',
+        },
+        values: [1, 2],
+      },
+    ]),
+  (error: unknown) => error instanceof PredictionModelError && error.code === 'invalid-data',
+)
 const metadataQueryResult = predictWithKnn(queryModel, [
   {
-    layout: {
-      key: 'target',
-      dtype: 'float32',
-      shape: [2],
-      axes: [{ name: 'renamed', ticks: ['a', 'b'], unit: 'index' }],
-      unit: 'other',
-    },
+    layout: { ...layoutB.layout, axes: [{ name: 'index', ticks: [30, 40] }] },
     values: [1, 2],
   },
 ])
-assert.ok(metadataQueryResult.queryDiagnostics.some((diagnostic) => diagnostic.fieldPath === 'dtype'))
 assert.ok(metadataQueryResult.queryDiagnostics.some((diagnostic) => diagnostic.fieldPath === 'axes[0].ticks'))
 const queryActivities: string[] = []
 const queryFingerprints = new Set<string>()

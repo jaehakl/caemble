@@ -1,0 +1,6 @@
+{
+  "id": "predictor",
+  "name": "Prediction",
+  "module": "app",
+  "startup_timeout_seconds": 120
+}

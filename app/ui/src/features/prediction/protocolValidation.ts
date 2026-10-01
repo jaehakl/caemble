@@ -35,7 +35,7 @@ const predictionAxisSchema = z
   })
   .passthrough()
 
-const predictionTensorLayoutSchema = z
+export const predictionTensorLayoutSchema = z
   .object({
     key: nonBlankStringSchema,
     dtype: z.enum(predictionNumericDtypes),
@@ -119,7 +119,7 @@ function tensorSampleSchema(valuesSchema: z.ZodType<readonly number[]>) {
     })
 }
 
-const predictionTensorSampleSchema = tensorSampleSchema(finiteNumberArraySchema)
+export const predictionTensorSampleSchema = tensorSampleSchema(finiteNumberArraySchema)
 const predictionTrainingTensorSampleSchema = tensorSampleSchema(trainingNumberArraySchema)
 
 const predictionTrainingRowSchema = z
@@ -138,7 +138,7 @@ const exclusionReasonSchema = z.enum([
   'layout-mismatch',
 ])
 
-const cohortDiagnosticSchema = z
+export const cohortDiagnosticSchema = z
   .object({
     direction: z.enum(['forward', 'inverse']),
     disposition: z.enum(['included-with-warning', 'excluded']),
@@ -156,7 +156,7 @@ const cohortDiagnosticSchema = z
   })
   .passthrough()
 
-const exclusionCountsSchema = z
+export const exclusionCountsSchema = z
   .object({
     'missing-block': nonnegativeIntegerSchema,
     'extra-block': nonnegativeIntegerSchema,
@@ -293,7 +293,7 @@ const workerModelProfileSchema = z
     }
   })
 
-const predictionNeighborSchema = z
+export const predictionNeighborSchema = z
   .object({
     measurementId: positiveIntegerSchema,
     distanceSquared: z.number().nonnegative(),
@@ -301,7 +301,7 @@ const predictionNeighborSchema = z
   })
   .passthrough()
 
-const queryDiagnosticSchema = z
+export const queryDiagnosticSchema = z
   .object({
     blockKey: z.string(),
     fieldPath: z.string(),

@@ -1,3 +1,9 @@
+import { BrowserPredictionExecution } from './browserExecution'
+import { RemotePredictionExecution } from './remoteExecution'
+import { RemotePredictionSettings } from './RemotePredictionSettings'
+import { reconcileRemoteAssets } from './remoteAssets'
+import { restorePredictionSetup, persistPredictionSetup } from './setupPersistence'
+import { recordedDataRules } from '@/features/measurement/recordedData'
 import { materialVarsHash } from '@/lib/material/resolution'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -145,6 +151,7 @@ export function PredictionWorkspace({
     calculationErrors,
     surrogateValues,
     surrogateErrors,
+    provenanceByDirection,
     neighborsByDirection,
     profiles,
     forwardRecordProfiles,
@@ -193,6 +200,8 @@ export function PredictionWorkspace({
   const [setupAppliedRevision, setSetupAppliedRevision] = useState(0)
   const handledSetupRevision = useRef(0)
   const [setupOpen, setSetupOpen] = useState(false)
+  const [assetBusy, setAssetBusy] = useState(false)
+  const [remoteConnected, setRemoteConnected] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailsDirection, setDetailsDirection] = useState<PredictionDirection>('forward')
   const [setupBusyAction, setSetupBusyAction] = useState<PredictionSetupBusyAction>(null)
@@ -293,7 +302,12 @@ export function PredictionWorkspace({
   setCandidateVariablesRef.current = workbench.setCandidateVariables
   sourceIdentityRef.current = sourceIdentity
 
-  const viewerContextKey = predictionFingerprint([sourceIdentity, context?.fingerprint, setup, varsSchema])
+  const viewerContextKey = predictionFingerprint([
+    sourceIdentity,
+    setup.executionId === 'remote-knn' ? selectedCalculationContractFingerprint : context?.fingerprint,
+    setup,
+    varsSchema,
+  ])
   const viewerContextRef = useRef(viewerContextKey)
   const viewerActiveRef = useRef(active)
   viewerContextRef.current = viewerContextKey
@@ -398,6 +412,7 @@ export function PredictionWorkspace({
     (explicit = false) => {
       setViewerState(null)
       const samplingAtCancellation = lifecycleRef.current.samplingProgress
+      if (explicit && runtime.executionLocation === 'remote') runtime.resetExecution()
       const outcome = runtime.cancelCurrent({
         cancelCalculationData: cancelCalculationDataRef.current,
         cancelMeasurement: explicit ? cancelMeasurementRef.current : () => measurementActionsRef.current.detach(),
@@ -420,6 +435,7 @@ export function PredictionWorkspace({
     const wasActive = previousActiveRef.current
     previousActiveRef.current = active
     if (!active) {
+      if (runtime.executionLocation === 'remote') runtime.resetExecution()
       autoLoadAttemptRef.current = null
       runtime.invalidateFingerprintCheck()
       skipNextPredictionBusyCheckRef.current = false
@@ -564,7 +580,22 @@ export function PredictionWorkspace({
 
   useLayoutEffect(() => {
     runtime.invalidateValidation()
-    runtime.resetExecution()
+    const restored = authenticated && experimentId !== null ? restorePredictionSetup(queryScope, experimentId) : null
+    const nextSetup = restored ?? defaultSetup
+    setSetup(nextSetup)
+    setSetupDraft(nextSetup)
+    runtime.setExecution(() =>
+      nextSetup.executionId === 'remote-knn' && nextSetup.launcherId
+        ? new RemotePredictionExecution(nextSetup.launcherId, {
+            onHello: reconcileRemoteAssets,
+            onState: (state, message) => {
+              setRemoteConnected(state === 'connected')
+              if (state === 'failed' && message)
+                onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
+            },
+          })
+        : new BrowserPredictionExecution(),
+    )
     clearModelCaches()
     runtime.clearTrainingSnapshots()
     setContext(null)
@@ -580,7 +611,7 @@ export function PredictionWorkspace({
       autoLoadAttemptRef.current = `${dataReadable}:${experimentId ?? 'none'}`
       void reloadData()
     }
-  }, [experimentId])
+  }, [experimentId, queryScope])
 
   useEffect(() => {
     const loadKey = `${dataReadable}:${experimentId ?? 'none'}`
@@ -635,6 +666,14 @@ export function PredictionWorkspace({
       )
         return
       if (fingerprint !== context.fingerprint) {
+        if (setup.executionId === 'remote-knn') {
+          const fresh = await loadPredictionContextData({ experimentId, queryClient, queryScope, signal })
+          if (!runtime.fingerprintCheckIsCurrent(checkRevision) || contextRef.current !== context) return
+          setContext(fresh)
+          setStatus('원본 변경 감지 · Dataset 동기화와 모델 업데이트를 명시적으로 실행하세요.')
+          setFreshnessPending(false)
+          return
+        }
         setStatus('Measurement 또는 Calculation 변경 감지 · 모델을 자동 갱신하는 중…')
         await reloadData({ automatic: true, preserveValidation: true })
         return
@@ -647,14 +686,19 @@ export function PredictionWorkspace({
         experimentIdRef.current === experimentId &&
         contextRef.current === context
       ) {
-        setDataStale(true)
+        setDataStale(setup.executionId !== 'remote-knn')
         setFreshnessPending(false)
-        setStatus('Prediction 데이터 최신성을 확인하지 못했습니다. Reload Data를 실행하세요.')
+        setStatus(
+          setup.executionId === 'remote-knn'
+            ? '원본 변경 확인 실패 · 선택한 저장 모델은 유지됩니다. 원본 확인을 다시 시도하세요.'
+            : 'Prediction 데이터 최신성을 확인하지 못했습니다. Reload Data를 실행하세요.',
+        )
       }
     }
   }, [
     lifecycleRef,
     context,
+    setup.executionId,
     dataReadable,
     experimentId,
     queryClient,
@@ -764,7 +808,7 @@ export function PredictionWorkspace({
       setViewerState(null)
       activeForwardVarsFingerprintRef.current = expectedFingerprint
       runtime.abortCalculation()
-      if (runtime.cancelPendingPrediction()) clearModelCaches()
+      if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
       dispatchResults({ type: 'forward-started' })
       startOperation('forward', 'Forward · RecordedData를 예측하는 중…', { direction: 'forward' })
       try {
@@ -857,7 +901,7 @@ export function PredictionWorkspace({
       setViewerState(null)
       activeForwardVarsFingerprintRef.current = null
       runtime.abortCalculation()
-      if (runtime.cancelPendingPrediction()) clearModelCaches()
+      if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
       dispatchResults({ type: 'inverse-started' })
       startOperation('inverse', 'Inverse · Vars를 예측하는 중…', { direction: 'inverse' })
       try {
@@ -903,6 +947,7 @@ export function PredictionWorkspace({
             type: 'surrogate-completed',
             values: surrogate.calculated.values,
             errors: surrogate.calculated.errors,
+            provenance: surrogate.result.provenance,
           })
           setStatus(
             Object.keys(surrogate.calculated.errors).length
@@ -1014,7 +1059,7 @@ export function PredictionWorkspace({
       runtime.invalidateTransaction()
       activeForwardVarsFingerprintRef.current = null
       runtime.abortCalculation()
-      if (runtime.cancelPendingPrediction()) clearModelCaches()
+      if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
       setDirection('inverse')
       validationRef.current = null
       dispatchResults({ type: 'candidate-edited', direction: 'inverse' })
@@ -1327,7 +1372,14 @@ export function PredictionWorkspace({
     const calculationIds = Object.freeze([...setup.calculationIds])
     const reference = Object.freeze({ ...calculationValues })
     const frozenDirection = direction
+    const frozenProvenance = { ...provenanceByDirection }
     const frozenProfile = profile
+    const frozenCalculationWeights =
+      setup.executionId === 'remote-knn' && frozenProfile?.knn
+        ? Object.fromEntries(
+            calculationIds.map((id) => [id, frozenProfile.knn!.inputBlockWeights[`calculation:${id}`] ?? 1]),
+          )
+        : setup.algorithm.calculationWeights
     const frozenModelFingerprint = runtime.cachedModel(direction)?.fingerprint ?? null
     const frozenPrimaryRevision = runtime.currentPrimaryRevision()
     const frozenRepredicted = Object.freeze(frozenDirection === 'inverse' ? { ...surrogateValues } : {})
@@ -1412,7 +1464,7 @@ export function PredictionWorkspace({
         frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' && frozenProfile.knn
           ? inverseValidationAggregateErrorFromScales(
               rows,
-              frozenSetup.algorithm.calculationWeights,
+              frozenCalculationWeights,
               frozenProfile.inputLayouts,
               frozenProfile.knn.inputScales,
             )
@@ -1422,7 +1474,7 @@ export function PredictionWorkspace({
         aggregateError,
         calculationContractFingerprint: frozenCalculationContractFingerprint,
         candidateVarsFingerprint: currentCandidateFingerprint,
-        calculationWeights: frozenSetup.algorithm.calculationWeights,
+        calculationWeights: frozenCalculationWeights,
         direction: frozenDirection,
         experimentId: experimentId!,
         inverseInputLayouts:
@@ -1436,6 +1488,7 @@ export function PredictionWorkspace({
         measurementId: completion.measurementId,
         primaryRevision: frozenPrimaryRevision,
         repredicted: frozenRepredicted,
+        modelProvenance: frozenProvenance,
         rows: Object.freeze(rows),
         snapshotFingerprint,
         sourceFingerprints: Object.freeze(Object.fromEntries(sourceFingerprintEntries)),
@@ -1472,6 +1525,7 @@ export function PredictionWorkspace({
     experimentId,
     finishOperation,
     profile,
+    provenanceByDirection,
     queryClient,
     queryScope,
     runtime,
@@ -1616,6 +1670,8 @@ export function PredictionWorkspace({
   }, [command?.id])
 
   const setupDraftError = useMemo(() => {
+    if (setupDraft.executionId === 'remote-knn' && (!authenticated || !setupDraft.launcherId))
+      return '로그인 후 Predictor 장비를 선택하세요.'
     if (!setupDraft.calculationIds.length) return 'Calculation을 하나 이상 선택하세요.'
     if (
       setupDraft.calculationIds.some(
@@ -1633,12 +1689,13 @@ export function PredictionWorkspace({
       setupDraft.algorithm.kMode === 'manual' &&
       (!Number.isSafeInteger(setupDraft.algorithm.manualK) ||
         setupDraft.algorithm.manualK < 1 ||
-        setupDraft.algorithm.manualK > (context?.measurements.length ?? 0))
+        (setupDraft.executionId === 'browser-knn' &&
+          setupDraft.algorithm.manualK > (context?.measurements.length ?? 0)))
     ) {
       return `Manual k는 1..${(context?.measurements.length ?? 0).toLocaleString()} 범위의 정수여야 합니다.`
     }
     return null
-  }, [context?.measurements.length, setupDraft])
+  }, [authenticated, context, setupDraft])
   const setupDraftApplied = predictionFingerprint([setupDraft]) === predictionFingerprint([setup])
 
   const initializeMissingInverseTargets = useCallback(async () => {
@@ -1658,7 +1715,7 @@ export function PredictionWorkspace({
     const transaction = runtime.beginTransaction()
     activeForwardVarsFingerprintRef.current = null
     runtime.abortCalculation()
-    if (runtime.cancelPendingPrediction()) clearModelCaches()
+    if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
     dispatchResults({ type: 'target-initialization-started' })
     startOperation('initializing-targets', '새 Calculation Target을 현재 Candidate의 Forward 예측으로 초기화하는 중…')
     try {
@@ -1713,7 +1770,19 @@ export function PredictionWorkspace({
       return
     }
     cancelCurrent()
-    runtime.resetExecution()
+    runtime.setExecution(() =>
+      setupDraft.executionId === 'remote-knn' && setupDraft.launcherId
+        ? new RemotePredictionExecution(setupDraft.launcherId, {
+            onHello: reconcileRemoteAssets,
+            onState: (state, message) => {
+              setRemoteConnected(state === 'connected')
+              if (state === 'failed' && message)
+                onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
+            },
+          })
+        : new BrowserPredictionExecution(),
+    )
+    if (experimentId !== null && authenticated) persistPredictionSetup(queryScope, experimentId, setupDraft)
     setSetup(setupDraft)
     setSetupOpen(false)
     validationRef.current = null
@@ -1721,7 +1790,18 @@ export function PredictionWorkspace({
     clearModelCaches()
     activeForwardVarsFingerprintRef.current = null
     setSetupAppliedRevision((current) => current + 1)
-  }, [cancelCurrent, clearModelCaches, lifecycleRef, runtime, setupDraft, setupDraftError])
+  }, [
+    cancelCurrent,
+    clearModelCaches,
+    lifecycleRef,
+    runtime,
+    setupDraft,
+    setupDraftError,
+    experimentId,
+    authenticated,
+    queryScope,
+    onActivity,
+  ])
 
   useEffect(() => {
     if (
@@ -2030,7 +2110,7 @@ export function PredictionWorkspace({
         runtime.invalidateTransaction()
         activeForwardVarsFingerprintRef.current = null
         runtime.abortCalculation()
-        if (runtime.cancelPendingPrediction()) clearModelCaches()
+        if (runtime.cancelPendingPrediction() && runtime.executionLocation === 'browser') clearModelCaches()
         setDirection('forward')
         validationRef.current = null
         dispatchResults({ type: 'candidate-edited', direction: 'forward' })
@@ -2070,13 +2150,48 @@ export function PredictionWorkspace({
       <PredictionSetupDialog
         algorithmLabel="kNN"
         executionLabel={setupDraft.executionId === 'browser-knn' ? '브라우저' : setupDraft.executionId}
-        applyDisabled={Boolean(setupDraftError) || dataStale || freshnessPending || validating}
+        executionSettings={
+          <RemotePredictionSettings
+            authenticated={authenticated}
+            open={setupOpen}
+            context={context}
+            varsSchema={varsSchema}
+            sourceHash={workbench.experimentRecord?.source_hash ?? null}
+            rules={recordedDataRules(
+              workbench.experimentDocument.simulationProgram?.recordedData ?? {},
+              'prediction.forward',
+            )}
+            resultContracts={workbench.experimentDocument.simulationProgram?.resultContracts ?? {}}
+            setup={setupDraft}
+            onChange={setSetupDraft}
+            onActivity={onActivity}
+            onBusyChange={setAssetBusy}
+            onReconnect={() => {
+              cancelCurrent()
+              runtime.resetExecution()
+              clearModelCaches()
+              dispatchResults({ type: 'predictions-invalidated' })
+              setStatus('선택한 저장 모델로 Prediction에 다시 연결합니다.')
+            }}
+            loadedDirections={
+              remoteConnected
+                ? (['forward', 'inverse'] as const).filter((direction) => Boolean(runtime.cachedModel(direction)))
+                : []
+            }
+            onBeforeDelete={async () => {
+              await runtime.releaseLoadedModels()
+              cancelCurrent(true)
+              clearModelCaches()
+            }}
+          />
+        }
+        applyDisabled={assetBusy || Boolean(setupDraftError) || dataStale || freshnessPending || validating}
         autoK={
           setupDraftApplied && profile?.rowCount
             ? Math.min(15, Math.max(1, Math.round(Math.sqrt(profile.rowCount))))
             : null
         }
-        busyAction={setupBusyAction}
+        busyAction={assetBusy ? 'manage-assets' : setupBusyAction}
         calculateMissingDisabled={
           !setupDraft.calculationIds.length ||
           busy ||
@@ -2136,7 +2251,7 @@ export function PredictionWorkspace({
         }
         kMode={setupDraft.algorithm.kMode}
         manualK={setupDraft.algorithm.manualK}
-        manualKMaximum={context?.measurements.length ?? 0}
+        manualKMaximum={setupDraft.executionId === 'browser-knn' ? (context?.measurements.length ?? 0) : undefined}
         open={setupOpen}
         reloadDisabled={busy}
         selectedCalculationIds={setupDraft.calculationIds}
@@ -2200,6 +2315,8 @@ export function PredictionWorkspace({
         neighbors={neighborsByDirection[detailsDirection] ?? []}
         open={detailsOpen}
         profiles={profiles}
+        provenance={provenanceByDirection}
+        validationProvenance={validation?.modelProvenance}
         resultText={modelWarningText}
         retryCalculationsDisabled={
           busy ||

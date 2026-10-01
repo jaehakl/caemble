@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { AlertCircle, Calculator, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import type { CalculationDataOutput } from '@/api'
 import { TensorEditor, type TensorEditorComparisonStatus } from '@/components/tensor-editor'
@@ -25,7 +26,7 @@ import type {
   PredictionWeighting,
 } from './knn'
 import { comparePredictionOutput, predictionOutputRange, type PredictionValidationMetric } from './metrics'
-import type { PredictionModelProfile } from './execution'
+import type { PredictionModelProfile, PredictionProvenance } from './execution'
 
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
@@ -385,7 +386,7 @@ export function PredictionCalculationPane({
 }
 
 export type PredictionKMode = 'auto' | 'manual'
-export type PredictionSetupBusyAction = 'apply' | 'calculate-missing' | 'reload' | null
+export type PredictionSetupBusyAction = 'apply' | 'calculate-missing' | 'reload' | 'manage-assets' | null
 
 export type PredictionSetupCalculation = Readonly<{
   description?: string | null
@@ -400,6 +401,7 @@ export type PredictionSetupCalculation = Readonly<{
 export type PredictionSetupDialogProps = Readonly<{
   algorithmLabel: string
   executionLabel: string
+  executionSettings?: ReactNode
   applyDisabled?: boolean
   autoK?: number | null
   busyAction?: PredictionSetupBusyAction
@@ -439,6 +441,7 @@ const exclusionLabels: Readonly<Record<PredictionCohortExclusionReason, string>>
 export function PredictionSetupDialog({
   algorithmLabel,
   executionLabel,
+  executionSettings,
   applyDisabled = false,
   autoK,
   busyAction = null,
@@ -488,6 +491,7 @@ export function PredictionSetupDialog({
               <dd className="mt-1 font-medium">{executionLabel}</dd>
             </div>
           </dl>
+          {executionSettings}
           <section className="space-y-3" aria-labelledby="prediction-calculations-heading">
             <div>
               <h3 className="text-sm font-semibold" id="prediction-calculations-heading">
@@ -745,6 +749,8 @@ export type PredictionDetailsDialogProps = Readonly<{
   neighbors: readonly PredictionNeighbor[]
   open: boolean
   profiles: Partial<Record<PredictionDirection, PredictionModelProfile>>
+  provenance?: Partial<Record<PredictionDirection, PredictionProvenance>>
+  validationProvenance?: Partial<Record<PredictionDirection, PredictionProvenance>>
   forwardRecordProfiles?: readonly Readonly<{
     error: string | null
     name: string
@@ -882,6 +888,8 @@ export function PredictionDetailsDialog({
   neighbors,
   open,
   profiles,
+  provenance,
+  validationProvenance,
   resultText,
   retryCalculationsDisabled = false,
   retryingCalculations = false,
@@ -913,6 +921,25 @@ export function PredictionDetailsDialog({
               <SelectItem value="inverse">Inverse 진단</SelectItem>
             </SelectContent>
           </Select>
+          {provenance?.[direction] && (
+            <p className="text-xs break-all text-muted-foreground">
+              {direction === 'forward' ? 'Forward / Re-predicted' : 'Inverse'} · Model {provenance[direction].modelId} r
+              {provenance[direction].modelRevision} · Dataset {provenance[direction].datasetId} r
+              {provenance[direction].datasetRevision}
+            </p>
+          )}
+          {validationProvenance && (
+            <div className="space-y-1 text-xs text-muted-foreground" aria-label="Validation model revisions">
+              {Object.entries(validationProvenance).map(
+                ([key, item]) =>
+                  item && (
+                    <p key={key}>
+                      Validation {key} · Model {item.modelId} r{item.modelRevision} · Dataset r{item.datasetRevision}
+                    </p>
+                  ),
+              )}
+            </div>
+          )}
           {direction === 'forward' && forwardRecordProfiles.length ? (
             <Card>
               <CardHeader className="p-4 pb-3">

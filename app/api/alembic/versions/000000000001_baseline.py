@@ -31,7 +31,8 @@ def upgrade() -> None:
     # Optimization tables belong to revisions 20/21. Creating them early would attach their
     # foreign keys to historical Batch schemas before that migration runs.
     tables = [table for table in Base.metadata.sorted_tables
-              if table.name not in {"cae_studies", "cae_optimizations", "cae_trials", "cae_stage_submissions"}]
+              if table.name not in {"cae_studies", "cae_optimizations", "cae_trials", "cae_stage_submissions"}
+              and not table.name.startswith("prediction_")]
     Base.metadata.create_all(bind=op.get_bind(), tables=tables, checkfirst=False)
     op.bulk_insert(Role.__table__, [{"name": "user"}, {"name": "admin"}])
 

@@ -18,6 +18,7 @@ import { batchCommand } from './batch'
 import { optimizationCommand } from './optimization'
 import { calculationCommand } from './calculation'
 import { dataCommand } from './data'
+import { datasetCommand } from './prediction'
 import {
   getAuthoringGuide,
   listAuthoringGuides,
@@ -45,6 +46,7 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   calculation-data missing|run|export --experiment <id> [--calculation <id>] [--measurement <id>]
   measurement inspect <id> | data inspect|slice|export <resource> <id> [--offset N --count N]
   data export --result <local-result> --out <empty-directory>
+  dataset export <id> [--revision N] --out <empty-directory> | validate <directory>
   agent guide|context solver|experiment|calculation [--source <dir> --measurement <id>]
   reference search <query> | show <id> | export --out <dir>
   docs search <query> | show <document-id|scenario>
@@ -94,6 +96,7 @@ async function main() {
     'gpu-count',
     'gpu-memory-mib',
     'version',
+    'revision',
     'item',
     'task',
     'width',
@@ -196,6 +199,7 @@ async function main() {
     else if (group === 'calculation' || group === 'calculation-data')
       result = await calculationCommand(group, command, context)
     else if (group === 'measurement' || group === 'data') result = await dataCommand(group, command, context)
+    else if (group === 'dataset') result = await datasetCommand(command, context)
     else if (group === 'catalog') {
       await verifyPython(environment)
       result =

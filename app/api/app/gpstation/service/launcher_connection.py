@@ -123,6 +123,7 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                     "type": "launcher.accepted",
                     "launcher_id": launcher_id,
                     "execution_protocol": 2, "boot_id": hello.boot_id, "session_id": hello.session_id,
+                    "user_id": principal.user_id,
                     "instances": hello.instances,
                     "server_time": utcnow().isoformat(),
                 }

@@ -8,6 +8,7 @@ Commands and component-relative paths in this document are relative to `app/slav
 - `cae`: trusted-payload CAE simulation and Solver implementations.
 - `evaluation`: Node Measurement builds and Calculation for saved Optimizations.
 - `tts`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
+- `predictor`: CPU kNN Prediction, local Dataset copies and persistent model artifacts over WebRTC.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.
@@ -78,6 +79,84 @@ It starts a fresh slave process for each execution attempt. One instance owns
 one active Job; several instances of the same or different applications can run
 within one launcher's resource budget. Committed Batch items wait when resources
 are unavailable and start automatically after earlier instances finish cleanup.
+
+## Predictor datasets and saved models
+
+Install `predictor` with `poetry install` in its own directory, then restart the
+launcher. It uses CPU NumPy and the existing WebRTC SDK; it does not require a GPU,
+the AI application, or a separate signaling service. The browser selects a specific
+launcher, and a local model is never scheduled on another machine as a fallback.
+
+Set `CAEMBLE_PREDICTOR_STORAGE_ROOT` in `app/launcher/.env` to keep Dataset and model
+files on a chosen local disk. The default is `%LOCALAPPDATA%/Caemble/predictor` on
+Windows and `~/.local/share/Caemble/predictor` otherwise. Keep this root across worker
+upgrades. Its `storage-id` identifies the disk store independently of a worker PID
+or session. Owner data lives under `owners/<SHA-256 of user ID>/`; the API supplies
+the authenticated owner identity to the launcher. Account tokens are not passed
+to the Predictor process.
+
+Datasets downloaded from the server use a short-lived grant covering one revision
+and its referenced objects. Predictor downloads the object bodies directly and
+verifies their lengths and SHA-256 checksums. It retains the latest Dataset payload.
+Saved models are self-contained, so replacing or deleting a Dataset does not alter
+an existing model. Saving publishes a revision only after all artifact files and
+its manifest are complete. Local persistence is not backup or device replication.
+
+From the checkout, export a server Dataset as a portable local bundle:
+
+```powershell
+.\caemble.cmd doctor
+.\caemble.cmd dataset export <dataset-id> --out .work/dataset-copy
+.\caemble.cmd dataset validate .work/dataset-copy
+```
+
+If `doctor` reports a stale CLI, run `npm run build:cli` in `app/ui` and invoke
+`node app/ui/dist-cli/caemble.cjs` for development. Export defaults to the current
+revision; `--revision N` explicitly selects a retained payload. Retired Dataset
+payloads cannot be exported. The output directory must be empty. Validation is
+read-only and needs no server credentials or Solver execution.
+
+A supported local bundle contains `manifest.json` with kind
+`caemble.prediction.dataset.artifact`, version `1`, identity, revision, metadata,
+and file lengths/checksums. `dataset.json` contains the exact immutable Dataset
+manifest, and each stored object is `<sha256>.object`. Dataset files preserve Vars,
+record meaning, coordinates and units. They do not contain account credentials or
+download grants. Arbitrary CSV, NumPy files and directory layouts are not imported.
+
+To stage a bundle on a launcher, copy the complete validated directory into
+`<storage-root>/owners/<owner-hash>/imports/<import-id>`. Choose an opaque import ID
+using letters, digits, `_` or `-`. Enter this import ID in Prediction's local import
+control. Predictor validates and copies the bundle into managed storage with a new
+local Dataset identity, retaining the server source as provenance. The same import
+ID remains bound to that source. Replace the staged bundle and explicitly Sync to
+publish a new local revision when its content changes. Models keep their existing
+revision until explicitly updated. The source staging directory remains available
+for the operator to manage; browser requests never contain an absolute local path.
+See the [Predictor protocol](../../app/slaves/predictor/README.md) for manifest and
+operation contracts.
+
+An open Prediction session retains CPU/RAM reservations. The UI finishes it after
+five idle minutes and reloads the same saved model on the next prediction. Explicit
+Cancel, leaving the remote execution, or connection loss ends in-flight work; model
+files remain. Launcher reservations are returned only after the full process tree
+exits. Reconnecting does not resume an unfinished preparation or create an updated
+model automatically.
+
+Developer acceptance uses an isolated loopback fixture with real Chromium, SDK
+DataChannels and launcher-managed subprocesses. Build `app/sdk/master/js`, install
+the UI's Playwright dependency, SDK `[slave]` and Predictor environments, then run from
+`app/launcher`:
+
+```powershell
+$env:RUN_WEBRTC_BROWSER_TESTS = '1'
+poetry run python -m pytest tests/test_webrtc_browser.py tests/test_predictor_browser.py -q
+```
+
+These tests substitute HTTP scheduling only. They verify binary transfers, new
+process identity after restart, cancellation, disconnect and confirmed resource
+cleanup. The Predictor test prepares Forward and Inverse artifacts, deletes the
+Dataset, starts a new process, and reloads identical predictions from the saved
+files. They do not claim production signaling or NAT traversal verification.
 
 ## Launcher resource policy
 

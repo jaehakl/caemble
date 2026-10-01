@@ -23,3 +23,16 @@ def test_child_thread_limits_exist_before_spawn_without_mutating_parent(monkeypa
     assert os.environ["TOKENIZERS_PARALLELISM"] == "true"
     assert os.environ["CAEMBLE_CAE_CPU_BUDGET"] == "12"
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "GPU-parent"
+
+
+def test_predictor_identity_and_origin_come_from_authenticated_launcher(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAEMBLE_PREDICTOR_OWNER_ID", "untrusted-parent")
+    monkeypatch.setenv("CAEMBLE_PREDICTOR_API_URL", "https://untrusted.example")
+    settings = LauncherSettings(_env_file=None, api_url="http://localhost:8000/", access_token="secret",
+                                predictor_storage_root=tmp_path)
+    env = subprocess_env(settings, owner_id="authenticated-user")
+    assert env["CAEMBLE_PREDICTOR_OWNER_ID"] == "authenticated-user"
+    assert env["CAEMBLE_PREDICTOR_API_URL"] == "http://localhost:8000"
+    assert env["CAEMBLE_PREDICTOR_STORAGE_ROOT"] == str(tmp_path.resolve())
+    assert "CAEMBLE_ACCESS_TOKEN" not in env
+    assert "CAEMBLE_PREDICTOR_OWNER_ID" not in subprocess_env(settings)

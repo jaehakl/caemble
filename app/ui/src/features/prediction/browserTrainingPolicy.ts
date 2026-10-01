@@ -2,7 +2,8 @@ import type { RecordedDataRecord } from '@/api'
 import { isDataTensor } from '@/lib/cad/model/dataTensor'
 import { predictionVarsLayouts } from './data'
 import type { PredictionTrainingPolicy } from './execution'
-import { PREDICTION_NUMERIC_CELL_LIMIT, type PredictionTrainingRow } from './knn'
+import { PREDICTION_NUMERIC_CELL_LIMIT } from './browserLimits'
+import type { PredictionTrainingRow } from './types'
 
 export function assertTrainingCellLimit(rows: readonly PredictionTrainingRow[]) {
   let cells = 0

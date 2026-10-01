@@ -70,9 +70,10 @@ class JobOrchestrator:
             with suppress(Exception):
                 await launcher.websocket.close(code=code)
 
-    async def create_job(self, db, *, user_id, handler_type, slave_app_id, offer, resources=None) -> Job:
+    async def create_job(self, db, *, user_id, handler_type, slave_app_id, offer, resources=None,
+                         target_launcher_id=None) -> Job:
         job = await JobService.create_job(db, user_id=user_id, handler_type=handler_type,
-            slave_app_id=slave_app_id, offer=offer, resources=resources)
+            slave_app_id=slave_app_id, offer=offer, resources=resources, target_launcher_id=target_launcher_id)
         self.wake_dispatcher()
         return job
 

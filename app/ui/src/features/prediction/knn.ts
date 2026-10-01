@@ -1,93 +1,15 @@
-import { assertBoxGridData, type BoxGridData } from '@/contracts/boxGrid'
+import { assertBoxGridData } from '@/contracts/boxGrid'
 
-export const PREDICTION_PERSISTENT_ARRAY_LIMIT_BYTES = 192 * 1024 * 1024
-export const PREDICTION_WORKING_SET_LIMIT_BYTES = 256 * 1024 * 1024
-export const PREDICTION_NUMERIC_CELL_LIMIT = 10_000_000
+import { PREDICTION_PERSISTENT_ARRAY_LIMIT_BYTES, PREDICTION_WORKING_SET_LIMIT_BYTES, PREDICTION_NUMERIC_CELL_LIMIT } from './browserLimits'
+export { PREDICTION_PERSISTENT_ARRAY_LIMIT_BYTES, PREDICTION_WORKING_SET_LIMIT_BYTES, PREDICTION_NUMERIC_CELL_LIMIT } from './browserLimits'
 
-export const predictionNumericDtypes = [
-  'float16',
-  'float32',
-  'float64',
-  'complex64',
-  'int8',
-  'int16',
-  'int32',
-  'int64',
-  'uint8',
-  'uint16',
-  'uint32',
-  'uint64',
-] as const
+import { predictionNumericDtypes } from './types'
+import type { PredictionNumericDtype, PredictionDirection, PredictionTensorLayout, PredictionTensorSample, PredictionTrainingRow, PredictionCohortExclusionReason, PredictionCohortDiagnosticGroup, PredictionCohortSummary, PredictionQueryDiagnostic } from './types'
+export { predictionNumericDtypes } from './types'
+export type { PredictionNumericDtype, PredictionDirection, PredictionAxis, PredictionTensorLayout, PredictionTensorSample, PredictionTrainingRow, PredictionCohortExclusionReason, PredictionCohortDiagnosticDisposition, PredictionCohortDiagnosticGroup, PredictionCohortSummary, PredictionQueryDiagnostic } from './types'
 
-export type PredictionNumericDtype = (typeof predictionNumericDtypes)[number]
-export type PredictionDirection = 'forward' | 'inverse'
 export type PredictionWeighting = 'uniform' | 'distance'
 export type PredictionInputScaling = 'range' | 'standard-deviation'
-
-export type PredictionAxis = Readonly<{
-  name: string
-  ticks: readonly (number | string)[]
-  unit?: string
-}>
-
-export type PredictionTensorLayout = Readonly<{
-  key: string
-  dtype: PredictionNumericDtype
-  shape: readonly number[]
-  axes?: readonly PredictionAxis[]
-  dataSchemaSignature?: string
-  tensorOrder?: number
-  unit?: string
-  quantityKind?: string
-  minimum?: number
-  maximum?: number
-  boxGrid?: BoxGridData
-  frequencyOutput?: boolean
-}>
-
-export type PredictionTensorSample = Readonly<{
-  layout: PredictionTensorLayout
-  values: readonly number[]
-}>
-
-export type PredictionTrainingRow = Readonly<{
-  measurementId: number
-  inputs: readonly PredictionTensorSample[]
-  outputs: readonly PredictionTensorSample[]
-}>
-
-export type PredictionCohortExclusionReason =
-  'missing-block' | 'extra-block' | 'invalid-tensor' | 'fixed-layout-mismatch' | 'layout-mismatch'
-
-export type PredictionCohortDiagnosticDisposition = 'included-with-warning' | 'excluded'
-
-export type PredictionCohortDiagnosticGroup = Readonly<{
-  direction: PredictionDirection
-  disposition: PredictionCohortDiagnosticDisposition
-  reason: PredictionCohortExclusionReason | 'metadata-mismatch'
-  side: 'input' | 'output'
-  blockKey: string
-  fieldPath: string
-  baselineMeasurementId: number | null
-  expected: string
-  actual: string
-  measurementIds: readonly number[]
-  mismatchCount?: number
-  firstMismatchIndex?: number
-  maxAbsoluteDifference?: number
-}>
-
-export type PredictionCohortSummary = Readonly<{
-  totalRows: number
-  includedRows: number
-  includedMeasurementIds: readonly number[]
-  warningMeasurementIds: readonly number[]
-  dominantShapeSignature: string
-  baselineMeasurementId: number
-  diagnostics: readonly PredictionCohortDiagnosticGroup[]
-  omittedDiagnosticGroups: number
-  excluded: Readonly<Record<PredictionCohortExclusionReason, number>>
-}>
 
 export type PredictionCohortOptions = Readonly<{
   direction: PredictionDirection
@@ -154,16 +76,6 @@ export type PredictionNeighbor = Readonly<{
   measurementId: number
   distanceSquared: number
   weight: number
-}>
-
-export type PredictionQueryDiagnostic = Readonly<{
-  blockKey: string
-  fieldPath: string
-  expected: string
-  actual: string
-  mismatchCount?: number
-  firstMismatchIndex?: number
-  maxAbsoluteDifference?: number
 }>
 
 export type PredictionResult = Readonly<{
@@ -364,14 +276,17 @@ function orderedSamples(
   }
   if (fixed) {
     const mismatch = ordered.find(
-      (sample) => JSON.stringify(sample.layout.shape) !== JSON.stringify(fixed.get(sample.layout.key)!.shape),
+      (sample) =>
+        JSON.stringify(predictionShapeSignature(sample.layout)) !==
+        JSON.stringify(predictionShapeSignature(fixed.get(sample.layout.key)!)),
     )
     if (mismatch) {
       return {
         reason: 'fixed-layout-mismatch' as const,
         blockKey: mismatch.layout.key,
-        expected: JSON.stringify(fixed.get(mismatch.layout.key)!.shape),
-        actual: JSON.stringify(mismatch.layout.shape),
+        fieldPath: 'layout',
+        expected: JSON.stringify(predictionShapeSignature(fixed.get(mismatch.layout.key)!)),
+        actual: JSON.stringify(predictionShapeSignature(mismatch.layout)),
       }
     }
   }
@@ -389,7 +304,12 @@ function predictionShapeSignature(layout: PredictionTensorLayout) {
       components: grid.components, channelUnits: grid.channelUnits, frequencyKind: grid.frequencyKind,
       configuration: grid.configuration, weighting: grid.weighting,
       axes: layout.axes?.slice(3).map((axis, index) => ({ ...axis, ...(index === 1 && layout.frequencyOutput ? { ticks: undefined } : {}) })),
-    } } : {}),
+    } } : {
+      dtype: layout.dtype,
+      unit: layout.unit,
+      quantityKind: layout.quantityKind,
+      axes: layout.axes?.map((axis) => ({ name: axis.name, unit: axis.unit })),
+    }),
   }
 }
 
@@ -623,7 +543,7 @@ export function selectPredictionCohort(options: PredictionCohortOptions): Predic
             reason: 'layout-mismatch',
             side,
             blockKey: sample.layout.key,
-              fieldPath: shapeMatches ? 'boxGridContract' : 'shape',
+              fieldPath: shapeMatches ? (sample.layout.boxGrid ? 'boxGridContract' : 'layout') : 'shape',
             baselineMeasurementId: baseline.measurementId,
               expected: JSON.stringify(shapeMatches ? predictionShapeSignature(expectedLayout) : expectedLayout.shape),
               actual: JSON.stringify(shapeMatches ? predictionShapeSignature(sample.layout) : sample.layout.shape),

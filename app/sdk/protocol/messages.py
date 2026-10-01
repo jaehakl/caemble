@@ -46,6 +46,7 @@ class LauncherAccepted(BaseModel):
     type: Literal["launcher.accepted"]
     execution_protocol: Literal[2] = 2
     launcher_id: str
+    user_id: str | None = None
     boot_id: str
     session_id: str
     server_time: str

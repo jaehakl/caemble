@@ -155,6 +155,8 @@ class Job(TimestampMixin, Base):
         UUID(as_uuid=False),
         ForeignKey("launchers.id", ondelete="SET NULL"),
     )
+    # Retain the constraint when a launcher is deleted; never fall back to another disk.
+    target_launcher_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False))
     handler_type: Mapped[str] = mapped_column(Text, nullable=False)
     slave_app_id: Mapped[str] = mapped_column(Text, nullable=False)
     job_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="webrtc")

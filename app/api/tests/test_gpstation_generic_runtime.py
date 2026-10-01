@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
@@ -19,6 +20,7 @@ from gpstation.db import ExecutionAttempt, Job, Launcher
 from gpstation.service.batches import finish_job
 from gpstation.service.execution import IDENTITY_FIELDS
 from gpstation.service.job_orchestrator import JobOrchestrator
+from gpstation.service.job_service import JobService
 from gpstation.service.server_handlers import server_handlers
 from gpstation.service.state import runtime, utcnow
 from model_registry import register_models
@@ -49,6 +51,24 @@ class GenericTerminalCallbackTests(unittest.IsolatedAsyncioTestCase):
                 if batch_id is None:
                     db.scalar.assert_not_awaited()
 
+    async def test_target_launcher_rejects_other_owners_and_unsupported_applications(self):
+        register_models()
+        for target, status in (
+            (None, 404),
+            (SimpleNamespace(user_id="other"), 404),
+            (SimpleNamespace(user_id="owner", slave_app_ids=["ai"], job_modes={}), 422),
+            (SimpleNamespace(user_id="owner", slave_app_ids=["predictor"],
+                             job_modes={"predictor": "websocket"}), 422),
+        ):
+            with self.subTest(target=target):
+                db = AsyncMock()
+                db.get.return_value = target
+                with self.assertRaises(HTTPException) as raised:
+                    await JobService.create_job(db, user_id="owner", handler_type="predictor.open",
+                        slave_app_id="predictor", offer={}, target_launcher_id=str(uuid.uuid4()))
+                self.assertEqual(raised.exception.status_code, status)
+                db.commit.assert_not_awaited()
+
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
 class GenericRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -68,6 +88,40 @@ class GenericRuntimeTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def tearDownClass(cls):
         asyncio.run(_drop_database(cls.database))
+
+    async def test_target_constraint_survives_offline_and_deleted_launcher(self):
+        engine = create_async_engine(make_async_db_url(_database_url(self.database)))
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        owner = str(uuid.uuid4())
+        target_id, other_id = str(uuid.uuid4()), str(uuid.uuid4())
+        resources = {"revision": 1, "admission_open": True, "cpu_total": 2, "cpu_reserved": 0,
+            "ram_budget_bytes": 4096, "ram_used_bytes": 0, "ram_startup_reserved_bytes": 0,
+            "gpu_devices": [], "defaults": {"cpu_cores": 1, "startup_ram_bytes": 1024, "gpu_count": 0}}
+        snapshots = {key: {"resources": resources, "boot_id": f"boot-{key}"} for key in (target_id, other_id)}
+        try:
+            async with sessions() as db:
+                db.add(User(id=owner, is_active=True))
+                for key in (target_id, other_id):
+                    db.add(Launcher(id=key, user_id=owner, launcher_name="prediction fixture", status="ready",
+                        slave_app_ids=["predictor"], job_modes={"predictor": "webrtc"},
+                        connected_at=utcnow(), last_heartbeat_at=utcnow()))
+                await db.commit()
+                job = await JobService.create_job(db, user_id=owner, handler_type="predictor.open",
+                    slave_app_id="predictor", offer={}, target_launcher_id=target_id)
+                job_id = job.id
+                self.assertIsNone(await JobService.claim_next_compatible_job(db, available_launchers={other_id: snapshots[other_id]}))
+                selected = await JobService.claim_next_compatible_job(db, available_launchers=snapshots)
+                self.assertEqual((selected[0].id, selected[1]), (job_id, target_id))
+                second = await JobService.create_job(db, user_id=owner, handler_type="predictor.open",
+                    slave_app_id="predictor", offer={}, target_launcher_id=target_id)
+                second_id = second.id
+                await db.delete(await db.get(Launcher, target_id))
+                await db.commit()
+            async with sessions() as db:
+                self.assertEqual((await db.get(Job, second_id)).target_launcher_id, target_id)
+                self.assertIsNone(await JobService.claim_next_compatible_job(db, available_launchers={other_id: snapshots[other_id]}))
+        finally:
+            await engine.dispose()
 
     async def test_success_cancel_and_cleanup_without_product_handlers(self):
         engine = create_async_engine(make_async_db_url(_database_url(self.database)))

@@ -79,6 +79,11 @@ class OptimizationRenameMigrationTests(unittest.TestCase):
             result = {}
             for table in tables:
                 rows = [json.loads(row[0]) for row in await connection.fetch(f"SELECT to_jsonb(t) FROM {table} t")]
+                if table == "jobs":
+                    # Revision 22 owns target placement. The evolving baseline
+                    # may already expose its nullable column at revision 20.
+                    for row in rows:
+                        row.pop("target_launcher_id", None)
                 if legacy:
                     for row in rows:
                         if table == "cae_trials":

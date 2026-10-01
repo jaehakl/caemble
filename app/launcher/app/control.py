@@ -93,6 +93,9 @@ async def run_connection(settings: LauncherSettings, manager: WorkerManager,
         if manager.launcher_id is not None and manager.launcher_id != accepted.launcher_id:
             raise RuntimeError("Server changed launcher identity during the same boot")
         manager.launcher_id = accepted.launcher_id
+        if manager.owner_id is not None and manager.owner_id != accepted.user_id:
+            raise RuntimeError("Server changed launcher owner during the same boot")
+        manager.owner_id = accepted.user_id
         on_connected()
         if manager.stopping:
             await manager.stop_all("finishing expired control grace cleanup")

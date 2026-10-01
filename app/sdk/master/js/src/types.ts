@@ -35,6 +35,7 @@ export type JobDescriptor = {
   progress: unknown[];
   state: string;
   launcher_id?: string | null;
+  target_launcher_id?: string | null;
   attempt_id?: string | null;
   instance_id?: string | null;
   attempt_count?: number;
@@ -177,6 +178,7 @@ export type ConnectOptions = {
 
 export type RunJobOptions = ConnectOptions & {
   slaveAppId?: string;
+  targetLauncherId?: string;
   resources?: ResourceRequest;
   rtcConfig?: RTCConfiguration;
   onJobCreated?: (job: JobDescriptor) => void;

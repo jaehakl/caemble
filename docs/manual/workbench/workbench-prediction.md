@@ -63,7 +63,7 @@ Calculation이 실패해도 성공한 Box Grid 예측은 남습니다. 예측이
 
 **Prediction Settings**에서 한 개 이상의 저장된 Calculation, 계산식별 거리 가중치, 사용할 이웃 수 k의 **Auto/Manual**, **Neighbor weighting**을 고른 뒤 **적용**합니다. 설정을 편집하는 동안에는 현재 모델이 바뀌지 않습니다. 출력 규격의 사전 검증이 없는 Calculation은 선택할 수 없으므로 Calculation 탭에서 검증해 다시 저장하세요.
 
-설정 상단의 **Algorithm**은 예측 방법, **Execution**은 계산 위치를 표시합니다. 현재 지원하는 조합은 **kNN · 브라우저**입니다.
+설정 상단의 **Algorithm**은 예측 방법, **Execution**은 계산 위치를 표시합니다. kNN은 **브라우저**와 **원격 Predictor**에서 실행할 수 있습니다. 원격 실행에는 로그인과 Predictor가 설치된 내 launcher가 필요합니다. 선택한 장비에서 실행할 수 없으면 원인을 표시하며 실행 위치를 자동으로 바꾸지 않습니다.
 
 계산식을 선택하면 저장된 출력 규격으로 오른쪽 카드와 축을 먼저 준비합니다. 값이 도착하기 전에는 편집할 수 없는 **Updating…** 상태입니다. **새로고침**은 최신 Measurement와 CalculationData를 읽고, **누락 데이터 계산**은 선택한 Calculation의 빠진 결과를 계산한 뒤 다시 불러옵니다. 공개 Demo의 새로고침과 Model Details는 누구나 사용할 수 있지만, 누락 데이터 계산에는 관리자 권한이 필요합니다.
 
@@ -79,15 +79,29 @@ Calculation이 실패해도 성공한 Box Grid 예측은 남습니다. 예측이
 
 Console의 source를 **Prediction**으로 선택하면 shape 불일치로 제외된 Record와 모델 실패를 확인할 수 있습니다. 모델의 변경 식별값에는 ExperimentRecord 규격과 Calculation의 참조·소스·출력 규격이 포함됩니다. 이들이 바뀌면 이전 모델과 예측·검증 결과를 오래된 상태로 처리합니다.
 
-Measurement, RecordedData 또는 CalculationData가 바뀌면 학습 입력과 Worker의 모델 캐시를 자동으로 다시 만들고 현재 Forward 또는 Inverse 방향을 재계산합니다. 자동 갱신에 실패한 경우에는 갱신이 필요하다는 안내와 **새로고침**이 남습니다.
+브라우저 실행에서는 Measurement, RecordedData 또는 CalculationData가 바뀌면 학습 입력과 Worker의 모델 캐시를 자동으로 다시 만들고 현재 Forward 또는 Inverse 방향을 재계산합니다. 자동 갱신에 실패한 경우에는 갱신이 필요하다는 안내와 **새로고침**이 남습니다. 원격 저장 모델은 명시적으로 업데이트할 때까지 생성에 사용한 Dataset revision을 유지합니다.
 
 모델 준비 시 학습 데이터·원본 참조·메타데이터를 하나의 snapshot으로 고정합니다. 학습 입력과 알고리즘 설정의 식별값은 실행 중인 모델 인스턴스와 별도로 관리하므로, Worker를 다시 시작하면 같은 입력으로 모델을 다시 준비합니다. 취소하거나 입력·설정을 바꾼 뒤 도착한 이전 응답은 현재 결과를 덮어쓰지 않습니다.
 
 **Auto k**는 학습 행 수 `n`에 대해 `round(sqrt(n))`을 사용하되 1~15와 실제 데이터 묶음 크기 안으로 제한합니다. **Manual k**는 1~`n`의 정수입니다. **Distance**는 가까운 이웃에 더 큰 가중치를 주고, **Uniform**은 선택된 이웃을 같은 비중으로 평균합니다. 거리는 Forward에서 varsSchema 범위로, Inverse에서 학습 데이터의 표준편차로 정규화합니다.
 
-모델은 브라우저의 Prediction Worker에서 Float64 배열로 계산합니다. 원본을 PCA나 요약값으로 대체하지 않습니다. 복소수는 진폭·위상을 실수부·허수부로 바꾸어 이웃을 가중 평균한 뒤 다시 복원합니다. 진폭이 0이면 위상도 0이며, 위상 각도를 직접 평균하지 않습니다.
+브라우저 모델은 Prediction Worker에서, 원격 모델은 선택한 Predictor 프로세스에서 Float64 배열로 계산합니다. 원본을 PCA나 요약값으로 대체하지 않습니다. 복소수는 진폭·위상을 실수부·허수부로 바꾸어 이웃을 가중 평균한 뒤 다시 복원합니다. 진폭이 0이면 위상도 0이며, 위상 각도를 직접 평균하지 않습니다.
 
-모델당 수치 원소 **1천만 개**, 유지하는 배열 **192 MiB**, 전체 작업 메모리 **256 MiB**가 상한입니다. 하나라도 넘으면 모델을 만들지 않고 메모리 오류를 표시합니다. 선택한 Calculation 수나 텐서 크기를 줄이고 새로고침하세요. 실제 사용량은 **Model Details**에서 확인할 수 있습니다.
+브라우저는 모델당 수치 원소 **1천만 개**, 유지하는 배열 **192 MiB**, 전체 작업 메모리 **256 MiB**가 상한입니다. 하나라도 넘으면 모델을 만들지 않고 메모리 오류를 표시합니다. 선택한 Calculation 수나 텐서 크기를 줄이고 새로고침하세요. 원격 Predictor는 launcher가 배정한 자원과 현재 여유 메모리로 준비 가능 여부를 판단합니다. 실제 사용량은 **Model Details**에서 확인할 수 있습니다.
+
+### 원격 Dataset과 저장 모델
+
+원격 실행에서는 사용할 launcher와 Dataset을 고르고 모델을 생성합니다. Dataset은 학습에 사용할 Measurement·RecordedData·CalculationData와 그 내용의 revision을 고정합니다. 큰 서버 데이터는 Predictor가 제한된 읽기 권한으로 직접 내려받습니다. 브라우저에 전체 학습 데이터를 내려받아 다시 장비로 보내지 않습니다.
+
+원본 결과가 추가되거나 바뀌어도 Dataset과 저장 모델은 자동으로 갱신되지 않습니다. **Dataset 동기화**로 같은 Dataset의 최신 내용을 명시적으로 확정한 다음 **모델 업데이트**로 새 모델 revision을 만드세요. 동기화는 저장 모델을 다시 학습하지 않습니다. Dataset은 최신 데이터 본문만 유지하며, 이전 revision의 식별 정보와 그 revision으로 만든 저장 모델은 확인할 수 있습니다.
+
+모델 목록에서 이름, 방향, 알고리즘, 학습 Dataset revision과 저장 장비를 확인하고 **불러오기**로 사용할 수 있습니다. 저장 모델에는 예측에 필요한 데이터와 전처리 정보가 들어 있으므로 원본 Dataset을 동기화하거나 삭제한 뒤에도 같은 모델을 다시 사용할 수 있습니다. 재로드는 최신 원본으로 모델을 다시 만드는 동작이 아닙니다.
+
+Vars와 Target을 연속해서 바꾸면 전송 중인 예측이 끝난 뒤 최신 입력만 처리합니다. 이전 응답은 화면을 덮어쓰지 않습니다. **Cancel**은 실행 중인 원격 세션을 종료하며 저장 파일은 유지합니다. 연결이 끊겼을 때는 실패 상태를 확인하고 저장 모델을 다시 불러오세요. 사용하지 않는 원격 세션은 5분 뒤 자원을 반환하며, 다음 요청에서는 같은 저장 모델을 다시 로드합니다.
+
+Dataset 삭제는 해당 Dataset 자산과 보관 파일을 지우며 원본 Experiment의 Measurement·RecordedData·CalculationData를 삭제하지 않습니다. 모델 삭제는 선택한 저장 모델과 그 파일을 지웁니다. 메모리에서 모델을 해제하거나 Prediction을 닫는 동작과 삭제는 별개입니다. 장비에 접근할 수 없어 파일 삭제를 확인하지 못했다면 삭제 완료로 표시하지 않습니다.
+
+로컬 장비에만 저장된 모델은 백업된 상태가 아닙니다. 장비나 저장 디스크를 사용할 수 없으면 모델 목록에 등록 정보가 남아 있어도 불러올 수 없습니다. [Predictor 설치와 Dataset 파일 준비](../../operations/workers.md#predictor-datasets-and-saved-models)에서 저장 위치와 CLI 내보내기를 확인하세요.
 
 ### Farthest Sample & Run
 
@@ -105,7 +119,7 @@ Measurement, RecordedData 또는 CalculationData가 바뀌면 학습 입력과 W
 
 **Cancel**은 준비와 후처리를 중단하고 이미 등록된 배치의 취소를 요청합니다. Experiment나 소스를 바꾸면 현재 화면에서 진행하던 처리를 분리합니다. 이미 제출된 서버 작업은 CAE Jobs에서 관리하세요. 브라우저를 닫아도 제출된 시뮬레이션은 계속되지만 후처리는 브라우저가 필요합니다. 빠진 CalculationData는 **누락 데이터 계산**이나 Calculation의 **All Missing**으로 보완할 수 있습니다.
 
-배치가 끝나거나 취소·중단된 뒤 저장된 점이 있으면 모델을 한 번 자동 갱신합니다. 서버에서 나중에 실패한 후보도 이번 실행의 임시 기준점에는 포함되지만, 다음 실행은 실제 Recorded Measurement로 기준점을 다시 구성합니다.
+브라우저 실행에서는 배치가 끝나거나 취소·중단된 뒤 저장된 점이 있으면 모델을 한 번 자동 갱신합니다. 원격 저장 모델에는 Dataset 동기화와 모델 업데이트로 새 결과를 반영합니다. 서버에서 나중에 실패한 후보도 이번 실행의 임시 기준점에는 포함되지만, 다음 실행은 실제 Recorded Measurement로 기준점을 다시 구성합니다.
 
 ### Save & Run 검증
 
@@ -119,6 +133,6 @@ Forward에서는 **Predicted ↔ Actual**, Inverse에서는 **Target ↔ Re-pred
 
 비교 결과의 shape가 기준과 다르면 같은 카드 안에 원래 shape와 좌표로 따로 표시합니다. 기준과 실제 크기를 안내하고 해당 쌍의 겹치기와 오차 계산만 중단합니다. 소스가 일치하지 않거나 텐서가 잘못된 경우에는 정상 결과로 표시하지 않습니다. 시뮬레이션·저장·후처리 실패나 취소는 검증 실패로 표시하며, 실제 CalculationData가 없는 항목에는 개별 오류를 보여 줍니다.
 
-성공하면 새 Measurement를 포함해 모델을 자동 갱신하고 현재 방향을 다시 예측합니다. 다만 카드에는 실행 시작 시점의 Predicted 또는 Target·Re-predicted와 완료된 Actual 비교를 그대로 남깁니다. Vars·Target·Prediction Settings·Experiment·소스·출력 규격을 바꾸거나, 수동으로 데이터를 다시 불러오거나, 새 Save & Run을 시작하면 이 비교 기준을 해제합니다.
+브라우저 실행에서는 성공하면 새 Measurement를 포함해 모델을 자동 갱신하고 현재 방향을 다시 예측합니다. 원격 실행은 선택된 저장 모델 revision을 유지하며, 새 표본을 반영하려면 Dataset 동기화와 모델 업데이트를 실행합니다. 카드에는 실행 시작 시점의 Predicted 또는 Target·Re-predicted와 완료된 Actual 비교를 그대로 남깁니다. 원격 비교에는 Inverse와 Forward에 각각 사용한 Model·Dataset revision을 기록합니다. Vars·Target·Prediction Settings·Experiment·소스·출력 규격을 바꾸거나, 수동으로 데이터를 다시 불러오거나, 새 Save & Run을 시작하면 이 비교 기준을 해제합니다.
 
 Measurement에서 후보를 직접 고르는 방법은 [Measurement 사용법](workbench-measurement.md)에서 확인할 수 있습니다. Prediction의 Sample & Run은 위의 최대 거리 선택 방식을 사용하며 별도 알고리즘 선택 창은 없습니다. 실행 입력과 큰 결과는 S3로 전달하고, 서버 배치 실행 후 브라우저에서 후처리를 수행합니다.

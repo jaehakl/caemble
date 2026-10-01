@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import Field
 
@@ -31,6 +32,7 @@ class JobCreateRequest(BaseModel):
     slave_app_id: str = "ai"
     offer: Dict[str, Any]
     resources: ResourceRequest | None = None
+    target_launcher_id: UUID | None = None
 
 
 class JobData(BaseModel):
@@ -43,6 +45,7 @@ class JobData(BaseModel):
     progress: List[Any] = Field(default_factory=list)
     state: JobState
     launcher_id: Optional[str] = None
+    target_launcher_id: str | None = None
     assigned_at: Optional[datetime] = None
     answer_ready_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
