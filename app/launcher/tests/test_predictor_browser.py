@@ -6,6 +6,9 @@ import importlib.util
 import json
 import os
 import copy
+import asyncio
+import shutil
+from urllib.request import Request, urlopen
 
 import psutil
 import pytest
@@ -36,13 +39,13 @@ async def test_predictor_browser_prepares_and_reloads_after_process_and_dataset_
         throw new Error('Predictor process did not clean up');
       }
       async function open() {
-        const job=await client.runJob('predictor.hello',{protocolVersion:1,requestId:crypto.randomUUID()},options);
+        const job=await client.runJob('predictor.hello',{protocolVersion:2,requestId:crypto.randomUUID()},options);
         if(job.payload.error) throw new Error(JSON.stringify(job.payload.error));
         return job;
       }
       async function call(job,action,payload={},expectedError) {
         const requestId=crypto.randomUUID();
-        const response=await job.session.call(action,{...payload,protocolVersion:1,requestId,sessionId:job.payload.sessionId});
+        const response=await job.session.call(action,{...payload,protocolVersion:2,requestId,sessionId:job.payload.sessionId});
         const value=response.payload;
         if(value.requestId!==requestId || value.sessionId!==job.payload.sessionId) throw new Error('RPC identity mismatch');
         if(expectedError) {
@@ -133,3 +136,113 @@ async def test_predictor_browser_prepares_and_reloads_after_process_and_dataset_
         assert not psutil.pid_exists(result["secondPid"])
         assert not fixture.manager.instances
         assert not fixture.manager.ledger.reservations
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.getenv("RUN_WEBRTC_BROWSER_TESTS") != "1", reason="Set RUN_WEBRTC_BROWSER_TESTS=1 for real browser tests")
+async def test_predictor_browser_backups_restore_after_original_storage_loss(tmp_path):
+    directory = APP_ROOT / "slaves/predictor"
+    slave = SlaveApp("predictor", "Predictor", "app", directory)
+    fixtures_spec = importlib.util.spec_from_file_location("portable_fixtures", directory / "tests/fixtures.py")
+    fixtures = importlib.util.module_from_spec(fixtures_spec)
+    fixtures_spec.loader.exec_module(fixtures)
+    transfer_spec = importlib.util.spec_from_file_location("transfer_fixture", directory / "tests/transfer_fixture.py")
+    transfer_fixture = importlib.util.module_from_spec(transfer_spec)
+    transfer_spec.loader.exec_module(transfer_fixture)
+    source = fixtures.dataset()
+    scenario = f"const definition={json.dumps(fixtures.definition(source))};\n" + """
+      const options={slaveAppId:'predictor',targetLauncherId:launcherId,autoFinish:false,timeoutMs:30000,
+        resources:{cpu_cores:1,startup_ram_bytes:268435456,gpu_count:0}};
+      async function open() {
+        const job=await client.runJob('predictor.hello',{protocolVersion:2,requestId:crypto.randomUUID()},options);
+        if(job.payload.error) throw new Error(JSON.stringify(job.payload.error));
+        return job;
+      }
+      async function call(job,action,payload={}) {
+        const response=await job.session.call(action,{...payload,protocolVersion:2,requestId:crypto.randomUUID(),sessionId:job.payload.sessionId});
+        if(response.payload.error) throw new Error(action+': '+JSON.stringify(response.payload.error));
+        return response.payload;
+      }
+      async function finish(job) {
+        await job.session.finish();
+        for(let attempt=0;attempt<200;attempt++) {
+          const state=await(await fetch('/fixture/jobs/'+job.session.jobId)).json();
+          if(state.cleaned) return;
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        throw new Error('Predictor cleanup not confirmed');
+      }
+      const first=await open();
+      const imported=(await call(first,'dataset.import',{importId:'portable'})).dataset;
+      const data={datasetId:imported.datasetId,revision:imported.revision,fingerprint:imported.fingerprint};
+      const prepared=await call(first,'model.prepare',{dataset:data,direction:'forward',definition,
+        model:{modelId:'portable-model',revision:1,operationId:'prepare-portable',name:'한글 온도 모델'}});
+      const before=await call(first,'model.predict',{instance:prepared.instance,input:{direction:'forward',vars:{x:.5}}});
+      const grants=await(await fetch('/fixture/backup',{method:'POST',body:JSON.stringify({dataset:data})})).json();
+      const backed=await call(first,'artifact.backup',{operationId:'backup',grant:grants.backup,includeDataset:true,
+        model:{modelId:'portable-model',revision:1,manifestChecksum:prepared.artifact.manifestChecksum}});
+      if(backed.receipt.state!=='complete') throw new Error('Backup not completed');
+      await call(first,'model.release',{instance:prepared.instance});
+      await finish(first);
+      await fetch('/fixture/lose-original',{method:'POST'});
+      const second=await open();
+      if(second.payload.storageId===first.payload.storageId || second.payload.models.length) throw new Error('Expected a fresh target storage');
+      const restore=await(await fetch('/fixture/restore',{method:'POST',body:JSON.stringify({storageId:second.payload.storageId})})).json();
+      const restored=await call(second,'artifact.restore',{operationId:'restore',grant:restore.grant});
+      if(restored.receipt.state!=='complete') throw new Error('Restore not registered');
+      await finish(second);
+      const third=await open();
+      const loaded=await call(third,'model.load',{modelId:'portable-model',revision:1,manifestChecksum:prepared.artifact.manifestChecksum});
+      const after=await call(third,'model.predict',{instance:loaded.instance,input:{direction:'forward',vars:{x:.5}}});
+      if(loaded.artifact.manifestChecksum!==prepared.artifact.manifestChecksum) throw new Error('Artifact bytes changed');
+      if(!third.payload.datasets.some(row=>row.datasetId===data.datasetId && row.revision===data.revision)) throw new Error('Dataset identity was lost');
+      await call(third,'model.release',{instance:loaded.instance});
+      await finish(third);
+      client.clearPrewarmedJobConnections();
+      return {sourceStorageId:first.payload.storageId,targetStorageId:third.payload.storageId,output:after.output,
+        before:{output:before.output,provenance:before.provenance},after:{output:after.output,provenance:after.provenance}};
+    """
+    with transfer_fixture.TransferServer() as storage:
+        async def extra_request(method, path, body):
+            if path.startswith("/prediction/operations/"):
+                def forward():
+                    data = json.dumps(body).encode() if body is not None else None
+                    with urlopen(Request(storage.url + path, data=data, method=method), timeout=30) as response:
+                        return json.loads(response.read())
+                return await asyncio.to_thread(forward)
+            if method == "POST" and path == "/fixture/backup":
+                data = body["dataset"]
+                storage.operations["backup"] = {"id": "backup", "kind": "backup", "model_id": "portable-model", "model_revision": 1,
+                    "include_dataset": True, "dataset_id": data["datasetId"], "dataset_revision": data["revision"],
+                    "dataset_fingerprint": data["fingerprint"]}
+                grant = {key: value.replace(storage.url, fixture.url) if isinstance(value, str) else value
+                         for key, value in storage.grant("backup").items()}
+                return {"backup": grant}
+            if method == "POST" and path == "/fixture/lose-original":
+                original = (tmp_path / "storage").resolve()
+                assert original.is_relative_to(tmp_path.resolve()) and not fixture.manager.instances
+                shutil.rmtree(original)
+                fixture.manager.settings.predictor_storage_root = tmp_path / "restored"
+                return {"removed": True}
+            if method == "POST" and path == "/fixture/restore":
+                storage.operations["restore"] = {**storage.operations["backup"], "id": "restore", "kind": "restore", "target_storage_id": body["storageId"]}
+                grant = {key: value.replace(storage.url, fixture.url) if isinstance(value, str) else value
+                         for key, value in storage.grant("restore").items()}
+                return {"grant": grant}
+            return None
+
+        async with WebRtcHarness(slave, tmp_path, scenario, extra_request=extra_request) as fixture:
+            owner_hash = hashlib.sha256(fixture.owner_id.encode()).hexdigest()
+            staging = tmp_path / "storage/owners" / owner_hash / "imports/portable"
+            staging.mkdir(parents=True)
+            raw = json.dumps(source, ensure_ascii=False).encode("utf-8")
+            (staging / "dataset.json").write_bytes(raw)
+            (staging / "manifest.json").write_text(json.dumps({"kind": "caemble.prediction.dataset.artifact", "version": 1,
+                "identity": source["datasetId"], "revision": source["revision"], "metadata": {},
+                "files": [{"name": "dataset.json", "byteLength": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]}), encoding="utf-8")
+            result = await fixture.run_browser(timeout=150)
+            assert result["sourceStorageId"] != result["targetStorageId"]
+            assert result["before"] == result["after"]
+            assert result["output"][0]["values"] == pytest.approx([15], abs=1e-12, rel=1e-12)
+            assert not fixture.manager.instances
+            assert not fixture.manager.ledger.reservations

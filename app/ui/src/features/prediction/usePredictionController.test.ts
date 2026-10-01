@@ -15,8 +15,6 @@ const savedReference: SavedPredictionModel = {
   datasetRevision: 2,
   direction: 'forward',
   fingerprint: 'same-content',
-  storageId: 'storage',
-  launcherId: 'launcher',
 }
 
 function savedExecution() {
@@ -236,4 +234,42 @@ describe('PredictionRuntimeController', () => {
     expect(run).toHaveBeenCalledOnce()
     expect(onRestart).not.toHaveBeenCalled()
   })
+})
+
+it('routes two directions independently and preserves the other owner when one route changes', async () => {
+  const { execution: forward, runtime } = savedExecution()
+  const { execution: inverse } = savedExecution()
+  const { execution: replacement } = savedExecution()
+  runtime.setExecutions({ forward: { key: 'A', create: () => forward }, inverse: { key: 'B', create: () => inverse } })
+  const transaction = runtime.beginTransaction()
+  const forwardModel = await runtime.loadModel(savedReference, transaction)
+  const inverseModel = await runtime.loadModel(
+    { ...savedReference, direction: 'inverse', modelId: 'inverse' },
+    transaction,
+  )
+  expect(forward.load).toHaveBeenCalledOnce()
+  expect(inverse.load).toHaveBeenCalledOnce()
+  vi.mocked(forward.dispose).mockClear()
+  runtime.setExecutions({
+    forward: { key: 'A', create: () => forward },
+    inverse: { key: 'C', create: () => replacement },
+  })
+  expect(runtime.modelIsCurrent(forwardModel)).toBe(true)
+  expect(runtime.modelIsCurrent(inverseModel)).toBe(false)
+  expect(inverse.release).toHaveBeenCalledWith(inverseModel.instance)
+  expect(forward.dispose).not.toHaveBeenCalled()
+  expect(inverse.dispose).toHaveBeenCalledOnce()
+  runtime.dispose()
+})
+
+it('shares one execution for the same route and does not fall back to Browser for an empty remote selection', () => {
+  const { execution, runtime } = savedExecution()
+  const create = vi.fn(() => execution)
+  runtime.setExecutions({ forward: { key: 'shared', create }, inverse: { key: 'shared', create } })
+  expect(create).toHaveBeenCalledOnce()
+  runtime.setExecutions({})
+  runtime.start()
+  expect(runtime.executionAvailableFor('forward')).toBe(false)
+  expect(runtime.executionAvailableFor('inverse')).toBe(false)
+  runtime.dispose()
 })

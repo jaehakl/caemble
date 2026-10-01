@@ -1,15 +1,16 @@
 """HTTP facade for owned Prediction assets and scoped Dataset downloads."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Body, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
 from gpstation.utils.csrf import require_web_csrf
-from prediction import datasets, grants, lifecycle, models
+from prediction import datasets, grants, lifecycle, models, operations, replicas
 from prediction.common import canonical_bytes
 from prediction.schemas import (DatasetGrantRequest, DatasetSelection, DeleteRequest,
-    LocalDatasetRegistration, ModelComplete, ModelLeaseRequest, ModelReserve, StorageRegistration)
+    LocalDatasetRegistration, ModelComplete, ModelLeaseRequest, ModelReserve, StorageRegistration,
+    ArchiveUpload, AssetRename, OperationComplete, OperationCreate, ReplicaRegistration)
 from user_auth.schemas import UserData
 from user_auth.utils.auth_wrapper import require_roles
 
@@ -116,3 +117,107 @@ async def list_storages(db: AsyncSession = Depends(get_db), user: UserData = Dep
 @router.post("/storages")
 async def register_storage(body: StorageRegistration, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
     return await lifecycle.register_storage(db, body, user.id)
+
+
+@router.patch("/datasets/{dataset_id}")
+async def rename_dataset(dataset_id: UUID, body: AssetRename, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    return await lifecycle.rename_asset(db, "dataset", str(dataset_id), body.name, user.id)
+
+
+@router.patch("/models/{model_id}")
+async def rename_model(model_id: UUID, body: AssetRename, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    return await lifecycle.rename_asset(db, "model", str(model_id), body.name, user.id)
+
+
+@router.post("/datasets/{dataset_id}/preview")
+async def preview_dataset(dataset_id: UUID, body: DatasetSelection, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    return await datasets.preview_source(db, str(dataset_id), body, user.id)
+
+
+@router.post("/replicas/check")
+async def check_replica(body: ReplicaRegistration, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    return await replicas.check_replica(db, body, user.id)
+
+
+@router.get("/operations")
+async def list_operations(experiment_id: int | None = None, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    return await operations.list_operations(db, user.id, experiment_id)
+
+
+@router.post("/operations")
+async def create_operation(body: OperationCreate, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    return await operations.create_operation(db, body, user.id)
+
+
+@router.get("/operations/{operation_id}")
+async def get_operation(operation_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    row = await operations.owned_operation(db, str(operation_id), user.id)
+    if row.kind.startswith("delete_") and row.state != "completed":
+        await operations.process_cloud_deletions(db, row)
+    await operations.expire_operation(db, row)
+    return operations.operation_view(row)
+
+
+@router.post("/operations/{operation_id}/grants")
+async def operation_grant(operation_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    row = await operations.owned_operation(db, str(operation_id), user.id)
+    await operations.issue_grant(db, row, retry=True)
+    if row.kind.startswith("delete_"):
+        await operations.process_cloud_deletions(db, row)
+    return await operations.operation_response(db, row)
+
+
+@router.post("/operations/{operation_id}/cancel")
+async def cancel_operation(operation_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    row = await operations.owned_operation(db, str(operation_id), user.id)
+    return await operations.stop_operation(db, row, cancel=True)
+
+
+@router.post("/operations/{operation_id}/interrupt")
+async def interrupt_operation(operation_id: UUID, body: dict = Body(default={}), db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    row = await operations.owned_operation(db, str(operation_id), user.id)
+    return await operations.stop_operation(db, row, error=str(body.get("error", "Connection interrupted."))[:1000])
+
+
+@router.get("/operations/{operation_id}/transfer")
+async def transfer_manifest(operation_id: UUID, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    row = await operations.granted_operation(db, str(operation_id), authorization)
+    return await operations.transfer_manifest(db, row)
+
+
+@router.post("/operations/{operation_id}/grant/renew")
+async def renew_operation_grant(operation_id: UUID, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    row = await operations.granted_operation(db, str(operation_id), authorization, renew=True)
+    return await operations.issue_grant(db, row)
+
+
+@router.post("/operations/{operation_id}/archives/{slot}/uploads")
+async def prepare_archive(operation_id: UUID, slot: str, body: ArchiveUpload, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    row = await operations.granted_operation(db, str(operation_id), authorization)
+    return await operations.prepare_archive(db, row, slot, body)
+
+
+@router.post("/operations/{operation_id}/archives/{slot}/complete")
+async def complete_archive(operation_id: UUID, slot: str, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    row = await operations.granted_operation(db, str(operation_id), authorization)
+    return await operations.complete_archive(db, row, slot)
+
+
+@router.post("/operations/{operation_id}/complete")
+async def complete_operation(operation_id: UUID, body: OperationComplete, request: Request,
+        authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    # This one endpoint supports the operation-only worker credential and the
+    # authenticated UI replaying a durable receipt after a lost response.
+    token = authorization.removeprefix("Bearer ")
+    import jwt
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False}) if token else {}
+    except jwt.InvalidTokenError:
+        claims = {}
+    if claims.get("typ") == "prediction_operation":
+        row = await operations.granted_operation(db, str(operation_id), authorization)
+    else:
+        from user_auth.session import check_user
+        user = await authenticated(await check_user(request, db))
+        row = await operations.owned_operation(db, str(operation_id), user.id)
+    return await operations.complete_operation(db, row, body)

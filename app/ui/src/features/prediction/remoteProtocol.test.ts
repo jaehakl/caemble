@@ -8,6 +8,12 @@ import {
 } from './remoteProtocol'
 
 describe('Predictor Python wire contracts', () => {
+  it('guides an old runner to the coordinated release update', () => {
+    expect(() =>
+      parseRemoteEnvelope({ protocolVersion: 1, requestId: 'request', sessionId: 'session' }, 'request'),
+    ).toThrowError(/Predictor를 업데이트/)
+  })
+
   it('reads unavailable artifact summaries emitted by ArtifactStore.list', () => {
     const hello = remoteHelloSchema.parse({
       sessionId: 'session',
@@ -72,7 +78,7 @@ describe('Predictor Python wire contracts', () => {
 
   it('keeps request and process identity ahead of an application error', () => {
     const response = {
-      protocolVersion: 1,
+      protocolVersion: 2,
       requestId: 'previous-request',
       sessionId: 'old-process',
       error: { code: 'dataset-missing', message: 'Missing Dataset.' },

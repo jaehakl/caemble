@@ -169,7 +169,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(PredictionModel, model["id"])).state, "active")
             self.assertEqual((await db.get(ModelRevision, (model["id"], 1))).source_contracts["sourceHash"], "a" * 64)
 
-    async def test_model_retry_tombstone_and_connected_only_deletion(self):
+    async def test_model_retry_tombstone_and_offline_deletion_stays_pending(self):
         async with self.sessions() as db:
             dataset = await freeze_dataset(db, self.selection(), self.owner)
             request = self.model_request(dataset)
@@ -185,9 +185,9 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             launcher = await db.get(Launcher, self.launcher_id)
             launcher.disconnected_at = utcnow()
             await db.commit()
-            with self.assertRaises(HTTPException) as offline:
-                await delete_asset(db, "model", model["id"], removal, self.owner)
-            self.assertEqual(offline.exception.status_code, 409)
+            pending = await delete_asset(db, "model", model["id"], removal, self.owner)
+            self.assertEqual(pending["state"], "deleting")
+            self.assertEqual(pending["revisions"][0]["replicas"][0]["state"], "deleting")
             launcher.disconnected_at = None
             await db.commit()
             self.assertEqual((await delete_asset(db, "model", model["id"], removal, self.owner))["state"], "deleting")

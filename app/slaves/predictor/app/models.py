@@ -288,15 +288,16 @@ class ModelBundle:
                 for name, array in model.arrays.items():
                     with (path / f"{index}-{name}.npy").open("wb") as stream:
                         np.save(stream, array, allow_pickle=False)
-        manifest, _, checksum = store.write("models", self.metadata["modelId"], self.metadata["revision"], summary, write, cancel)
+        manifest, _, checksum = store.write("models", self.metadata["modelId"], self.metadata["revision"], summary, write, cancel,
+                                            publication_lock=True)
         return {**summary, "storageId": store.storage_id, "launcherId": store.launcher_id,
-                "files": manifest["files"], "manifestChecksum": checksum}
+                "files": manifest["files"], "manifestChecksum": checksum, "verified": True}
 
     @classmethod
-    def load(cls, store: ArtifactStore, model_id: str, revision: int, memory_budget: int):
+    def load(cls, store: ArtifactStore, model_id: str, revision: int, memory_budget: int, cancel=None):
         if store.deleted(model_id, revision):
             raise PredictionError("deleted", "This model revision has been deleted.")
-        manifest, path, checksum = store.read("models", model_id, revision, memory_budget)
+        manifest, path, checksum = store.read("models", model_id, revision, memory_budget, cancel)
         content = json.loads((path / "model.json").read_bytes())
         expected_files = {"model.json"} | {f"{index}-{name}.npy" for index in range(len(content["models"])) for name in
                                           ("input", "output", "inputMinimums", "inputMaximums", "inputScales", "measurementIds")}
@@ -310,6 +311,7 @@ class ModelBundle:
         models = []
         total = 0
         for index, metadata in enumerate(content["models"]):
+            check_cancel(cancel)
             total += metadata["resources"]["workingSetBytes"]
             if total > memory_budget:
                 raise PredictionError("memory-limit", "Saved model exceeds the available working memory.")
@@ -323,5 +325,5 @@ class ModelBundle:
                 raise PredictionError("artifact-checksum", "Saved model contains invalid numerical arrays.")
             models.append(KnnModel(metadata, arrays))
         artifact = {**manifest["metadata"], "storageId": store.storage_id, "launcherId": store.launcher_id,
-                    "files": manifest["files"], "manifestChecksum": checksum}
+                    "files": manifest["files"], "manifestChecksum": checksum, "verified": True}
         return cls(content["metadata"], models), artifact

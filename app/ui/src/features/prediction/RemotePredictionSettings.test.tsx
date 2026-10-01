@@ -1,22 +1,33 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { webcrypto } from 'node:crypto'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PredictionDatasetRecord, PredictionModelRecord } from '@/contracts/api/prediction'
+import type {
+  PredictionDatasetRecord,
+  PredictionModelRecord,
+  PredictionReplica,
+  PredictionStorage,
+} from '@/contracts/api/prediction'
 import type { PredictionContext } from './predictionContextData'
 import type { PredictionSetup } from './usePredictionModels'
 import { RemotePredictionSettings } from './RemotePredictionSettings'
+import { PredictionAssetController } from './assetManagement'
 import { savedContractFromSource } from './savedModels'
 
 const mocks = vi.hoisted(() => ({
   listLaunchers: vi.fn(),
   datasets: vi.fn(),
   models: vi.fn(),
+  storages: vi.fn(),
+  operations: vi.fn(),
   syncDataset: vi.fn(),
+  previewDataset: vi.fn(),
   createDataset: vi.fn(),
   reserve: vi.fn(),
+  operation: vi.fn(),
   grant: vi.fn(),
   releaseGrant: vi.fn(),
-  deleteAsset: vi.fn(),
+  interruptOperation: vi.fn(),
   inspect: vi.fn(),
   prepare: vi.fn(),
   release: vi.fn(),
@@ -24,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   reconcile: vi.fn(),
   registerArtifact: vi.fn(),
+  startOperation: vi.fn(),
   hello: {} as Record<string, unknown>,
 }))
 
@@ -32,24 +44,16 @@ vi.mock('@gpstation/v1-master-js-sdk', () => ({
     listLaunchers = mocks.listLaunchers
   },
 }))
-vi.mock('@/api/prediction', () => ({
-  predictionApi: {
-    datasets: mocks.datasets,
-    models: mocks.models,
-    syncDataset: mocks.syncDataset,
-    createDataset: mocks.createDataset,
-    reserve: mocks.reserve,
-    grant: mocks.grant,
-    releaseGrant: mocks.releaseGrant,
-    deleteAsset: mocks.deleteAsset,
-  },
-}))
+vi.mock('@/api/prediction', () => ({ predictionApi: mocks }))
 vi.mock('./remoteExecution', () => ({
   RemotePredictionExecution: class {
     id = 'remote-knn'
     state = 'connected'
     implementationVersion = 'knn-v1'
     preprocessingVersion = 'box-relative-v2'
+    get hello() {
+      return mocks.hello
+    }
     constructor(
       _launcherId: string,
       private options: { onHello?: (hello: unknown) => Promise<void> },
@@ -70,6 +74,11 @@ vi.mock('./remoteAssets', async (original) => ({
   reconcileRemoteAssets: mocks.reconcile,
   registerRemoteArtifact: mocks.registerArtifact,
 }))
+vi.mock('./assetOperations', () => ({
+  startPredictionAssetOperation: mocks.startOperation,
+  verifyPredictionReplica: vi.fn(),
+  retryPredictionAssetOperation: vi.fn(),
+}))
 
 const launcherId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'
 const storageId = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb'
@@ -77,6 +86,9 @@ const datasetId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 const forwardId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 const inverseId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
 const operationId = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+const backupStorageId = '11111111-1111-4111-8111-111111111111'
+const localReplicaId = '22222222-2222-4222-8222-222222222222'
+const backupReplicaId = '33333333-3333-4333-8333-333333333333'
 const varsSchema = { x: { shape: [], min: 0, max: 2 } }
 const records = [{ id: 10, name: 'temperature', contract_hash: 'record-contract' }]
 const calculations = [
@@ -99,6 +111,19 @@ const context = {
   analysis: { fingerprint: 'analysis', items: [] },
 } as unknown as PredictionContext
 
+function replica(backup = false): PredictionReplica {
+  return {
+    id: backup ? backupReplicaId : localReplicaId,
+    storage_id: backup ? backupStorageId : storageId,
+    state: 'present',
+    manifest_sha256: 'd'.repeat(64),
+    artifact: null,
+    checked_at: null,
+    verified_at: null,
+    delete_id: null,
+  }
+}
+
 function dataset(sourceKind: 'server' | 'local' = 'server'): PredictionDatasetRecord {
   return {
     id: datasetId,
@@ -106,8 +131,6 @@ function dataset(sourceKind: 'server' | 'local' = 'server'): PredictionDatasetRe
     experiment_id: 1,
     state: 'active',
     current_revision: 1,
-    storage_id: sourceKind === 'local' ? storageId : null,
-    launcher_id: sourceKind === 'local' ? launcherId : null,
     delete_id: null,
     source_kind: sourceKind,
     revisions: [
@@ -116,6 +139,7 @@ function dataset(sourceKind: 'server' | 'local' = 'server'): PredictionDatasetRe
         fingerprint: 'sha256:' + 'c'.repeat(64),
         payload_available: true,
         source_contracts: sourceContracts,
+        replicas: sourceKind === 'local' ? [replica()] : [],
       },
     ],
   }
@@ -128,8 +152,6 @@ function model(direction: 'forward' | 'inverse'): PredictionModelRecord {
     experiment_id: 1,
     state: 'active',
     current_revision: 1,
-    storage_id: storageId,
-    launcher_id: launcherId,
     delete_id: null,
     direction,
     algorithm: 'knn',
@@ -141,9 +163,14 @@ function model(direction: 'forward' | 'inverse'): PredictionModelRecord {
         dataset_id: datasetId,
         dataset_revision: 1,
         dataset_fingerprint: 'dataset-fingerprint',
-        definition: { fingerprint: `${direction}-fingerprint`, contract: savedContractFromSource(sourceContracts) },
+        definition: {
+          fingerprint: `${direction}-fingerprint`,
+          contract: savedContractFromSource(sourceContracts),
+          algorithm: { kind: 'knn', kMode: 'manual', manualK: 7 },
+        },
         source_contracts: sourceContracts,
         artifact: { manifest_sha256: 'd'.repeat(64) },
+        replicas: [replica(), replica(true)],
       },
     ],
   }
@@ -152,7 +179,7 @@ function model(direction: 'forward' | 'inverse'): PredictionModelRecord {
 function setup(): PredictionSetup {
   return {
     executionId: 'remote-knn',
-    launcherId,
+    datasetId,
     calculationIds: [4],
     algorithm: { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance', calculationWeights: {} },
     models: {
@@ -163,32 +190,29 @@ function setup(): PredictionSetup {
         datasetRevision: 1,
         direction: 'inverse',
         fingerprint: 'inverse-fingerprint',
-        storageId,
-        launcherId,
       },
     },
+    routes: { inverse: { replicaId: localReplicaId, storageId, launcherId } },
   }
 }
 
-function show(initial = setup()) {
-  const onChange = vi.fn()
-  const onActivity = vi.fn()
-  render(
-    <RemotePredictionSettings
-      authenticated
-      open
-      context={context}
-      sourceHash={'b'.repeat(64)}
-      varsSchema={varsSchema}
-      rules={[]}
-      resultContracts={{}}
-      setup={initial}
-      onChange={onChange}
-      onBeforeDelete={vi.fn()}
-      onActivity={onActivity}
-    />,
-  )
-  return { onChange, onActivity }
+async function show(initial = setup()) {
+  const manager = new PredictionAssetController('owner:1', 1)
+  await manager.refresh()
+  const props = {
+    authenticated: true,
+    open: true,
+    context,
+    sourceHash: 'b'.repeat(64),
+    varsSchema,
+    rules: [],
+    resultContracts: {},
+    setup: initial,
+    onChange: vi.fn(),
+    onUse: vi.fn(),
+    manager,
+  }
+  return { ...props, ...render(<RemotePredictionSettings {...props} />), props }
 }
 
 beforeEach(() => {
@@ -209,22 +233,102 @@ beforeEach(() => {
   ])
   mocks.datasets.mockResolvedValue([dataset()])
   mocks.models.mockResolvedValue([model('inverse')])
+  mocks.storages.mockResolvedValue([
+    {
+      storage_id: storageId,
+      name: 'Local store',
+      kind: 'predictor_local',
+      checked_at: null,
+      accesses: [{ launcher_id: launcherId, connected: true, checked_at: null }],
+    },
+    { storage_id: backupStorageId, name: 'Backup store', kind: 'object_backup', checked_at: null, accesses: [] },
+  ] satisfies PredictionStorage[])
+  mocks.operations.mockResolvedValue([])
+  mocks.operation.mockResolvedValue({ id: operationId, state: 'completed' })
   mocks.syncDataset.mockResolvedValue(dataset())
+  mocks.previewDataset.mockResolvedValue({ added: 2, changed: 1, removed: 0 })
   mocks.reconcile.mockResolvedValue(undefined)
-  mocks.reserve.mockResolvedValue({ ...model('forward'), reserved_revision: 1, operation_id: operationId })
+  mocks.reserve.mockResolvedValue({
+    ...model('forward'),
+    revisions: model('forward').revisions.map((item) => ({ ...item, state: 'reserved' })),
+    reserved_revision: 1,
+    operation_id: operationId,
+  })
   mocks.grant.mockResolvedValue({ grant_id: operationId, token: 'scoped-token', dataset_id: datasetId, revision: 1 })
   mocks.releaseGrant.mockResolvedValue(undefined)
+  mocks.interruptOperation.mockResolvedValue(undefined)
   mocks.prepare.mockResolvedValue({ instance: { handle: 'instance' }, artifact: { modelId: forwardId } })
   mocks.release.mockResolvedValue(undefined)
   mocks.command.mockResolvedValue({ dataset: { datasetId, revision: 1, fingerprint: 'sha256:' + 'c'.repeat(64) } })
   mocks.registerArtifact.mockResolvedValue(model('forward'))
 })
 
-describe('remote Prediction asset actions', () => {
-  it('synchronizes the server Dataset without preparing or changing either saved model', async () => {
-    const { onChange } = show()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Dataset 동기화' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: 'Dataset 동기화' }))
+describe('model-first Prediction management', () => {
+  it('supports keyboard traversal across management tabs and a full long Korean model name', async () => {
+    const longName = '한글모델이름과버전별예측결과'.repeat(30)
+    mocks.models.mockResolvedValue([{ ...model('inverse'), name: longName }])
+    const user = userEvent.setup()
+    await show()
+    await user.tab()
+    expect(screen.getByLabelText('Prediction 실행 위치')).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('tab', { name: '모델' })).toHaveFocus()
+    await user.tab()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('tabpanel', { name: '학습 데이터 관리' })).toBeInTheDocument()
+    await user.tab({ shift: true })
+    await user.keyboard(' ')
+    const item = screen.getByRole('button', { name: new RegExp(longName) })
+    item.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByLabelText('모델 이름')).toHaveValue(longName)
+    expect(item).toHaveAccessibleName(expect.stringContaining(longName))
+  })
+
+  it('explains empty model, Dataset and operation lists without changing selection', async () => {
+    mocks.models.mockResolvedValue([])
+    mocks.datasets.mockResolvedValue([])
+    const { onUse, onChange } = await show()
+    expect(screen.getByText(/아직 저장 모델이 없습니다/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '새 모델 만들기' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('tab', { name: '학습 데이터' }))
+    expect(screen.getByText(/등록된 학습 데이터가 없습니다/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '작업' }))
+    expect(screen.getByText('관리 작업이 없습니다.')).toBeInTheDocument()
+    expect(onUse).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+  it('shows one logical model with multiple locations, immutable settings and model-only backup by default', async () => {
+    const { manager, onUse, onChange } = await show()
+    const list = screen.getByLabelText('등록된 모델')
+    expect(within(list).getAllByRole('button')).toHaveLength(1)
+    fireEvent.click(within(list).getByRole('button', { name: /inverse saved/ }))
+    expect(screen.getAllByText('Local store').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Backup store').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByText('저장된 설정·ID·checksum'))
+    expect(screen.getByText(/"manualK": 7/)).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '학습 데이터 r1 원본도 포함' })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: '백업하기' }))
+    expect(mocks.startOperation).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({ kind: 'backup', include_dataset: false, source_replica_id: localReplicaId }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '이 모델 사용' }))
+    expect(onUse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        models: expect.objectContaining({ inverse: expect.objectContaining({ modelId: inverseId }) }),
+      }),
+      'inverse',
+    )
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('previews and synchronizes data without preparing or changing saved model selection', async () => {
+    const { onChange, onUse } = await show()
+    fireEvent.click(screen.getByRole('tab', { name: '학습 데이터' }))
+    fireEvent.click(screen.getByRole('button', { name: '새 데이터 확인' }))
+    expect(await screen.findByText('추가 2개 · 변경 1개 · 삭제 0개')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '학습 데이터 갱신' }))
     await waitFor(() =>
       expect(mocks.syncDataset).toHaveBeenCalledWith(
         datasetId,
@@ -237,22 +341,24 @@ describe('remote Prediction asset actions', () => {
         expect.any(Object),
       ),
     )
-    await screen.findByText('Dataset 동기화 완료')
     expect(mocks.reserve).not.toHaveBeenCalled()
     expect(mocks.prepare).not.toHaveBeenCalled()
     expect(onChange).not.toHaveBeenCalled()
+    expect(onUse).not.toHaveBeenCalled()
   })
 
-  it('creates only the selected direction and releases its instance and scoped grant', async () => {
+  it('creates and uses only the requested direction after registration and releases preparation resources', async () => {
     const initial = setup()
-    const { onChange } = show(initial)
-    await waitFor(() => expect(screen.getAllByRole('button', { name: '모델 만들기' })[0]).toBeEnabled())
-    fireEvent.click(screen.getAllByRole('button', { name: '모델 만들기' })[0])
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('forward 모델 만들기 완료'))
-    expect(onChange).toHaveBeenCalledOnce()
-    const changed = onChange.mock.calls[0][0] as PredictionSetup
+    const { onUse, onChange } = await show(initial)
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+    fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+    await waitFor(() => expect(onUse).toHaveBeenCalledOnce())
+    const [changed, direction] = onUse.mock.calls[0] as [PredictionSetup, string]
+    expect(direction).toBe('forward')
     expect(changed.models?.forward?.modelId).toBe(forwardId)
     expect(changed.models?.inverse).toEqual(initial.models?.inverse)
+    expect(changed.routes?.inverse).toEqual(initial.routes?.inverse)
     expect(mocks.reserve).toHaveBeenCalledWith(
       expect.objectContaining({
         direction: 'forward',
@@ -271,14 +377,58 @@ describe('remote Prediction asset actions', () => {
     )
     expect(mocks.release).toHaveBeenCalledWith({ handle: 'instance' })
     expect(mocks.releaseGrant).toHaveBeenCalledWith(datasetId, operationId)
+    expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('imports and synchronizes a local Dataset using opaque references', async () => {
+  it('keeps selection when creation fails and exposes its retryable task after reopening', async () => {
+    mocks.prepare.mockRejectedValueOnce(new Error('장비 저장 공간 부족'))
+    const { onUse, onChange, props, rerender, manager } = await show()
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+    fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+    await waitFor(() => expect(manager.getSnapshot().tasks[0]?.state).toBe('failed'))
+    rerender(<RemotePredictionSettings {...props} open={false} />)
+    rerender(<RemotePredictionSettings {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: '작업' }))
+    expect(screen.getByText('장비 저장 공간 부족')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeEnabled()
+    expect(onUse).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(mocks.releaseGrant).toHaveBeenCalledWith(datasetId, operationId)
+  })
+
+  it('continues an in-flight management task while its panel is closed', async () => {
+    let finish!: (value: PredictionDatasetRecord) => void
+    mocks.syncDataset.mockReturnValueOnce(
+      new Promise<PredictionDatasetRecord>((resolve) => {
+        finish = resolve
+      }),
+    )
+    const { props, rerender, manager } = await show()
+    fireEvent.click(screen.getByRole('tab', { name: '학습 데이터' }))
+    fireEvent.click(screen.getByRole('button', { name: '학습 데이터 갱신' }))
+    await waitFor(() => expect(mocks.syncDataset).toHaveBeenCalledOnce())
+    const signal = mocks.syncDataset.mock.calls[0][2].signal as AbortSignal
+    rerender(<RemotePredictionSettings {...props} open={false} />)
+    expect(signal.aborted).toBe(false)
+    expect(manager.getSnapshot().tasks[0].state).toBe('running')
+    await act(async () => {
+      finish(dataset())
+    })
+    rerender(<RemotePredictionSettings {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: '작업' }))
+    expect(screen.getByText('학습 데이터 갱신')).toBeInTheDocument()
+    expect(manager.getSnapshot().tasks[0].state).toBe('succeeded')
+  })
+
+  it('imports and synchronizes a local Dataset through opaque IDs without switching models', async () => {
     mocks.datasets.mockResolvedValue([dataset('local')])
-    const { onChange } = show()
-    const input = await screen.findByLabelText('로컬 Dataset import ID')
-    fireEvent.change(input, { target: { value: 'heat-fixture' } })
-    fireEvent.click(screen.getByRole('button', { name: '로컬 Dataset 가져오기' }))
+    const { onUse, onChange } = await show()
+    fireEvent.click(screen.getByRole('tab', { name: '학습 데이터' }))
+    fireEvent.click(screen.getByText('고급: 외부 Dataset 가져오기'))
+    fireEvent.change(screen.getByLabelText('외부 Dataset 장비'), { target: { value: launcherId } })
+    fireEvent.change(screen.getByLabelText('로컬 Dataset import ID'), { target: { value: 'heat-fixture' } })
+    fireEvent.click(screen.getByRole('button', { name: '외부 Dataset 가져오기' }))
     await waitFor(() =>
       expect(mocks.command).toHaveBeenCalledWith(
         'dataset.import',
@@ -286,32 +436,34 @@ describe('remote Prediction asset actions', () => {
         expect.any(Object),
       ),
     )
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Dataset 동기화' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: 'Dataset 동기화' }))
+    fireEvent.click(screen.getByRole('button', { name: '학습 데이터 갱신' }))
     await waitFor(() =>
       expect(mocks.command).toHaveBeenCalledWith('dataset.sync', { datasetId, experimentId: 1 }, expect.any(Object)),
     )
     expect(mocks.syncDataset).not.toHaveBeenCalled()
     expect(mocks.prepare).not.toHaveBeenCalled()
-    expect(mocks.inspect.mock.calls.length).toBeGreaterThanOrEqual(2)
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ datasetId }))
+    expect(onUse).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('shows unavailable artifact diagnostics independently of model selection', async () => {
-    mocks.hello.models = [
-      {
-        modelId: inverseId,
-        revision: 1,
-        available: false,
-        error: 'artifact-checksum: Saved file checksum differs from its manifest.',
-      },
-    ]
-    const { onChange } = show()
-    expect(screen.getByText(/파일 · 장비에서 확인 필요/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '연결 / 저장 파일 확인' }))
-    expect(await screen.findByText(/사용 불가: artifact-checksum/)).toHaveTextContent('메모리 · 로드되지 않음')
-    expect(mocks.reconcile).toHaveBeenCalledWith(mocks.hello)
-    expect(onChange).not.toHaveBeenCalled()
-    expect(mocks.prepare).not.toHaveBeenCalled()
+  it('rejects a late creation selection after a newer workspace selection', async () => {
+    let finish!: (value: unknown) => void
+    mocks.prepare.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    const { manager, onUse } = await show()
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+    fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+    await waitFor(() => expect(mocks.prepare).toHaveBeenCalledOnce())
+    manager.currentSelectionKey = 'newer-selection'
+    await act(async () => {
+      finish({ instance: { handle: 'instance' }, artifact: { modelId: forwardId } })
+    })
+    await waitFor(() => expect(manager.getSnapshot().tasks[0].state).toBe('succeeded'))
+    expect(mocks.registerArtifact).toHaveBeenCalledOnce()
+    expect(onUse).not.toHaveBeenCalled()
   })
 })

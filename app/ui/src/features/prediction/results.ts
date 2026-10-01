@@ -151,7 +151,12 @@ export function predictionResultsReducer(state: PredictionResults, action: Predi
         provenanceByDirection: { ...state.provenanceByDirection, forward: action.provenance },
       }
     case 'surrogate-failed':
-      return { ...state, surrogateValues: {}, surrogateErrors: {} }
+      return {
+        ...state,
+        surrogateValues: {},
+        surrogateErrors: {},
+        provenanceByDirection: { ...state.provenanceByDirection, forward: undefined },
+      }
     case 'candidate-edited':
       return {
         ...state,

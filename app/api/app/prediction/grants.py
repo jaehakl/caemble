@@ -67,7 +67,7 @@ async def granted_scope(db, identity, revision, authorization, *, renew=False):
         raise HTTPException(401, "Dataset grant renewal window expired.")
     item = await db.get(DatasetRevision, (str(identity), revision))
     lease = await db.get(DatasetGrant, claims["jti"])
-    if (row is None or row.user_id != claims["sub"] or row.state != "active" or row.current_revision != revision
+    if (row is None or row.user_id != claims["sub"] or row.state not in {"active", "deleting"} or row.current_revision != revision
             or item is None or item.payload is None or item.fingerprint != claims["fingerprint"]
             or lease is None or lease.dataset_id != str(identity) or lease.revision != revision
             or lease.expires_at.timestamp() + (RENEWAL_GRACE_SECONDS if renew else 0) <= now):

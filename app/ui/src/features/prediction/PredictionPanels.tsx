@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AlertCircle, Calculator, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import type { CalculationDataOutput } from '@/api'
 import { TensorEditor, type TensorEditorComparisonStatus } from '@/components/tensor-editor'
@@ -127,6 +127,7 @@ export type PredictionCalculationSeries = Readonly<{
 }>
 
 export type PredictionCalculationPaneItem = Readonly<{
+  canInitializeTarget?: boolean
   actual: PredictionCalculationSeries
   calculationId: number
   constraintMaximum: number
@@ -178,6 +179,8 @@ export function PredictionCalculationPane({
   updating,
   onOutputChange,
 }: PredictionCalculationPaneProps) {
+  const [targetDrafts, setTargetDrafts] = useState<Readonly<Record<number, CalculationDataOutput>>>({})
+  useEffect(() => setTargetDrafts({}), [resetKey])
   return (
     <section className="flex h-full min-h-0 flex-col gap-2" aria-label="Prediction calculation data">
       <header className="flex flex-wrap items-start justify-between gap-2 rounded-lg border bg-card px-3 py-2.5">
@@ -206,7 +209,8 @@ export function PredictionCalculationPane({
           </div>
         ) : (
           items.map((item) => {
-            const output = item.primary.output
+            const targetDraft = targetDrafts[item.calculationId]
+            const output = targetDraft ?? item.primary.output
             const outputValues = output
               ? output.shape.length === 0
                 ? [output.data as number]
@@ -259,6 +263,38 @@ export function PredictionCalculationPane({
                   ) : null}
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
+                  {item.canInitializeTarget && output ? (
+                    <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                      {targetDraft ? (
+                        <>
+                          <span>초기값 0에서 원하는 Target을 입력하고 확정하세요.</span>
+                          <Button
+                            size="sm"
+                            disabled={disabled}
+                            onClick={() => {
+                              onOutputChange(item.calculationId, targetDraft)
+                              setTargetDrafts((current) =>
+                                Object.fromEntries(
+                                  Object.entries(current).filter(([id]) => Number(id) !== item.calculationId),
+                                ),
+                              )
+                            }}
+                          >
+                            이 값을 Target으로 사용
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={disabled}
+                          onClick={() => setTargetDrafts((current) => ({ ...current, [item.calculationId]: output }))}
+                        >
+                          Target 직접 입력
+                        </Button>
+                      )}
+                    </div>
+                  ) : null}
                   {output ? (
                     <div className="space-y-2">
                       <TensorEditor
@@ -284,7 +320,7 @@ export function PredictionCalculationPane({
                         }}
                         constraintMaximum={item.constraintMaximum}
                         constraintMinimum={item.constraintMinimum}
-                        disabled={disabled || item.primary.status !== 'ready'}
+                        disabled={disabled || (!targetDraft && item.primary.status !== 'ready')}
                         key={`${item.calculationId}:${output.dtype}:${JSON.stringify(output.shape)}`}
                         label={item.name}
                         maximum={item.maximum}
@@ -296,10 +332,12 @@ export function PredictionCalculationPane({
                         onValueChange={(value) => {
                           const flat = flattenVarsTensor(value, output.shape, item.name)
                           const next = /^u?int/u.test(output.dtype) ? flat.map((member) => Math.round(member)) : flat
-                          onOutputChange(item.calculationId, {
+                          const edited = {
                             ...output,
                             data: output.shape.length === 0 ? next[0] : next,
-                          })
+                          }
+                          if (targetDraft) setTargetDrafts((current) => ({ ...current, [item.calculationId]: edited }))
+                          else onOutputChange(item.calculationId, edited)
                         }}
                       />
                       {item.repredicted?.metric ? (
@@ -476,7 +514,9 @@ export function PredictionSetupDialog({
         <DialogHeader className="border-b px-6 py-5 pr-12">
           <DialogTitle>Prediction 설정</DialogTitle>
           <DialogDescription>
-            사용할 Calculation과 k-Nearest Neighbor 가중 방식을 선택합니다. 설정 적용 전까지 모델은 변경되지 않습니다.
+            {executionLabel === 'remote-knn'
+              ? '저장 모델을 고르거나 새 모델 버전을 만듭니다. 아래 설정 작성안은 새 버전을 만들 때 사용됩니다.'
+              : '사용할 Calculation과 k-Nearest Neighbor 가중 방식을 선택합니다. 설정 적용 전까지 모델은 변경되지 않습니다.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -492,6 +532,15 @@ export function PredictionSetupDialog({
             </div>
           </dl>
           {executionSettings}
+          {executionLabel === 'remote-knn' ? (
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <h3 className="font-semibold">새 모델 버전 작성안</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Calculation, k와 가중치 변경은 선택한 저장 모델에 적용되지 않습니다. 모델 관리에서 새 버전을 만들고
+                사용하세요.
+              </p>
+            </div>
+          ) : null}
           <section className="space-y-3" aria-labelledby="prediction-calculations-heading">
             <div>
               <h3 className="text-sm font-semibold" id="prediction-calculations-heading">

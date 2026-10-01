@@ -56,7 +56,7 @@ def test_complex_calculation_cannot_create_a_saved_inverse_model(tmp_path):
     runtime = PredictorRuntime(tmp_path, "owner", "launcher", "http://127.0.0.1", 1000000)
     reference = stage(runtime, manifest)
     with pytest.raises(PredictionError) as error:
-        runtime.dispatch("model.prepare", {"protocolVersion": 1, "requestId": "complex-unsupported", "sessionId": runtime.session_id,
+        runtime.dispatch("model.prepare", {"protocolVersion": 2, "requestId": "complex-unsupported", "sessionId": runtime.session_id,
             "dataset": reference, "direction": "inverse", "definition": definition(manifest),
             "model": {"modelId": "unsupported-complex", "revision": 1, "operationId": "prepare", "name": "Unsupported"}})
     assert error.value.code == "insufficient-cohort"

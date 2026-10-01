@@ -32,6 +32,19 @@ export type PredictionValidationData = Readonly<{
   currentSourceFingerprints: ReadonlyMap<number, string>
 }>
 
+/** Sampling reads current centers explicitly, independently of saved-model inference. */
+export async function loadPredictionSamplingMeasurements(
+  queryClient: QueryClient,
+  queryScope: PrivateQueryScope,
+  experimentId: number,
+) {
+  const response = await fetchFreshQuery(
+    queryClient,
+    measurementsQueryOptions(queryScope, experimentId, contextListRequest(experimentId)),
+  )
+  return response.items.filter((item) => item.recorded_at !== null)
+}
+
 type PredictionContextMetadata = Readonly<{
   calculations: readonly SavedPredictionCalculation[]
   experimentRecords: readonly ExperimentRecordedDataRecord[]
@@ -77,11 +90,14 @@ async function loadContextMetadata(
   queryScope: PrivateQueryScope,
   experimentId: number,
   signal?: AbortSignal,
+  includeTraining = true,
 ): Promise<PredictionContextMetadata> {
   const listRequest = contextListRequest(experimentId)
   const [calculationResponse, measurementResponse, experimentRecordResponse] = await Promise.all([
     fetchFreshQuery(queryClient, calculationsQueryOptions(queryScope, experimentId, listRequest), signal),
-    fetchFreshQuery(queryClient, measurementsQueryOptions(queryScope, experimentId, listRequest), signal),
+    includeTraining
+      ? fetchFreshQuery(queryClient, measurementsQueryOptions(queryScope, experimentId, listRequest), signal)
+      : Promise.resolve({ items: [] }),
     fetchFreshQuery(queryClient, experimentRecordsQueryOptions(queryScope, experimentId), signal),
   ])
   signal?.throwIfAborted()
@@ -120,15 +136,19 @@ export async function loadPredictionContextData({
   queryClient,
   queryScope,
   signal,
+  savedModel = false,
 }: Readonly<{
   experimentId: number
   queryClient: QueryClient
   queryScope: PrivateQueryScope
   signal?: AbortSignal
+  savedModel?: boolean
 }>): Promise<PredictionContext> {
   const [metadata, analysis] = await Promise.all([
-    loadContextMetadata(queryClient, queryScope, experimentId, signal),
-    dbTables.CalculationData.analysis(experimentId, { signal }),
+    loadContextMetadata(queryClient, queryScope, experimentId, signal, !savedModel),
+    savedModel
+      ? Promise.resolve({ fingerprint: 'saved-model-contracts', total: 0, measurement_count: 0, items: [] })
+      : dbTables.CalculationData.analysis(experimentId, { signal }),
   ])
   signal?.throwIfAborted()
   return Object.freeze({
@@ -144,15 +164,19 @@ export async function loadPredictionContextFingerprint({
   queryClient,
   queryScope,
   signal,
+  savedModel = false,
 }: Readonly<{
   experimentId: number
   queryClient: QueryClient
   queryScope: PrivateQueryScope
   signal?: AbortSignal
+  savedModel?: boolean
 }>) {
   const [metadata, analysisStatus] = await Promise.all([
-    loadContextMetadata(queryClient, queryScope, experimentId, signal),
-    dbTables.CalculationData.analysisStatus(experimentId, { signal }),
+    loadContextMetadata(queryClient, queryScope, experimentId, signal, !savedModel),
+    savedModel
+      ? Promise.resolve({ fingerprint: 'saved-model-contracts' })
+      : dbTables.CalculationData.analysisStatus(experimentId, { signal }),
   ])
   signal?.throwIfAborted()
   return contextFingerprint(experimentId, analysisStatus.fingerprint, metadata)
@@ -213,4 +237,26 @@ export async function loadPredictionValidationData({
     actual: Object.freeze(actual),
     currentSourceFingerprints,
   })
+}
+
+/** Read only the selected actual values; historical training samples are not a prerequisite. */
+export async function loadPredictionSelectedTargets(
+  experimentId: number,
+  measurementId: number,
+  calculationIds: readonly number[],
+  signal?: AbortSignal,
+) {
+  const response = await dbTables.CalculationData.listRows(
+    {
+      ...getListRequest('visible'),
+      experiment_id: experimentId,
+      filter: { measurement_id: [measurementId, measurementId] },
+      limit: null,
+    },
+    { signal },
+  )
+  signal?.throwIfAborted()
+  return response.items.filter(
+    (item) => item.measurement_id === measurementId && calculationIds.includes(item.calculation_id),
+  )
 }

@@ -11,8 +11,6 @@ export const savedPredictionReferenceSchema = z.object({
   datasetRevision: z.number().int().positive(),
   direction: z.enum(['forward', 'inverse']),
   fingerprint: z.string().min(1),
-  storageId: z.string().uuid(),
-  launcherId: z.string().uuid(),
   manifestChecksum: z
     .string()
     .regex(/^[a-f0-9]{64}$/)

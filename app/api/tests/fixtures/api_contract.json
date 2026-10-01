@@ -5797,6 +5797,751 @@
             }
           }
         }
+      },
+      "/prediction/datasets/{dataset_id}": {
+        "patch": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Rename Dataset",
+          "operationId": "rename_dataset_prediction_datasets__dataset_id__patch",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRename"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/models/{model_id}": {
+        "patch": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Rename Model",
+          "operationId": "rename_model_prediction_models__model_id__patch",
+          "parameters": [
+            {
+              "name": "model_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Model Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRename"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/datasets/{dataset_id}/preview": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Preview Dataset",
+          "operationId": "preview_dataset_prediction_datasets__dataset_id__preview_post",
+          "parameters": [
+            {
+              "name": "dataset_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Dataset Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetSelection"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/replicas/check": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Check Replica",
+          "operationId": "check_replica_prediction_replicas_check_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplicaRegistration"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "List Operations",
+          "operationId": "list_operations_prediction_operations_get",
+          "parameters": [
+            {
+              "name": "experiment_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Experiment Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Create Operation",
+          "operationId": "create_operation_prediction_operations_post",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationCreate"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Get Operation",
+          "operationId": "get_operation_prediction_operations__operation_id__get",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/grants": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Operation Grant",
+          "operationId": "operation_grant_prediction_operations__operation_id__grants_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/cancel": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Cancel Operation",
+          "operationId": "cancel_operation_prediction_operations__operation_id__cancel_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/interrupt": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Interrupt Operation",
+          "operationId": "interrupt_operation_prediction_operations__operation_id__interrupt_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "default": {},
+                  "title": "Body"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/transfer": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Transfer Manifest",
+          "operationId": "transfer_manifest_prediction_operations__operation_id__transfer_get",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/grant/renew": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Renew Operation Grant",
+          "operationId": "renew_operation_grant_prediction_operations__operation_id__grant_renew_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/archives/{slot}/uploads": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Prepare Archive",
+          "operationId": "prepare_archive_prediction_operations__operation_id__archives__slot__uploads_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "slot",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Slot"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveUpload"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/archives/{slot}/complete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Complete Archive",
+          "operationId": "complete_archive_prediction_operations__operation_id__archives__slot__complete_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "slot",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Slot"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/complete": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Complete Operation",
+          "operationId": "complete_operation_prediction_operations__operation_id__complete_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationComplete"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "components": {
@@ -11304,6 +12049,16 @@
               "additionalProperties": true,
               "type": "object",
               "title": "Source Contracts"
+            },
+            "verified": {
+              "type": "boolean",
+              "title": "Verified",
+              "default": true
+            },
+            "payload_available": {
+              "type": "boolean",
+              "title": "Payload Available",
+              "default": true
             }
           },
           "additionalProperties": false,
@@ -11360,6 +12115,11 @@
               "const": 1,
               "title": "Format Version",
               "default": 1
+            },
+            "verified": {
+              "type": "boolean",
+              "title": "Verified",
+              "default": true
             }
           },
           "additionalProperties": false,
@@ -11385,6 +12145,30 @@
               "type": "integer",
               "minimum": 1.0,
               "title": "Revision"
+            },
+            "replica_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Replica Id"
+            },
+            "storage_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Storage Id"
             }
           },
           "additionalProperties": false,
@@ -11497,6 +12281,18 @@
               "maxLength": 200,
               "minLength": 1,
               "title": "Name"
+            },
+            "job_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Job Id"
             }
           },
           "additionalProperties": false,
@@ -11507,6 +12303,329 @@
             "name"
           ],
           "title": "StorageRegistration"
+        },
+        "ArchiveUpload": {
+          "properties": {
+            "manifest": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Manifest"
+            },
+            "artifact": {
+              "additionalProperties": true,
+              "type": "object",
+              "title": "Artifact"
+            },
+            "dataset": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "manifest",
+            "artifact"
+          ],
+          "title": "ArchiveUpload"
+        },
+        "AssetRename": {
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "title": "AssetRename"
+        },
+        "OperationComplete": {
+          "properties": {
+            "model": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            },
+            "dataset": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset"
+            },
+            "replica_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Replica Id"
+            },
+            "receipt": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Receipt"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "OperationComplete"
+        },
+        "OperationCreate": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "backup",
+                "restore",
+                "delete_replica",
+                "delete_asset",
+                "verify"
+              ],
+              "title": "Kind"
+            },
+            "asset_kind": {
+              "type": "string",
+              "enum": [
+                "model",
+                "dataset"
+              ],
+              "title": "Asset Kind",
+              "default": "model"
+            },
+            "asset_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Asset Id"
+            },
+            "revision": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Revision"
+            },
+            "source_replica_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Replica Id"
+            },
+            "source_launcher_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Launcher Id"
+            },
+            "target_storage_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Storage Id"
+            },
+            "target_launcher_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Launcher Id"
+            },
+            "include_dataset": {
+              "type": "boolean",
+              "title": "Include Dataset",
+              "default": false
+            },
+            "dataset_source_replica_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset Source Replica Id"
+            },
+            "dataset_source_launcher_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset Source Launcher Id"
+            },
+            "replica_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Replica Id"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id",
+            "kind",
+            "asset_id"
+          ],
+          "title": "OperationCreate"
+        },
+        "ReplicaRegistration": {
+          "properties": {
+            "asset_kind": {
+              "type": "string",
+              "enum": [
+                "model",
+                "dataset"
+              ],
+              "title": "Asset Kind"
+            },
+            "asset_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Asset Id"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Revision"
+            },
+            "storage_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Storage Id"
+            },
+            "launcher_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Launcher Id"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "present",
+                "missing",
+                "corrupt"
+              ],
+              "title": "State",
+              "default": "present"
+            },
+            "manifest_sha256": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Manifest Sha256"
+            },
+            "artifact": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Artifact"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "asset_kind",
+            "asset_id",
+            "revision",
+            "storage_id",
+            "launcher_id"
+          ],
+          "title": "ReplicaRegistration"
         }
       }
     }
@@ -12414,6 +13533,111 @@
         "POST"
       ],
       "renew_dataset_grant"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}",
+      [
+        "PATCH"
+      ],
+      "rename_dataset"
+    ],
+    [
+      "/prediction/datasets/{dataset_id}/preview",
+      [
+        "POST"
+      ],
+      "preview_dataset"
+    ],
+    [
+      "/prediction/models/{model_id}",
+      [
+        "PATCH"
+      ],
+      "rename_model"
+    ],
+    [
+      "/prediction/operations",
+      [
+        "GET"
+      ],
+      "list_operations"
+    ],
+    [
+      "/prediction/operations",
+      [
+        "POST"
+      ],
+      "create_operation"
+    ],
+    [
+      "/prediction/operations/{operation_id}",
+      [
+        "GET"
+      ],
+      "get_operation"
+    ],
+    [
+      "/prediction/operations/{operation_id}/archives/{slot}/complete",
+      [
+        "POST"
+      ],
+      "complete_archive"
+    ],
+    [
+      "/prediction/operations/{operation_id}/archives/{slot}/uploads",
+      [
+        "POST"
+      ],
+      "prepare_archive"
+    ],
+    [
+      "/prediction/operations/{operation_id}/cancel",
+      [
+        "POST"
+      ],
+      "cancel_operation"
+    ],
+    [
+      "/prediction/operations/{operation_id}/complete",
+      [
+        "POST"
+      ],
+      "complete_operation"
+    ],
+    [
+      "/prediction/operations/{operation_id}/grant/renew",
+      [
+        "POST"
+      ],
+      "renew_operation_grant"
+    ],
+    [
+      "/prediction/operations/{operation_id}/grants",
+      [
+        "POST"
+      ],
+      "operation_grant"
+    ],
+    [
+      "/prediction/operations/{operation_id}/interrupt",
+      [
+        "POST"
+      ],
+      "interrupt_operation"
+    ],
+    [
+      "/prediction/operations/{operation_id}/transfer",
+      [
+        "GET"
+      ],
+      "transfer_manifest"
+    ],
+    [
+      "/prediction/replicas/check",
+      [
+        "POST"
+      ],
+      "check_replica"
     ]
   ],
   "tables": {
@@ -12453,15 +13677,19 @@
     "calculation_experiment_records": "\nCREATE TABLE calculation_experiment_records (\n\tcalculation_id INTEGER NOT NULL, \n\texperiment_record_id INTEGER NOT NULL, \n\tCONSTRAINT pk_calculation_experiment_records PRIMARY KEY (calculation_id, experiment_record_id), \n\tCONSTRAINT fk_calc_records_calculation FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_calc_records_record FOREIGN KEY(experiment_record_id) REFERENCES experiment_records (id) ON DELETE CASCADE\n)\n\n",
     "calculation_legacy_metadata": "\nCREATE TABLE calculation_legacy_metadata (\n\tcalculation_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdescription TEXT, \n\tCONSTRAINT pk_calculation_legacy_metadata PRIMARY KEY (calculation_id), \n\tCONSTRAINT fk_calculation_legacy_metadata_calculation_id_calculations FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE CASCADE\n)\n\n",
     "storage_objects": "\nCREATE TABLE storage_objects (\n\tid UUID NOT NULL, \n\tuser_id UUID, \n\texperiment_id INTEGER, \n\tmeasurement_id INTEGER, \n\tcalculation_id INTEGER, \n\tcalculation_data_id INTEGER, \n\tjob_id UUID, \n\tattempt INTEGER, \n\tpurpose TEXT NOT NULL, \n\tmanifest JSONB NOT NULL, \n\tready BOOLEAN DEFAULT 'false' NOT NULL, \n\tbound BOOLEAN DEFAULT 'false' NOT NULL, \n\tdeleting BOOLEAN DEFAULT 'false' NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_storage_objects PRIMARY KEY (id), \n\tCONSTRAINT fk_storage_objects_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_experiment_id_experiments FOREIGN KEY(experiment_id) REFERENCES experiments (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_calculation_id_calculations FOREIGN KEY(calculation_id) REFERENCES calculations (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_calculation_data_id_calculation_data FOREIGN KEY(calculation_data_id) REFERENCES calculation_data (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_storage_objects_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE SET NULL\n)\n\n",
-    "prediction_datasets": "\nCREATE TABLE prediction_datasets (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tsource_kind TEXT NOT NULL, \n\tselection JSONB NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\tstorage_id UUID, \n\tlauncher_id UUID, \n\tdelete_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_datasets PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_datasets_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_datasets": "\nCREATE TABLE prediction_datasets (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tsource_kind TEXT NOT NULL, \n\tselection JSONB NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\tdelete_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_datasets PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_datasets_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
     "prediction_dataset_revisions": "\nCREATE TABLE prediction_dataset_revisions (\n\tdataset_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tfingerprint TEXT NOT NULL, \n\tsummary JSONB NOT NULL, \n\tpayload JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_revisions PRIMARY KEY (dataset_id, revision), \n\tCONSTRAINT uq_prediction_dataset_revisions_dataset_id UNIQUE (dataset_id, request_id), \n\tCONSTRAINT fk_prediction_dataset_revisions_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE CASCADE\n)\n\n",
     "prediction_dataset_requests": "\nCREATE TABLE prediction_dataset_requests (\n\tdataset_id UUID NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\trevision INTEGER NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_requests PRIMARY KEY (dataset_id, request_id), \n\tCONSTRAINT fk_prediction_dataset_requests_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE CASCADE\n)\n\n",
     "prediction_dataset_objects": "\nCREATE TABLE prediction_dataset_objects (\n\tdataset_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\tobject_id UUID NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_objects PRIMARY KEY (dataset_id, revision, object_id), \n\tCONSTRAINT fk_prediction_dataset_objects_dataset_id_prediction_dat_d7b4 FOREIGN KEY(dataset_id, revision) REFERENCES prediction_dataset_revisions (dataset_id, revision) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_dataset_objects_object_id_storage_objects FOREIGN KEY(object_id) REFERENCES storage_objects (id) ON DELETE RESTRICT\n)\n\n",
     "prediction_dataset_grants": "\nCREATE TABLE prediction_dataset_grants (\n\tid UUID NOT NULL, \n\tdataset_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tCONSTRAINT pk_prediction_dataset_grants PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_dataset_grants_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE CASCADE\n)\n\n",
-    "prediction_models": "\nCREATE TABLE prediction_models (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdirection TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\tstorage_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tdelete_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_models PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_models_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
-    "prediction_model_revisions": "\nCREATE TABLE prediction_model_revisions (\n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tdataset_id UUID NOT NULL, \n\tdataset_revision INTEGER NOT NULL, \n\tdataset_fingerprint TEXT NOT NULL, \n\tdefinition JSONB NOT NULL, \n\tsource_contracts JSONB NOT NULL, \n\tartifact JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_model_revisions PRIMARY KEY (model_id, revision), \n\tCONSTRAINT uq_prediction_model_revisions_model_id UNIQUE (model_id, request_id), \n\tCONSTRAINT fk_prediction_model_revisions_model_id_prediction_models FOREIGN KEY(model_id) REFERENCES prediction_models (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_model_revisions_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE RESTRICT\n)\n\n",
-    "prediction_storages": "\nCREATE TABLE prediction_storages (\n\tstorage_id UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tname TEXT NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_storages PRIMARY KEY (storage_id), \n\tCONSTRAINT fk_prediction_storages_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
-    "prediction_model_leases": "\nCREATE TABLE prediction_model_leases (\n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\tjob_id UUID NOT NULL, \n\tCONSTRAINT pk_prediction_model_leases PRIMARY KEY (model_id, revision, job_id), \n\tCONSTRAINT fk_prediction_model_leases_model_id_prediction_models FOREIGN KEY(model_id) REFERENCES prediction_models (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_model_leases_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n"
+    "prediction_models": "\nCREATE TABLE prediction_models (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\texperiment_id INTEGER NOT NULL, \n\tname TEXT NOT NULL, \n\tdirection TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tcurrent_revision INTEGER NOT NULL, \n\tdelete_id UUID, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_models PRIMARY KEY (id), \n\tCONSTRAINT fk_prediction_models_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_model_revisions": "\nCREATE TABLE prediction_model_revisions (\n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tstate TEXT NOT NULL, \n\tdataset_id UUID NOT NULL, \n\tdataset_revision INTEGER NOT NULL, \n\tdataset_fingerprint TEXT NOT NULL, \n\tdefinition JSONB NOT NULL, \n\tsource_contracts JSONB NOT NULL, \n\tartifact JSONB, \n\tpreparation JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_model_revisions PRIMARY KEY (model_id, revision), \n\tCONSTRAINT uq_prediction_model_revisions_model_id UNIQUE (model_id, request_id), \n\tCONSTRAINT fk_prediction_model_revisions_model_id_prediction_models FOREIGN KEY(model_id) REFERENCES prediction_models (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_model_revisions_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE RESTRICT\n)\n\n",
+    "prediction_storages": "\nCREATE TABLE prediction_storages (\n\tstorage_id UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\tkind TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_storages PRIMARY KEY (storage_id), \n\tCONSTRAINT fk_prediction_storages_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_model_leases": "\nCREATE TABLE prediction_model_leases (\n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\tjob_id UUID NOT NULL, \n\tstorage_id UUID, \n\treplica_id UUID, \n\tCONSTRAINT pk_prediction_model_leases PRIMARY KEY (model_id, revision, job_id), \n\tCONSTRAINT fk_prediction_model_leases_model_id_prediction_models FOREIGN KEY(model_id) REFERENCES prediction_models (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_model_leases_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_operation_objects": "\nCREATE TABLE prediction_operation_objects (\n\toperation_id UUID NOT NULL, \n\tslot TEXT NOT NULL, \n\tobject_id UUID NOT NULL, \n\tCONSTRAINT pk_prediction_operation_objects PRIMARY KEY (operation_id, slot), \n\tCONSTRAINT fk_prediction_operation_objects_operation_id_prediction_8255 FOREIGN KEY(operation_id) REFERENCES prediction_operations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_operation_objects_object_id_storage_objects FOREIGN KEY(object_id) REFERENCES storage_objects (id) ON DELETE RESTRICT\n)\n\n",
+    "prediction_operations": "\nCREATE TABLE prediction_operations (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tkind TEXT NOT NULL, \n\tasset_kind TEXT NOT NULL, \n\tasset_id UUID NOT NULL, \n\trevision INTEGER, \n\texperiment_id INTEGER NOT NULL, \n\tstate TEXT NOT NULL, \n\tstage TEXT NOT NULL, \n\tdetails JSONB NOT NULL, \n\terror JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE, \n\tcompleted_at TIMESTAMP WITH TIME ZONE, \n\tCONSTRAINT pk_prediction_operations PRIMARY KEY (id), \n\tCONSTRAINT uq_prediction_operations_user_id UNIQUE (user_id, request_id), \n\tCONSTRAINT fk_prediction_operations_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_replicas": "\nCREATE TABLE prediction_replicas (\n\tid UUID NOT NULL, \n\tmodel_id UUID, \n\tdataset_id UUID, \n\trevision INTEGER NOT NULL, \n\tstorage_id UUID NOT NULL, \n\tstate TEXT NOT NULL, \n\tmanifest_sha256 TEXT, \n\tartifact JSONB, \n\tobject_id UUID, \n\tdelete_id UUID, \n\tchecked_at TIMESTAMP WITH TIME ZONE, \n\tverified_at TIMESTAMP WITH TIME ZONE, \n\tCONSTRAINT pk_prediction_replicas PRIMARY KEY (id), \n\tCONSTRAINT one_asset CHECK ((model_id IS NULL) <> (dataset_id IS NULL)), \n\tCONSTRAINT fk_prediction_replicas_model_id_prediction_model_revisions FOREIGN KEY(model_id, revision) REFERENCES prediction_model_revisions (model_id, revision) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_replicas_dataset_id_prediction_dataset_revisions FOREIGN KEY(dataset_id, revision) REFERENCES prediction_dataset_revisions (dataset_id, revision) ON DELETE CASCADE, \n\tCONSTRAINT uq_prediction_replicas_model_id UNIQUE (model_id, revision, storage_id), \n\tCONSTRAINT uq_prediction_replicas_dataset_id UNIQUE (dataset_id, revision, storage_id), \n\tCONSTRAINT fk_prediction_replicas_storage_id_prediction_storages FOREIGN KEY(storage_id) REFERENCES prediction_storages (storage_id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_prediction_replicas_object_id_storage_objects FOREIGN KEY(object_id) REFERENCES storage_objects (id) ON DELETE RESTRICT\n)\n\n",
+    "prediction_storage_accesses": "\nCREATE TABLE prediction_storage_accesses (\n\tstorage_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_storage_accesses PRIMARY KEY (storage_id, launcher_id), \n\tCONSTRAINT fk_prediction_storage_accesses_storage_id_prediction_storages FOREIGN KEY(storage_id) REFERENCES prediction_storages (storage_id) ON DELETE CASCADE\n)\n\n"
   },
   "indexes": [
     "CREATE INDEX idx_api_keys_user_id ON api_keys (user_id)",
@@ -12501,6 +13729,13 @@
     "CREATE INDEX ix_prediction_datasets_user_id ON prediction_datasets (user_id)",
     "CREATE INDEX ix_prediction_models_experiment_id ON prediction_models (experiment_id)",
     "CREATE INDEX ix_prediction_models_user_id ON prediction_models (user_id)",
+    "CREATE INDEX ix_prediction_operation_objects_object_id ON prediction_operation_objects (object_id)",
+    "CREATE INDEX ix_prediction_operations_asset_id ON prediction_operations (asset_id)",
+    "CREATE INDEX ix_prediction_operations_experiment_id ON prediction_operations (experiment_id)",
+    "CREATE INDEX ix_prediction_operations_user_id ON prediction_operations (user_id)",
+    "CREATE INDEX ix_prediction_replicas_dataset_id ON prediction_replicas (dataset_id)",
+    "CREATE INDEX ix_prediction_replicas_model_id ON prediction_replicas (model_id)",
+    "CREATE INDEX ix_prediction_replicas_object_id ON prediction_replicas (object_id)",
     "CREATE INDEX ix_prediction_storages_user_id ON prediction_storages (user_id)",
     "CREATE INDEX ix_recorded_data_experiment_record_id ON recorded_data (experiment_record_id)",
     "CREATE INDEX ix_recorded_data_measurement_id ON recorded_data (measurement_id)",

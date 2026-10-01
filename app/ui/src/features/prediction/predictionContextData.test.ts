@@ -15,11 +15,27 @@ import {
   loadPredictionContextData,
   loadPredictionContextFingerprint,
   loadPredictionValidationData,
+  loadPredictionSamplingMeasurements,
 } from './predictionContextData'
 
 afterEach(() => vi.restoreAllMocks())
 
 describe('Prediction context data', () => {
+  it('loads only Recorded Measurement metadata for explicit sampling', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const recorded = { id: 1, vars: { x: 2 }, recorded_at: '2026-10-01' }
+    const list = vi
+      .spyOn(dbTables.Measurement, 'listRows')
+      .mockResolvedValue({ items: [recorded, { id: 2, recorded_at: null }] } as never)
+    const analysis = vi.spyOn(dbTables.CalculationData, 'analysis')
+    expect(await loadPredictionSamplingMeasurements(queryClient, 'user:test', 3)).toEqual([recorded])
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: null, filter: { experiment_id: [3, 3] } }),
+      expect.any(Object),
+    )
+    expect(analysis).not.toHaveBeenCalled()
+    queryClient.clear()
+  })
   it('reuses fresh metadata query keys while keeping analysis responses out of the Query cache', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const calculationList = vi.spyOn(dbTables.Calculation, 'listRows').mockResolvedValue({ items: [], total: 0 })
@@ -235,4 +251,27 @@ describe('Prediction context data', () => {
     expect(calculationDataList).not.toHaveBeenCalled()
     queryClient.clear()
   })
+})
+
+it('loads saved-model contracts without querying any historical training samples', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  vi.spyOn(dbTables.Calculation, 'listRows').mockResolvedValue({ items: [], total: 0 })
+  vi.spyOn(dbTables.ExperimentRecord, 'listRows').mockResolvedValue({ items: [], total: 0 })
+  const measurements = vi
+    .spyOn(dbTables.Measurement, 'listRows')
+    .mockRejectedValue(new Error('old samples unavailable'))
+  const analysis = vi
+    .spyOn(dbTables.CalculationData, 'analysis')
+    .mockRejectedValue(new Error('old samples unavailable'))
+  const analysisStatus = vi
+    .spyOn(dbTables.CalculationData, 'analysisStatus')
+    .mockRejectedValue(new Error('old samples unavailable'))
+  const options = { experimentId: 3, queryScope: 'user:test' as const, queryClient, savedModel: true }
+  const context = await loadPredictionContextData(options)
+  expect(await loadPredictionContextFingerprint(options)).toBe(context.fingerprint)
+  expect(context.measurements).toEqual([])
+  expect(measurements).not.toHaveBeenCalled()
+  expect(analysis).not.toHaveBeenCalled()
+  expect(analysisStatus).not.toHaveBeenCalled()
+  queryClient.clear()
 })

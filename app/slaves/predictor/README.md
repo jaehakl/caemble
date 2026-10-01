@@ -3,34 +3,46 @@
 This launcher executable prepares and persists CPU NumPy kNN models. Dataset files and
 model artifacts live outside process memory. Releasing a model handle never deletes files.
 
-## Protocol v1
+## Protocol v2
 
 Use the existing SDK `DataChannelMessage`, attachment transport and request cancellation.
-Each request payload has `protocolVersion: 1`, `requestId: string`, and (except hello)
+Each request payload has `protocolVersion: 2`, `requestId: string`, and (except hello)
 `sessionId: string` from hello. Responses use `<request type>.result` and preserve the
 SDK message ID. Successful payloads add `protocolVersion`, `requestId`, `sessionId`.
 Errors use the same result type and `{error: {code, message}}`; no local paths or tokens
 are returned. An instance is `{executionId:'remote-knn',sessionId,generation,handle}`.
 
 ```ts
-type DatasetRef = { datasetId: string; revision: number; fingerprint: string }
+type DatasetRef = { datasetId: string; revision: number; fingerprint: string };
 type Grant = {
-  manifest_url: string; object_url_template: string; token: string;
-  dataset_id: string; revision: number; fingerprint: string;
-  manifest_sha256: string; expires_at?: string | number;
-  grant_id?: string; refresh_url?: string
-}
+  manifest_url: string;
+  object_url_template: string;
+  token: string;
+  dataset_id: string;
+  revision: number;
+  fingerprint: string;
+  manifest_sha256: string;
+  expires_at?: string | number;
+  grant_id?: string;
+  refresh_url?: string;
+};
 type Prepare = {
   dataset: DatasetRef | { grant: Grant };
-  direction: 'forward' | 'inverse';
+  direction: "forward" | "inverse";
   definition: PredictionModelDefinition;
-  model: { modelId: string; revision: number; operationId: string; name: string }
-}
+  model: {
+    modelId: string;
+    revision: number;
+    operationId: string;
+    name: string;
+  };
+};
 // predictor.hello {} -> {sessionId,storageId,launcherId,implementationVersion,
 //   preprocessingVersion,capabilities,datasets,models}
 // dataset.import {importId:string,experimentId?:number} or {grant:Grant} -> {dataset:DatasetRef & summary}
 // dataset.list {} -> {datasets:summary[]}
 // dataset.sync {datasetId:string,experimentId?:number} -> {dataset:DatasetRef & summary}
+// dataset.preview {datasetId:string,experimentId?:number} -> {added:number,changed:number,removed:number}
 // dataset.delete {datasetId:string} -> {deleted:true}
 // model.prepare Prepare -> {...PreparedPredictionModel,artifact:Artifact}
 // model.load {modelId:string,revision:number,manifestChecksum?:string} -> {...PreparedPredictionModel,artifact:Artifact}
@@ -40,14 +52,25 @@ type Prepare = {
 // model.list {} -> {models:Artifact[]}
 // model.delete {modelId:string,revision?:number} -> {deleted:true}
 type Artifact = {
-  modelId:string; revision:number; operationId:string; name:string;
-  direction:'forward'|'inverse'; algorithm:'knn'; definition:PredictionModelDefinition;
-  datasetId:string; datasetRevision:number; datasetFingerprint:string;
-  storageId:string; launcherId:string; manifestChecksum:string; formatVersion:1;
-  files:{name:string;sha256:string;byteLength:number}[];
-  profile:PredictionModelProfile; inputLayouts:PredictionTensorLayout[];
-  outputLayouts:PredictionTensorLayout[]
-}
+  modelId: string;
+  revision: number;
+  operationId: string;
+  name: string;
+  direction: "forward" | "inverse";
+  algorithm: "knn";
+  definition: PredictionModelDefinition;
+  datasetId: string;
+  datasetRevision: number;
+  datasetFingerprint: string;
+  storageId: string;
+  launcherId: string;
+  manifestChecksum: string;
+  formatVersion: 1;
+  files: { name: string; sha256: string; byteLength: number }[];
+  profile: PredictionModelProfile;
+  inputLayouts: PredictionTensorLayout[];
+  outputLayouts: PredictionTensorLayout[];
+};
 ```
 
 The direction-neutral Dataset manifest is `kind: 'caemble.prediction.dataset', version: 1`
@@ -88,11 +111,60 @@ a new local Dataset from the same source.
 The Workbench supplies `experimentId` to reject an import or sync from another Experiment
 before publishing it.
 
-Owner-scoped native file locks serialize preparation, loading, synchronization and
-cleanup across Predictor processes. In-memory prediction does not take that lock.
+Owner-scoped native file locks protect publication, pointer updates and cleanup.
+Model preparation, loading and portable transfers hold revision read leases while
+doing long reads; their hashing and network transfer do not hold the owner lock.
+Independent operation locks serialize retries of the same operation across processes.
+In-memory prediction does not take the disk lock.
 Every loaded model handle holds a small PID/process-start lease; deletion is rejected
 until all live sessions release their handles. Leases from terminated processes are
 pruned when deletion is retried, so restarting a launcher does not strand its files.
+
+## Portable copies and operations
+
+Protocol v2 is deployed together with the API and UI. Existing artifact files remain
+format v1 and are preserved byte for byte. A portable archive is a deterministic
+`ZIP_STORED` file containing `package.json`, the original `manifest.json`, and the
+manifest's exact file inventory. Model and optional Dataset use separate archives,
+so deleting a Dataset copy does not require rewriting its model backup.
+Archive inspection rejects extra/duplicate/case-colliding paths, links, compressed
+or encrypted entries, unknown versions, mismatched hashes and invalid NumPy headers.
+NumPy loading never enables pickle. Storage identity, leases, process handles and
+grants are excluded from the archive.
+
+Management uses a separate short-lived Predictor job and the existing SDK. The
+browser sends only scoped operation grants and metadata; the slave streams checked
+8 MiB object chunks directly through API-issued storage URLs. Account credentials
+and local filesystem paths are never accepted. API metadata lists need no job.
+
+```ts
+// artifact.backup {operationId, grant, model:{modelId,revision,manifestChecksum},
+//   includeDataset, slots?:('model'|'dataset')[],
+//   datasetSource?:{local:DatasetRef}|{grant:Grant}|{backup:OperationGrant}}
+// artifact.restore {operationId, grant}
+// artifact.remove {operationId, grant, replicaId, kind:'model'|'dataset',identity,revision}
+// artifact.verify {kind:'model'|'dataset',identity,revision,manifestChecksum?}
+//   -> {state:'present'|'missing'|'corrupt',artifact?,storageId,launcherId,error?}
+// operation.inspect {operationId,grant?} -> {receipt:OperationReceipt|null,operation?}
+```
+
+Backup and restore return `{receipt, operation}`. Durable receipts record completed
+files separately from API registration; interrupted registration retries use the
+same operation and revision without retraining. Completed backup archives are kept
+locally until cloud registration succeeds, then removed from the operation staging
+area. A stopped process leaves recoverable staging that the next retry cleans.
+Inspection with the same operation grant reconciles registration and removes staged
+archives on both participants after a backup sourced from two launchers completes.
+Management cancellation belongs to its dedicated job and never releases unrelated
+prediction instances. Panel close does not cancel that job.
+
+Normal Dataset synchronization still retains only the latest payload. Explicitly
+restored revisions have independent retention markers and remain usable without
+changing a newer latest pointer. `artifact.remove` removes only the authorized copy
+and leaves no logical deletion tombstone, so an active revision can later be restored
+again. `dataset.import` continues to create a new identity; it is not restoration.
+`hello` and list responses inspect metadata and lengths with `verified:false`;
+`artifact.verify` performs explicit complete checksum verification.
 
 ## Numerical contract
 

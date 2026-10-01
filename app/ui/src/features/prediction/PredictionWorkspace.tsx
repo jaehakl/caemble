@@ -1,5 +1,7 @@
 import { BrowserPredictionExecution } from './browserExecution'
 import { RemotePredictionExecution } from './remoteExecution'
+import { usePredictionAssets } from './usePredictionAssets'
+import { PredictionModelSummary } from './PredictionModelSummary'
 import { RemotePredictionSettings } from './RemotePredictionSettings'
 import { reconcileRemoteAssets } from './remoteAssets'
 import { restorePredictionSetup, persistPredictionSetup } from './setupPersistence'
@@ -21,9 +23,15 @@ import {
   predictionForwardResultIsCurrent,
   predictionVarsLayouts,
   predictionVarsSamples,
+  calculationOutputSample,
 } from './data'
 import { emitPredictionCohortDiagnostics } from './diagnostics'
-import { comparePredictionOutput, inverseValidationAggregateErrorFromScales, predictionOutputRange } from './metrics'
+import {
+  calculationOutputContract,
+  comparePredictionOutput,
+  inverseValidationAggregateErrorFromScales,
+  predictionOutputRange,
+} from './metrics'
 import {
   PredictionCalculationPane,
   PredictionDetailsDialog,
@@ -38,14 +46,21 @@ import {
   loadPredictionContextData,
   loadPredictionContextFingerprint,
   loadPredictionValidationData,
+  loadPredictionSelectedTargets,
+  loadPredictionSamplingMeasurements,
   type PredictionContext,
 } from './predictionContextData'
 import type { PredictionSamplingRange } from './sampling'
 import { PredictionTrainingChangedError } from './trainingSnapshot'
-import { usePredictionController, type PredictionForwardRecordProfile } from './usePredictionController'
+import {
+  usePredictionController,
+  type PredictionExecutionBinding,
+  type PredictionForwardRecordProfile,
+} from './usePredictionController'
 import { initialPredictionResults, predictionResultsReducer, type ValidationRow } from './results'
 import {
   defaultPredictionSetup as defaultSetup,
+  predictionSetupFingerprint,
   usePredictionModels,
   type PredictionSetup,
   type PredictionRecordedPreview,
@@ -190,10 +205,13 @@ export function PredictionWorkspace({
   const userChangedVarsRef = useRef(false)
   const cancelMeasurementRef = useRef(workbench.measurementActions.cancel)
   const cancelCalculationDataRef = useRef(workbench.calculationDataActions.cancel)
-  const clearModelCaches = useCallback(() => {
-    runtime.clearModelCaches()
-    dispatchResults({ type: 'model-caches-cleared' })
-  }, [runtime])
+  const clearModelCaches = useCallback(
+    (modelDirection?: PredictionDirection) => {
+      runtime.clearModelCaches(modelDirection)
+      if (modelDirection !== 'inverse') dispatchResults({ type: 'model-caches-cleared' })
+    },
+    [runtime],
+  )
 
   const [context, setContext] = useState<PredictionContext | null>(null)
   const contextRef = useRef(context)
@@ -206,8 +224,7 @@ export function PredictionWorkspace({
   const [predictionRefreshRevision, setPredictionRefreshRevision] = useState(0)
   const handledPredictionRefreshRevision = useRef(0)
   const [setupOpen, setSetupOpen] = useState(false)
-  const [assetBusy, setAssetBusy] = useState(false)
-  const [remoteConnected, setRemoteConnected] = useState(false)
+  const [remoteConnected, setRemoteConnected] = useState<Partial<Record<PredictionDirection, boolean>>>({})
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [detailsDirection, setDetailsDirection] = useState<PredictionDirection>('forward')
   const [setupBusyAction, setSetupBusyAction] = useState<PredictionSetupBusyAction>(null)
@@ -232,6 +249,51 @@ export function PredictionWorkspace({
   const experimentId = workbench.experimentId
   const experimentIdRef = useRef(experimentId)
   const queryScope = usePrivateQueryScope()
+  const assets = usePredictionAssets(authenticated ? queryScope : null, experimentId, onActivity)
+  assets.currentSelectionKey = predictionFingerprint([setup, setupDraft, direction])
+  const selectionMeasurementRef = useRef(workbench.selectionContext?.measurementId ?? null)
+  selectionMeasurementRef.current = workbench.selectionContext?.measurementId ?? null
+  const configureExecutions = useCallback(
+    (next: PredictionSetup) => {
+      const bindings: Partial<Record<PredictionDirection, PredictionExecutionBinding>> = {}
+      for (const modelDirection of ['forward', 'inverse'] as const) {
+        if (next.executionId === 'browser-knn') {
+          bindings[modelDirection] = { key: 'browser-knn', create: () => new BrowserPredictionExecution() }
+          continue
+        }
+        const route = next.routes?.[modelDirection]
+        if (!route) continue
+        bindings[modelDirection] = {
+          key: `remote:${route.launcherId}:${route.storageId}`,
+          create: () =>
+            new RemotePredictionExecution(route.launcherId, {
+              storageId: route.storageId,
+              onHello: reconcileRemoteAssets,
+              onWarning: (message) =>
+                onActivity?.({ source: 'prediction', level: 'warning', phase: 'assets', message }),
+              onState: (state, message) => {
+                setRemoteConnected((previous) => ({
+                  ...previous,
+                  ...Object.fromEntries(
+                    (['forward', 'inverse'] as const)
+                      .filter(
+                        (item) =>
+                          next.routes?.[item]?.launcherId === route.launcherId &&
+                          next.routes?.[item]?.storageId === route.storageId,
+                      )
+                      .map((item) => [item, state === 'connected']),
+                  ),
+                }))
+                if (state === 'failed' && message)
+                  onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
+              },
+            }),
+        }
+      }
+      runtime.setExecutions(bindings)
+    },
+    [onActivity, runtime],
+  )
   const predictionEnabled =
     setup.executionId !== 'browser-knn' ||
     (browserActivation?.experimentId === experimentId && browserActivation?.queryScope === queryScope)
@@ -316,7 +378,7 @@ export function PredictionWorkspace({
   const viewerContextKey = predictionFingerprint([
     sourceIdentity,
     setup.executionId === 'remote-knn' ? selectedCalculationContractFingerprint : context?.fingerprint,
-    setup,
+    predictionSetupFingerprint(setup),
     varsSchema,
   ])
   const viewerContextRef = useRef(viewerContextKey)
@@ -461,7 +523,7 @@ export function PredictionWorkspace({
   }, [active, lifecycleRef, cancelCurrent, runtime, setFreshnessPending])
 
   const reloadData = useCallback(
-    async (options: Readonly<{ automatic?: boolean; preserveValidation?: boolean }> = {}) => {
+    async (options: Readonly<{ automatic?: boolean; preserveValidation?: boolean; savedModel?: boolean }> = {}) => {
       if (!dataReadable || experimentId === null) {
         setContext(null)
         setStatus(
@@ -478,6 +540,7 @@ export function PredictionWorkspace({
       startOperation('loading', 'Measurement와 CalculationData를 불러오는 중…')
       try {
         const nextContext = await loadPredictionContextData({
+          savedModel: options.savedModel ?? setup.executionId === 'remote-knn',
           experimentId,
           queryClient,
           queryScope,
@@ -510,7 +573,7 @@ export function PredictionWorkspace({
           !preservedValidation ||
           preservedValidation.direction !== direction ||
           preservedValidation.experimentId !== experimentId ||
-          preservedValidation.setupFingerprint !== predictionFingerprint([setup]) ||
+          preservedValidation.setupFingerprint !== predictionSetupFingerprint(setup) ||
           preservedValidation.sourceIdentity !== sourceIdentity ||
           preservedValidation.calculationContractFingerprint !== nextCalculationContractFingerprint
         ) {
@@ -519,6 +582,7 @@ export function PredictionWorkspace({
         validationRef.current = preservedValidation
         dispatchResults({ type: 'context-reloaded', validation: preservedValidation })
         setSetup((current) => {
+          if (current.executionId === 'remote-knn') return current
           const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
           const fallback =
             valid.length > 0
@@ -540,6 +604,7 @@ export function PredictionWorkspace({
           })
         })
         setSetupDraft((current) => {
+          if (current.executionId === 'remote-knn') return current
           const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
           return Object.freeze({
             ...current,
@@ -553,9 +618,11 @@ export function PredictionWorkspace({
           })
         })
         setStatus(
-          measurements.length
-            ? `${measurements.length.toLocaleString()}개 Measurement 준비됨`
-            : 'Recorded Measurement가 없습니다.',
+          (options.savedModel ?? setup.executionId === 'remote-knn')
+            ? '저장 모델 계약 준비됨 · 원본 학습 데이터 없이 예측할 수 있습니다.'
+            : measurements.length
+              ? `${measurements.length.toLocaleString()}개 Measurement 준비됨`
+              : 'Recorded Measurement가 없습니다.',
         )
         setPredictionRefreshRevision((current) => current + 1)
       } catch (cause: unknown) {
@@ -598,18 +665,7 @@ export function PredictionWorkspace({
     const nextSetup = restored ?? defaultSetup
     setSetup(nextSetup)
     setSetupDraft(nextSetup)
-    runtime.setExecution(() =>
-      nextSetup.executionId === 'remote-knn' && nextSetup.launcherId
-        ? new RemotePredictionExecution(nextSetup.launcherId, {
-            onHello: reconcileRemoteAssets,
-            onState: (state, message) => {
-              setRemoteConnected(state === 'connected')
-              if (state === 'failed' && message)
-                onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
-            },
-          })
-        : new BrowserPredictionExecution(),
-    )
+    configureExecutions(nextSetup)
     clearModelCaches()
     runtime.clearTrainingSnapshots()
     setContext(null)
@@ -619,11 +675,15 @@ export function PredictionWorkspace({
     calculationValuesRef.current = {}
     setCalculationValues({})
     setCalculationPrimaryRevision((current) => current + 1)
-    setDirection('forward')
+    setDirection(
+      nextSetup.executionId === 'remote-knn' && !nextSetup.models?.forward && nextSetup.models?.inverse
+        ? 'inverse'
+        : 'forward',
+    )
     activeForwardVarsFingerprintRef.current = null
     if (active) {
       autoLoadAttemptRef.current = `${dataReadable}:${experimentId ?? 'none'}`
-      void reloadData()
+      void reloadData({ savedModel: nextSetup.executionId === 'remote-knn' })
     }
   }, [experimentId, queryScope])
 
@@ -667,6 +727,7 @@ export function PredictionWorkspace({
     const signal = runtime.fingerprintSignal()
     try {
       const fingerprint = await loadPredictionContextFingerprint({
+        savedModel: setup.executionId === 'remote-knn',
         experimentId,
         queryClient,
         queryScope,
@@ -681,7 +742,13 @@ export function PredictionWorkspace({
         return
       if (fingerprint !== context.fingerprint) {
         if (setup.executionId === 'remote-knn') {
-          const fresh = await loadPredictionContextData({ experimentId, queryClient, queryScope, signal })
+          const fresh = await loadPredictionContextData({
+            experimentId,
+            queryClient,
+            queryScope,
+            signal,
+            savedModel: true,
+          })
           if (!runtime.fingerprintCheckIsCurrent(checkRevision) || contextRef.current !== context) return
           setContext(fresh)
           setStatus('원본 변경 감지 · Dataset 동기화와 모델 업데이트를 명시적으로 실행하세요.')
@@ -923,6 +990,7 @@ export function PredictionWorkspace({
       startOperation('inverse', 'Inverse · Vars를 예측하는 중…', { direction: 'inverse' })
       try {
         const prediction = await predictInverse(targets, transaction)
+        if (!runtime.transactionIsCurrent(transaction)) return
         const { model, result } = prediction
         const nextVars = Object.freeze(
           Object.fromEntries(
@@ -937,6 +1005,13 @@ export function PredictionWorkspace({
         dispatchResults({ type: 'inverse-completed', result, fingerprint: nextFingerprint })
         setGuideProgress((current) => ({ ...current, inverse: true }))
         rememberProfile(model.profile, model.fingerprint)
+        if (setup.executionId === 'remote-knn' && !setup.models?.forward) {
+          dispatchResults({ type: 'surrogate-failed' })
+          setStatus(
+            'Inverse 완료 · Target과 실제 결과를 Save & Run으로 비교할 수 있습니다. Re-predicted에는 Forward 모델이 필요합니다.',
+          )
+          return
+        }
         setStatus('Inverse 완료 · Viewer를 갱신하고 surrogate를 계산하는 중…')
         try {
           const deadline = Date.now() + 30_000
@@ -977,7 +1052,7 @@ export function PredictionWorkspace({
             await reloadChangedTraining()
             return
           }
-          clearModelCaches()
+          clearModelCaches('forward')
           dispatchResults({ type: 'surrogate-failed' })
           setStatus(`Inverse 완료 · surrogate unavailable: ${cause instanceof Error ? cause.message : String(cause)}`)
         }
@@ -1009,6 +1084,8 @@ export function PredictionWorkspace({
       runtime,
       setStatus,
       setup.calculationIds,
+      setup.executionId,
+      setup.models,
       varsSchema,
       workbench,
       startOperation,
@@ -1216,13 +1293,6 @@ export function PredictionWorkspace({
         effectiveSamplingRanges,
         total,
       ])
-      const centers = context.measurements.flatMap((measurement) => {
-        try {
-          return [predictionVarsSamples(measurement.vars as Readonly<Vars>, varsSchema)]
-        } catch {
-          return []
-        }
-      })
       let successes = 0
       let failures = 0
       let recorded = 0
@@ -1246,6 +1316,18 @@ export function PredictionWorkspace({
       })
       validationRef.current = null
       try {
+        const measurements =
+          setup.executionId === 'remote-knn'
+            ? await loadPredictionSamplingMeasurements(queryClient, queryScope, context.experimentId)
+            : context.measurements
+        if (!runtime.samplingIsCurrent(revision)) return
+        const centers = measurements.flatMap((measurement) => {
+          try {
+            return [predictionVarsSamples(measurement.vars as Readonly<Vars>, varsSchema)]
+          } catch {
+            return []
+          }
+        })
         const profile = await runtime.startSampling(sessionId, {
           fingerprint,
           totalAttempts: total,
@@ -1350,7 +1432,10 @@ export function PredictionWorkspace({
           })
           if (recorded === 0) skipNextPredictionBusyCheckRef.current = true
           if (recorded === 0 && candidateVarsRef.current) {
-            window.setTimeout(() => void runForward(candidateVarsRef.current!), 0)
+            window.setTimeout(() => {
+              if (direction === 'inverse') void runInverse(calculationValuesRef.current)
+              else void runForward(candidateVarsRef.current!)
+            }, 0)
           }
         }
       }
@@ -1358,16 +1443,21 @@ export function PredictionWorkspace({
     [
       clearModelCaches,
       context,
+      direction,
       effectiveSamplingRanges,
       finishOperation,
       onActivity,
+      queryClient,
+      queryScope,
       runForward,
+      runInverse,
       runtime,
       samplingDisabledReason,
       setFreshnessPending,
       setSamplingProgress,
       setStatus,
       sourceIdentity,
+      setup.executionId,
       startOperation,
       varsSchema,
       workbench,
@@ -1516,7 +1606,7 @@ export function PredictionWorkspace({
         rows: Object.freeze(rows),
         snapshotFingerprint,
         sourceFingerprints: Object.freeze(Object.fromEntries(sourceFingerprintEntries)),
-        setupFingerprint: predictionFingerprint([frozenSetup]),
+        setupFingerprint: predictionSetupFingerprint(frozenSetup),
         sourceIdentity: frozenSourceIdentity,
         summary,
         transactionId: frozenTransactionId,
@@ -1694,8 +1784,8 @@ export function PredictionWorkspace({
   }, [command?.id])
 
   const setupDraftError = useMemo(() => {
-    if (setupDraft.executionId === 'remote-knn' && (!authenticated || !setupDraft.launcherId))
-      return '로그인 후 Predictor 장비를 선택하세요.'
+    if (setupDraft.executionId === 'remote-knn' && !authenticated) return '로그인 후 저장 모델을 선택하세요.'
+    if (setupDraft.executionId === 'remote-knn') return null
     if (!setupDraft.calculationIds.length) return 'Calculation을 하나 이상 선택하세요.'
     if (
       setupDraft.calculationIds.some(
@@ -1720,13 +1810,84 @@ export function PredictionWorkspace({
     }
     return null
   }, [authenticated, context, setupDraft])
-  const setupDraftApplied = predictionFingerprint([setupDraft]) === predictionFingerprint([setup])
+  const setupDraftApplied = predictionSetupFingerprint(setupDraft) === predictionSetupFingerprint(setup)
 
   const initializeMissingInverseTargets = useCallback(async () => {
     if (!predictionEnabled) return
-    const missingIds = setup.calculationIds.filter((id) => !calculationValuesRef.current[id])
+    const compatibleTargets: Record<number, CalculationDataOutput> = {}
+    for (const id of setup.calculationIds) {
+      const target = calculationValuesRef.current[id]
+      const layout = context?.calculations.find((item) => item.id === id)?.output_layout
+      if (!target || !layout) continue
+      try {
+        calculationOutputSample(id, target)
+        if (
+          predictionFingerprint([calculationOutputContract(layout)]) ===
+          predictionFingerprint([calculationOutputContract(target)])
+        )
+          compatibleTargets[id] = target
+      } catch {
+        /* A changed input contract requires an explicit new Target. */
+      }
+    }
+    calculationValuesRef.current = Object.freeze(compatibleTargets)
+    setCalculationValues(calculationValuesRef.current)
+    const missingIds = setup.calculationIds.filter((id) => !compatibleTargets[id])
     if (!missingIds.length) {
       await runInverse(calculationValuesRef.current)
+      return
+    }
+    if (setup.executionId === 'remote-knn' && !setup.models?.forward) {
+      const transaction = runtime.beginTransaction()
+      const measurementId = selectionMeasurementRef.current
+      const targetRevision = runtime.currentPrimaryRevision()
+      const next = { ...calculationValuesRef.current }
+      if (measurementId !== null && experimentId !== null) {
+        setStatus('선택한 실제 CalculationData로 비어 있는 Target을 준비하는 중…')
+        try {
+          const actual = await loadPredictionSelectedTargets(
+            experimentId,
+            measurementId,
+            missingIds,
+            runtime.transactionSignal(),
+          )
+          if (
+            !runtime.transactionIsCurrent(transaction) ||
+            targetRevision !== runtime.currentPrimaryRevision() ||
+            selectionMeasurementRef.current !== measurementId
+          )
+            return
+          for (const row of actual) {
+            const layout = context?.calculations.find((item) => item.id === row.calculation_id)?.output_layout
+            if (
+              !layout ||
+              next[row.calculation_id] ||
+              predictionFingerprint([calculationOutputContract(layout)]) !==
+                predictionFingerprint([calculationOutputContract(row.data)])
+            )
+              continue
+            try {
+              calculationOutputSample(row.calculation_id, row.data)
+              next[row.calculation_id] = row.data
+            } catch {
+              /* Invalid actual data leaves this Target for explicit input. */
+            }
+          }
+        } catch (cause) {
+          if (!runtime.transactionIsCurrent(transaction)) return
+          onActivity?.({
+            source: 'prediction',
+            level: 'warning',
+            phase: 'targets',
+            message: `실제 Target을 읽지 못했습니다. 직접 입력할 수 있습니다. ${cause instanceof Error ? cause.message : String(cause)}`,
+          })
+        }
+      }
+      calculationValuesRef.current = Object.freeze(next)
+      setCalculationValues(calculationValuesRef.current)
+      dispatchResults({ type: 'targets-initialized', errors: {} })
+      if (setup.calculationIds.every((id) => next[id])) await runInverse(next)
+      else setStatus('Inverse 대기 · 비어 있는 Target을 직접 입력하세요. Forward 모델은 필요하지 않습니다.')
       return
     }
     if (!candidateVars) {
@@ -1777,8 +1938,11 @@ export function PredictionWorkspace({
   }, [
     candidateVars,
     clearModelCaches,
+    context,
+    experimentId,
     finishOperation,
     forwardOutputs,
+    onActivity,
     predictionEnabled,
     receiveRecorded,
     reloadChangedTraining,
@@ -1786,49 +1950,75 @@ export function PredictionWorkspace({
     runtime,
     setStatus,
     setup.calculationIds,
+    setup.executionId,
+    setup.models,
     startOperation,
   ])
 
-  const applySetup = useCallback(() => {
-    if (lifecycleRef.current.freshnessPending || lifecycleRef.current.dataStale) return
-    if (setupDraftError) {
-      toast.error(setupDraftError)
-      return
-    }
-    cancelCurrent()
-    runtime.setExecution(() =>
-      setupDraft.executionId === 'remote-knn' && setupDraft.launcherId
-        ? new RemotePredictionExecution(setupDraft.launcherId, {
-            onHello: reconcileRemoteAssets,
-            onState: (state, message) => {
-              setRemoteConnected(state === 'connected')
-              if (state === 'failed' && message)
-                onActivity?.({ source: 'prediction', level: 'error', phase: 'connection', message })
-            },
-          })
-        : new BrowserPredictionExecution(),
-    )
-    if (experimentId !== null && authenticated) persistPredictionSetup(queryScope, experimentId, setupDraft)
-    setSetup(setupDraft)
-    setBrowserActivation(setupDraft.executionId === 'browser-knn' ? { experimentId, queryScope } : null)
-    setSetupOpen(false)
-    validationRef.current = null
-    dispatchResults({ type: 'setup-applied' })
-    clearModelCaches()
-    activeForwardVarsFingerprintRef.current = null
-    setPredictionRefreshRevision((current) => current + 1)
-  }, [
-    cancelCurrent,
-    clearModelCaches,
-    lifecycleRef,
-    runtime,
-    setupDraft,
-    setupDraftError,
-    experimentId,
-    authenticated,
-    queryScope,
-    onActivity,
-  ])
+  const applySetup = useCallback(
+    (requested?: PredictionSetup, requestedDirection?: PredictionDirection) => {
+      const next = requested ?? setupDraft
+      if (!requested && setupDraftError) {
+        toast.error(setupDraftError)
+        return
+      }
+      const meaningChanged = predictionSetupFingerprint(next) !== predictionSetupFingerprint(setup)
+      const directionChanged = requestedDirection !== undefined && requestedDirection !== direction
+      const previousTransaction = runtime.currentTransaction()
+      const previousOperation = lifecycleRef.current.operation
+      if (meaningChanged || directionChanged) cancelCurrent()
+      configureExecutions(next)
+      if (experimentId !== null && authenticated) persistPredictionSetup(queryScope, experimentId, next)
+      setSetup(next)
+      setSetupDraft(next)
+      setBrowserActivation(next.executionId === 'browser-knn' ? { experimentId, queryScope } : null)
+      setSetupOpen(false)
+      if (next.executionId !== setup.executionId) void reloadData({ savedModel: next.executionId === 'remote-knn' })
+      if (!meaningChanged && !directionChanged && predictionEnabled) {
+        const transaction = runtime.currentTransaction()
+        setViewerState((previous) =>
+          previous?.transaction === previousTransaction ? { ...previous, transaction } : previous,
+        )
+        const predictionOperation = ['idle', 'forward', 'inverse', 'initializing-targets'].includes(previousOperation)
+        if (predictionOperation) {
+          finishOperation({ status: '저장 모델 선택을 유지한 채 설정을 적용했습니다.' })
+          const targetInitializationPending =
+            direction === 'inverse' && setup.calculationIds.some((id) => !calculationValuesRef.current[id])
+          if (transaction !== previousTransaction && (previousOperation !== 'idle' || targetInitializationPending)) {
+            activeForwardVarsFingerprintRef.current = null
+            setPredictionRefreshRevision((current) => current + 1)
+          }
+        }
+        return
+      }
+      if (requestedDirection) setDirection(requestedDirection)
+      else if (next.executionId === 'remote-knn' && !next.models?.forward && next.models?.inverse)
+        setDirection('inverse')
+      validationRef.current = null
+      dispatchResults({ type: 'setup-applied' })
+      clearModelCaches()
+      activeForwardVarsFingerprintRef.current = null
+      setPredictionRefreshRevision((current) => current + 1)
+    },
+    [
+      authenticated,
+      cancelCurrent,
+      clearModelCaches,
+      configureExecutions,
+      direction,
+      experimentId,
+      finishOperation,
+      lifecycleRef,
+      predictionEnabled,
+      queryScope,
+      reloadData,
+      runtime,
+      setDirection,
+      setup,
+      setupDraft,
+      setupDraftError,
+    ],
+  )
 
   useEffect(() => {
     if (
@@ -1836,7 +2026,7 @@ export function PredictionWorkspace({
       !predictionEnabled ||
       !predictionRefreshRevision ||
       !context ||
-      !candidateEvaluationReady ||
+      (direction === 'forward' && !candidateEvaluationReady) ||
       lifecycleRef.current.freshnessPending ||
       lifecycleRef.current.dataStale ||
       handledPredictionRefreshRevision.current === predictionRefreshRevision
@@ -1931,7 +2121,7 @@ export function PredictionWorkspace({
         const validationSnapshotCurrent =
           validation?.direction === direction &&
           validation.experimentId === experimentId &&
-          validation.setupFingerprint === predictionFingerprint([setup]) &&
+          validation.setupFingerprint === predictionSetupFingerprint(setup) &&
           validation.sourceIdentity === sourceIdentity &&
           validation.calculationContractFingerprint === selectedCalculationContractFingerprint
             ? validation
@@ -2030,6 +2220,11 @@ export function PredictionWorkspace({
           constraintMinimum,
           constraintMaximum,
           name: calculation.name,
+          canInitializeTarget:
+            direction === 'inverse' &&
+            setup.executionId === 'remote-knn' &&
+            !committedOutput &&
+            Boolean(calculation.output_layout),
           primary: Object.freeze({
             output,
             role: direction === 'forward' ? 'predicted' : 'target',
@@ -2174,21 +2369,34 @@ export function PredictionWorkspace({
   return (
     <>
       {varsContainer ? createPortal(varsPane, varsContainer) : null}
-      <PredictionCalculationPane
-        disabled={validating || dataStale || freshnessPending}
-        items={paneItems}
-        mode={direction === 'forward' ? 'prediction' : 'target'}
-        resetKey={`${experimentId ?? 'none'}:${calculationPrimaryRevision}`}
-        status={predictionStatus}
-        updating={predictionUpdating}
-        onOutputChange={changeCalculationOutput}
-      />
+      <div className="flex h-full min-h-0 flex-col gap-2">
+        <PredictionModelSummary
+          manager={assets}
+          setup={setup}
+          onManage={() => {
+            setSetupDraft(setup)
+            setSetupOpen(true)
+          }}
+        />
+        <PredictionCalculationPane
+          disabled={validating || dataStale || freshnessPending}
+          items={paneItems}
+          mode={direction === 'forward' ? 'prediction' : 'target'}
+          resetKey={`${experimentId ?? 'none'}:${calculationPrimaryRevision}`}
+          status={predictionStatus}
+          updating={predictionUpdating}
+          onOutputChange={changeCalculationOutput}
+        />
+      </div>
       <PredictionSetupDialog
         algorithmLabel="kNN"
         executionLabel={setupDraft.executionId === 'browser-knn' ? '브라우저' : setupDraft.executionId}
         executionSettings={
           <RemotePredictionSettings
             authenticated={authenticated}
+            manager={assets}
+            direction={direction}
+            onUse={applySetup}
             open={setupOpen}
             context={context}
             varsSchema={varsSchema}
@@ -2201,7 +2409,6 @@ export function PredictionWorkspace({
             setup={setupDraft}
             onChange={setSetupDraft}
             onActivity={onActivity}
-            onBusyChange={setAssetBusy}
             onReconnect={() => {
               cancelCurrent()
               runtime.resetExecution()
@@ -2209,11 +2416,9 @@ export function PredictionWorkspace({
               dispatchResults({ type: 'predictions-invalidated' })
               setStatus('선택한 저장 모델로 Prediction에 다시 연결합니다.')
             }}
-            loadedDirections={
-              remoteConnected
-                ? (['forward', 'inverse'] as const).filter((direction) => Boolean(runtime.cachedModel(direction)))
-                : []
-            }
+            loadedDirections={(['forward', 'inverse'] as const).filter(
+              (item) => remoteConnected[item] && Boolean(runtime.cachedModel(item)),
+            )}
             onBeforeDelete={async () => {
               await runtime.releaseLoadedModels()
               cancelCurrent(true)
@@ -2221,13 +2426,13 @@ export function PredictionWorkspace({
             }}
           />
         }
-        applyDisabled={assetBusy || Boolean(setupDraftError) || dataStale || freshnessPending || validating}
+        applyDisabled={Boolean(setupDraftError) || dataStale || freshnessPending || validating}
         autoK={
           setupDraftApplied && profile?.rowCount
             ? Math.min(15, Math.max(1, Math.round(Math.sqrt(profile.rowCount))))
             : null
         }
-        busyAction={assetBusy ? 'manage-assets' : setupBusyAction}
+        busyAction={setupBusyAction}
         calculateMissingDisabled={
           !setupDraft.calculationIds.length ||
           busy ||
@@ -2295,7 +2500,7 @@ export function PredictionWorkspace({
           setupDraftError ?? (dataStale ? '새 Measurement를 반영하려면 Reload Data가 필요합니다.' : null)
         }
         weighting={setupDraft.algorithm.weighting}
-        onApply={applySetup}
+        onApply={() => applySetup()}
         onCalculateMissing={() => (authenticated ? void calculateMissing() : onRequestLogin())}
         onCalculationSelectedChange={(calculationId, selected) =>
           setSetupDraft((current) => {

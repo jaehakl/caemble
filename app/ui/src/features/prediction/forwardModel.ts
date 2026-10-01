@@ -5,7 +5,12 @@ import type { RecordedResultContracts } from '@/contracts/results'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { predictedRecordedData, predictionFingerprint } from './data'
 import { emitPredictionCohortDiagnostics, emitPredictionQueryDiagnostics } from './diagnostics'
-import type { PredictionAlgorithm, PredictionModelProfile, SavedPredictionModel } from './execution'
+import type {
+  PredictionAlgorithm,
+  PredictionExecutionRoute,
+  PredictionModelProfile,
+  SavedPredictionModel,
+} from './execution'
 import { assertSavedPredictionCompatible } from './savedModels'
 import type { PredictionContext } from './predictionContextData'
 import { loadTrainingSnapshot } from './trainingSnapshot'
@@ -28,6 +33,7 @@ export type ForwardBuildOptions = Readonly<{
     algorithm: PredictionAlgorithm
     executionId: string
     models?: Readonly<Partial<Record<'forward' | 'inverse', SavedPredictionModel>>>
+    routes?: Readonly<Partial<Record<'forward' | 'inverse', PredictionExecutionRoute>>>
   }>
   checkFreshness?: () => Promise<string>
   onActivity?: RuntimeActivityCallback
@@ -51,14 +57,14 @@ export async function buildForwardModel({
   onProfile,
 }: ForwardBuildOptions): Promise<PredictionForwardModelBundle> {
   if (!runtime.transactionIsCurrent(transaction)) throw new DOMException('Stale Prediction transaction', 'AbortError')
-  if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.executionAvailable)
+  if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.executionAvailableFor('forward'))
     throw new Error('Forward 모델 context가 준비되지 않았습니다.')
   if (!requiredRecordIds.length) throw new Error('선택한 Calculation이 사용하는 ExperimentRecord가 없습니다.')
   if (setup.executionId === 'remote-knn') {
     const reference = setup.models?.forward
     if (!reference) throw new Error('Forward 저장 모델을 선택하거나 만드세요.')
     assertSavedPredictionCompatible(reference, context, varsSchema, requiredRecordIds, [])
-    const model = await runtime.loadModel(reference, transaction)
+    const model = await runtime.loadModel(reference, transaction, setup.routes?.forward)
     onForwardRecordProfilesChange(model.recordProfiles)
     onProfile(model.profile, model.fingerprint)
     return model
@@ -77,7 +83,7 @@ export async function buildForwardModel({
         recordedData,
         resultContracts,
         signal: runtime.transactionSignal(),
-        policy: runtime.trainingPolicy,
+        policy: runtime.trainingPolicyFor('forward'),
         checkFreshness,
       }),
     transaction,

@@ -1,9 +1,10 @@
 import { predictionApi } from '@/api/prediction'
 import { ApiError } from '@/api/http'
-import type { PredictionModelRecord } from '@/contracts/api/prediction'
-import type { SavedPredictionModel } from './execution'
+import type { PredictionModelRecord, PredictionStorage } from '@/contracts/api/prediction'
+import type { SavedPredictionModel, PredictionExecutionRoute } from './execution'
 import { savedPredictionReferenceSchema } from './savedModels'
 import { profileJson, type RemoteArtifact, type RemoteHello } from './remoteProtocol'
+import type { PredictionSetup } from './usePredictionModels'
 
 export function registerRemoteArtifact(artifact: RemoteArtifact) {
   return predictionApi.complete(artifact.modelId, artifact.revision, {
@@ -14,6 +15,7 @@ export function registerRemoteArtifact(artifact: RemoteArtifact) {
     input_layouts: artifact.inputLayouts,
     output_layouts: artifact.outputLayouts,
     format_version: artifact.formatVersion,
+    verified: artifact.verified !== false,
   })
 }
 
@@ -26,7 +28,8 @@ export async function reconcileRemoteAssets(hello: RemoteHello) {
       await registerRemoteArtifact(artifact)
     } catch (error) {
       // Tombstones win over stale local registrations. Explicit deletion remains retryable.
-      if (!(error instanceof ApiError) || (error.status !== 410 && error.status !== 404)) throw error
+      // A stale/conflicting receipt must not prevent explicit verification or removal.
+      if (!(error instanceof ApiError) || ![404, 409, 410].includes(error.status)) throw error
     }
   }
   for (const dataset of hello.datasets) {
@@ -46,9 +49,11 @@ export async function reconcileRemoteAssets(hello: RemoteHello) {
         launcher_id: hello.launcherId,
         sample_count: dataset.sampleCount,
         source_contracts: dataset.sourceContracts,
+        verified: dataset.verified !== false,
+        payload_available: dataset.payloadAvailable !== false,
       })
     } catch (error) {
-      if (!(error instanceof ApiError) || (error.status !== 410 && error.status !== 404)) throw error
+      if (!(error instanceof ApiError) || ![404, 409, 410].includes(error.status)) throw error
     }
   }
 }
@@ -58,7 +63,7 @@ export function savedModelReference(
   revision = model.current_revision,
 ): SavedPredictionModel {
   const item = model.revisions.find((entry) => entry.revision === revision && entry.state === 'ready')
-  if (!item || !model.storage_id || !model.launcher_id) throw new Error('완성된 저장 모델 revision이 없습니다.')
+  if (!item) throw new Error('완성된 저장 모델 revision이 없습니다.')
   return savedPredictionReferenceSchema.parse({
     modelId: model.id,
     modelRevision: revision,
@@ -66,9 +71,60 @@ export function savedModelReference(
     datasetRevision: item.dataset_revision,
     direction: model.direction,
     fingerprint: item.definition.fingerprint,
-    storageId: model.storage_id,
-    launcherId: model.launcher_id,
     contract: item.definition.contract,
     manifestChecksum: item.artifact?.manifest_sha256,
   })
+}
+
+export function modelExecutionRoutes(
+  model: PredictionModelRecord,
+  revision: number,
+  storages: readonly PredictionStorage[],
+) {
+  const item = model.revisions.find((entry) => entry.revision === revision)
+  return (item?.replicas ?? []).flatMap((replica) => {
+    const storage = storages.find((entry) => entry.storage_id === replica.storage_id)
+    if (!storage || storage.kind !== 'predictor_local' || replica.state === 'deleted' || replica.state === 'deleting')
+      return []
+    return storage.accesses.map((access) => ({
+      replicaId: replica.id,
+      storageId: replica.storage_id,
+      launcherId: access.launcher_id,
+      name: storage.name,
+      connected: access.connected,
+      state: replica.state,
+    }))
+  })
+}
+
+export function preferredModelRoute(
+  model: PredictionModelRecord,
+  revision: number,
+  storages: readonly PredictionStorage[],
+  preferred?: PredictionExecutionRoute,
+): PredictionExecutionRoute | undefined {
+  const routes = modelExecutionRoutes(model, revision, storages)
+  const previous =
+    preferred &&
+    routes.find((route) => route.storageId === preferred.storageId && route.launcherId === preferred.launcherId)
+  const route = previous ?? (routes.length === 1 ? routes[0] : undefined)
+  return route && { replicaId: route.replicaId, storageId: route.storageId, launcherId: route.launcherId }
+}
+
+export function setupUsingSavedModel(
+  setup: PredictionSetup,
+  model: PredictionModelRecord,
+  revision: number,
+  route: PredictionExecutionRoute | undefined,
+): PredictionSetup {
+  const reference = savedModelReference(model, revision)
+  const calculationIds = Object.keys(reference.contract?.calculations ?? {}).map(Number)
+  return {
+    ...setup,
+    executionId: 'remote-knn',
+    datasetId: reference.datasetId,
+    calculationIds: calculationIds.length ? calculationIds : setup.calculationIds,
+    models: { ...setup.models, [model.direction]: reference },
+    routes: { ...setup.routes, [model.direction]: route },
+  }
 }

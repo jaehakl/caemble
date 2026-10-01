@@ -42,12 +42,15 @@ class LocalDatasetRegistration(RequestModel):
     launcher_id: UUID
     sample_count: int = Field(ge=0)
     source_contracts: dict[str, Any]
+    verified: bool = True
+    payload_available: bool = True
 
 
 class StorageRegistration(RequestModel):
     storage_id: UUID
     launcher_id: UUID
     name: str = Field(min_length=1, max_length=200)
+    job_id: UUID | None = None
 
 
 class DatasetGrantRequest(RequestModel):
@@ -81,6 +84,7 @@ class ModelComplete(RequestModel):
     input_layouts: Any
     output_layouts: Any
     format_version: Literal[1] = 1
+    verified: bool = True
 
 
 class DeleteRequest(RequestModel):
@@ -92,3 +96,49 @@ class DeleteRequest(RequestModel):
 class ModelLeaseRequest(RequestModel):
     job_id: UUID
     revision: int = Field(ge=1)
+    replica_id: UUID | None = None
+    storage_id: UUID | None = None
+
+
+class ReplicaRegistration(RequestModel):
+    asset_kind: Literal["model", "dataset"]
+    asset_id: UUID
+    revision: int = Field(ge=1)
+    storage_id: UUID
+    launcher_id: UUID
+    state: Literal["present", "missing", "corrupt"] = "present"
+    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    artifact: dict[str, Any] | None = None
+
+
+class OperationCreate(RequestModel):
+    request_id: UUID
+    kind: Literal["backup", "restore", "delete_replica", "delete_asset", "verify"]
+    asset_kind: Literal["model", "dataset"] = "model"
+    asset_id: UUID
+    revision: int | None = Field(default=None, ge=1)
+    source_replica_id: UUID | None = None
+    source_launcher_id: UUID | None = None
+    target_storage_id: UUID | None = None
+    target_launcher_id: UUID | None = None
+    include_dataset: bool = False
+    dataset_source_replica_id: UUID | None = None
+    dataset_source_launcher_id: UUID | None = None
+    replica_id: UUID | None = None
+
+
+class ArchiveUpload(RequestModel):
+    manifest: dict[str, Any]
+    artifact: dict[str, Any]
+    dataset: dict[str, Any] | None = None
+
+
+class OperationComplete(RequestModel):
+    model: dict[str, Any] | None = None
+    dataset: dict[str, Any] | None = None
+    replica_id: UUID | None = None
+    receipt: dict[str, Any] | None = None
+
+
+class AssetRename(RequestModel):
+    name: str = Field(min_length=1, max_length=200)

@@ -1,8 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { GpStationClient, type LauncherView } from '@gpstation/v1-master-js-sdk'
-import { browserClient } from '@/api/http'
-import { predictionApi } from '@/api/prediction'
-import type { PredictionDatasetGrant, PredictionDatasetRecord, PredictionModelRecord } from '@/contracts/api/prediction'
+import { useState, useSyncExternalStore } from 'react'
+import type { PredictionModelRecord } from '@/contracts/api/prediction'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { RecordedDataRule, VarsSchemaEntry } from '@/lib/cad/model'
@@ -11,28 +8,13 @@ import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import type { PredictionContext } from './predictionContextData'
 import type { PredictionSetup } from './usePredictionModels'
 import type { PredictionDirection } from './types'
-import { RemotePredictionExecution, type RemotePredictionState } from './remoteExecution'
-import { reconcileRemoteAssets, registerRemoteArtifact, savedModelReference } from './remoteAssets'
-import { assertSavedPredictionCompatible, savedContractFromSource } from './savedModels'
-import { predictionFingerprint } from './data'
-import { remoteDatasetSchema, type RemoteHello } from './remoteProtocol'
+import type { PredictionAssetController } from './assetManagement'
+import { createPredictionModel } from './assetCreation'
+import { PredictionModelManager } from './PredictionModelManager'
+import { PredictionDatasetManager } from './PredictionDatasetManager'
+import { PredictionAssetTasks } from './PredictionAssetTasks'
 
-export function RemotePredictionSettings({
-  authenticated,
-  open,
-  context,
-  sourceHash,
-  varsSchema,
-  rules,
-  resultContracts,
-  setup,
-  onChange,
-  onBeforeDelete,
-  onActivity,
-  onBusyChange,
-  loadedDirections = [],
-  onReconnect,
-}: Readonly<{
+export type PredictionAssetSettingsProps = Readonly<{
   authenticated: boolean
   open: boolean
   context: PredictionContext | null
@@ -42,581 +24,295 @@ export function RemotePredictionSettings({
   resultContracts: RecordedResultContracts
   setup: PredictionSetup
   onChange: (setup: PredictionSetup) => void
-  onBeforeDelete: () => Promise<void>
+  onUse?: (setup: PredictionSetup, direction?: PredictionDirection) => void
+  manager: PredictionAssetController
+  direction?: PredictionDirection
+  onBeforeDelete?: () => Promise<void>
   onActivity?: RuntimeActivityCallback
   onBusyChange?: (busy: boolean) => void
   loadedDirections?: readonly PredictionDirection[]
   onReconnect?: () => void
-}>) {
-  const [launchers, setLaunchers] = useState<LauncherView[]>([])
-  const [datasets, setDatasets] = useState<PredictionDatasetRecord[]>([])
-  const [models, setModels] = useState<PredictionModelRecord[]>([])
+}>
+
+export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
+  const {
+    authenticated,
+    open,
+    context,
+    sourceHash,
+    varsSchema,
+    rules,
+    resultContracts,
+    setup,
+    onChange,
+    onUse,
+    manager,
+    direction = 'forward',
+  } = props
+  const state = useSyncExternalStore(manager.subscribe, manager.getSnapshot)
+  const [tab, setTab] = useState<'models' | 'datasets' | 'operations'>('models')
+  const [creationOpen, setCreationOpen] = useState(false)
+  const [newDirection, setNewDirection] = useState(direction)
+  const [launcherId, setLauncherId] = useState('')
   const [datasetId, setDatasetId] = useState(setup.datasetId ?? '')
+  const [datasetRevision, setDatasetRevision] = useState<number | undefined>()
   const [name, setName] = useState('')
-  const [importId, setImportId] = useState('')
-  const [files, setFiles] = useState<RemoteHello | null>(null)
-  const [working, setWorking] = useState<string | null>(null)
-  const [message, setMessage] = useState('')
-  const [connection, setConnection] = useState<RemotePredictionState>('disconnected')
-  const executionRef = useRef<RemotePredictionExecution | null>(null)
-  const operationRef = useRef<AbortController | null>(null)
-  const dataset = datasets.find((item) => item.id === datasetId)
-  const enabled = authenticated && open && setup.executionId === 'remote-knn'
-  useEffect(() => {
-    setDatasetId(setup.datasetId ?? '')
-  }, [setup.datasetId, context?.experimentId])
-  useEffect(() => {
-    onBusyChange?.(Boolean(working))
-    return () => onBusyChange?.(false)
-  }, [working, onBusyChange])
-
-  const refresh = useCallback(async () => {
-    if (!context) return
-    const client = new GpStationClient({
-      apiBaseUrl: browserClient.baseUrl,
-      authMode: 'cookie',
-      jobApiPrefix: '/web/jobs',
-    })
-    const [nextLaunchers, nextDatasets, nextModels] = await Promise.all([
-      client.listLaunchers(),
-      predictionApi.datasets(context.experimentId),
-      predictionApi.models(context.experimentId),
-    ])
-    setLaunchers(nextLaunchers.filter((item) => item.slave_app_ids.includes('predictor')))
-    setDatasets(nextDatasets)
-    setModels(nextModels)
-    setDatasetId((current) =>
-      nextDatasets.some((item) => item.id === current) ? current : (nextDatasets[0]?.id ?? ''),
-    )
-  }, [context])
-
-  useEffect(() => {
-    if (enabled)
-      void refresh().catch((error: unknown) => setMessage(error instanceof Error ? error.message : String(error)))
-    return () => {
-      operationRef.current?.abort()
-      executionRef.current?.dispose()
-      executionRef.current = null
-    }
-  }, [enabled, refresh, setup.launcherId])
-
-  const execution = () => {
-    if (!setup.launcherId) throw new Error('Predictor 장비를 선택하세요.')
-    if (
-      !executionRef.current ||
-      executionRef.current.state === 'failed' ||
-      executionRef.current.state === 'disconnected'
-    ) {
-      executionRef.current?.dispose()
-      executionRef.current = new RemotePredictionExecution(setup.launcherId, {
-        onState: setConnection,
-        onHello: async (hello) => {
-          await reconcileRemoteAssets(hello)
-          setFiles(hello)
-        },
-      })
-    }
-    return executionRef.current
-  }
-
-  const run = async (label: string, action: (signal: AbortSignal) => Promise<void>) => {
-    if (working) return
-    const abort = new AbortController()
-    operationRef.current = abort
-    setWorking(label)
-    setMessage('')
-    try {
-      await action(abort.signal)
-      if (!abort.signal.aborted) {
-        await refresh()
-        setMessage(`${label} 완료`)
-      }
-    } catch (error) {
-      if (!abort.signal.aborted) {
-        const text = error instanceof Error ? error.message : String(error)
-        setMessage(text)
-        onActivity?.({ source: 'prediction', level: 'error', phase: 'assets', message: text })
-      }
-    } finally {
-      if (operationRef.current === abort) {
-        operationRef.current = null
-        setWorking(null)
-      }
-    }
-  }
-
-  const selection = () => {
-    if (!context || !varsSchema || !sourceHash) throw new Error('저장된 Experiment와 Vars 계약을 먼저 준비하세요.')
-    const selected = context.calculations.filter((item) => setup.calculationIds.includes(item.id))
-    return {
-      request_id: crypto.randomUUID(),
-      name: name.trim() || dataset?.name || `Experiment ${context.experimentId} Dataset`,
-      experiment_id: context.experimentId,
-      source_hash: sourceHash,
-      vars_schema: varsSchema,
-      calculation_ids: [...setup.calculationIds],
-      record_ids: [...new Set(selected.flatMap((item) => item.experiment_record_ids))],
-      rules,
-      result_contracts: resultContracts,
-    }
-  }
-
-  const buildModel = async (direction: PredictionDirection, update: boolean, signal: AbortSignal) => {
-    if (!dataset || !context || !varsSchema) throw new Error('Dataset과 Experiment를 먼저 선택하세요.')
-    const remote = execution()
-    const hello = await remote.inspect({ requestId: crypto.randomUUID(), signal })
-    const source = dataset.revisions.find((item) => item.revision === dataset.current_revision)
-    if (!source?.payload_available || dataset.state !== 'active')
-      throw new Error('Dataset 최신 데이터를 사용할 수 없습니다.')
-    const requiredRecordIds = [
-      ...new Set(
-        context.calculations
-          .filter((item) => setup.calculationIds.includes(item.id))
-          .flatMap((item) => item.experiment_record_ids),
-      ),
-    ]
-    const frozenContract = savedContractFromSource(source.source_contracts)
-    const contract = {
-      ...frozenContract,
-      records: Object.fromEntries(requiredRecordIds.map((id) => [id, frozenContract.records[id]])),
-      calculations: Object.fromEntries(setup.calculationIds.map((id) => [id, frozenContract.calculations[id]])),
-    }
-    assertSavedPredictionCompatible(
-      {
-        modelId: '',
-        modelRevision: 0,
-        datasetId: dataset.id,
-        datasetRevision: dataset.current_revision,
-        direction,
-        fingerprint: '',
-        storageId: hello.storageId,
-        launcherId: hello.launcherId,
-        contract,
-      },
+  const [previous, setPrevious] = useState<PredictionModelRecord | undefined>()
+  const [refreshDataset, setRefreshDataset] = useState(false)
+  const dataset = state.datasets.find((item) => item.id === datasetId)
+  const applyModel = onUse ?? onChange
+  const create = async () => {
+    if (!context || !sourceHash || !varsSchema) return
+    const selection = manager.currentSelectionKey
+    const next = await createPredictionModel(manager, {
       context,
+      sourceHash,
       varsSchema,
-      requiredRecordIds,
-      setup.calculationIds,
-    )
-    const meaning = {
-      snapshotFingerprint: source.fingerprint,
-      algorithm: setup.algorithm,
-      implementationId: remote.id,
-      implementationVersion: remote.implementationVersion,
-      preprocessingVersion: remote.preprocessingVersion,
-      contract,
-      direction,
-      calculationIds: setup.calculationIds,
-      requiredRecordIds,
-    }
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(predictionFingerprint([meaning])))
-    const fingerprint = `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
-    const definition = { ...meaning, fingerprint }
-    const previous = update ? setup.models?.[direction] : undefined
-    const reserved = await predictionApi.reserve(
-      {
-        request_id: crypto.randomUUID(),
-        name: name.trim() || `${dataset.name} · ${direction === 'forward' ? 'Forward' : 'Inverse'}`,
-        direction,
-        dataset_id: dataset.id,
-        dataset_revision: dataset.current_revision,
-        definition,
-        storage_id: hello.storageId,
-        launcher_id: hello.launcherId,
-        ...(previous
-          ? {
-              model_id: previous.modelId,
-              expected_revision: models.find((item) => item.id === previous.modelId)?.current_revision,
-            }
-          : {}),
-      },
-      { signal },
-    )
-    let grant: PredictionDatasetGrant | undefined
-    try {
-      if (dataset.source_kind === 'server')
-        grant = await predictionApi.grant(dataset.id, dataset.current_revision, { signal })
-      else if (dataset.storage_id !== hello.storageId) throw new Error('선택한 장비에 로컬 Dataset이 없습니다.')
-      const prepared = await remote.prepare(
-        {
-          kind: 'dataset-revision',
-          direction,
-          fingerprint: source.fingerprint,
-          dataset: grant
-            ? { grant }
-            : { datasetId: dataset.id, revision: dataset.current_revision, fingerprint: source.fingerprint },
-          model: {
-            modelId: reserved.id,
-            revision: reserved.reserved_revision!,
-            operationId: reserved.operation_id!,
-            name: reserved.name,
-          },
-        },
-        definition,
-        { requestId: crypto.randomUUID(), signal },
-      )
-      try {
-        const complete = await registerRemoteArtifact(prepared.artifact)
-        if (!signal.aborted)
-          onChange({ ...setup, models: { ...setup.models, [direction]: savedModelReference(complete) } })
-      } finally {
-        await remote.release(prepared.instance)
-      }
-    } finally {
-      if (grant) await predictionApi.releaseGrant(dataset.id, grant.grant_id)
+      rules,
+      resultContracts,
+      setup,
+      name,
+      launcherId,
+      direction: newDirection,
+      dataset,
+      datasetRevision,
+      previous,
+      refreshDataset,
+    })
+    if (next && manager.active && selection === manager.currentSelectionKey) {
+      applyModel(next, newDirection)
+      setCreationOpen(false)
     }
   }
-
-  const deleteAsset = async (
-    kind: 'datasets' | 'models',
-    asset: PredictionDatasetRecord | PredictionModelRecord,
-    signal: AbortSignal,
-  ) => {
-    if (
-      !window.confirm(
-        `${asset.name}의 ${kind === 'models' ? '모든 모델 revision과 파일' : 'Dataset 데이터'}을 삭제할까요?${kind === 'datasets' ? ' 원본과 저장 모델은 유지됩니다.' : ''}`,
-      )
-    )
-      return
-    await onBeforeDelete()
-    const remote = asset.storage_id ? execution() : null
-    if (remote) {
-      const hello = await remote.inspect({ requestId: crypto.randomUUID(), signal })
-      if (hello.storageId !== asset.storage_id) throw new Error('이 자산이 저장된 장비에 연결하세요.')
-    }
-    const request = {
-      request_id: asset.delete_id ?? crypto.randomUUID(),
-      storage_id: asset.storage_id,
-      launcher_id: asset.launcher_id,
-    }
-    await predictionApi.deleteAsset(kind, asset.id, request, false, { signal })
-    if (remote) {
-      await remote.command(
-        kind === 'models' ? 'model.delete' : 'dataset.delete',
-        kind === 'models' ? { modelId: asset.id } : { datasetId: asset.id },
-        { requestId: crypto.randomUUID(), signal },
-      )
-      await predictionApi.deleteAsset(kind, asset.id, request, true, { signal })
-    }
-    if (kind === 'models')
-      onChange({
-        ...setup,
-        models: Object.fromEntries(Object.entries(setup.models ?? {}).filter(([, item]) => item.modelId !== asset.id)),
-      })
-  }
-
   return (
-    <section className="space-y-3 rounded-lg border p-3" aria-label="Prediction 실행 및 저장 모델">
+    <section className="space-y-3 rounded-lg border p-3" aria-label="데이터·모델 관리" hidden={!open}>
       <label className="block text-sm font-medium">
-        Execution
+        예측 방법
         <select
           aria-label="Prediction 실행 위치"
           className="mt-1 w-full rounded-md border bg-background p-2"
           value={setup.executionId}
-          disabled={Boolean(working)}
           onChange={(event) => onChange({ ...setup, executionId: event.target.value })}
         >
-          <option value="browser-knn">브라우저 · kNN</option>
+          <option value="browser-knn">브라우저 kNN · 현재 선택 데이터</option>
           <option value="remote-knn" disabled={!authenticated}>
-            원격 Predictor · kNN{!authenticated ? ' (로그인 필요)' : ''}
+            저장 모델 사용{!authenticated ? ' (로그인 필요)' : ''}
           </option>
         </select>
       </label>
-      {setup.executionId === 'remote-knn' && (
+      {setup.executionId === 'browser-knn' ? (
+        <p className="text-xs text-muted-foreground">
+          브라우저에서는 현재 선택한 데이터로 예측합니다. 장비 연결과 모델 저장은 필요하지 않습니다.
+        </p>
+      ) : (
         <>
-          <label className="block text-sm">
-            장비
-            <select
-              aria-label="Predictor 장비"
-              className="mt-1 w-full rounded-md border bg-background p-2"
-              disabled={Boolean(working)}
-              value={setup.launcherId ?? ''}
-              onChange={(event) => onChange({ ...setup, launcherId: event.target.value, models: {} })}
-            >
-              <option value="">장비 선택</option>
-              {launchers.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.launcher_name} · {item.status}
-                </option>
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="tablist" aria-label="관리 항목" className="flex flex-wrap gap-1">
+              {(
+                [
+                  ['models', '모델'],
+                  ['datasets', '학습 데이터'],
+                  ['operations', '작업'],
+                ] as const
+              ).map(([value, label]) => (
+                <Button
+                  type="button"
+                  key={value}
+                  role="tab"
+                  aria-selected={tab === value}
+                  size="sm"
+                  variant={tab === value ? 'secondary' : 'ghost'}
+                  onClick={() => setTab(value)}
+                >
+                  {label}
+                </Button>
               ))}
-            </select>
-          </label>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span>연결 · {connection}</span>
+            </div>
             <Button
+              type="button"
               size="sm"
               variant="outline"
-              disabled={Boolean(working) || !setup.launcherId}
-              onClick={() =>
-                void run('장비 확인', async (signal) => {
-                  await execution().inspect({ requestId: crypto.randomUUID(), signal })
-                })
-              }
+              disabled={state.loading}
+              onClick={() => void manager.refresh()}
             >
-              연결 / 저장 파일 확인
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={Boolean(working)}
-              onClick={() => {
-                executionRef.current?.dispose()
-                executionRef.current = null
-              }}
-            >
-              연결 해제
-            </Button>
-            {onReconnect && (
-              <Button size="sm" variant="outline" disabled={Boolean(working)} onClick={onReconnect}>
-                Prediction 다시 연결
-              </Button>
-            )}
-          </div>
-          <Input
-            aria-label="새 Dataset 또는 모델 이름"
-            value={name}
-            placeholder="새 Dataset 또는 모델 이름 (선택)"
-            onChange={(event) => setName(event.target.value)}
-            disabled={Boolean(working)}
-          />
-          <div className="flex gap-2">
-            <Input
-              aria-label="로컬 Dataset import ID"
-              value={importId}
-              placeholder="장비에 준비한 Dataset import ID"
-              onChange={(event) => setImportId(event.target.value)}
-              disabled={Boolean(working)}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={Boolean(working) || !setup.launcherId || !importId.trim()}
-              onClick={() =>
-                void run('로컬 Dataset 가져오기', async (signal) => {
-                  const remote = execution()
-                  await remote.inspect({ requestId: crypto.randomUUID(), signal })
-                  const imported = await remote.command(
-                    'dataset.import',
-                    { importId: importId.trim(), experimentId: context?.experimentId },
-                    { requestId: crypto.randomUUID(), signal },
-                  )
-                  await remote.inspect({ requestId: crypto.randomUUID(), signal })
-                  const importedDataset = remoteDatasetSchema.parse(imported.dataset)
-                  setDatasetId(importedDataset.datasetId)
-                  onChange({ ...setup, datasetId: importedDataset.datasetId })
-                })
-              }
-            >
-              로컬 Dataset 가져오기
+              목록 새로고침
             </Button>
           </div>
-          <label className="block text-sm">
-            Dataset
-            <select
-              aria-label="Prediction Dataset"
-              className="mt-1 w-full rounded-md border bg-background p-2"
-              value={datasetId}
-              disabled={Boolean(working)}
-              onChange={(event) => {
-                setDatasetId(event.target.value)
-                onChange({ ...setup, datasetId: event.target.value || undefined })
-              }}
-            >
-              <option value="">Dataset 선택</option>
-              {datasets.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} · r{item.current_revision} · {item.source_kind} · {item.state}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={Boolean(working) || !setup.calculationIds.length}
-              onClick={() =>
-                void run('Dataset 만들기', async (signal) => {
-                  const item = await predictionApi.createDataset(selection(), { signal })
-                  setDatasetId(item.id)
-                  onChange({ ...setup, datasetId: item.id })
-                })
-              }
-            >
-              Dataset 만들기
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={Boolean(working) || !dataset}
-              onClick={() =>
-                void run('Dataset 동기화', async (signal) => {
-                  if (!dataset) return
-                  if (dataset.source_kind === 'local') {
-                    const remote = execution()
-                    await remote.inspect({ requestId: crypto.randomUUID(), signal })
-                    await remote.command(
-                      'dataset.sync',
-                      { datasetId: dataset.id, experimentId: context?.experimentId },
-                      { requestId: crypto.randomUUID(), signal },
-                    )
-                    await remote.inspect({ requestId: crypto.randomUUID(), signal })
-                    return
-                  }
-                  await predictionApi.syncDataset(
-                    dataset.id,
-                    { ...selection(), name: dataset.name, expected_revision: dataset.current_revision },
-                    { signal },
-                  )
-                })
-              }
-            >
-              Dataset 동기화
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={Boolean(working) || !dataset}
-              onClick={() => dataset && void run('Dataset 삭제', (signal) => deleteAsset('datasets', dataset, signal))}
-            >
-              Dataset 삭제
-            </Button>
-          </div>
-          {dataset && (
-            <p className="text-xs text-muted-foreground">
-              {dataset.id} · 최신 r{dataset.current_revision} 데이터 보존 · 이전 revision은 출처 기록만 보존. 동기화는
-              저장 모델을 변경하지 않습니다.
+          {state.error && (
+            <p role="alert" className="text-sm text-destructive">
+              목록을 불러오지 못했습니다: {state.error}
             </p>
           )}
-          {(['forward', 'inverse'] as const).map((direction) => {
-            const selected = setup.models?.[direction]
-            const selectedAsset = models.find((item) => item.id === selected?.modelId)
-            const file =
-              selected &&
-              files?.models.find(
-                (item) => item.modelId === selected.modelId && item.revision === selected.modelRevision,
-              )
-            return (
-              <div className="space-y-2 rounded-md border p-3" key={direction}>
-                <label className="block text-sm font-medium">
-                  {direction === 'forward' ? 'Forward' : 'Inverse'} 저장 모델
-                  <select
-                    aria-label={`${direction} 저장 모델`}
-                    className="mt-1 w-full rounded-md border bg-background p-2"
-                    disabled={Boolean(working)}
-                    value={selected ? `${selected.modelId}:${selected.modelRevision}` : ''}
-                    onChange={(event) => {
-                      const [id, revision] = event.target.value.split(':')
-                      const model = models.find((item) => item.id === id)
-                      const next = { ...setup.models }
-                      if (model) next[direction] = savedModelReference(model, Number(revision))
-                      else delete next[direction]
-                      onChange({ ...setup, models: next })
-                    }}
-                  >
-                    <option value="">저장 모델 선택</option>
-                    {models
-                      .filter(
-                        (item) =>
-                          item.direction === direction &&
-                          item.launcher_id === setup.launcherId &&
-                          item.state === 'active',
-                      )
-                      .flatMap((item) =>
-                        item.revisions
-                          .filter((entry) => entry.state === 'ready')
-                          .map((entry) => (
-                            <option key={`${item.id}:${entry.revision}`} value={`${item.id}:${entry.revision}`}>
-                              {item.name} · r{entry.revision} · Dataset r{entry.dataset_revision}
-                            </option>
-                          )),
-                      )}
-                  </select>
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(working) || !dataset || !setup.launcherId}
-                    onClick={() =>
-                      void run(`${direction} 모델 만들기`, (signal) => buildModel(direction, false, signal))
-                    }
-                  >
-                    모델 만들기
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(working) || !dataset || !selected}
-                    onClick={() =>
-                      void run(`${direction} 모델 업데이트`, (signal) => buildModel(direction, true, signal))
-                    }
-                  >
-                    모델 업데이트
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(working) || !selectedAsset}
-                    onClick={() =>
-                      selectedAsset && void run('모델 삭제', (signal) => deleteAsset('models', selectedAsset, signal))
-                    }
-                  >
-                    모델 삭제
-                  </Button>
-                </div>
-                {selected && (
-                  <p className="text-xs break-all text-muted-foreground">
-                    모델 {selected.modelId} · r{selected.modelRevision} / Dataset {selected.datasetId} · r
-                    {selected.datasetRevision}
-                  </p>
-                )}
-                {selected && (
-                  <p className="text-xs text-muted-foreground">
-                    파일 ·{' '}
-                    {file
-                      ? 'manifestChecksum' in file
-                        ? '저장됨 (확인)'
-                        : `사용 불가: ${file.error}`
-                      : '장비에서 확인 필요'}{' '}
-                    · 메모리 · {loadedDirections.includes(direction) ? '로드됨' : '로드되지 않음'}
-                  </p>
-                )}
-              </div>
-            )
-          })}
-          {models
-            .filter((item) => item.state === 'deleting' && item.launcher_id === setup.launcherId)
-            .map((item) => (
+          {tab === 'models' && (
+            <div role="tabpanel" aria-label="모델 관리" className="space-y-3">
               <Button
-                key={item.id}
+                type="button"
                 size="sm"
-                variant="outline"
-                disabled={Boolean(working)}
-                onClick={() => void run('모델 삭제 재시도', (signal) => deleteAsset('models', item, signal))}
+                onClick={() => {
+                  setPrevious(undefined)
+                  setNewDirection(direction)
+                  setName('')
+                  setRefreshDataset(false)
+                  setDatasetRevision(undefined)
+                  setCreationOpen(true)
+                }}
               >
-                {item.name} 삭제 재시도
+                새 모델 만들기
               </Button>
-            ))}
-          {working && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                operationRef.current?.abort()
-                executionRef.current?.dispose()
-                executionRef.current = null
-              }}
-            >
-              작업 중단
-            </Button>
+              <PredictionModelManager
+                manager={manager}
+                setup={setup}
+                onChange={onChange}
+                onUse={applyModel}
+                onNewVersion={(model) => {
+                  setPrevious(model)
+                  setNewDirection(model.direction)
+                  setName(model.name)
+                  setDatasetId(
+                    model.revisions.find((item) => item.revision === model.current_revision)?.dataset_id ?? '',
+                  )
+                  setDatasetRevision(
+                    model.revisions.find((item) => item.revision === model.current_revision)?.dataset_revision,
+                  )
+                  setRefreshDataset(false)
+                  setCreationOpen(true)
+                }}
+              />
+              {creationOpen && (
+                <section className="space-y-3 rounded border bg-muted/20 p-3" aria-label="모델 만들기">
+                  <h4 className="text-sm font-medium">
+                    {previous ? `${previous.name} · 새 버전` : '모델 만들고 사용'}
+                  </h4>
+                  <Input
+                    aria-label="새 모델 이름"
+                    placeholder="모델 이름 (비우면 데이터와 방향으로 제안)"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                  <label className="block text-sm">
+                    예측 방향
+                    <select
+                      aria-label="만들 모델 방향"
+                      className="mt-1 w-full rounded border bg-background p-2"
+                      value={newDirection}
+                      disabled={Boolean(previous)}
+                      onChange={(event) => setNewDirection(event.target.value as PredictionDirection)}
+                    >
+                      <option value="forward">Forward · Vars에서 결과 예측</option>
+                      <option value="inverse">Inverse · Target에서 Vars 제안</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm">
+                    학습 데이터
+                    <select
+                      aria-label="모델 학습 데이터"
+                      className="mt-1 w-full rounded border bg-background p-2"
+                      value={datasetId}
+                      onChange={(event) => {
+                        setDatasetId(event.target.value)
+                        setDatasetRevision(undefined)
+                        setRefreshDataset(false)
+                      }}
+                    >
+                      <option value="">현재 선택 데이터로 만들기</option>
+                      {state.datasets
+                        .filter((item) => item.state === 'active')
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} · r{item.current_revision}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  {dataset && (
+                    <label className="block text-sm">
+                      학습 데이터 버전
+                      <select
+                        aria-label="모델 학습 데이터 버전"
+                        className="mt-1 w-full rounded border bg-background p-2"
+                        value={datasetRevision ?? dataset.current_revision}
+                        disabled={refreshDataset}
+                        onChange={(event) => setDatasetRevision(Number(event.target.value))}
+                      >
+                        {dataset.revisions.map((item) => (
+                          <option key={item.revision} value={item.revision} disabled={!item.payload_available}>
+                            r{item.revision} · {item.sample_count ?? '?'} 표본
+                            {item.revision === dataset.current_revision ? ' · 최신' : ' · 보관본'}
+                            {!item.payload_available ? ' · 원본 없음' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {dataset && (
+                    <label className="flex gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={refreshDataset}
+                        onChange={(event) => setRefreshDataset(event.target.checked)}
+                      />
+                      새 데이터를 반영한 뒤 모델 만들기
+                    </label>
+                  )}
+                  <label className="block text-sm">
+                    준비·실행 장비
+                    <select
+                      aria-label="모델 생성 장비"
+                      className="mt-1 w-full rounded border bg-background p-2"
+                      value={launcherId}
+                      onChange={(event) => setLauncherId(event.target.value)}
+                    >
+                      <option value="">장비 선택</option>
+                      {state.launchers.map((launcher) => (
+                        <option key={launcher.id} value={launcher.id}>
+                          {launcher.launcher_name} · {launcher.status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    현재 선택한 Calculation과 아래 새 버전 작성안의 k·거리 설정을 사용합니다. 파일 저장과 등록이 모두
+                    성공하면 해당 방향의 모델을 전환합니다.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={
+                        !context ||
+                        !sourceHash ||
+                        !varsSchema ||
+                        !launcherId ||
+                        !setup.calculationIds.length ||
+                        state.tasks.some(
+                          (task) =>
+                            task.state === 'running' && task.key === `model:${previous?.id ?? newDirection}:create`,
+                        )
+                      }
+                      onClick={() => void create()}
+                    >
+                      모델 만들고 사용
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setCreationOpen(false)}>
+                      닫기
+                    </Button>
+                  </div>
+                </section>
+              )}
+            </div>
           )}
-          <p role="status" className="text-xs">
-            {working
-              ? `${working}…`
-              : message ||
-                'Dataset 동기화와 모델 업데이트는 각각 명시적으로 실행합니다. 유휴 5분 후 자원을 반환합니다.'}
-          </p>
+          {tab === 'datasets' && <PredictionDatasetManager {...props} />}
+          {tab === 'operations' && <PredictionAssetTasks manager={manager} />}
+          {state.tasks.some((task) => task.state === 'running') && tab !== 'operations' && (
+            <button
+              type="button"
+              role="status"
+              className="text-xs text-primary underline"
+              onClick={() => setTab('operations')}
+            >
+              진행 중인 관리 작업 보기 · 화면을 닫아도 계속됩니다.
+            </button>
+          )}
         </>
       )}
     </section>

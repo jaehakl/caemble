@@ -150,9 +150,14 @@ export class RemotePredictionError extends Error {
 }
 
 export function parseRemoteEnvelope(value: unknown, requestId: string, sessionId?: string) {
+  if (value && typeof value === 'object' && 'protocolVersion' in value && value.protocolVersion !== 2)
+    throw new RemotePredictionError(
+      'unsupported-execution',
+      'Predictor 통신 버전이 다릅니다. API·UI와 같은 릴리스로 Predictor를 업데이트하고 launcher를 다시 연결하세요.',
+    )
   const envelope = z
     .object({
-      protocolVersion: z.literal(1),
+      protocolVersion: z.literal(2),
       requestId: identity,
       sessionId: identity,
       error: z.object({ code: identity, message: identity }).optional(),

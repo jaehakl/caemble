@@ -26,7 +26,7 @@ def runtime(tmp_path):
 
 
 def call(worker, action, **payload):
-    return worker.dispatch(action, {"protocolVersion": 1, "requestId": "request-1", "sessionId": worker.session_id, **payload})
+    return worker.dispatch(action, {"protocolVersion": 2, "requestId": "request-1", "sessionId": worker.session_id, **payload})
 
 
 def prepare(worker, direction="forward", manifest=None, **algorithm):
@@ -63,7 +63,7 @@ package=Path(sys.argv[1]); spec=importlib.util.spec_from_file_location("predicto
 module=importlib.util.module_from_spec(spec);sys.modules["predictor"]=module;spec.loader.exec_module(module)
 from predictor.runtime import PredictorRuntime
 worker=PredictorRuntime(Path(sys.argv[2]),"owner-1","launcher-1","http://127.0.0.1:8000",128*1024*1024)
-base={"protocolVersion":1,"requestId":"restart","sessionId":worker.session_id}
+base={"protocolVersion":2,"requestId":"restart","sessionId":worker.session_id}
 loaded=worker.dispatch("model.load",dict(base,modelId="model-forward",revision=1))
 result=worker.dispatch("model.predict",dict(base,instance=loaded["instance"],input={"direction":"forward","vars":{"x":.5}}))
 print(json.dumps({"instance":loaded["instance"],"result":result,"datasets":worker.store.list("datasets")}))
@@ -223,6 +223,30 @@ def test_manual_local_sync_updates_added_removed_rows_and_keeps_saved_model(tmp_
     call(worker, "dataset.delete", datasetId=imported["datasetId"])
     with pytest.raises(PredictionError, match="deleted"):
         call(worker, "dataset.import", importId="source")
+
+
+def test_local_dataset_preview_counts_content_without_publishing(tmp_path):
+    worker = runtime(tmp_path)
+    source = worker.store.namespace / "imports" / "preview"
+    source.mkdir(parents=True)
+    manifest = dataset()
+    def update_source():
+        raw = encode_json(manifest)
+        (source / "dataset.json").write_bytes(raw)
+        (source / "manifest.json").write_bytes(encode_json({"kind": "caemble.prediction.dataset.artifact", "version": 1,
+            "identity": manifest["datasetId"], "revision": manifest["revision"], "metadata": {},
+            "files": [{"name": "dataset.json", "byteLength": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]}))
+    update_source()
+    imported = call(worker, "dataset.import", importId="preview")["dataset"]
+    unchanged = call(worker, "dataset.preview", datasetId=imported["datasetId"])
+    assert {key: unchanged[key] for key in ("added", "changed", "removed")} == {"added": 0, "changed": 0, "removed": 0}
+    manifest["measurements"] = [manifest["measurements"][0], {**manifest["measurements"][1], "vars": {"x": 1.25}}, {"id": 4, "vars": {"x": 1.5}}]
+    manifest.update(revision=2, fingerprint="sha256:" + "c" * 64)
+    update_source()
+    result = call(worker, "dataset.preview", datasetId=imported["datasetId"])
+    assert {key: result[key] for key in ("added", "changed", "removed")} == {"added": 1, "changed": 1, "removed": 1}
+    assert worker.store.latest_dataset(imported["datasetId"]) == 1
+    assert len(worker.store.list("datasets")) == 1
 
 
 def test_polar_and_modal_groups_use_correct_numerical_representation(tmp_path):

@@ -11,6 +11,7 @@ import {
   type PredictionPreparationInput,
   type PredictionRequest,
   type SavedPredictionModel,
+  type PredictionExecutionRoute,
 } from './execution'
 import {
   parseRemoteEnvelope,
@@ -27,7 +28,12 @@ export type PredictionTransport = Readonly<{
   connect: (requestId: string) => Promise<{ session: JobSession; payload: unknown }>
   cancel: (jobId: string) => Promise<void>
 }>
-type LoadedModel = { reference: SavedPredictionModel; prepared: RemotePrepared; wire: PredictionModelInstance | null }
+type LoadedModel = {
+  reference: SavedPredictionModel
+  route: PredictionExecutionRoute
+  prepared: RemotePrepared
+  wire: PredictionModelInstance | null
+}
 const invalidSessionCodes = new Set(['stale-response', 'model-mismatch', 'storage-mismatch', 'unsupported-execution'])
 
 /** One wire call at a time. Aborting a caller does not break the SDK response/ACK exchange. */
@@ -61,7 +67,9 @@ export class RemotePredictionExecution implements PredictionExecution {
     private readonly options: {
       transport?: PredictionTransport
       idleMs?: number
+      storageId?: string
       onState?: (state: RemotePredictionState, message?: string) => void
+      onWarning?: (message: string) => void
       onHello?: (hello: RemoteHello) => Promise<void>
     } = {},
   ) {
@@ -74,7 +82,7 @@ export class RemotePredictionExecution implements PredictionExecution {
       connect: (requestId) =>
         client.runJob(
           'predictor.hello',
-          { protocolVersion: 1, requestId },
+          { protocolVersion: 2, requestId },
           {
             slaveAppId: 'predictor',
             targetLauncherId: launcherId,
@@ -144,6 +152,7 @@ export class RemotePredictionExecution implements PredictionExecution {
       const hello = remoteHelloSchema.parse(parseRemoteEnvelope(result.payload, requestId))
       if (
         hello.launcherId !== this.launcherId ||
+        (this.options.storageId !== undefined && hello.storageId !== this.options.storageId) ||
         hello.implementationVersion !== this.implementationVersion ||
         hello.preprocessingVersion !== this.preprocessingVersion
       )
@@ -169,9 +178,17 @@ export class RemotePredictionExecution implements PredictionExecution {
     const sessionId = this.helloValue!.sessionId
     const response = await session.call(
       type,
-      { ...body, protocolVersion: 1, requestId, sessionId },
+      { ...body, protocolVersion: 2, requestId, sessionId },
       {
-        timeoutMs: type === 'model.prepare' || type === 'dataset.import' || type === 'dataset.sync' ? 600_000 : 60_000,
+        timeoutMs:
+          type === 'artifact.backup' || type === 'artifact.restore'
+            ? 1_800_000
+            : type.startsWith('artifact.') ||
+                type === 'model.prepare' ||
+                type === 'dataset.import' ||
+                type === 'dataset.sync'
+              ? 600_000
+              : 60_000,
       },
     )
     return parseRemoteEnvelope(response.payload, requestId, sessionId)
@@ -295,7 +312,6 @@ export class RemotePredictionExecution implements PredictionExecution {
         (artifact.modelId !== expected.modelId ||
           artifact.revision !== expected.modelRevision ||
           wire.fingerprint !== expected.fingerprint ||
-          artifact.storageId !== expected.storageId ||
           artifact.datasetId !== expected.datasetId ||
           artifact.datasetRevision !== expected.datasetRevision ||
           artifact.direction !== expected.direction ||
@@ -305,7 +321,7 @@ export class RemotePredictionExecution implements PredictionExecution {
     return wire
   }
 
-  private ownPrepared(wire: RemotePrepared): RemotePrepared {
+  private ownPrepared(wire: RemotePrepared, route?: PredictionExecutionRoute): RemotePrepared {
     const artifact = wire.artifact
     const reference: SavedPredictionModel = {
       modelId: artifact.modelId,
@@ -314,17 +330,57 @@ export class RemotePredictionExecution implements PredictionExecution {
       datasetRevision: artifact.datasetRevision,
       direction: artifact.direction,
       fingerprint: wire.fingerprint,
-      storageId: artifact.storageId,
-      launcherId: artifact.launcherId,
       manifestChecksum: artifact.manifestChecksum,
     }
     const instance = { ...wire.instance, sessionId: this.sessionId, handle: crypto.randomUUID() }
     const prepared = { ...wire, instance, provenance: reference }
-    this.models.set(instance.handle, { reference, prepared, wire: wire.instance })
+    this.models.set(instance.handle, {
+      reference,
+      route: route ?? { storageId: artifact.storageId, launcherId: artifact.launcherId },
+      prepared,
+      wire: wire.instance,
+    })
     return prepared
   }
 
-  private async releaseRejectedLease(modelId: string, revision: number, session: JobSession, error: unknown) {
+  private async recordVerifiedReplica(wire: RemotePrepared) {
+    try {
+      await predictionApi.checkReplica({
+        asset_kind: 'model',
+        asset_id: wire.artifact.modelId,
+        revision: wire.artifact.revision,
+        storage_id: wire.artifact.storageId,
+        launcher_id: wire.artifact.launcherId,
+        state: 'present',
+        manifest_sha256: wire.artifact.manifestChecksum,
+      })
+    } catch {
+      this.options.onWarning?.(
+        '모델 파일 검증은 완료했지만 저장 위치 상태를 등록하지 못했습니다. 관리 화면에서 파일 확인을 다시 실행하세요.',
+      )
+    }
+  }
+
+  private lease(
+    modelId: string,
+    revision: number,
+    session: JobSession,
+    release = false,
+    route?: PredictionExecutionRoute,
+  ) {
+    return predictionApi.lease(modelId, revision, session.jobId, release, {
+      ...(route?.replicaId ? { replica_id: route.replicaId } : {}),
+      storage_id: route?.storageId ?? this.helloValue!.storageId,
+    })
+  }
+
+  private async releaseRejectedLease(
+    modelId: string,
+    revision: number,
+    session: JobSession,
+    error: unknown,
+    route?: PredictionExecutionRoute,
+  ) {
     if (
       error instanceof RemotePredictionError &&
       !invalidSessionCodes.has(error.code) &&
@@ -332,7 +388,7 @@ export class RemotePredictionExecution implements PredictionExecution {
         (other) => other.wire && other.reference.modelId === modelId && other.reference.modelRevision === revision,
       )
     )
-      await predictionApi.lease(modelId, revision, session.jobId, true)
+      await this.lease(modelId, revision, session, true, route)
   }
 
   prepare(input: PredictionPreparationInput, definition: PredictionModelDefinition, request: PredictionRequest) {
@@ -349,7 +405,7 @@ export class RemotePredictionExecution implements PredictionExecution {
                 revision: grant!.revision,
                 fingerprint: grant!.fingerprint,
               }
-        await predictionApi.lease(input.model.modelId, input.model.revision, session.jobId)
+        await this.lease(input.model.modelId, input.model.revision, session)
         try {
           const wire = this.checkedPrepared(
             await this.rpc(
@@ -370,8 +426,6 @@ export class RemotePredictionExecution implements PredictionExecution {
               datasetRevision: dataset.revision,
               direction: input.direction,
               fingerprint: definition.fingerprint,
-              launcherId: this.launcherId,
-              storageId: this.helloValue!.storageId,
             },
           )
           if (
@@ -393,30 +447,33 @@ export class RemotePredictionExecution implements PredictionExecution {
     )
   }
 
-  load(reference: SavedPredictionModel, request: PredictionRequest) {
-    if (reference.launcherId !== this.launcherId) return Promise.reject(new Error('저장 모델이 다른 장비에 있습니다.'))
+  load(reference: SavedPredictionModel, request: PredictionRequest, route?: PredictionExecutionRoute) {
+    if (!route || route.launcherId !== this.launcherId)
+      return Promise.reject(new Error('저장 모델을 사용할 실행 위치를 선택하세요.'))
     return this.enqueue(
       request,
       async (session) => {
-        await predictionApi.lease(reference.modelId, reference.modelRevision, session.jobId)
+        if (route.storageId !== this.helloValue?.storageId)
+          throw new RemotePredictionError('storage-mismatch', '선택한 모델 복사본의 저장소가 연결된 저장소와 다릅니다.')
+        await this.lease(reference.modelId, reference.modelRevision, session, false, route)
         try {
-          return this.ownPrepared(
-            this.checkedPrepared(
-              await this.rpc(
-                session,
-                'model.load',
-                {
-                  modelId: reference.modelId,
-                  revision: reference.modelRevision,
-                  manifestChecksum: reference.manifestChecksum,
-                },
-                request.requestId,
-              ),
-              reference,
+          const wire = this.checkedPrepared(
+            await this.rpc(
+              session,
+              'model.load',
+              {
+                modelId: reference.modelId,
+                revision: reference.modelRevision,
+                manifestChecksum: reference.manifestChecksum,
+              },
+              request.requestId,
             ),
+            reference,
           )
+          await this.recordVerifiedReplica(wire)
+          return this.ownPrepared(wire, route)
         } catch (error) {
-          await this.releaseRejectedLease(reference.modelId, reference.modelRevision, session, error)
+          await this.releaseRejectedLease(reference.modelId, reference.modelRevision, session, error, route)
           throw error
         }
       },
@@ -439,7 +496,9 @@ export class RemotePredictionExecution implements PredictionExecution {
         )
           throw new PredictionInstanceInvalidatedError('원격 모델 인스턴스를 다시 로드하세요.', false)
         if (!model.wire) {
-          await predictionApi.lease(model.reference.modelId, model.reference.modelRevision, session.jobId)
+          if (model.route.storageId !== this.helloValue?.storageId)
+            throw new RemotePredictionError('storage-mismatch', '다시 연결된 저장소가 선택한 복사본과 다릅니다.')
+          await this.lease(model.reference.modelId, model.reference.modelRevision, session, false, model.route)
           try {
             const loaded = this.checkedPrepared(
               await this.rpc(session, 'model.load', {
@@ -449,6 +508,7 @@ export class RemotePredictionExecution implements PredictionExecution {
               }),
               model.reference,
             )
+            await this.recordVerifiedReplica(loaded)
             if (!this.models.has(instance.handle)) {
               await this.rpc(session, 'model.release', { instance: loaded.instance })
               if (
@@ -459,12 +519,18 @@ export class RemotePredictionExecution implements PredictionExecution {
                     other.reference.modelRevision === model.reference.modelRevision,
                 )
               )
-                await predictionApi.lease(model.reference.modelId, model.reference.modelRevision, session.jobId, true)
+                await this.lease(model.reference.modelId, model.reference.modelRevision, session, true, model.route)
               throw new PredictionInstanceInvalidatedError('원격 모델 인스턴스가 해제되었습니다.', false)
             }
             model.wire = loaded.instance
           } catch (error) {
-            await this.releaseRejectedLease(model.reference.modelId, model.reference.modelRevision, session, error)
+            await this.releaseRejectedLease(
+              model.reference.modelId,
+              model.reference.modelRevision,
+              session,
+              error,
+              model.route,
+            )
             throw error
           }
         }
@@ -504,7 +570,7 @@ export class RemotePredictionExecution implements PredictionExecution {
             other.reference.modelRevision === model.reference.modelRevision,
         )
       )
-        await predictionApi.lease(model.reference.modelId, model.reference.modelRevision, session.jobId, true)
+        await this.lease(model.reference.modelId, model.reference.modelRevision, session, true, model.route)
     })
   }
 

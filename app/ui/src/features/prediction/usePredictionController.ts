@@ -12,6 +12,7 @@ import {
   type PredictionRequest,
   type PreparedPredictionModel,
   type SavedPredictionModel,
+  type PredictionExecutionRoute,
 } from './execution'
 import type { TrainingSnapshot } from './trainingSnapshot'
 import {
@@ -34,12 +35,16 @@ type CancelResourcesOptions = Readonly<{
   samplingActive: boolean
 }>
 
+export type PredictionExecutionBinding = Readonly<{ key: string; create: () => PredictionExecution }>
+
 export class PredictionRuntimeController {
   private calculationAbort: AbortController | null = null
   private cancelSamplingCandidateWait: (() => void) | null = null
   private checkingFingerprint = 0
   private fingerprintAbort: AbortController | null = null
-  private execution: PredictionExecution | null = null
+  private executions: Partial<Record<PredictionDirection, PredictionExecution>> = {}
+  private bindings: Partial<Record<PredictionDirection, PredictionExecutionBinding>> = {}
+  private configured = false
   private readonly sampling = new BrowserPredictionSamplingService()
   private readonly pending = new Map<string, () => void>()
   private readonly modelOwners = new Map<PreparedPredictionModel, PredictionExecution>()
@@ -61,7 +66,7 @@ export class PredictionRuntimeController {
   constructor(private createExecution: () => PredictionExecution = () => new BrowserPredictionExecution()) {}
 
   start() {
-    if (!this.execution) this.execution = this.createExecution()
+    if (!this.configured) this.setExecution(this.createExecution)
   }
 
   dispose() {
@@ -74,27 +79,37 @@ export class PredictionRuntimeController {
     this.cancelCandidateWait()
     this.abortCalculation()
     this.clearModelCaches()
-    this.execution?.dispose()
-    this.execution = null
+    for (const execution of new Set(Object.values(this.executions))) execution.dispose()
+    this.executions = {}
+    this.bindings = {}
+    this.configured = false
     this.sampling.dispose()
     this.snapshots = {}
     this.emittedDiagnosticFingerprints.clear()
   }
 
   get executionAvailable() {
-    return this.execution !== null
+    return Object.keys(this.executions).length > 0
   }
 
   get trainingPolicy() {
-    return this.execution?.trainingPolicy
+    return this.executions.forward?.trainingPolicy
   }
 
   get executionLocation() {
-    return this.execution?.location ?? 'browser'
+    return this.executions.forward?.location ?? this.executions.inverse?.location ?? 'browser'
   }
 
-  async loadModel(reference: SavedPredictionModel, transaction: number) {
-    const execution = this.execution
+  executionAvailableFor(direction: PredictionDirection) {
+    return Boolean(this.executions[direction])
+  }
+
+  trainingPolicyFor(direction: PredictionDirection) {
+    return this.executions[direction]?.trainingPolicy
+  }
+
+  async loadModel(reference: SavedPredictionModel, transaction: number, route?: PredictionExecutionRoute) {
+    const execution = this.executions[reference.direction]
     if (!execution?.load) throw new Error('선택한 실행 위치는 저장 모델 로드를 지원하지 않습니다.')
     const cached = this.modelCache[reference.direction]
     if (
@@ -108,15 +123,16 @@ export class PredictionRuntimeController {
     if (cached) this.releaseModel(cached)
     delete this.modelCache[reference.direction]
     const model = await this.request(
+      reference.direction,
       transaction,
-      (owner, request) => owner.load!(reference, request),
+      (owner, request) => owner.load!(reference, request, route),
       (owner, late) => {
         void owner.release(late.instance).catch(() => undefined)
       },
     )
     if (
       !this.transactionIsCurrent(transaction) ||
-      this.execution !== execution ||
+      this.executions[reference.direction] !== execution ||
       revision !== this.modelRevision[reference.direction] ||
       model.fingerprint !== reference.fingerprint ||
       model.profile.direction !== reference.direction
@@ -130,20 +146,48 @@ export class PredictionRuntimeController {
   }
 
   setExecution(createExecution: () => PredictionExecution) {
-    this.invalidateTransaction()
-    this.clearModelCaches()
-    this.execution?.dispose()
     this.createExecution = createExecution
-    this.execution = createExecution()
+    const binding = { key: crypto.randomUUID(), create: createExecution }
+    this.setExecutions({ forward: binding, inverse: binding })
+  }
+
+  setExecutions(bindings: Partial<Record<PredictionDirection, PredictionExecutionBinding>>) {
+    this.configured = true
+    const directions = ['forward', 'inverse'] as const
+    if (directions.every((direction) => this.bindings[direction]?.key === bindings[direction]?.key)) return
+    this.invalidateTransaction()
+    const previous = new Set(Object.values(this.executions))
+    const reusable = new Map(
+      Object.entries(this.bindings).flatMap(([direction, binding]) => {
+        const execution = this.executions[direction as PredictionDirection]
+        return execution ? [[binding.key, execution] as const] : []
+      }),
+    )
+    const next: Partial<Record<PredictionDirection, PredictionExecution>> = {}
+    for (const direction of directions) {
+      const binding = bindings[direction]
+      if (binding) {
+        const execution = reusable.get(binding.key) ?? binding.create()
+        reusable.set(binding.key, execution)
+        next[direction] = execution
+      }
+      if (this.executions[direction] !== next[direction]) this.clearModelCaches(direction)
+    }
+    this.bindings = bindings
+    this.executions = next
+    for (const execution of previous) {
+      if (!Object.values(next).includes(execution)) execution.dispose()
+    }
   }
 
   /** Settle cancellation even if an execution ignores its AbortSignal. */
   private request<T>(
+    direction: PredictionDirection,
     transaction: number,
     run: (execution: PredictionExecution, request: PredictionRequest) => Promise<T>,
     releaseLate?: (execution: PredictionExecution, value: T) => void,
   ): Promise<T> {
-    const execution = this.execution
+    const execution = this.executions[direction]
     const signal = this.transactionAbort?.signal
     if (!execution || !signal || !this.transactionIsCurrent(transaction))
       return Promise.reject(new DOMException('Stale Prediction transaction', 'AbortError'))
@@ -175,7 +219,7 @@ export class PredictionRuntimeController {
             if (
               settled ||
               !this.transactionIsCurrent(transaction) ||
-              this.execution !== execution ||
+              this.executions[direction] !== execution ||
               execution.sessionId !== sessionId
             ) {
               releaseLate?.(execution, value)
@@ -203,7 +247,7 @@ export class PredictionRuntimeController {
     transaction: number,
     executionId: string,
   ) {
-    const execution = this.execution
+    const execution = this.executions[snapshot.direction]
     if (
       !execution ||
       execution.id !== executionId ||
@@ -232,6 +276,7 @@ export class PredictionRuntimeController {
     if (cached) this.releaseModel(cached)
     delete this.modelCache[snapshot.direction]
     const model = await this.request(
+      snapshot.direction,
       transaction,
       (owner, request) => owner.prepare(snapshot, definition, request),
       (owner, late) => {
@@ -241,7 +286,7 @@ export class PredictionRuntimeController {
     if (
       !this.transactionIsCurrent(transaction) ||
       revision !== this.modelRevision[snapshot.direction] ||
-      this.execution !== execution ||
+      this.executions[snapshot.direction] !== execution ||
       model.instance.sessionId !== execution.sessionId ||
       model.instance.executionId !== execution.id ||
       model.fingerprint !== definition.fingerprint
@@ -255,9 +300,9 @@ export class PredictionRuntimeController {
   }
 
   modelIsCurrent(model: PreparedPredictionModel) {
-    const execution = this.execution
+    const execution = this.executions[model.profile.direction]
     return (
-      execution !== null &&
+      execution !== undefined &&
       this.modelOwners.get(model) === execution &&
       model.instance.executionId === execution.id &&
       model.instance.sessionId === execution.sessionId
@@ -268,7 +313,7 @@ export class PredictionRuntimeController {
     if (!this.modelIsCurrent(model))
       throw new PredictionInstanceInvalidatedError('Prediction 모델을 다시 준비해야 합니다.')
     const capturedInput = structuredClone(input)
-    const result = await this.request(transaction, (execution, request) =>
+    const result = await this.request(input.direction, transaction, (execution, request) =>
       execution.predict(model.instance, capturedInput, request),
     )
     if (!this.modelIsCurrent(model) || !this.transactionIsCurrent(transaction))
@@ -309,12 +354,20 @@ export class PredictionRuntimeController {
     return this.sampling.dropSampling(sessionId)
   }
 
-  resetExecution() {
+  resetExecution(direction?: PredictionDirection) {
     this.invalidateTransaction()
     this.cancelPendingPrediction()
-    this.clearModelCaches()
-    this.execution?.dispose()
-    this.execution = this.createExecution()
+    const owners = direction ? [this.executions[direction]] : Object.values(this.executions)
+    for (const execution of new Set(owners)) {
+      if (!execution) continue
+      const sharing = (['forward', 'inverse'] as const).filter((item) => this.executions[item] === execution)
+      const replacement = this.bindings[sharing[0]]!.create()
+      for (const item of sharing) {
+        this.clearModelCaches(item)
+        this.executions[item] = replacement
+      }
+      execution.dispose()
+    }
   }
 
   cancelPendingPrediction() {
@@ -323,7 +376,12 @@ export class PredictionRuntimeController {
     return hadPending
   }
 
-  async runWithExecutionRetry<T>(transaction: number, run: () => Promise<T>, onRestart: () => void) {
+  async runWithExecutionRetry<T>(
+    transaction: number,
+    run: () => Promise<T>,
+    onRestart: () => void,
+    direction?: PredictionDirection,
+  ) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         return await run()
@@ -336,7 +394,7 @@ export class PredictionRuntimeController {
         ) {
           throw cause
         }
-        this.clearModelCaches()
+        this.clearModelCaches(direction)
         onRestart()
       }
     }
@@ -517,11 +575,14 @@ export class PredictionRuntimeController {
     if (owner) void owner.release(model.instance).catch(() => undefined)
   }
 
-  clearModelCaches() {
-    this.modelRevision.forward += 1
-    this.modelRevision.inverse += 1
-    for (const model of this.modelOwners.keys()) this.releaseModel(model)
-    this.modelCache = {}
+  clearModelCaches(direction?: PredictionDirection) {
+    for (const item of direction ? [direction] : (['forward', 'inverse'] as const)) {
+      this.modelRevision[item] += 1
+      for (const model of this.modelOwners.keys()) {
+        if (model.profile.direction === item) this.releaseModel(model)
+      }
+      delete this.modelCache[item]
+    }
   }
 
   async releaseLoadedModels() {

@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from gpstation.db import Launcher
-from prediction.db import PredictionStorage
+from prediction.db import PredictionStorage, StorageAccess
 
 IDENTITY_NAMESPACE = UUID("897a2e86-43d2-4e7c-9923-73bb2da5a454")
 
@@ -33,8 +33,9 @@ async def owned(db, model, identity, user_id, *, active=True):
 
 async def connected_storage(db, storage_id, launcher_id, user_id):
     storage = await db.get(PredictionStorage, str(storage_id))
+    access = await db.get(StorageAccess, (str(storage_id), str(launcher_id)))
     launcher = await db.get(Launcher, str(launcher_id))
-    if (storage is None or storage.user_id != user_id or storage.launcher_id != str(launcher_id)
+    if (storage is None or storage.user_id != user_id or storage.kind != "predictor_local" or access is None
             or launcher is None or launcher.user_id != user_id or launcher.disconnected_at is not None
             or launcher.status not in {"ready", "busy"}):
         raise HTTPException(409, "Connect the registered Prediction storage before this operation.")

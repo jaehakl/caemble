@@ -208,7 +208,8 @@ class DatasetReader:
         return {"sourceKind": source_kind, "sourceHash": manifest.get("sourceHash"),
                 "sampleCount": len(manifest["measurements"]), "sourceContracts": contracts}
 
-    def import_local(self, import_id: str, cancel: threading.Event | None = None, experiment_id: int | None = None) -> dict:
+    def import_local(self, import_id: str, cancel: threading.Event | None = None, experiment_id: int | None = None,
+                     *, dataset_id: str | None = None, preview: bool = False) -> dict:
         imports = (self.store.namespace / "imports").resolve()
         source = (imports / safe_id(import_id)).resolve()
         if not source.is_relative_to(imports) or source.is_symlink():
@@ -251,9 +252,26 @@ class DatasetReader:
                 raise PredictionError("dataset-checksum", "Local Dataset identity differs from its bundle manifest.")
             if any(f"{ref['sha256']}.object" not in names for ref in references(manifest).values()):
                 raise PredictionError("dataset-checksum", "Local Dataset bundle is missing a referenced object.")
-            identity = str(uuid.uuid5(uuid.UUID(self.store.storage_id), f"{self.store.namespace.name}/dataset/{import_id}"))
+            identity = dataset_id or str(uuid.uuid5(uuid.UUID(self.store.storage_id), f"{self.store.namespace.name}/dataset/{import_id}"))
             if self.store.dataset_deleted(identity):
                 raise PredictionError("deleted", "This local Dataset was deleted. Use a different import ID to create a new Dataset.")
+            if preview:
+                current = self.store.latest_dataset(identity)
+                previous_manifest, previous_path, _ = self.store.read("datasets", identity, current, cancel=cancel)
+                previous = previous_manifest["metadata"]
+                if previous["experimentId"] != manifest["experimentId"] or previous["origin"]["datasetId"] != manifest["datasetId"]:
+                    raise PredictionError("dataset-source", "Local Dataset source changed to another Experiment or identity.")
+                before = json.loads((previous_path / "dataset.json").read_bytes())
+                def rows(value):
+                    contracts = {key: member for key, member in value.items()
+                                 if key not in ("datasetId", "revision", "fingerprint", "name", "origin", "measurements", "recorded", "calculationData")}
+                    return {row["id"]: hashlib.sha256(encode_json(content_identity({"measurement": row, "contracts": contracts,
+                        "recorded": sorted((item for item in value.get("recorded", []) if item["measurement_id"] == row["id"]), key=lambda item: item["id"]),
+                        "calculations": sorted((item for item in value.get("calculationData", []) if item["measurement_id"] == row["id"]), key=lambda item: item["id"])}))).hexdigest()
+                        for row in value["measurements"]}
+                old, new = rows(before), rows(manifest)
+                return {"added": len(new.keys() - old.keys()), "removed": len(old.keys() - new.keys()),
+                        "changed": sum(old[key] != new[key] for key in old.keys() & new.keys())}
             self.store.discard_unpublished_dataset(identity, cancel)
             origin = {"datasetId": manifest["datasetId"], "revision": manifest["revision"], "fingerprint": manifest["fingerprint"]}
             content = {key: value for key, value in manifest.items() if key not in ("datasetId", "revision", "fingerprint", "name", "origin")}
@@ -300,13 +318,14 @@ class DatasetReader:
         except FileNotFoundError:
             raise PredictionError("dataset-missing", "Local Dataset import bundle is missing.") from None
 
-    def sync_local(self, dataset_id: str, cancel: threading.Event | None = None, experiment_id: int | None = None) -> dict:
+    def sync_local(self, dataset_id: str, cancel: threading.Event | None = None, experiment_id: int | None = None,
+                   *, preview: bool = False) -> dict:
         current = self.store.latest_dataset(dataset_id)
         manifest, _, _ = self.store.read("datasets", dataset_id, current)
         metadata = manifest["metadata"]
         if metadata.get("sourceKind") != "local" or not metadata.get("importId"):
             raise PredictionError("dataset-source", "This Dataset has no registered local import source.")
-        return self.import_local(metadata["importId"], cancel, experiment_id)
+        return self.import_local(metadata["importId"], cancel, experiment_id, dataset_id=dataset_id, preview=preview)
 
     @staticmethod
     def validate(manifest: dict) -> None:
@@ -326,10 +345,11 @@ class DatasetReader:
                 reader = DatasetReader(temporary_store, self.api_url, self.memory_budget)
                 imported = reader.import_grant(reference["grant"], cancel)
                 return reader.load(imported, cancel, direction, definition)
-        latest = self.store.latest_dataset(reference["datasetId"])
-        if latest != reference["revision"]:
+        parent = self.store.path("datasets", reference["datasetId"])
+        latest = self.store.latest_dataset(reference["datasetId"]) if (parent / "latest").exists() else None
+        if latest != reference["revision"] and not (parent / "retained" / str(reference["revision"])).exists():
             raise PredictionError("dataset-unavailable", "Only the latest local Dataset payload is retained; load its saved model instead.")
-        _, path, _ = self.store.read("datasets", reference["datasetId"], latest, self.memory_budget)
+        _, path, _ = self.store.read("datasets", reference["datasetId"], reference["revision"], self.memory_budget, cancel)
         manifest = json.loads((path / "dataset.json").read_bytes())
         self.validate(manifest)
         if manifest["fingerprint"] != reference["fingerprint"]:

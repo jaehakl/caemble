@@ -11,7 +11,7 @@
   },
   "src/features/prediction/PredictionWorkspace.tsx": {
     "react-hooks/exhaustive-deps": {
-      "count": 9
+      "count": 8
     }
   },
   "src/features/viewer/workspace/useCadWorkspace.ts": {

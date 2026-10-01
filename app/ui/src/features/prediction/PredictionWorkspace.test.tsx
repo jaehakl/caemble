@@ -12,7 +12,7 @@ import {
   type PredictionWorkspaceCommand,
   type PredictionWorkspaceChromeState,
 } from './PredictionWorkspace'
-import type { PredictionRecordedPreview } from './usePredictionModels'
+import type { PredictionRecordedPreview, PredictionSetup } from './usePredictionModels'
 import { PredictionTrainingChangedError } from './trainingSnapshot'
 import { persistPredictionSetup } from './setupPersistence'
 import { defaultPredictionSetup } from './usePredictionModels'
@@ -23,12 +23,18 @@ const mocks = vi.hoisted(() => ({
   predictionOnly: false,
   calculateMeasurement: vi.fn(),
   calculateMissing: () => {},
+  applySavedSetup: (_setup: PredictionSetup, _direction?: 'forward' | 'inverse') => {},
   calculationSource: 'calculation-source',
   contextFingerprint: 'before',
   forwardOutputs: vi.fn(),
   viewerState: vi.fn(),
   chromeState: vi.fn(),
+  setCandidate: vi.fn(),
   loadContextData: vi.fn(),
+  selectedTargets: vi.fn(),
+  samplingMeasurements: vi.fn(),
+  startSampling: vi.fn(),
+  selectedMeasurementId: null as number | null,
   loadContextFingerprint: vi.fn(),
   predictInverse: vi.fn(),
   saveAndRun: vi.fn(),
@@ -59,9 +65,7 @@ vi.mock('./client', () => ({
     }
     dispose() {}
     reset() {}
-    async startSampling() {
-      return { existingCenterCount: 1, candidateCount: 10, activeComponentCount: 1 }
-    }
+    startSampling = mocks.startSampling
     nextSample = mocks.nextSample
     acceptSample = mocks.acceptSample
     async dropSampling() {}
@@ -69,15 +73,21 @@ vi.mock('./client', () => ({
   PredictionWorkerRestartError: class extends Error {},
 }))
 vi.mock('./diagnostics', () => ({ emitPredictionCohortDiagnostics: () => undefined }))
+vi.mock('./usePredictionAssets', () => ({ usePredictionAssets: () => ({ currentSelectionKey: '' }) }))
+vi.mock('./PredictionModelSummary', () => ({ PredictionModelSummary: () => null }))
+vi.mock('./RemotePredictionSettings', () => ({ RemotePredictionSettings: () => null }))
 vi.mock('./predictionContextData', () => ({
   loadPredictionContextData: mocks.loadContextData,
   loadPredictionContextFingerprint: mocks.loadContextFingerprint,
+  loadPredictionSelectedTargets: mocks.selectedTargets,
+  loadPredictionSamplingMeasurements: mocks.samplingMeasurements,
   loadPredictionValidationData: async () => ({
     actual: mocks.actual ? [{ calculation_id: 1, data: mocks.actual }] : [],
     currentSourceFingerprints: new Map([[1, mocks.actualSource]]),
   }),
 }))
-vi.mock('./usePredictionModels', () => ({
+vi.mock('./usePredictionModels', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./usePredictionModels')>()),
   defaultPredictionSetup: Object.freeze({
     calculationIds: Object.freeze([]),
     algorithm: Object.freeze({
@@ -135,6 +145,7 @@ vi.mock('./PredictionPanels', () => ({
   }) => (open ? <div role="dialog" data-validation-count={validationComparisons.length} /> : null),
   PredictionSetupDialog: ({
     calculateMissingDisabled,
+    executionSettings,
     onCalculateMissing,
     open,
     applyDisabled,
@@ -143,6 +154,7 @@ vi.mock('./PredictionPanels', () => ({
     onReload,
   }: {
     calculateMissingDisabled: boolean
+    executionSettings: { props: { onUse: (setup: PredictionSetup, direction?: 'forward' | 'inverse') => void } }
     onCalculateMissing: () => void
     open: boolean
     applyDisabled: boolean
@@ -151,6 +163,7 @@ vi.mock('./PredictionPanels', () => ({
     onReload: () => void
   }) => {
     mocks.calculateMissing = onCalculateMissing
+    mocks.applySavedSetup = executionSettings.props.onUse
     return (
       <>
         <button disabled={calculateMissingDisabled} onClick={onCalculateMissing}>
@@ -187,7 +200,10 @@ function predictionResult(direction: 'forward' | 'inverse', value: number) {
       profile: {
         direction,
         inputLayouts: direction === 'inverse' ? [{ key: 'calculation:1', dtype: 'float64', shape: [] }] : [],
-        knn: { inputScales: direction === 'inverse' ? new Float64Array([1]) : new Float64Array() },
+        knn: {
+          inputScales: direction === 'inverse' ? new Float64Array([1]) : new Float64Array(),
+          inputBlockWeights: { 'calculation:1': 1 },
+        },
       },
     },
     result: {
@@ -212,6 +228,7 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
   const workbench = {
     calculationDataActions: { busy: false, cancel: vi.fn(), calculateMeasurement: mocks.calculateMeasurement },
     candidateVars: candidate,
+    selectionContext: { experimentId, measurementId: mocks.selectedMeasurementId, calculationId: 1 },
     experiment: { sourceBundle: { files: { 'experiment.tsx': 'export default 1' } } },
     experimentClean: true,
     experimentDocument: {
@@ -240,6 +257,7 @@ function TestWorkspace({ deferCandidateEvaluation = false }: { deferCandidateEva
       stage: null,
     },
     setCandidateVariables: (vars: { x: number }) => {
+      mocks.setCandidate(vars)
       setCandidate(vars)
       return true
     },
@@ -313,8 +331,15 @@ async function renderWorkspace(deferCandidateEvaluation = false, applySettings =
 beforeEach(() => {
   localStorage.clear()
   mocks.queryScope = 'user:test'
+  mocks.selectedMeasurementId = null
+  mocks.selectedTargets.mockReset().mockResolvedValue([])
+  mocks.samplingMeasurements.mockReset().mockResolvedValue([{ id: 15, vars: { x: 0.25 }, recorded_at: '2026-10-01' }])
+  mocks.startSampling
+    .mockReset()
+    .mockResolvedValue({ existingCenterCount: 1, candidateCount: 10, activeComponentCount: 1 })
   mocks.viewerState.mockReset()
   mocks.chromeState.mockReset()
+  mocks.setCandidate.mockReset()
   mocks.workerCreated.mockReset()
   mocks.manageable = true
   mocks.predictionOnly = false
@@ -801,4 +826,258 @@ it('predicts and enables Save & Run from metadata while Geometry and material sn
   )
   fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
   await waitFor(() => expect(mocks.saveAndRun).toHaveBeenCalledTimes(1))
+})
+
+function inverseOnlySetup(): PredictionSetup {
+  return {
+    ...defaultPredictionSetup,
+    executionId: 'remote-knn',
+    calculationIds: [1],
+    routes: {
+      inverse: {
+        launcherId: '10000000-0000-4000-8000-000000000001',
+        storageId: '10000000-0000-4000-8000-000000000002',
+      },
+    },
+    models: {
+      inverse: {
+        modelId: '20000000-0000-4000-8000-000000000001',
+        modelRevision: 3,
+        datasetId: '30000000-0000-4000-8000-000000000001',
+        datasetRevision: 2,
+        direction: 'inverse',
+        fingerprint: 'saved-inverse',
+        contract: { experimentId: 10, varsSchemaFingerprint: 'vars', records: {}, calculations: { '1': 'contract' } },
+      },
+    },
+  }
+}
+
+it('uses explicit Targets and validates Inverse without loading or predicting Forward', async () => {
+  persistPredictionSetup('user:test', 10, inverseOnlySetup())
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canValidate: true, direction: 'inverse' }),
+    ),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18'))
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-repredicted-status', 'unavailable')
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+it('loads current Recorded Measurement centers only when sampling with a saved model', async () => {
+  persistPredictionSetup('user:test', 10, inverseOnlySetup())
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  expect(mocks.samplingMeasurements).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canSample: true, canValidate: true })),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Sample' }))
+  await waitFor(() => expect(mocks.startSampling).toHaveBeenCalledOnce())
+  expect(mocks.samplingMeasurements).toHaveBeenCalledWith(expect.any(QueryClient), 'user:test', 10)
+  expect(mocks.startSampling).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({
+      centers: [[expect.objectContaining({ layout: expect.objectContaining({ key: 'x' }), values: [0.25] })]],
+    }),
+  )
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+})
+
+it('initializes missing Inverse Targets from the selected actual values only', async () => {
+  persistPredictionSetup('user:test', 10, inverseOnlySetup())
+  mocks.selectedMeasurementId = 9
+  mocks.selectedTargets.mockResolvedValue([{ id: 80, calculation_id: 1, measurement_id: 9, data: scalar(12) }])
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalled())
+  expect(mocks.selectedTargets).toHaveBeenCalledWith(10, 9, [1], expect.any(AbortSignal))
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '12')
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+})
+
+it('does not overwrite an explicit Target when selected actual values arrive late', async () => {
+  persistPredictionSetup('user:test', 10, inverseOnlySetup())
+  mocks.selectedMeasurementId = 9
+  let complete!: (value: unknown) => void
+  mocks.selectedTargets.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve
+      }),
+  )
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await waitFor(() => expect(mocks.selectedTargets).toHaveBeenCalled())
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledOnce())
+  await act(async () => complete([{ id: 80, calculation_id: 1, measurement_id: 9, data: scalar(12) }]))
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+  expect(mocks.predictInverse).toHaveBeenCalledOnce()
+})
+
+it('preserves Target and completed Actual comparison when only the execution copy changes', async () => {
+  const setup = inverseOnlySetup()
+  persistPredictionSetup('user:test', 10, setup)
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true })),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18'))
+  await act(async () =>
+    mocks.applySavedSetup({
+      ...setup,
+      routes: {
+        inverse: {
+          launcherId: '40000000-0000-4000-8000-000000000001',
+          storageId: '40000000-0000-4000-8000-000000000002',
+        },
+      },
+    }),
+  )
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18')
+  expect(mocks.forwardOutputs).not.toHaveBeenCalled()
+  expect(mocks.predictInverse).toHaveBeenCalledOnce()
+})
+
+it('preserves a completed predicted Viewer when only its execution route changes', async () => {
+  const inverse = inverseOnlySetup()
+  const setup: PredictionSetup = {
+    ...inverse,
+    models: { forward: { ...inverse.models!.inverse!, direction: 'forward' } },
+    routes: { forward: inverse.routes!.inverse },
+  }
+  persistPredictionSetup('user:test', 10, setup)
+  mocks.forwardOutputs.mockImplementation(async (_vars, _transaction, publish) => {
+    publish(recordedPreview)
+    return predictionResult('forward', 10)
+  })
+  await renderWorkspace(false, false)
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: recordedPreview }))
+  await act(async () =>
+    mocks.applySavedSetup({
+      ...setup,
+      routes: {
+        forward: {
+          launcherId: '40000000-0000-4000-8000-000000000001',
+          storageId: '40000000-0000-4000-8000-000000000002',
+        },
+      },
+    }),
+  )
+  expect(mocks.viewerState).toHaveBeenLastCalledWith(expect.objectContaining({ preview: recordedPreview }))
+  expect(mocks.forwardOutputs).toHaveBeenCalledOnce()
+})
+
+it('keeps a committed Save & Run busy and accepts Actual after a route-only change', async () => {
+  const setup = inverseOnlySetup()
+  persistPredictionSetup('user:test', 10, setup)
+  let complete!: (value: { measurementId: number }) => void
+  mocks.saveAndRun.mockReturnValueOnce(
+    new Promise((resolve) => {
+      complete = resolve
+    }),
+  )
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() =>
+    expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true })),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  await waitFor(() => expect(mocks.saveAndRun).toHaveBeenCalledOnce())
+  await act(async () =>
+    mocks.applySavedSetup({
+      ...setup,
+      routes: {
+        inverse: {
+          launcherId: '40000000-0000-4000-8000-000000000001',
+          storageId: '40000000-0000-4000-8000-000000000002',
+        },
+      },
+    }),
+  )
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true, canValidate: false }))
+  fireEvent.click(screen.getByRole('button', { name: 'Validate' }))
+  expect(mocks.saveAndRun).toHaveBeenCalledOnce()
+  await act(async () => complete({ measurementId: 2 }))
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-actual', '18'))
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+})
+
+it('restarts interrupted Inverse on a new route and discards the old late candidate', async () => {
+  const setup = inverseOnlySetup()
+  persistPredictionSetup('user:test', 10, setup)
+  let complete!: (value: ReturnType<typeof predictionResult>) => void
+  mocks.predictInverse
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        complete = resolve
+      }),
+    )
+    .mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await screen.findByTestId('calculation-1')
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Target' }))
+  await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledOnce())
+  await act(async () =>
+    mocks.applySavedSetup({
+      ...setup,
+      routes: {
+        inverse: {
+          launcherId: '40000000-0000-4000-8000-000000000001',
+          storageId: '40000000-0000-4000-8000-000000000002',
+        },
+      },
+    }),
+  )
+  await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledTimes(2))
+  expect(mocks.setCandidate).toHaveBeenCalledOnce()
+  await act(async () => complete(predictionResult('inverse', 0)))
+  expect(mocks.setCandidate).toHaveBeenCalledOnce()
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '20')
+})
+
+it('using the selected Inverse model switches direction and retains a compatible existing Target', async () => {
+  const inverse = inverseOnlySetup()
+  const setup: PredictionSetup = {
+    ...inverse,
+    models: {
+      ...inverse.models,
+      forward: {
+        ...inverse.models!.inverse!,
+        modelId: '20000000-0000-4000-8000-000000000002',
+        direction: 'forward',
+      },
+    },
+    routes: { ...inverse.routes, forward: inverse.routes!.inverse },
+  }
+  persistPredictionSetup('user:test', 10, setup)
+  mocks.forwardOutputs.mockResolvedValue(predictionResult('forward', 10))
+  mocks.predictInverse.mockResolvedValue(predictionResult('inverse', 0))
+  await renderWorkspace(false, false)
+  await waitFor(() => expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10'))
+  await act(async () => mocks.applySavedSetup(setup, 'inverse'))
+  await waitFor(() => expect(mocks.predictInverse).toHaveBeenCalledOnce())
+  expect(mocks.chromeState).toHaveBeenLastCalledWith(expect.objectContaining({ direction: 'inverse' }))
+  expect(screen.getByTestId('calculation-1')).toHaveAttribute('data-primary', '10')
+  expect(mocks.selectedTargets).not.toHaveBeenCalled()
 })

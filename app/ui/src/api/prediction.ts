@@ -4,8 +4,11 @@ import {
   predictionDatasetSchema,
   predictionGrantSchema,
   predictionModelSchema,
+  predictionStorageSchema,
+  predictionOperationSchema,
   type PredictionDatasetSelection,
   type PredictionModelReservation,
+  type PredictionOperationRequest,
 } from '@/contracts/api/prediction'
 
 export function createPredictionApi(client: CaembleClient) {
@@ -64,15 +67,91 @@ export function createPredictionApi(client: CaembleClient) {
         csrf: 'required',
         validate: (value) => predictionModelSchema.parse(value),
       }),
-    lease: (id: string, revision: number, jobId: string, release = false) =>
+    lease: (
+      id: string,
+      revision: number,
+      jobId: string,
+      release = false,
+      route?: { replica_id?: string; storage_id?: string },
+    ) =>
       client.request(
         'post',
         `/prediction/models/${encodeURIComponent(id)}/leases${release ? '/release' : ''}`,
-        { revision, job_id: jobId },
+        { revision, job_id: jobId, ...route },
         { csrf: 'required' },
       ),
     registerStorage: (body: { storage_id: string; launcher_id: string; name: string }, context?: RequestContext) =>
       client.request('post', '/prediction/storages', body, { ...context, csrf: 'required' }),
+    storages: (context?: RequestContext) =>
+      client.request('get', '/prediction/storages', undefined, {
+        ...context,
+        validate: (value) => z.object({ items: z.array(predictionStorageSchema) }).parse(value).items,
+      }),
+    operations: (experimentId: number, context?: RequestContext) =>
+      client.request('get', `/prediction/operations?experiment_id=${experimentId}`, undefined, {
+        ...context,
+        validate: (value) => z.object({ items: z.array(predictionOperationSchema) }).parse(value).items,
+      }),
+    operation: (id: string, context?: RequestContext) =>
+      client.request('get', `/prediction/operations/${encodeURIComponent(id)}`, undefined, {
+        ...context,
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    createOperation: (body: PredictionOperationRequest, context?: RequestContext) =>
+      client.request('post', '/prediction/operations', body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    retryOperation: (id: string, body: object = {}, context?: RequestContext) =>
+      client.request('post', `/prediction/operations/${encodeURIComponent(id)}/grants`, body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    cancelOperation: (id: string) =>
+      client.request(
+        'post',
+        `/prediction/operations/${encodeURIComponent(id)}/cancel`,
+        {},
+        {
+          csrf: 'required',
+          validate: (value) => predictionOperationSchema.parse(value),
+        },
+      ),
+    interruptOperation: (id: string, error: string) =>
+      client.request(
+        'post',
+        `/prediction/operations/${encodeURIComponent(id)}/interrupt`,
+        { error },
+        {
+          csrf: 'required',
+          validate: (value) => predictionOperationSchema.parse(value),
+        },
+      ),
+    checkReplica: (body: object, context?: RequestContext) =>
+      client.request('post', '/prediction/replicas/check', body, { ...context, csrf: 'required' }),
+    completeOperation: (id: string, body: object, context?: RequestContext) =>
+      client.request('post', `/prediction/operations/${encodeURIComponent(id)}/complete`, body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    previewDataset: (id: string, body: PredictionDatasetSelection, context?: RequestContext) =>
+      client.request('post', `/prediction/datasets/${encodeURIComponent(id)}/preview`, body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) =>
+          z
+            .object({
+              added: z.number().int().nonnegative(),
+              changed: z.number().int().nonnegative(),
+              removed: z.number().int().nonnegative(),
+            })
+            .parse(value),
+      }),
+    renameAsset: (kind: 'datasets' | 'models', id: string, name: string) =>
+      client.request('patch', `/prediction/${kind}/${encodeURIComponent(id)}`, { name }, { csrf: 'required' }),
     deleteAsset: (kind: 'datasets' | 'models', id: string, body: object, complete = false, context?: RequestContext) =>
       client.request(
         'post',

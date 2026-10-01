@@ -84,8 +84,9 @@ are unavailable and start automatically after earlier instances finish cleanup.
 
 Install `predictor` with `poetry install` in its own directory, then restart the
 launcher. It uses CPU NumPy and the existing WebRTC SDK; it does not require a GPU,
-the AI application, or a separate signaling service. The browser selects a specific
-launcher, and a local model is never scheduled on another machine as a fallback.
+the AI application, or a separate signaling service. In Prediction, select a saved
+model revision and then its replica and launcher. Forward and Inverse can use
+different launchers. A local model is never scheduled on another machine as a fallback.
 
 Set `CAEMBLE_PREDICTOR_STORAGE_ROOT` in `app/launcher/.env` to keep Dataset and model
 files on a chosen local disk. The default is `%LOCALAPPDATA%/Caemble/predictor` on
@@ -100,7 +101,47 @@ and its referenced objects. Predictor downloads the object bodies directly and
 verifies their lengths and SHA-256 checksums. It retains the latest Dataset payload.
 Saved models are self-contained, so replacing or deleting a Dataset does not alter
 an existing model. Saving publishes a revision only after all artifact files and
-its manifest are complete. Local persistence is not backup or device replication.
+its manifest are complete. Local persistence alone does not create a backup.
+
+The API identifies a Dataset or model independently of its storage locations.
+Local stores and object backups are replicas of an immutable revision; each local
+store can have registered launcher access paths. Keep the `storage-id` with its
+store rather than generating one for each launcher or copying it to an unrelated
+disk. File verification and launcher connectivity are separate statuses. Existing
+registrations migrate as unverified until a real file load or verification checks
+the bytes. Metadata inspection alone does not prove that a file is intact.
+
+Prediction's model manager creates object-storage backups using the API's existing
+object storage configuration and owner authorization. Backup is explicit and defaults
+to the model only. It includes the arrays and preprocessing needed for prediction;
+the original training Dataset is optional. Including training data requires the exact
+Dataset revision used by the model, from a retained server payload, reachable local
+replica, or existing backup. An unavailable historical payload cannot be substituted
+with the latest Dataset or reconstructed from a model. Routine Dataset synchronization
+keeps the latest payload; explicit backup and restored historical payloads remain
+available until separately removed.
+
+Restore verifies checksums and atomically registers the same asset ID, revision and
+manifest checksum at the selected destination store. It does not retrain or change
+the model's definition. A model-only backup can restore inference after the original
+store and Dataset are gone. Source launcher IDs, storage IDs, session handles and
+grants are not execution requirements of the restored model. Backup packages do not
+carry account credentials or download tokens. This release supports the same owner's
+API-backed backup and restore, not cross-account publication or a separate storage
+service. Predictor RPC is version `2`; Dataset and model artifact files remain
+version `1` without rewriting model manifest bytes on restore.
+
+Upgrade the API, UI and Predictor together after active Predictor jobs finish.
+With a pre-upgrade database backup retained and database writers stopped, run
+`poetry run alembic upgrade head` from `app/api` using the deployment's configured
+database. Migration `000000000024` moves existing locations into replicas and
+access paths, preserving unfinished preparation, pending deletion and leases.
+It does not inspect local files or rewrite artifacts. The UI migrates saved setup
+v1 to v2 on load, retaining model contracts and moving location fields into
+execution preferences. Old Predictor RPC clients must update before reconnecting.
+Schema downgrade cannot safely collapse multiple copies into one location; a
+rollback requires the pre-upgrade database and matching application release.
+Follow the [deployment procedure](deployment.md) for the production change window.
 
 From the checkout, export a server Dataset as a portable local bundle:
 
@@ -125,10 +166,10 @@ download grants. Arbitrary CSV, NumPy files and directory layouts are not import
 
 To stage a bundle on a launcher, copy the complete validated directory into
 `<storage-root>/owners/<owner-hash>/imports/<import-id>`. Choose an opaque import ID
-using letters, digits, `_` or `-`. Enter this import ID in Prediction's local import
-control. Predictor validates and copies the bundle into managed storage with a new
+using letters, digits, `_` or `-`. Enter this import ID in Prediction's
+**학습 데이터 → 고급: 외부 Dataset 가져오기** control. Predictor validates and copies the bundle into managed storage with a new
 local Dataset identity, retaining the server source as provenance. The same import
-ID remains bound to that source. Replace the staged bundle and explicitly Sync to
+ID remains bound to that source. Replace the staged bundle and explicitly update the Dataset to
 publish a new local revision when its content changes. Models keep their existing
 revision until explicitly updated. The source staging directory remains available
 for the operator to manage; browser requests never contain an absolute local path.
@@ -140,7 +181,25 @@ five idle minutes and reloads the same saved model on the next prediction. Expli
 Cancel, leaving the remote execution, or connection loss ends in-flight work; model
 files remain. Launcher reservations are returned only after the full process tree
 exits. Reconnecting does not resume an unfinished preparation or create an updated
-model automatically.
+model automatically. The browser retains one inference session per selected
+launcher/store route, sharing it when both directions use the same route.
+
+Management jobs have a separate lifetime from inference and from the management
+panel. Closing the panel does not cancel a preparation, backup or restore. Transfer
+jobs request one CPU and 256 MiB startup RAM; model preparation uses the normal
+Predictor allocation. Backup and restore allow up to 30 minutes per RPC, while file
+verification and removal allow up to 10 minutes. Resource admission still applies.
+After interruption, inspect the persisted operation and retry the same operation;
+completed transfers and registrations are reused. The UI switches a model selection
+only after successful creation or an explicit **복원하고 사용** action, and only if
+the user has not selected something newer while waiting.
+
+Removing one replica differs from deleting the whole asset. Whole-model deletion
+targets all revisions and model copies, while Dataset deletion preserves models and
+the original Experiment records. Active leases and unreachable launchers leave a
+deletion pending until the file removal can be confirmed. A disconnected launcher
+does not imply that its files are missing. Inspect the pending operation before
+retrying; an API tombstone prevents late registration from resurrecting a deleted asset.
 
 Developer acceptance uses an isolated loopback fixture with real Chromium, SDK
 DataChannels and launcher-managed subprocesses. Build `app/sdk/master/js`, install
@@ -154,9 +213,11 @@ poetry run python -m pytest tests/test_webrtc_browser.py tests/test_predictor_br
 
 These tests substitute HTTP scheduling only. They verify binary transfers, new
 process identity after restart, cancellation, disconnect and confirmed resource
-cleanup. The Predictor test prepares Forward and Inverse artifacts, deletes the
-Dataset, starts a new process, and reloads identical predictions from the saved
-files. They do not claim production signaling or NAT traversal verification.
+cleanup. The Predictor test prepares Forward and Inverse artifacts, backs up the
+model, removes the source store, and restores into a different storage identity.
+A fresh third Predictor process loads the restored files and checks unchanged
+manifest checksums, provenance and predictions. They do not claim production
+signaling or NAT traversal verification.
 
 ## Launcher resource policy
 

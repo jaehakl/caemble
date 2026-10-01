@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { PersistedCalculationRecord } from '@/api'
 import type { SavedPredictionModel } from './execution'
 import type { PredictionContext } from './predictionContextData'
-import type { PredictionSetup } from './usePredictionModels'
+import { predictionSetupFingerprint, type PredictionSetup } from './usePredictionModels'
 import { assertSavedPredictionCompatible, savedContractFromSource, savedPredictionContract } from './savedModels'
 import { persistPredictionSetup, restorePredictionSetup } from './setupPersistence'
 
@@ -56,8 +56,6 @@ function savedModel(direction: 'forward' | 'inverse' = 'forward'): SavedPredicti
     datasetRevision: 1,
     direction,
     fingerprint: `${direction}-fingerprint`,
-    storageId,
-    launcherId,
     manifestChecksum: 'a'.repeat(64),
     contract: savedPredictionContract(contextWith(), varsSchema),
   }
@@ -66,7 +64,7 @@ function savedModel(direction: 'forward' | 'inverse' = 'forward'): SavedPredicti
 function setupWithModels(): PredictionSetup {
   return {
     executionId: 'remote-knn',
-    launcherId,
+    routes: { forward: { storageId, launcherId }, inverse: { storageId, launcherId } },
     datasetId: '30000000-0000-4000-8000-000000000001',
     calculationIds: [7],
     algorithm: { kind: 'knn', kMode: 'manual', manualK: 2, weighting: 'distance', calculationWeights: { 7: 1 } },
@@ -143,6 +141,43 @@ describe('saved Prediction contracts', () => {
 })
 
 describe('saved Prediction setup persistence', () => {
+  it('migrates v1 identity and exact revisions without requiring the original launcher online', () => {
+    const setup = setupWithModels()
+    const legacy = {
+      ...setup,
+      launcherId,
+      routes: undefined,
+      models: {
+        forward: { ...setup.models!.forward!, launcherId, storageId },
+        inverse: { ...setup.models!.inverse!, launcherId, storageId },
+      },
+    }
+    localStorage.setItem(
+      'caemble.prediction.setup:owner-a:3',
+      JSON.stringify({ version: 1, owner: 'owner-a', experimentId: 3, setup: legacy }),
+    )
+    expect(restorePredictionSetup('owner-a', 3)).toEqual(setup)
+    const written = JSON.parse(localStorage.getItem('caemble.prediction.setup:owner-a:3')!)
+    expect(written.version).toBe(2)
+    expect(written.setup.models.forward).not.toHaveProperty('launcherId')
+    expect(written.setup.routes.forward).toEqual({ storageId, launcherId })
+  })
+
+  it('preserves independent execution preferences on two different launchers', () => {
+    const setup = {
+      ...setupWithModels(),
+      routes: {
+        forward: { storageId, launcherId },
+        inverse: {
+          storageId: '40000000-0000-4000-8000-000000000001',
+          launcherId: '40000000-0000-4000-8000-000000000002',
+        },
+      },
+    }
+    persistPredictionSetup('owner-a', 3, setup)
+    expect(restorePredictionSetup('owner-a', 3)).toEqual(setup)
+  })
+
   it('restores independent Forward and Inverse revisions with their contracts and checksums', () => {
     const setup = setupWithModels()
     persistPredictionSetup('owner-a', 3, setup)
@@ -175,13 +210,26 @@ describe('saved Prediction setup persistence', () => {
     expect(restorePredictionSetup('owner-a', 3)).toEqual(setup)
   })
 
-  it('rejects a saved Model bound to another launcher or Experiment', () => {
+  it('rejects a saved Model with another Experiment or wrong direction', () => {
     for (const forward of [
-      { ...savedModel(), launcherId: '40000000-0000-4000-8000-000000000001' },
+      { ...savedModel(), direction: 'inverse' as const },
       { ...savedModel(), contract: { ...savedModel().contract!, experimentId: 4 } },
     ]) {
       persistPredictionSetup('owner-a', 3, { ...setupWithModels(), models: { forward } })
       expect(restorePredictionSetup('owner-a', 3)).toBeNull()
     }
   })
+})
+
+it('keeps replica preferences and new-version algorithm drafts out of saved inference meaning', () => {
+  const setup = setupWithModels()
+  const changed = {
+    ...setup,
+    routes: { inverse: { storageId, launcherId: '40000000-0000-4000-8000-000000000001' } },
+    algorithm: { ...setup.algorithm, manualK: 8 },
+  }
+  expect(predictionSetupFingerprint(changed)).toBe(predictionSetupFingerprint(setup))
+  expect(
+    predictionSetupFingerprint({ ...setup, models: { forward: { ...setup.models!.forward!, modelRevision: 10 } } }),
+  ).not.toBe(predictionSetupFingerprint(setup))
 })

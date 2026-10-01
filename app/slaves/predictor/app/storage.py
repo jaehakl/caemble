@@ -1,7 +1,7 @@
 """Owner-scoped, checksum-verified atomic artifacts in a registered local root."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import errno
 import hashlib
 import json
@@ -54,13 +54,15 @@ class ArtifactStore:
         self.namespace.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
-    def transaction(self, cancel: threading.Event | None = None):
+    def transaction(self, cancel: threading.Event | None = None, *, operation_id: str | None = None):
         """Serialize disk reads/writes across Predictor sessions for this owner."""
         if os.name == "nt":
             import msvcrt
         else:
             import fcntl
-        with (self.namespace / ".storage.lock").open("a+b") as stream:
+        directory = self.path("operations", operation_id) if operation_id is not None else self.namespace
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / ".storage.lock").open("a+b") as stream:
             if stream.tell() == 0:
                 stream.write(b"\0")
                 stream.flush()
@@ -91,7 +93,7 @@ class ArtifactStore:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def path(self, kind: str, identity: str, revision: int | None = None) -> Path:
-        if kind not in ("models", "datasets", "tombstones", "leases"):
+        if kind not in ("models", "datasets", "tombstones", "leases", "read-leases", "operations"):
             raise PredictionError("invalid-reference", "Unknown artifact category.")
         path = self.namespace / kind / safe_id(identity)
         if revision is not None:
@@ -112,8 +114,14 @@ class ArtifactStore:
     def release_lease(self, identity: str, revision: int, handle: str) -> None:
         (self.path("leases", identity, revision) / f"{safe_id(handle)}.json").unlink(missing_ok=True)
 
-    def assert_unused(self, identity: str, revision: int | None) -> None:
-        directory = self.path("leases", identity, revision)
+    def assert_unused(self, identity: str, revision: int | None, kind: str = "models") -> None:
+        directories = [self.path("read-leases", f"{kind}-{identity}", revision)]
+        if kind == "models":
+            directories.append(self.path("leases", identity, revision))
+        for directory in directories:
+            self._assert_no_live_leases(directory)
+
+    def _assert_no_live_leases(self, directory: Path) -> None:
         if not directory.exists():
             return
         for path in directory.rglob("*.json"):
@@ -128,7 +136,24 @@ class ArtifactStore:
                 raise PredictionError("model-in-use", "Cannot verify an existing model lease; its files were retained.") from error
             path.unlink(missing_ok=True)
 
-    def read(self, kind: str, identity: str, revision: int, budget: int | None = None) -> tuple[dict, Path, str]:
+    @contextmanager
+    def read_lease(self, kind: str, identity: str, revision: int, cancel=None, *, allow_missing: bool = False):
+        """Keep immutable revision bytes alive without holding the owner lock during IO."""
+        handle = str(uuid.uuid4())
+        directory = self.path("read-leases", f"{kind}-{safe_id(identity)}", revision)
+        with self.transaction(cancel):
+            if not allow_missing and not self.path(kind, identity, revision).is_dir():
+                raise PredictionError("artifact-missing", "Saved artifact files are missing on this storage.")
+            directory.mkdir(parents=True, exist_ok=True)
+            process = psutil.Process()
+            (directory / f"{handle}.json").write_bytes(encode_json({"pid": process.pid, "createdAt": process.create_time()}))
+        try:
+            yield
+        finally:
+            (directory / f"{handle}.json").unlink(missing_ok=True)
+
+    def read(self, kind: str, identity: str, revision: int, budget: int | None = None,
+             cancel: threading.Event | None = None, verify: bool = True) -> tuple[dict, Path, str]:
         path = self.path(kind, identity, revision)
         try:
             raw = (path / "manifest.json").read_bytes()
@@ -137,32 +162,42 @@ class ArtifactStore:
                 raise PredictionError("artifact-version", "Unsupported artifact format.")
             if manifest.get("identity") != identity or manifest.get("revision") != revision:
                 raise PredictionError("artifact-checksum", "Artifact identity differs from its manifest.")
+            if not isinstance(manifest.get("files"), list) or len({file["name"] for file in manifest["files"]}) != len(manifest["files"]):
+                raise PredictionError("artifact-checksum", "Artifact file names must be unique.")
             total = sum(file["byteLength"] for file in manifest["files"])
             if budget is not None and total > budget:
                 raise PredictionError("memory-limit", f"Artifact needs {total:,} bytes; {budget:,} bytes are available.")
             for file in manifest["files"]:
                 name = file["name"]
+                if (type(file["byteLength"]) is not int or file["byteLength"] < 0
+                        or not isinstance(file["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", file["sha256"])):
+                    raise PredictionError("artifact-checksum", "Artifact file metadata is invalid.")
                 if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", "..", "manifest.json"):
                     raise PredictionError("artifact-checksum", "Artifact manifest contains an invalid file name.")
-                target = (path / name).resolve()
-                if not target.is_relative_to(path) or target.is_symlink():
+                unresolved = path / name
+                target = unresolved.resolve()
+                if not target.is_relative_to(path) or unresolved.is_symlink():
                     raise PredictionError("artifact-checksum", "Artifact file escapes its revision directory.")
                 if target.stat().st_size != file["byteLength"]:
                     raise PredictionError("artifact-checksum", "Artifact file length differs from its manifest.")
-                digest = hashlib.sha256()
-                with target.open("rb") as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                if digest.hexdigest() != file["sha256"]:
-                    raise PredictionError("artifact-checksum", "Artifact file checksum differs from its manifest.")
+                if verify:
+                    digest = hashlib.sha256()
+                    with target.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            check_cancel(cancel)
+                            digest.update(chunk)
+                    if digest.hexdigest() != file["sha256"]:
+                        raise PredictionError("artifact-checksum", "Artifact file checksum differs from its manifest.")
             return manifest, path, hashlib.sha256(raw).hexdigest()
         except FileNotFoundError:
             raise PredictionError("artifact-missing", "Saved artifact files are missing on this storage.") from None
-        except (KeyError, TypeError, json.JSONDecodeError) as error:
+        except PredictionError:
+            raise
+        except (KeyError, TypeError, ValueError) as error:
             raise PredictionError("artifact-checksum", "Saved artifact manifest is invalid.") from error
 
     def write(self, kind: str, identity: str, revision: int, metadata: dict, writer,
-              cancel: threading.Event | None = None) -> tuple[dict, Path, str]:
+              cancel: threading.Event | None = None, *, publication_lock: bool = False) -> tuple[dict, Path, str]:
         target = self.path(kind, identity, revision)
         if kind == "models" and self.deleted(identity, revision):
             raise PredictionError("deleted", "This model revision has been deleted.")
@@ -196,7 +231,10 @@ class ArtifactStore:
                 os.fsync(stream.fileno())
             check_cancel(cancel)
             try:
-                os.replace(temporary, target)
+                with self.transaction(cancel) if publication_lock else nullcontext():
+                    if (kind == "models" and self.deleted(identity, revision)) or (kind == "datasets" and self.dataset_deleted(identity)):
+                        raise PredictionError("deleted", "This asset has been logically deleted.")
+                    os.replace(temporary, target)
             except OSError:
                 if not target.exists():
                     raise
@@ -230,7 +268,7 @@ class ArtifactStore:
             return
         current = self.latest_dataset(identity) if (parent / "latest").exists() else 0
         for child in parent.iterdir():
-            if child.is_dir() and child.name.isdigit() and int(child.name) > current:
+            if child.is_dir() and child.name.isdigit() and int(child.name) > current and not (parent / "retained" / child.name).exists():
                 check_cancel(cancel)
                 self.read("datasets", identity, int(child.name))
                 self._remove(child)
@@ -240,7 +278,10 @@ class ArtifactStore:
         previous = parent / "latest"
         if previous.exists() and int(previous.read_text(encoding="utf-8")) > revision:
             raise PredictionError("revision-conflict", "Cannot replace a newer local Dataset revision.")
-        retired = [child for child in parent.iterdir() if child.is_dir() and child.name.isdigit() and int(child.name) != revision]
+        retired = [child for child in parent.iterdir() if child.is_dir() and child.name.isdigit()
+                   and int(child.name) != revision and not (parent / "retained" / child.name).exists()]
+        for child in retired:
+            self.assert_unused(identity, int(child.name), "datasets")
         for child in retired:
             manifest, _, checksum = self.read("datasets", identity, int(child.name))
             if manifest["metadata"].get("sourceKind") == "local":
@@ -256,7 +297,7 @@ class ArtifactStore:
         for child in retired:
             self._remove(child)
 
-    def list(self, kind: str) -> list[dict]:
+    def list(self, kind: str, *, verify: bool = True) -> list[dict]:
         directory = self.namespace / kind
         result = []
         if not directory.exists():
@@ -264,21 +305,27 @@ class ArtifactStore:
         for identity in sorted(directory.iterdir()):
             if not identity.is_dir() or identity.name.startswith("."):
                 continue
-            if kind == "datasets" and not (identity / "latest").exists():
+            if kind == "datasets" and not (identity / "latest").exists() and not (identity / "retained").exists():
                 continue
-            revisions = [self.latest_dataset(identity.name)] if kind == "datasets" else [int(path.name) for path in identity.iterdir() if path.is_dir() and path.name.isdigit()]
+            revisions = [int(path.name) for path in identity.iterdir() if path.is_dir() and path.name.isdigit()]
+            if kind == "datasets":
+                latest = self.latest_dataset(identity.name) if (identity / "latest").exists() else None
+                revisions = [revision for revision in revisions if revision == latest or (identity / "retained" / str(revision)).exists()]
             if kind == "datasets":
                 receipts = identity / "receipts"
                 if receipts.exists():
                     for path in sorted(receipts.glob("*.json"), key=lambda path: int(path.stem)):
                         receipt = json.loads(path.read_bytes())
-                        if receipt["revision"] != revisions[0]:
-                            result.append({**receipt, "storageId": self.storage_id, "launcherId": self.launcher_id})
+                        if receipt["revision"] not in revisions:
+                            result.append({**receipt, "storageId": self.storage_id, "launcherId": self.launcher_id,
+                                           "verified": False, "payloadAvailable": False})
             for revision in revisions:
                 try:
-                    manifest, _, checksum = self.read(kind, identity.name, revision)
+                    manifest, _, checksum = self.read(kind, identity.name, revision, verify=verify)
                     result.append({**manifest["metadata"], "files": manifest["files"], "manifestChecksum": checksum,
-                                   "storageId": self.storage_id, "launcherId": self.launcher_id, "available": True})
+                                   "storageId": self.storage_id, "launcherId": self.launcher_id,
+                                   "available": True, "verified": verify,
+                                   **({"payloadAvailable": True} if kind == "datasets" else {})})
                 except PredictionError as error:
                     result.append({"modelId" if kind == "models" else "datasetId": identity.name,
                                    "revision": revision, "available": False, "error": {"code": error.code, "message": str(error)}})
@@ -294,6 +341,7 @@ class ArtifactStore:
 
     def delete(self, kind: str, identity: str, revision: int | None = None) -> None:
         target = self.path(kind, identity, revision)
+        self.assert_unused(identity, revision, kind)
         if kind == "models":
             self.assert_unused(identity, revision)
             tombstone = self.path("tombstones", identity)
@@ -305,3 +353,59 @@ class ArtifactStore:
             (tombstone / "all").touch()
         if target.exists():
             self._remove(target)
+
+    def remove_replica(self, kind: str, identity: str, revision: int, cancel=None) -> None:
+        """Removing one copy never creates the logical deletion tombstone."""
+        if kind not in ("models", "datasets"):
+            raise PredictionError("invalid-reference", "Unknown artifact category.")
+        removed = None
+        with self.transaction(cancel):
+            self.assert_unused(identity, revision, kind)
+            target = self.path(kind, identity, revision)
+            if target.exists():
+                removed = target.parent / f".removing-{uuid.uuid4()}"
+                os.replace(target, removed)
+            if kind == "datasets":
+                (target.parent / "retained" / str(revision)).unlink(missing_ok=True)
+                latest = target.parent / "latest"
+                if latest.exists() and latest.read_text(encoding="utf-8").strip() == str(revision):
+                    latest.unlink()
+        if removed is not None:
+            self._remove(removed)
+
+    def publish_replica(self, kind: str, identity: str, revision: int, staged: Path, checksum: str, cancel=None) -> bool:
+        """Publish previously verified bytes; a collision compares the exact manifest."""
+        with self.transaction(cancel):
+            if (kind == "models" and self.deleted(identity, revision)) or (kind == "datasets" and self.dataset_deleted(identity)):
+                raise PredictionError("deleted", "This asset has been logically deleted.")
+            target = self.path(kind, identity, revision)
+            reused = target.exists()
+            if reused:
+                actual = hashlib.sha256((target / "manifest.json").read_bytes()).hexdigest()
+                if actual != checksum:
+                    raise PredictionError("revision-conflict", "This identity and revision already contain different content.")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staged, target)
+            if kind == "datasets":
+                retained = target.parent / "retained"
+                retained.mkdir(exist_ok=True)
+                (retained / str(revision)).touch()
+            return reused
+
+    def save_receipt(self, operation_id: str, receipt: dict) -> dict:
+        directory = self.path("operations", operation_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        pending = directory / f".pending-{uuid.uuid4()}"
+        with pending.open("wb") as stream:
+            stream.write(encode_json(receipt))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, directory / "receipt.json")
+        return receipt
+
+    def receipt(self, operation_id: str) -> dict | None:
+        try:
+            return json.loads((self.path("operations", operation_id) / "receipt.json").read_bytes())
+        except FileNotFoundError:
+            return None

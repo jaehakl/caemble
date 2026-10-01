@@ -7,6 +7,7 @@ import { RemotePredictionError } from './remoteProtocol'
 
 const launcherId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'
 const storageId = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb'
+const route = { storageId, launcherId }
 const reference: SavedPredictionModel = {
   modelId: 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
   modelRevision: 2,
@@ -14,8 +15,6 @@ const reference: SavedPredictionModel = {
   datasetRevision: 3,
   direction: 'forward',
   fingerprint: 'model-fingerprint',
-  storageId,
-  launcherId,
   manifestChecksum: 'a'.repeat(64),
 }
 const profile = {
@@ -118,7 +117,7 @@ function transportFixture() {
         call: async <TInput, TResult>(type: string, input?: TInput) => {
           const body = input as Record<string, unknown>
           calls.push({ type, body })
-          const envelope = { protocolVersion: 1, requestId: wrongRequest ? 'wrong-request' : body.requestId, sessionId }
+          const envelope = { protocolVersion: 2, requestId: wrongRequest ? 'wrong-request' : body.requestId, sessionId }
           let result: unknown = { released: true }
           if (type === 'model.load' || type === 'model.prepare') {
             if (modelGate) {
@@ -176,7 +175,7 @@ function transportFixture() {
       return {
         session,
         payload: {
-          protocolVersion: 1,
+          protocolVersion: 2,
           requestId,
           sessionId,
           storageId,
@@ -223,6 +222,7 @@ function transportFixture() {
 
 beforeEach(() => {
   vi.spyOn(predictionApi, 'lease').mockResolvedValue({ leased: true })
+  vi.spyOn(predictionApi, 'checkReplica').mockResolvedValue({})
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -239,7 +239,7 @@ describe('remote Prediction execution lifecycle', () => {
       const abort = new AbortController()
       const promise =
         operation === 'load'
-          ? remote.load(reference, request('model', abort))
+          ? remote.load(reference, request('model', abort), route)
           : remote.prepare(datasetInput, definition, request('model', abort))
       const rejected = expect(promise).rejects.toMatchObject({ name: 'AbortError' })
       await vi.waitFor(() => expect(fixture.calls).toHaveLength(1))
@@ -247,7 +247,9 @@ describe('remote Prediction execution lifecycle', () => {
       await rejected
       complete()
       await vi.waitFor(() => expect(fixture.calls.some((call) => call.type === 'model.release')).toBe(true))
-      expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[0].jobId, true)
+      expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[0].jobId, true, {
+        storage_id: storageId,
+      })
       expect(fixture.transport.cancel).not.toHaveBeenCalled()
       expect(fixture.calls.some((call) => call.type === 'model.delete')).toBe(false)
       remote.dispose()
@@ -263,7 +265,7 @@ describe('remote Prediction execution lifecycle', () => {
     const fixture = transportFixture()
     fixture.setArtifact(change)
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
-    await expect(remote.load(reference, request('load'))).rejects.toMatchObject({ code: 'model-mismatch' })
+    await expect(remote.load(reference, request('load'), route)).rejects.toMatchObject({ code: 'model-mismatch' })
     expect(remote.state).toBe('failed')
     expect(fixture.sessions[0].closed).toBe(true)
     expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId)
@@ -289,11 +291,11 @@ describe('remote Prediction execution lifecycle', () => {
         throw new RemotePredictionError('reconciliation', 'Storage rejected.')
       },
     })
-    await expect(remote.load(reference, request('load'))).rejects.toMatchObject({ code: 'reconciliation' })
+    await expect(remote.load(reference, request('load'), route)).rejects.toMatchObject({ code: 'reconciliation' })
     expect(fixture.sessions[0].closed).toBe(true)
     expect(remote.state).toBe('failed')
     expect(fixture.calls).toEqual([])
-    await expect(remote.load(reference, request('retry'))).rejects.toMatchObject({
+    await expect(remote.load(reference, request('retry'), route)).rejects.toMatchObject({
       name: 'PredictionInstanceInvalidatedError',
     })
     expect(fixture.sessions).toHaveLength(1)
@@ -308,7 +310,7 @@ describe('remote Prediction execution lifecycle', () => {
     })
     const onHello = vi.fn(() => hello)
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, onHello })
-    const loading = remote.load(reference, request('load'))
+    const loading = remote.load(reference, request('load'), route)
     const rejected = expect(loading).rejects.toMatchObject({ name: 'AbortError' })
     await vi.waitFor(() => expect(onHello).toHaveBeenCalledOnce())
     remote.dispose()
@@ -323,7 +325,7 @@ describe('remote Prediction execution lifecycle', () => {
   it('discards an active superseded result and only sends the latest waiting prediction', async () => {
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     const complete = fixture.delayNextPrediction()
     const abort = new AbortController()
     const first = remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('first', abort))
@@ -349,7 +351,7 @@ describe('remote Prediction execution lifecycle', () => {
     vi.useFakeTimers()
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, idleMs: 300_000 })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     await vi.advanceTimersByTimeAsync(299_999)
     expect(fixture.sessions[0].finish).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
@@ -371,7 +373,7 @@ describe('remote Prediction execution lifecycle', () => {
     vi.useFakeTimers()
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, idleMs: 100 })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     const complete = fixture.delayNextPrediction()
     const prediction = remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('pending'))
     const rejected = expect(prediction).rejects.toMatchObject({ name: 'AbortError' })
@@ -387,7 +389,7 @@ describe('remote Prediction execution lifecycle', () => {
     vi.useFakeTimers()
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, idleMs: 100 })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     await vi.advanceTimersByTimeAsync(100)
     if (mismatch === 'checksum') fixture.setArtifact({ manifestChecksum: 'c'.repeat(64) })
     else fixture.setInstanceSession('old-session')
@@ -404,17 +406,21 @@ describe('remote Prediction execution lifecycle', () => {
     vi.useFakeTimers()
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, idleMs: 100 })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     fixture.setModelError('artifact-missing')
     vi.mocked(predictionApi.lease).mockClear()
-    await expect(remote.load(reference, request('another-load'))).rejects.toMatchObject({ code: 'artifact-missing' })
+    await expect(remote.load(reference, request('another-load'), route)).rejects.toMatchObject({
+      code: 'artifact-missing',
+    })
     expect(predictionApi.lease).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(100)
     vi.mocked(predictionApi.lease).mockClear()
     await expect(
       remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('predict')),
     ).rejects.toMatchObject({ code: 'artifact-missing' })
-    expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true)
+    expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true, {
+      storage_id: storageId,
+    })
     expect(remote.state).toBe('connected')
     remote.dispose()
   })
@@ -423,7 +429,7 @@ describe('remote Prediction execution lifecycle', () => {
     vi.useFakeTimers()
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, idleMs: 100 })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     await vi.advanceTimersByTimeAsync(100)
     const complete = fixture.delayNextModel()
     const prediction = remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('predict'))
@@ -434,7 +440,9 @@ describe('remote Prediction execution lifecycle', () => {
     complete()
     await rejected
     expect(fixture.calls.filter((call) => call.type === 'model.release')).toHaveLength(1)
-    expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true)
+    expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true, {
+      storage_id: storageId,
+    })
     expect(fixture.calls.some((call) => call.type === 'model.predict')).toBe(false)
     remote.dispose()
   })
@@ -442,7 +450,7 @@ describe('remote Prediction execution lifecycle', () => {
   it('requires explicit reconnection after unexpected disconnect', async () => {
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     fixture.sessions[0].close()
     await expect(
       remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('predict')),
@@ -454,15 +462,76 @@ describe('remote Prediction execution lifecycle', () => {
   it('rejects stale response identity and releases RAM independently of stored files', async () => {
     const fixture = transportFixture()
     const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
-    const model = await remote.load(reference, request('load'))
+    const model = await remote.load(reference, request('load'), route)
     await remote.release(model.instance)
     expect(fixture.calls[fixture.calls.length - 1]?.type).toBe('model.release')
     expect(fixture.calls.some((item) => item.type === 'model.delete')).toBe(false)
-    const next = await remote.load(reference, request('load-again'))
+    const next = await remote.load(reference, request('load-again'), route)
     fixture.wrongRequest()
     await expect(
       remote.predict(next.instance, { direction: 'forward', vars: { x: 1 } }, request('stale')),
     ).rejects.toMatchObject({ code: 'stale-response' })
     remote.dispose()
   })
+})
+
+it('leases the selected replica and retains it across idle reloads and release', async () => {
+  vi.useFakeTimers()
+  const fixture = transportFixture()
+  const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, idleMs: 100 })
+  const replicaRoute = { ...route, replicaId: 'ffffffff-ffff-4fff-bfff-ffffffffffff' }
+  const model = await remote.load(reference, request('load'), replicaRoute)
+  expect(predictionApi.checkReplica).toHaveBeenCalledWith(
+    expect.objectContaining({
+      asset_kind: 'model',
+      asset_id: reference.modelId,
+      revision: 2,
+      storage_id: storageId,
+      launcher_id: launcherId,
+      state: 'present',
+      manifest_sha256: reference.manifestChecksum,
+    }),
+  )
+  expect(predictionApi.lease).toHaveBeenCalledWith(reference.modelId, 2, fixture.sessions[0].jobId, false, {
+    replica_id: replicaRoute.replicaId,
+    storage_id: storageId,
+  })
+  await vi.advanceTimersByTimeAsync(101)
+  await remote.predict(model.instance, { direction: 'forward', vars: { x: 1 } }, request('predict'))
+  expect(predictionApi.checkReplica).toHaveBeenCalledTimes(2)
+  expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, false, {
+    replica_id: replicaRoute.replicaId,
+    storage_id: storageId,
+  })
+  await remote.release(model.instance)
+  expect(predictionApi.lease).toHaveBeenLastCalledWith(reference.modelId, 2, fixture.sessions[1].jobId, true, {
+    replica_id: replicaRoute.replicaId,
+    storage_id: storageId,
+  })
+  remote.dispose()
+})
+
+it('rejects a route whose actual storage differs before requesting a lease', async () => {
+  const fixture = transportFixture()
+  const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
+  await expect(remote.load(reference, request('load'), { ...route, storageId: 'other-storage' })).rejects.toMatchObject(
+    { code: 'storage-mismatch' },
+  )
+  expect(predictionApi.lease).not.toHaveBeenCalled()
+  expect(fixture.calls).toEqual([])
+  remote.dispose()
+})
+
+it('keeps a byte-verified model usable when registering its replica status fails', async () => {
+  const fixture = transportFixture()
+  const onWarning = vi.fn()
+  vi.mocked(predictionApi.checkReplica).mockRejectedValueOnce(new Error('metadata unavailable'))
+  const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport, onWarning })
+  const prepared = await remote.load(reference, request('load'), route)
+  expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('저장 위치 상태를 등록하지 못했습니다'))
+  await expect(
+    remote.predict(prepared.instance, { direction: 'forward', vars: { x: 1 } }, request('predict')),
+  ).resolves.toBeDefined()
+  expect(remote.state).toBe('connected')
+  remote.dispose()
 })

@@ -9,6 +9,7 @@ import type { Vars, VarsSchemaEntry, RecordedData, RecordedDataRule } from '@/li
 import type { RecordedDataSchemaTree } from '@/lib/cad/simulation'
 import { buildCalculationRecordedData } from '../calculation/calculationRecordedData'
 import { predictionFingerprint } from './data'
+import type { PredictionDirection } from './types'
 import { emitPredictionQueryDiagnostics } from './diagnostics'
 import { calculationOutputContract } from './metrics'
 import type {
@@ -16,6 +17,7 @@ import type {
   PredictionExecutionResult,
   PredictionModelProfile,
   SavedPredictionModel,
+  PredictionExecutionRoute,
 } from './execution'
 import { assertSavedPredictionCompatible } from './savedModels'
 import { loadTrainingSnapshot } from './trainingSnapshot'
@@ -43,7 +45,7 @@ export type PredictionSetup = Readonly<{
   calculationIds: readonly number[]
   algorithm: PredictionAlgorithm
   executionId: string
-  launcherId?: string
+  routes?: Readonly<Partial<Record<PredictionDirection, PredictionExecutionRoute>>>
   datasetId?: string
   models?: Readonly<Partial<Record<'forward' | 'inverse', SavedPredictionModel>>>
 }>
@@ -59,6 +61,15 @@ export const defaultPredictionSetup: PredictionSetup = Object.freeze({
   }),
   executionId: 'browser-knn',
 })
+
+/** Storage preferences and new-version settings do not alter immutable model meaning. */
+export function predictionSetupFingerprint(setup: PredictionSetup) {
+  return predictionFingerprint([
+    setup.executionId,
+    setup.calculationIds,
+    setup.executionId === 'remote-knn' ? setup.models : setup.algorithm,
+  ])
+}
 
 async function rowsInBatches<T>(items: readonly T[], size: number, run: (item: T) => Promise<void>) {
   for (let offset = 0; offset < items.length; offset += size) {
@@ -83,7 +94,7 @@ export function usePredictionModels({
   setup,
   varsSchema,
 }: Readonly<{
-  clearModelCaches: () => void
+  clearModelCaches: (direction?: PredictionDirection) => void
   context: PredictionContext | null
   checkFreshness?: () => Promise<string>
   experimentId: number | null
@@ -139,14 +150,14 @@ export function usePredictionModels({
     async (transaction: number) => {
       if (!runtime.transactionIsCurrent(transaction))
         throw new DOMException('Stale Prediction transaction', 'AbortError')
-      if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.executionAvailable)
+      if (!context || context.experimentId !== experimentId || !varsSchema || !runtime.executionAvailableFor('inverse'))
         throw new Error('Inverse 모델 context가 준비되지 않았습니다.')
       if (!setup.calculationIds.length) throw new Error('Inverse에 사용할 Calculation을 선택하세요.')
       if (setup.executionId === 'remote-knn') {
         const reference = setup.models?.inverse
         if (!reference) throw new Error('Inverse 저장 모델을 선택하거나 만드세요.')
         assertSavedPredictionCompatible(reference, context, varsSchema, [], setup.calculationIds)
-        const model = await runtime.loadModel(reference, transaction)
+        const model = await runtime.loadModel(reference, transaction, setup.routes?.inverse)
         onProfile(model.profile, model.fingerprint)
         return model
       }
@@ -162,7 +173,7 @@ export function usePredictionModels({
             varsSchema,
             calculationIds: setup.calculationIds,
             signal: runtime.transactionSignal(),
-            policy: runtime.trainingPolicy,
+            policy: runtime.trainingPolicyFor('inverse'),
             checkFreshness,
           }),
         transaction,
@@ -257,7 +268,8 @@ export function usePredictionModels({
             throw new Error(input.error ?? '예측 RecordedData를 Calculation input으로 만들 수 없습니다.')
           return { calculated: await executeCalculations(input.input, transaction), model, result }
         },
-        clearModelCaches,
+        () => clearModelCaches('forward'),
+        'forward',
       ),
     [
       candidateBoxGrids,
@@ -285,7 +297,8 @@ export function usePredictionModels({
           emitPredictionQueryDiagnostics(result, model.fingerprint, runtime.emittedDiagnosticFingerprints, onActivity)
           return Object.freeze({ model, result })
         },
-        clearModelCaches,
+        () => clearModelCaches('inverse'),
+        'inverse',
       )
     },
     [clearModelCaches, ensureInverseModel, onActivity, runtime],

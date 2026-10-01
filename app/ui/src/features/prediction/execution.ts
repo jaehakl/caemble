@@ -66,11 +66,16 @@ export type SavedPredictionModel = PredictionProvenance &
   Readonly<{
     direction: PredictionDirection
     fingerprint: string
-    storageId: string
-    launcherId: string
     manifestChecksum?: string
     contract?: PredictionSavedContract
   }>
+
+/** A preferred path to one copy; it never changes the saved model's meaning. */
+export type PredictionExecutionRoute = Readonly<{
+  replicaId?: string
+  storageId: string
+  launcherId: string
+}>
 
 export type PredictionSavedContract = Readonly<{
   experimentId: number
@@ -151,7 +156,11 @@ export interface PredictionExecution {
     definition: PredictionModelDefinition,
     request: PredictionRequest,
   ): Promise<PreparedPredictionModel>
-  load?(model: SavedPredictionModel, request: PredictionRequest): Promise<PreparedPredictionModel>
+  load?(
+    model: SavedPredictionModel,
+    request: PredictionRequest,
+    route?: PredictionExecutionRoute,
+  ): Promise<PreparedPredictionModel>
   predict(
     instance: PredictionModelInstance,
     input: PredictionInput,

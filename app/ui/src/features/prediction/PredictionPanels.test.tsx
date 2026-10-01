@@ -245,3 +245,37 @@ it('shows the supported algorithm and execution location as separate read-only s
   expect(screen.queryByRole('combobox', { name: 'Algorithm' })).not.toBeInTheDocument()
   expect(screen.queryByText('Deep Learning')).not.toBeInTheDocument()
 })
+
+it('requires explicit commitment before a missing Target placeholder becomes input', () => {
+  const onOutputChange = vi.fn()
+  render(
+    <PredictionCalculationPane
+      disabled={false}
+      items={[
+        {
+          calculationId: 1,
+          name: 'Temperature',
+          minimum: -0.5,
+          maximum: 0.5,
+          constraintMinimum: -100,
+          constraintMaximum: 100,
+          canInitializeTarget: true,
+          primary: { output: { ...reference, data: [0, 0] }, role: 'target', status: 'unavailable' },
+          actual: { output: null, status: 'unavailable' },
+        },
+      ]}
+      mode="target"
+      resetKey="empty"
+      status="Target 입력 필요"
+      updating={false}
+      onOutputChange={onOutputChange}
+    />,
+  )
+  expect(onOutputChange).not.toHaveBeenCalled()
+  expect(JSON.parse(screen.getByTestId('tensor').textContent!).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Target 직접 입력' }))
+  expect(JSON.parse(screen.getByTestId('tensor').textContent!).disabled).toBe(false)
+  expect(onOutputChange).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '이 값을 Target으로 사용' }))
+  expect(onOutputChange).toHaveBeenCalledWith(1, { ...reference, data: [0, 0] })
+})

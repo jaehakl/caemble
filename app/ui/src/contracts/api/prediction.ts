@@ -3,14 +3,30 @@ import { z } from 'zod'
 const id = z.string().uuid()
 const revision = z.number().int().nonnegative()
 const definition = z.object({ fingerprint: z.string().min(1) }).passthrough()
+export const predictionReplicaSchema = z.object({
+  id,
+  storage_id: id,
+  state: z.enum(['unverified', 'present', 'missing', 'corrupt', 'deleting', 'deleted']),
+  manifest_sha256: z.string().nullable(),
+  artifact: z.record(z.string(), z.unknown()).nullable(),
+  checked_at: z.string().nullable(),
+  verified_at: z.string().nullable(),
+  delete_id: id.nullable(),
+})
+export const predictionStorageSchema = z.object({
+  storage_id: id,
+  name: z.string(),
+  kind: z.enum(['predictor_local', 'object_backup', 'api_dataset']),
+  configured: z.boolean().optional(),
+  checked_at: z.string().nullable(),
+  accesses: z.array(z.object({ launcher_id: id, connected: z.boolean(), checked_at: z.string().nullable() })),
+})
 const asset = {
   id,
   name: z.string(),
   experiment_id: z.number().int().positive(),
   state: z.enum(['active', 'deleting', 'deleted']),
   current_revision: revision,
-  storage_id: id.nullable(),
-  launcher_id: id.nullable(),
   delete_id: id.nullable(),
 }
 export const predictionDatasetSchema = z.object({
@@ -22,7 +38,9 @@ export const predictionDatasetSchema = z.object({
         revision,
         fingerprint: z.string(),
         payload_available: z.boolean(),
+        api_payload_available: z.boolean().optional(),
         sample_count: z.number().int().nonnegative().optional(),
+        replicas: z.array(predictionReplicaSchema),
       })
       .passthrough(),
   ),
@@ -42,6 +60,7 @@ export const predictionModelSchema = z.object({
       definition,
       source_contracts: z.record(z.string(), z.unknown()),
       artifact: z.record(z.string(), z.unknown()).nullable(),
+      replicas: z.array(predictionReplicaSchema),
     }),
   ),
   reserved_revision: revision.optional(),
@@ -64,6 +83,57 @@ export const predictionGrantSchema = z
 export type PredictionDatasetRecord = z.infer<typeof predictionDatasetSchema>
 export type PredictionModelRecord = z.infer<typeof predictionModelSchema>
 export type PredictionDatasetGrant = z.infer<typeof predictionGrantSchema>
+export type PredictionReplica = z.infer<typeof predictionReplicaSchema>
+export type PredictionStorage = z.infer<typeof predictionStorageSchema>
+
+export const predictionOperationGrantSchema = z.object({
+  operation_id: id,
+  token: z.string().min(1),
+  manifest_url: z.string().url(),
+  prepare_url: z.string(),
+  complete_url: z.string(),
+  register_url: z.string().url(),
+  refresh_url: z.string().url(),
+  expires_at: z.union([z.string(), z.number()]),
+})
+export const predictionOperationSchema = z.object({
+  id,
+  request_id: id,
+  kind: z.string(),
+  state: z.string(),
+  stage: z.string(),
+  asset_kind: z.enum(['model', 'dataset']),
+  asset_id: id,
+  revision: revision.nullable(),
+  source_replica_id: id.nullable(),
+  target_storage_id: id.nullable(),
+  target_launcher_id: id.nullable(),
+  include_dataset: z.boolean(),
+  details: z.record(z.string(), z.unknown()),
+  error: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  completed_at: z.string().nullable(),
+  grant: predictionOperationGrantSchema.optional(),
+  dataset_grant: predictionGrantSchema.optional(),
+})
+export type PredictionOperation = z.infer<typeof predictionOperationSchema>
+export type PredictionOperationGrant = z.infer<typeof predictionOperationGrantSchema>
+export type PredictionOperationRequest = Readonly<{
+  request_id: string
+  kind: 'backup' | 'restore' | 'delete_replica' | 'delete_asset' | 'verify'
+  asset_kind: 'model' | 'dataset'
+  asset_id: string
+  revision?: number
+  source_replica_id?: string
+  source_launcher_id?: string
+  target_storage_id?: string
+  target_launcher_id?: string
+  include_dataset?: boolean
+  dataset_source_replica_id?: string
+  dataset_source_launcher_id?: string
+  replica_id?: string
+}>
 export type PredictionDatasetSelection = Readonly<{
   request_id: string
   name: string
