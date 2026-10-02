@@ -66,7 +66,7 @@ class LinuxInstallerSmoke(unittest.TestCase):
         self.bin = self.directory / "command fakes"
         self.bin.mkdir()
         self.projects = ["app/launcher", *(f"app/slaves/{name}" for name in (
-            "ai", "tts", "cae_simulation", "cae_evaluation", "cae_prediction"))]
+            "ai", "tts_kokoro", "tts_voicevox", "cae_simulation", "cae_evaluation", "cae_prediction"))]
         for relative in self.projects:
             project = self.repo / relative
             project.mkdir(parents=True)

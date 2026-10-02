@@ -7,8 +7,8 @@ from typing import Any
 from sdk.slave import DataChannelAttachment, DataChannelMessage, SlaveApp, SlaveContext
 
 from app.logging import log, log_exception
-from app.voicevox.models import VoicevoxAudioQueryRequest, VoicevoxSynthesisRequest
-from app.voicevox.runtime import get_voicevox_runtime
+from app.models import VoicevoxAudioQueryRequest, VoicevoxSynthesisRequest
+from app.runtime import get_voicevox_runtime
 
 
 def register_handlers(app: SlaveApp) -> None:

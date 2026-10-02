@@ -4,7 +4,7 @@ An independent Python 3.12 CPU environment runs Kokoro **model v1.0** with the
 Kokoro/Misaki Python packages pinned to 0.9.4. It does not change the AI worker's
 Torch, CUDA, LLM or SDXL dependencies. The launcher discovers `manifest.json`.
 
-From `app/slaves/tts`, prepare explicitly before starting/restarting the launcher:
+From `app/slaves/tts_kokoro`, prepare explicitly before starting/restarting the launcher:
 
 ```powershell
 poetry env use 3.12
@@ -27,13 +27,13 @@ downloads assets. The manifest intentionally does not auto-run `prepare`.
 check voice quality. To include actual synthesis in the automated tests, set
 `CAEMBLE_TTS_REAL_TEST=1` before running unittest.
 
-Use a separate GPStation session with `slaveAppId: "tts"`,
+Use a separate GPStation session with `slaveAppId: "tts_kokoro"`,
 `handlerType: "ai.kokoro.synthesis"`, and CPU resources (`gpuCount: 0`). Do not
 send this handler to the existing `ai` session. Recommended launcher resource
 configuration in `app/launcher/resources.toml`:
 
 ```toml
-[defaults.tts]
+[defaults.tts_kokoro]
 cpu_cores = 4
 gpu_count = 0
 ```

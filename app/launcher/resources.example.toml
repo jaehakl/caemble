@@ -22,6 +22,12 @@ metrics_max_age_seconds = 3.0 # Must be at least sample_interval_seconds.
 # gpu_count = 0 # Optional CPU-only override.
 # vram_budget_gb = 8
 
+[defaults.tts_voicevox]
+gpu_count = 1
+
+[defaults.tts_kokoro]
+gpu_count = 0
+
 # Exact handler profiles override app defaults; API/CLI requests override both.
 #[defaults."ai.sdxl.inpaint"]
 #gpu_count = 1

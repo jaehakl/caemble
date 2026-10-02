@@ -38,7 +38,7 @@ def doctor(directory: Path | None = None, *, verify_hashes: bool = False) -> dic
         try:
             versions[package] = metadata.version(package)
         except metadata.PackageNotFoundError as error:
-            raise RuntimeError(f"Missing {package}; run poetry install in app/slaves/tts") from error
+            raise RuntimeError(f"Missing {package}; run poetry install in app/slaves/tts_kokoro") from error
     if versions["kokoro"] != "0.9.4" or versions["misaki"] != "0.9.4":
         raise RuntimeError("Kokoro and Misaki must both be version 0.9.4")
     if util.find_spec("en_core_web_sm") is None:

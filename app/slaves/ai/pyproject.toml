@@ -6,8 +6,6 @@ authors = [{ name = "Caemble" }]
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "caemble-runtime-sdk[slave]",
-    "python-dotenv>=1.1.1,<2.0.0",
-    "pydantic-settings>=2.10.1,<3.0.0",
     "pydantic>=2.12.5,<3.0.0",
     "torch==2.7.0+cu128",
     "torchvision==0.22.0+cu128",

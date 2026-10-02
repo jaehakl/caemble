@@ -1,6 +1,6 @@
 # Caemble worker applications
 
-`ai`, `tts`, `cae_simulation`, `cae_evaluation`, and `cae_prediction` are independent
+`ai`, `tts_voicevox`, `tts_kokoro`, `cae_simulation`, `cae_evaluation`, and `cae_prediction` are independent
 launcher-discovered applications. The renamed folders retain executable IDs
 `cae`, `evaluation`, `predictor`, and the additional `predictor-training` entrypoint.
 Launcher manifests remain beside each application. From the repository root,

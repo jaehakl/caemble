@@ -52,6 +52,7 @@ Thumbs.db
 app/slaves/ai/models.toml
 app/launcher/resources.toml
 app/slaves/ai/voicevox_runtime/
+app/slaves/tts_voicevox/voicevox_runtime/
 app/slaves/ai/models/
 app/slaves/ai/cache/
 app/slaves/ai/.cache/

@@ -1,5 +1,5 @@
 {
-  "id": "tts",
+  "id": "tts_kokoro",
   "name": "English TTS (Kokoro CPU)",
   "module": "app",
   "startup_timeout_seconds": 180,

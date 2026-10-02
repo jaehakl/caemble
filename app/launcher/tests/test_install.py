@@ -21,7 +21,7 @@ def checkout(tmp_path, monkeypatch):
     for relative in installer.PROJECTS:
         directory = repo / relative
         directory.mkdir(parents=True)
-        requirement = ">=3.12,<3.13" if directory.name == "tts" else ">=3.11,<3.15"
+        requirement = ">=3.12,<3.13" if directory.name == "tts_kokoro" else ">=3.11,<3.15"
         (directory / "pyproject.toml").write_text(
             f'[project]\nname = "{directory.name}"\nrequires-python = "{requirement}"\n', encoding="utf-8")
         (directory / "poetry.lock").write_text("# fixture locked dependencies\n", encoding="utf-8")
@@ -74,9 +74,9 @@ def test_all_projects_once_from_any_directory_and_spaces(checkout, monkeypatch, 
     monkeypatch.setattr(installer, "PROJECTS", (*installer.PROJECTS, "app/slaves/cae_prediction"))
     installer.install(repo)
     installs = [(args, options) for args, options in calls if args[1:2] == ["install"]]
-    assert len(installs) == 6
+    assert len(installs) == 7
     assert [options["cwd"].name for _, options in installs] == [
-        "launcher", "ai", "tts", "cae_simulation", "cae_evaluation", "cae_prediction"]
+        "launcher", "ai", "tts_kokoro", "tts_voicevox", "cae_simulation", "cae_evaluation", "cae_prediction"]
     for args, options in installs:
         assert args == ["poetry", "install", "--only", "main", "--no-interaction"]
         assert options["env"]["POETRY_VIRTUALENVS_IN_PROJECT"] == "true"
@@ -97,7 +97,7 @@ def test_reuses_compatible_environment_and_preserves_legacy_environment(checkout
     legacy_python.write_bytes(b"legacy interpreter")
     installer.install(repo)
     created = [options["cwd"].name for args, options in calls if args[-3:] == ["-m", "venv", ".venv"]]
-    assert "cae_simulation" not in created and len(created) == 5
+    assert "cae_simulation" not in created and len(created) == 6
     assert local_python.read_bytes() == b"installed interpreter"
     assert legacy_python.read_bytes() == b"legacy interpreter"
 
@@ -136,11 +136,11 @@ def test_old_node_and_invalid_release_fail_before_install(checkout):
 
 def test_incompatible_environment_is_preserved(checkout):
     repo, calls, control = checkout
-    python = repo / "app/slaves/tts/.venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    python = repo / "app/slaves/tts_kokoro/.venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     python.parent.mkdir(parents=True)
     python.write_bytes(b"keep incompatible interpreter")
     control["versions"][str(python)] = [3, 11, 9]
-    with pytest.raises(installer.InstallError, match="tts.*preserved"):
+    with pytest.raises(installer.InstallError, match="tts_kokoro.*preserved"):
         installer.install(repo)
     assert python.read_bytes() == b"keep incompatible interpreter"
     assert not any(args[1:2] == ["install"] for args, _ in calls)
@@ -288,8 +288,8 @@ def test_state_alias_precedence_matches_actual_launcher_lock(checkout, monkeypat
 
 def test_check_lock_failure_does_not_modify_any_environment(checkout):
     repo, calls, control = checkout
-    control["fail"] = lambda args, options: args[1:3] == ["check", "--lock"] and options["cwd"].name == "tts"
-    with pytest.raises(installer.InstallError, match=r"\[tts\] lockfile prerequisite"):
+    control["fail"] = lambda args, options: args[1:3] == ["check", "--lock"] and options["cwd"].name == "tts_kokoro"
+    with pytest.raises(installer.InstallError, match=r"\[tts_kokoro\] lockfile prerequisite"):
         installer.install(repo)
     assert not any(args[1:2] == ["install"] or "venv" in args for args, _ in calls)
 
@@ -303,7 +303,7 @@ def test_runtime_doctor_failure_is_reported(checkout):
 
 @pytest.mark.parametrize("relative,stage", [
     ("app/slaves/cae_evaluation/runtime.toml", "Node configuration prerequisite"),
-    ("app/slaves/tts/pyproject.toml", "project prerequisite"),
+    ("app/slaves/tts_kokoro/pyproject.toml", "project prerequisite"),
 ])
 def test_malformed_configuration_reports_project_and_step(checkout, relative, stage):
     repo, calls, _ = checkout

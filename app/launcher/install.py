@@ -17,7 +17,7 @@ import tomllib
 
 
 PROJECTS = (
-    "app/launcher", "app/slaves/ai", "app/slaves/tts", "app/slaves/cae_simulation",
+    "app/launcher", "app/slaves/ai", "app/slaves/tts_kokoro", "app/slaves/tts_voicevox", "app/slaves/cae_simulation",
     "app/slaves/cae_evaluation", "app/slaves/cae_prediction",
 )
 LEGACY_PROJECTS = {"cae": "cae_simulation", "evaluation": "cae_evaluation", "predictor": "cae_prediction"}

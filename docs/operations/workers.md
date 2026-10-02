@@ -4,10 +4,11 @@ Commands and component-relative paths in this document are relative to `app/slav
 
 `app/slaves` contains the independent applications discovered by the launcher:
 
-- `ai`: LLM/chat, embedding, image, tagging, and VOICEVOX handlers.
+- `ai`: LLM/chat, embedding, image, and tagging handlers.
 - `cae_simulation` (ID `cae`): trusted-payload CAE simulation and Solver implementations.
 - `cae_evaluation` (ID `evaluation`): Node Measurement builds and Calculation for saved Optimizations.
-- `tts`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
+- `tts_voicevox`: Japanese VOICEVOX synthesis on CPU or an allocated NVIDIA CUDA GPU.
+- `tts_kokoro`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
 - `cae_prediction` (ID `predictor`): Forward Prediction, local Dataset copies and persistent model artifacts.
   One environment provides WebRTC inference/management and the `predictor-training`
   WebSocket executable for independent training Jobs. The current algorithm is CPU kNN.
@@ -461,22 +462,65 @@ Local llama.cpp models use `path`. OpenAI-backed model entries use
 must not contain a local path. Never commit keys, model files, Hugging Face/CLIP
 caches, VOICEVOX files, `.env`, or `.venv`.
 
-Install the optional VOICEVOX 0.16.4 runtime with:
+## Japanese TTS configuration
+
+VOICEVOX runs independently in `tts_voicevox`, without AI's Torch/LLM environment.
+Prepare its pinned Core 0.16.4 and VOICEVOX ONNX Runtime 1.17.3 explicitly:
 
 ```powershell
-Push-Location ai
-poetry run python scripts/install_voicevox.py
+Push-Location tts_voicevox
+poetry install
+poetry run python scripts/install_voicevox.py --device cuda
+poetry run python -m app doctor
+poetry run python -m app smoke --device cuda
 Pop-Location
 ```
 
+The installer displays the official model/runtime terms. CUDA includes the
+additional libraries; use `--device cpu` on CPU-only machines. Worker requests
+never download models. Offline `doctor` checks files without loading models or
+claiming GPU readiness. Worker initialization validates the actual allocation:
+zero GPUs means CPU, one GPU requires CUDA, and multiple GPUs are rejected.
+CUDA failures are reported; there is no CPU or DirectML fallback. The default
+resource example assigns one GPU to `tts_voicevox` and zero to `tts_kokoro`.
+
+Use `slaveAppId: "tts_voicevox"` for the existing `ai.voicevox.speakers`,
+`ai.voicevox.audio_query`, and `ai.voicevox.synthesis` handlers. Their payloads,
+result types and WAV attachments are unchanged. See the
+[VOICEVOX worker contract](../../app/slaves/tts_voicevox/README.md) for local
+CPU/CUDA comparison and configuration.
+
+### Migrating existing TTS installations
+
+Stop the Launcher and active TTS jobs before updating the checkout. Create fresh
+Poetry environments in `tts_voicevox` and `tts_kokoro`; do not relocate an existing
+`.venv` because its entrypoints may contain absolute paths. Old environments and
+ignored files are preserved and are no longer discovered without a manifest.
+
+Copy only the `VOICEVOX_RUNTIME_DIR` and `VOICEVOX_CPU_NUM_THREADS` settings from
+`ai/.env` to `tts_voicevox/.env`, preserving the original file. A relative runtime
+path now resolves from `tts_voicevox`. To reuse old assets, set an absolute
+`VOICEVOX_RUNTIME_DIR`; install CUDA assets into a separate directory when keeping
+an existing CPU installation. Do not combine CPU and CUDA runtime library trees.
+
+Copy Kokoro's existing `.models` and `.data` into `tts_kokoro` without overwriting
+conflicting files, or set `CAEMBLE_TTS_MODEL_DIR` to the absolute old model path.
+Keep the originals until the new worker passes `doctor` and synthesis checks.
+Rename `[defaults.tts]` to `[defaults.tts_kokoro]` in local resource configuration,
+and add `[defaults.tts_voicevox]` with `gpu_count = 1` (or `0` for CPU jobs).
+
+Update external callers: VOICEVOX jobs change app ID `ai` to `tts_voicevox`, and
+Kokoro jobs change `tts` to `tts_kokoro`. Handler names stay unchanged. There are
+no old-ID aliases; restart the Launcher to publish the new executable IDs.
+
 ## English TTS configuration
 
-The `tts` worker uses its own Python 3.12 environment and exposes
+The `tts_kokoro` worker uses its own Python 3.12 environment and exposes
 `ai.kokoro.synthesis`. Install and prepare it explicitly before restarting the
 launcher:
 
 ```powershell
-Push-Location tts
+Push-Location tts_kokoro
 poetry env use 3.12
 poetry install
 poetry run python -m app prepare
@@ -486,15 +530,15 @@ Pop-Location
 ```
 
 Preparation downloads the pinned Kokoro model and US `af_heart` voice into
-`tts/.models/kokoro-v1.0`, plus the English G2P package. `doctor` checks local
+`tts_kokoro/.models/kokoro-v1.0`, plus the English G2P package. `doctor` checks local
 readiness; `smoke` performs actual CPU synthesis and creates
-`tts/.data/kokoro-smoke.wav` for listening. No model download occurs during
+`tts_kokoro/.data/kokoro-smoke.wav` for listening. No model download occurs during
 worker initialization or synthesis. A missing asset excludes TTS from launcher
 advertisements with a preparation error.
 
-Use `slaveAppId: "tts"` with CPU-only resources (`gpu_count = 0`) in a separate
+Use `slaveAppId: "tts_kokoro"` with CPU-only resources (`gpu_count = 0`) in a separate
 GPStation job. SDXL continues to use the `ai` worker and its own GPU allocation.
-See the [TTS worker contract](../../app/slaves/tts/README.md) for payload,
+See the [TTS worker contract](../../app/slaves/tts_kokoro/README.md) for payload,
 preprocessing metadata, offline regression tests and local model configuration.
 
 ## Runtime ownership

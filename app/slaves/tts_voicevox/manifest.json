@@ -1,0 +1,7 @@
+{
+  "id": "tts_voicevox",
+  "name": "Japanese TTS (VOICEVOX CPU/CUDA)",
+  "module": "app",
+  "startup_timeout_seconds": 300,
+  "readiness_args": ["-m", "app", "doctor"]
+}

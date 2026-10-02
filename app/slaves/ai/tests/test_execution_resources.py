@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.llm import runtime
-from app.voicevox import runtime as voicevox
 
 
 @pytest.fixture
@@ -59,16 +58,6 @@ def test_gpu_indices_are_local_to_allocated_devices(model, managed):
         runtime.build_prompt_llm_config()
     managed(["GPU-physical-3", "GPU-physical-5"])
     assert runtime.build_prompt_llm_config().lease_device_ids == (0, 1)
-
-
-@pytest.mark.parametrize("requested", [0, 1, 20])
-def test_voicevox_auto_and_explicit_threads_follow_allocation(managed, monkeypatch, requested):
-    calls = []
-    monkeypatch.setattr(voicevox, "_runtime", None)
-    monkeypatch.setattr(voicevox.settings, "voicevox_cpu_num_threads", requested)
-    monkeypatch.setattr(voicevox, "VoicevoxRuntime", lambda path, threads: calls.append(threads) or object())
-    voicevox.get_voicevox_runtime()
-    assert calls == [1 if requested == 1 else 2]
 
 
 def test_sdxl_rejects_gpu_call_in_cpu_session_before_loading_models(managed):
