@@ -1,6 +1,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PredictionDatasetRecord, PredictionModelRecord, PredictionOperation } from '@/contracts/api/prediction'
+import { defaultPredictionQualityValidation } from '@/contracts/api/prediction'
 import { createPredictionModel, predictionDatasetSelection, type PredictionCreationInput } from './assetCreation'
 import type { PredictionAssetController, PredictionAssetWork } from './assetManagement'
 import type { PredictionContext } from './predictionContextData'
@@ -216,6 +217,23 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('independent Prediction training submission', () => {
+  it('freezes opt-in quality splitting in the model fingerprint and keeps default training unchanged', async () => {
+    const { manager } = harness()
+    await createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3 })
+    const ordinary = mocks.reserve.mock.calls[0][0].definition
+    expect(ordinary).not.toHaveProperty('qualityValidation')
+    await createPredictionModel(manager, {
+      ...input,
+      dataset: historical,
+      datasetRevision: 3,
+      qualityValidation: defaultPredictionQualityValidation,
+    })
+    const evaluated = mocks.reserve.mock.calls[1][0].definition
+    expect(evaluated.qualityValidation).toEqual(defaultPredictionQualityValidation)
+    expect(evaluated.fingerprint).not.toBe(ordinary.fingerprint)
+    expect(evaluated.snapshotFingerprint).toBe(ordinary.snapshotFingerprint)
+  })
+
   it('freezes explicit BoxGrid outputs without requiring Calculation data', () => {
     const selection = predictionDatasetSelection(
       { ...input, context: { ...input.context, calculations: [] } },

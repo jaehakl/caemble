@@ -143,6 +143,35 @@ and the saved output layouts; it does not claim improved predictive accuracy. Th
 retained in `model.json` for recovery without the Dataset, while the public receipt contains only
 its Measurement ID and the validated checksum. The temporary validation model is closed without
 installing a browser inference handle.
+
+Optional `definition.qualityValidation` freezes `{version: 1, split: "design-point",
+holdoutFraction: 0.2, seed: 0, minimumGroups: 5}` before the definition fingerprint is computed.
+Omission preserves full-data training. Quality v1 requires rebuild: continued training may have
+already seen a validation point. Canonical Vars group repeated Measurements together, normalize
+numeric spelling/signed zero, and assign the first `ceil(groups * 0.2)` seeded hash-sorted groups
+to validation. Invalid Vars are excluded with reasons. The worker passes only the training
+partition's Measurements and recorded values to model preparation and preprocessing.
+
+`qualityReport` measures the actual prepared model before saving, independently of the later
+saved-model execution check. It supports real-valued, non-modal BoxGrid outputs with the existing
+relative-cell layout contract. Each Record/component reports MAE, RMSE and maximum absolute
+error in its own unit. Measurement errors are averaged within each design point, then design
+points receive equal weight. Incompatible/missing outputs are reported as excluded, never as
+zero error; no evaluable output or fewer than five valid design points fails the requested
+evaluation. Poor accuracy is advisory and does not block model use or change Hybrid adoption.
+The report freezes the source/definition/split fingerprints and partition inventories in both
+model metadata and manifest. Different splits are not comparable fixed evaluation sets.
+Archives and saved-artifact recovery preserve this report without rereading the Dataset.
+
+`trainingMetrics` is the immutable pre-save process-tree observation, including loading,
+preparation and quality-evaluation phases. The training receipt's `executionMetrics` also covers
+saving, reloading and cleanup. Recovery preserves the original artifact report while recording
+the new attempt's timings separately. Runtime load/single/batch responses carry additive
+`executionMetrics`. RSS is a sampled sum across the process tree (including shared pages), not
+the model's retained RAM estimate or an OS high-water mark. GPU not-requested/unavailable states
+are distinct from measured zero. Short calls need not produce a GPU sample. These observations
+do not alter resource allocation or limits.
+
 Retry checks for this exact completed artifact before accessing the Dataset, so loss of the
 registration response never requires retraining. If no completed artifact exists, retry must
 revalidate the exact Dataset revision; it never selects the latest revision implicitly.
@@ -256,6 +285,12 @@ An implementation advertising warm-start or incremental modes implements the opt
 `ForwardModelUpdateImplementation` and supplies `update(dataset,
 definition, model_ref, base, update, context)`, returning a distinct `ForwardModel`. The completed
 base is read-only; its cleanup and durable pin remain execution-layer responsibilities.
+An implementation declaring `supportsNativeBatch: true` also implements the optional
+`ForwardBatchModel.predict_many(values, context)`, returning one result per input in order.
+The existing remote `model.predict_batch` retains its 32-input limit and owns candidate IDs and
+checksum provenance. Without that capability it uses single predictions and refreshes the
+available RAM allowance for every input. Native implementations own their batch scratch budget
+and cooperative cancellation. Advertising a missing method or returning the wrong count fails.
 `ForwardModel` declares the instance metadata, memory footprint, layouts, profile, preparation
 details, prediction, file-writing and resource-closing methods. Per-record profile construction belongs to the
 algorithm; management consumes its preparation details without assuming kNN groups or neighbors.

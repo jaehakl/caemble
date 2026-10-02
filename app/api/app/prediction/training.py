@@ -369,6 +369,14 @@ async def complete_job(db, job, packet):
     if any(artifact.get(key) != value for key, value in expected.items()):
         raise ValueError("Training artifact differs from the frozen operation.")
     validation = artifact.get("validation")
+    if validation is not None:
+        measurement_id = validation.get("measurementId") if isinstance(validation, dict) else None
+        if (not isinstance(validation, dict) or type(validation.get("version")) is not int or validation["version"] != 1
+                or validation.get("manifestChecksum") != artifact.get("manifestChecksum")
+                or validation.get("loadPassed") is not True or validation.get("predictPassed") is not True
+                or "measurementId" not in validation
+                or (measurement_id is not None and (type(measurement_id) is not int or measurement_id <= 0))):
+            raise ValueError("Model execution validation must certify this saved artifact.")
     if update is not None:
         source = await db.get(DatasetRevision, (run.dataset_id, run.dataset_revision))
         measurement_id = validation.get("measurementId") if isinstance(validation, dict) else None
@@ -381,7 +389,8 @@ async def complete_job(db, job, packet):
     body = ModelComplete(request_id=row.id, manifest_sha256=artifact.get("manifestChecksum"),
         files=artifact.get("files"), profile=artifact.get("profile"), input_layouts=artifact.get("inputLayouts"),
         output_layouts=artifact.get("outputLayouts"), format_version=artifact.get("formatVersion"), verified=True,
-        **({"update": update, "validation": validation} if update is not None else {}))
+        update=update, validation=validation, quality_report=artifact.get("qualityReport"),
+        training_metrics=artifact.get("trainingMetrics"), execution_metrics=artifact.get("executionMetrics"))
     await complete_model(db, row.asset_id, row.revision, body, row.user_id, commit=False)
     return {"operation_id": row.id, "model_id": row.asset_id, "revision": row.revision}
 

@@ -4,6 +4,7 @@ import type {
   PredictionDatasetRecord,
   PredictionDatasetSelection,
   PredictionModelRecord,
+  PredictionQualityValidation,
 } from '@/contracts/api/prediction'
 import type { RecordedDataRule, VarsSchemaEntry } from '@caemble/execution/cad/model'
 import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
@@ -29,6 +30,7 @@ export type PredictionCreationInput = Readonly<{
   datasetRevision?: number
   previous?: PredictionModelRecord
   refreshDataset?: boolean
+  qualityValidation?: PredictionQualityValidation
 }>
 
 export function predictionDatasetSelection(
@@ -138,6 +140,7 @@ export function createPredictionModel(manager: PredictionAssetController, input:
       contract,
       direction: input.direction,
       requiredRecordIds,
+      ...(input.qualityValidation ? { qualityValidation: input.qualityValidation } : {}),
     }
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(predictionFingerprint([meaning])))
     const fingerprint = `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`

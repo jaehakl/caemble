@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { PredictionModelRecord } from '@/contracts/api/prediction'
+import {
+  defaultPredictionQualityValidation,
+  predictionQualityValidationSchema,
+  type PredictionModelRecord,
+} from '@/contracts/api/prediction'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { RecordedDataRule, VarsSchemaEntry } from '@caemble/execution/cad/model'
@@ -55,6 +59,7 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
   const [name, setName] = useState('')
   const [previous, setPrevious] = useState<PredictionModelRecord | undefined>()
   const [refreshDataset, setRefreshDataset] = useState(false)
+  const [qualityValidation, setQualityValidation] = useState(false)
   const [submitted, setSubmitted] = useState<{
     selection: string
     setup: PredictionSetup
@@ -94,6 +99,7 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
       datasetRevision,
       previous,
       refreshDataset,
+      ...(qualityValidation ? { qualityValidation: defaultPredictionQualityValidation } : {}),
     })
     if (next && manager.active) {
       setSubmitted({ selection, setup, result: next })
@@ -175,6 +181,7 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                   setPrevious(undefined)
                   setName('')
                   setRefreshDataset(false)
+                  setQualityValidation(false)
                   setDatasetRevision(undefined)
                   setCreationOpen(true)
                 }}
@@ -196,6 +203,12 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                     model.revisions.find((item) => item.revision === model.current_revision)?.dataset_revision,
                   )
                   setRefreshDataset(false)
+                  setQualityValidation(
+                    predictionQualityValidationSchema.safeParse(
+                      model.revisions.find((item) => item.revision === model.current_revision)?.definition
+                        .qualityValidation,
+                    ).success,
+                  )
                   setCreationOpen(true)
                 }}
               />
@@ -359,6 +372,20 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                         <option value="uniform">균등</option>
                       </select>
                     </label>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="flex gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={qualityValidation}
+                        onChange={(event) => setQualityValidation(event.target.checked)}
+                      />
+                      미학습 설계점으로 품질 평가
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      서로 다른 설계점이 5개 이상 필요합니다. 약 20%를 평가용으로 분리하며, 평가용 설계점은 저장 모델
+                      학습에 사용하지 않습니다.
+                    </p>
                   </div>
                   <div className="flex gap-2">
                     <Button

@@ -19,6 +19,10 @@ export function registerRemoteArtifact(artifact: RemoteArtifact, signal?: AbortS
       output_layouts: artifact.outputLayouts,
       format_version: artifact.formatVersion,
       verified: artifact.verified !== false,
+      ...(artifact.qualityReport ? { quality_report: artifact.qualityReport } : {}),
+      ...(artifact.trainingMetrics ? { training_metrics: artifact.trainingMetrics } : {}),
+      ...(artifact.executionMetrics ? { execution_metrics: artifact.executionMetrics } : {}),
+      ...(artifact.validation ? { validation: artifact.validation } : {}),
     },
     { signal },
   )

@@ -3,11 +3,65 @@ import {
   parseRemoteEnvelope,
   profileJson,
   remoteHelloSchema,
+  remotePreparedSchema,
   remoteProfileSchema,
   remoteResultSchema,
 } from './remoteProtocol'
+import { executionMetricsFixture } from './qualityReport.fixture'
 
 describe('Predictor Python wire contracts', () => {
+  it('preserves optional load execution metrics while accepting existing prepared responses', () => {
+    const profile = {
+      direction: 'forward',
+      rowCount: 2,
+      inputLayouts: [],
+      inputSize: 1,
+      outputSize: 1,
+      includedMeasurementIds: [1, 2],
+      warningMeasurementIds: [],
+      diagnostics: [],
+      omittedDiagnosticGroups: 0,
+      excluded: {
+        'missing-block': 0,
+        'extra-block': 0,
+        'invalid-tensor': 0,
+        'fixed-layout-mismatch': 0,
+        'layout-mismatch': 0,
+      },
+    }
+    const prepared = {
+      fingerprint: 'model',
+      instance: { executionId: 'remote-predictor', sessionId: 'session', generation: 1, handle: 'handle' },
+      profile,
+      errors: {},
+      recordProfiles: [],
+      rules: [],
+      artifact: {
+        modelId: 'model',
+        revision: 1,
+        operationId: 'operation',
+        name: 'Saved model',
+        direction: 'forward',
+        algorithm: 'knn',
+        definition: { fingerprint: 'model' },
+        datasetId: 'dataset',
+        datasetRevision: 1,
+        datasetFingerprint: 'data',
+        storageId: 'storage',
+        launcherId: 'launcher',
+        manifestChecksum: 'a'.repeat(64),
+        formatVersion: 1,
+        files: [],
+        profile,
+        inputLayouts: [],
+        outputLayouts: [],
+      },
+    }
+    expect(remotePreparedSchema.parse(prepared).executionMetrics).toBeUndefined()
+    expect(
+      remotePreparedSchema.parse({ ...prepared, executionMetrics: executionMetricsFixture }).executionMetrics,
+    ).toEqual(executionMetricsFixture)
+  })
   it('guides an old runner to the coordinated release update', () => {
     expect(() =>
       parseRemoteEnvelope({ protocolVersion: 1, requestId: 'request', sessionId: 'session' }, 'request'),
@@ -196,6 +250,10 @@ describe('Predictor Python wire contracts', () => {
       provenance: { modelId: 'model', modelRevision: 1, datasetId: 'dataset', datasetRevision: 2 },
     }
     expect(remoteResultSchema.parse(result).output[0].layout).toEqual(output.layout)
+    expect(remoteResultSchema.parse(result).executionMetrics).toBeUndefined()
+    expect(remoteResultSchema.parse({ ...result, executionMetrics: executionMetricsFixture }).executionMetrics).toEqual(
+      executionMetricsFixture,
+    )
     expect(remoteResultSchema.safeParse({ ...result, output: [{ ...output, values: [] }] }).success).toBe(false)
     expect(remoteResultSchema.safeParse({ ...result, direction: 'inverse' }).success).toBe(false)
   })

@@ -2,21 +2,24 @@
 from __future__ import annotations
 
 import json
-import math
+import logging
 import os
 from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
+from time import perf_counter
 from urllib.error import HTTPError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, build_opener
 
-from prediction_contracts import validate_training_update
+from prediction_contracts import validate_quality_report, validate_training_update
+from sdk.process_metrics import ProcessMetrics
 
 from .dataset import NoRedirect
 from .errors import PredictionError
 from .models import ModelBundle, implementation_for
-from .representations import vars_samples
+from .quality import evaluate_quality, split_dataset
+from .representations import validate_sample, vars_samples
 from .storage import check_cancel, encode_json, safe_id
 
 
@@ -59,6 +62,12 @@ class TrainingOperations:
             manifest, path, checksum = self.store.read("models", model["modelId"], model["revision"], cancel=cancel)
             content = json.loads((path / "model.json").read_bytes())
             metadata = content["metadata"]
+            try:
+                validate_quality_report(metadata.get("qualityReport"), spec["definition"], spec["dataset"])
+            except ValueError as error:
+                raise PredictionError("model-validation", str(error)) from error
+            if metadata.get("qualityReport") != manifest["metadata"].get("qualityReport"):
+                raise PredictionError("artifact-checksum", "Saved quality report differs from its manifest.")
             if (any(metadata.get(key) != model[key] for key in ("modelId", "revision", "operationId"))
                     or metadata.get("definition") != spec["definition"]
                     or metadata.get("datasetId") != spec["dataset"]["datasetId"]
@@ -218,6 +227,31 @@ class TrainingOperations:
             return self._ack_pin(payload["grant"], pin_id, False, cancel)
 
     def train(self, spec: dict, dataset_reference, cancel=None, progress=None) -> dict:
+        context = self.model_context(cancel)
+        metrics = ProcessMetrics(context.allocation.gpu_devices if context.allocation else ())
+        phases, result = {}, None
+        try:
+            with metrics:
+                result = self._train(spec, dataset_reference, cancel, progress, metrics, phases)
+            return result
+        finally:
+            try:
+                execution = {**metrics.result, "phases": phases}
+                if result is not None:
+                    result["artifact"].setdefault("executionMetrics", execution)
+                receipt = self.store.receipt(safe_id(spec["operationId"]))
+                if (receipt is not None and receipt.get("pinId") == spec.get("pinId")
+                        and receipt.get("definition") == spec.get("definition")):
+                    receipt["executionMetrics"] = execution
+                    if result is not None:
+                        receipt["artifact"] = result["artifact"]
+                    self.store.save_receipt(spec["operationId"], receipt)
+            except Exception:
+                # Mandatory publication is already complete (or has failed with
+                # its own error). Observational metadata must not change that result.
+                logging.getLogger(__name__).warning("Could not persist training execution measurements", exc_info=True)
+
+    def _train(self, spec: dict, dataset_reference, cancel, progress, metrics, phases) -> dict:
         operation_id = safe_id(spec["operationId"])
         if (spec.get("storageId") != self.store.storage_id or spec.get("launcherId") != self.store.launcher_id
                 or spec["model"].get("operationId") != operation_id):
@@ -233,8 +267,15 @@ class TrainingOperations:
             receipt["update"] = deepcopy(spec["update"])
             if spec["update"]["targetSnapshot"] != spec["dataset"]:
                 raise PredictionError("dataset-checksum", "Training update targets another Dataset revision.")
+        phase, phase_started = "preflight", perf_counter()
         def report(value):
+            nonlocal phase, phase_started
             check_cancel(cancel)
+            stage = value if isinstance(value, str) else value.get("stage", phase)
+            if stage != phase:
+                now = perf_counter()
+                phases[phase] = phases.get(phase, 0.0) + now - phase_started
+                phase, phase_started = stage, now
             receipt["progress"] = {"stage": value} if isinstance(value, str) else value
             self.store.save_receipt(operation_id, receipt)
             if progress:
@@ -257,6 +298,9 @@ class TrainingOperations:
                     if any(dataset[key] != spec["dataset"][key] for key in ("datasetId", "revision", "fingerprint")):
                         raise PredictionError("dataset-checksum", "Training input differs from its pinned Dataset revision.")
                     report("training")
+                    training_dataset, validation_groups, quality_split = dataset, None, None
+                    if spec["definition"].get("qualityValidation") is not None:
+                        training_dataset, validation_groups, quality_split = split_dataset(dataset, cancel)
                     base = (spec.get("update") or {}).get("baseModel")
                     with ExitStack() as base_access:
                         base_model = None
@@ -273,9 +317,13 @@ class TrainingOperations:
                             context = self.model_context(cancel, report)
                             if base_model is not None:
                                 context = replace(context, available_ram_bytes=max(0, context.available_ram_bytes - base_model.persistent_bytes))
-                            bundle = ModelBundle.prepare(dataset, "forward", spec["definition"], model, context,
+                            bundle = ModelBundle.prepare(training_dataset, "forward", spec["definition"], model, context,
                                                          update=spec.get("update"), base_model=base_model)
                             try:
+                                if validation_groups is not None:
+                                    report("quality-evaluation")
+                                    bundle.metadata["qualityReport"] = evaluate_quality(
+                                        bundle, dataset, validation_groups, quality_split, lambda: self.model_context(cancel))
                                 included = set(bundle.profile()["includedMeasurementIds"])
                                 sample = next((row for row in sorted(dataset["measurements"], key=lambda row: row["id"])
                                                if row["id"] in included), None)
@@ -285,6 +333,7 @@ class TrainingOperations:
                                 receipt["validationInput"] = {"measurementId": sample["id"], "vars": deepcopy(sample["vars"])}
                                 bundle.metadata["validationSample"] = deepcopy(receipt["validationInput"])
                                 report("saving")
+                                bundle.metadata["trainingMetrics"] = {**metrics.snapshot(), "phases": dict(phases)}
                                 artifact = bundle.save(self.store, cancel)
                             finally:
                                 bundle.close()
@@ -293,6 +342,8 @@ class TrainingOperations:
                                 base_model.close()
                 else:
                     previous = self.store.receipt(operation_id) or {}
+                    if previous.get("artifact", {}).get("executionMetrics") is not None:
+                        artifact["executionMetrics"] = deepcopy(previous["artifact"]["executionMetrics"])
                     for key in ("validationInput", "validation"):
                         if key in previous:
                             receipt[key] = previous[key]
@@ -309,6 +360,8 @@ class TrainingOperations:
                                error={"code": getattr(error, "code", "training-failed"), "message": str(error)})
                 self.store.save_receipt(operation_id, receipt)
                 raise
+            finally:
+                phases[phase] = phases.get(phase, 0.0) + perf_counter() - phase_started
 
     def validate_saved(self, spec: dict, artifact: dict, receipt: dict, cancel=None) -> dict:
         validation = receipt.get("validation")
@@ -342,11 +395,9 @@ class TrainingOperations:
                 raise PredictionError("model-validation", "Reloaded model did not produce its Forward output contract.")
             for output, expected_layout in zip(outputs, loaded.implementation.output_layouts):
                 layout, values = output.get("layout", {}), output.get("values")
-                shape = layout.get("shape")
-                expected = math.prod(shape) + (shape[4] if layout.get("frequencyOutput") else 0) if isinstance(shape, list) else 0
-                if (layout != expected_layout or not isinstance(values, list) or not expected or len(values) != expected
-                        or any(type(value) not in (int, float) or not math.isfinite(value) for value in values)):
+                if layout != expected_layout or not isinstance(values, list):
                     raise PredictionError("model-validation", "Reloaded model prediction contains invalid output values.")
+                validate_sample(output, expected_layout)
             check_cancel(cancel)
             return {"version": 1, "manifestChecksum": artifact["manifestChecksum"], "loadPassed": True,
                     "predictPassed": True, "measurementId": sample["measurementId"]}

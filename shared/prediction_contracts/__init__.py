@@ -5,6 +5,8 @@ from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING
 import re
 
+from .quality import QUALITY_VALIDATION_V1, validate_quality_report, validate_quality_settings
+
 PREDICTION_PROTOCOL_VERSION = 3
 EXECUTION_ID = "remote-predictor"
 
@@ -16,6 +18,7 @@ ALGORITHMS = {
         "directions": ["forward"],
         "representations": ["box-relative-v2"],
         "supportsCheckpoints": False,
+        "supportsNativeBatch": False,
         "supportedUpdateModes": ["rebuild"],
         "resources": {
             "training": {"gpu_count": 0},
@@ -45,6 +48,7 @@ def validate_definition(definition: dict) -> dict:
     if any(definition.get(key) != descriptor[key] for key in ("implementationVersion", "preprocessingVersion")):
         raise ValueError("Model implementation or preprocessing version is not supported.")
     algorithm = definition["algorithm"]
+    validate_quality_settings(definition.get("qualityValidation"))
     if (definition.get("calculationIds") or algorithm.get("calculationWeights")
             or any(key in definition for key in ("targets", "constraints", "objectiveWeights"))):
         raise ValueError("Forward models accept Vars and BoxGrid outputs, without Calculation objectives.")
@@ -66,6 +70,8 @@ def validate_training_update(update: dict | None, definition: dict) -> str:
     if not isinstance(update, dict) or update.get("mode") not in descriptor["supportedUpdateModes"]:
         raise ValueError("This algorithm does not support the requested training update mode.")
     mode = update["mode"]
+    if definition.get("qualityValidation") is not None and mode != "rebuild":
+        raise ValueError("Quality validation v1 requires rebuild; a base model may already contain validation samples.")
     target = update.get("targetSnapshot")
     if (not isinstance(target, dict) or not isinstance(target.get("datasetId"), str) or not target["datasetId"]
             or type(target.get("revision")) is not int or target["revision"] < 1

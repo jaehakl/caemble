@@ -11,7 +11,7 @@ import psutil
 from sdk.protocol.execution import ExecutionIdentity
 
 from app.containment import ProcessContainer, recover_container
-from app.gpu_memory import GpuProcessMonitor
+from sdk.gpu_memory import GpuProcessMonitor
 from app.journal import LauncherJournal
 from app.resources import ResourceLedger, ResourcePolicy, discover_gpus
 from app.settings import LauncherSettings

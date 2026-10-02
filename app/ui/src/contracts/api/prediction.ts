@@ -7,6 +7,90 @@ const id = z.string().uuid()
 export const predictionLocationIdSchema = z.guid()
 const revision = z.number().int().nonnegative()
 const definition = z.object({ fingerprint: z.string().min(1) }).passthrough()
+export const predictionQualityValidationSchema = z.object({
+  version: z.literal(1),
+  split: z.literal('design-point'),
+  holdoutFraction: z.literal(0.2),
+  seed: z.literal(0),
+  minimumGroups: z.literal(5),
+})
+export type PredictionQualityValidation = z.infer<typeof predictionQualityValidationSchema>
+export const defaultPredictionQualityValidation: PredictionQualityValidation = Object.freeze({
+  version: 1,
+  split: 'design-point',
+  holdoutFraction: 0.2,
+  seed: 0,
+  minimumGroups: 5,
+})
+const measurementIds = z.array(z.number().int().positive())
+const excludedMeasurements = z.array(z.object({ measurementId: z.number().int().positive(), reason: z.string() }))
+export const predictionQualityReportSchema = z.object({
+  version: z.literal(1),
+  evaluation: z.literal('pre-save-holdout'),
+  status: z.enum(['complete', 'partial']),
+  dataset: z.object({ datasetId: id, revision: z.number().int().positive(), fingerprint: z.string() }),
+  definitionFingerprint: z.string(),
+  split: z.object({
+    version: z.literal(1),
+    seed: z.literal(0),
+    holdoutFraction: z.literal(0.2),
+    fingerprint: z.string(),
+    trainingMeasurementIds: measurementIds,
+    validationMeasurementIds: measurementIds,
+    trainingGroupCount: z.number().int().nonnegative(),
+    validationGroupCount: z.number().int().nonnegative(),
+    excluded: excludedMeasurements,
+  }),
+  records: z.array(
+    z.object({
+      recordId: z.number().int().positive(),
+      key: z.string(),
+      unit: z.string(),
+      status: z.enum(['evaluated', 'unavailable']),
+      trainingMeasurementIds: measurementIds,
+      evaluatedMeasurementIds: measurementIds,
+      evaluatedGroupCount: z.number().int().nonnegative(),
+      excluded: excludedMeasurements,
+      components: z.array(
+        z.object({
+          component: z.string(),
+          mae: z.number().finite().nonnegative(),
+          rmse: z.number().finite().nonnegative(),
+          maxAbsoluteError: z.number().finite().nonnegative(),
+        }),
+      ),
+    }),
+  ),
+})
+export type PredictionQualityReport = z.infer<typeof predictionQualityReportSchema>
+export const predictionExecutionMetricsSchema = z
+  .object({
+    version: z.literal(1),
+    scope: z.literal('process-tree'),
+    elapsedSeconds: z.number().finite().nonnegative(),
+    peakRssBytes: z.number().int().nonnegative().nullable(),
+    rssStatus: z.enum(['measured', 'unavailable']),
+    peakVramBytes: z.record(z.string(), z.number().int().nonnegative().nullable()),
+    gpuStatus: z.enum(['not-requested', 'measured', 'unavailable']),
+    rssSamples: z.number().int().nonnegative(),
+    gpuSamples: z.number().int().nonnegative(),
+    rssIntervalSeconds: z.number().finite().nonnegative(),
+    gpuIntervalSeconds: z.number().finite().nonnegative(),
+    sampledCpuSeconds: z.number().finite().nonnegative(),
+    samplingShutdownSeconds: z.number().finite().nonnegative(),
+    warnings: z.array(z.string()),
+    phases: z.record(z.string(), z.number().finite().nonnegative()).optional(),
+  })
+  .passthrough()
+export type PredictionExecutionMetrics = z.infer<typeof predictionExecutionMetricsSchema>
+const predictionArtifactSchema = z
+  .object({
+    quality_report: predictionQualityReportSchema.optional(),
+    training_metrics: predictionExecutionMetricsSchema.optional(),
+    execution_metrics: predictionExecutionMetricsSchema.optional(),
+    validation: z.record(z.string(), z.unknown()).optional(),
+  })
+  .catchall(z.unknown())
 export const predictionAlgorithmSchema = z.object({
   kind: z.string().min(1),
   implementationVersion: z.string().min(1),
@@ -14,6 +98,7 @@ export const predictionAlgorithmSchema = z.object({
   directions: z.array(z.enum(['forward', 'inverse'])),
   representations: z.array(z.string().min(1)),
   supportsCheckpoints: z.boolean().optional(),
+  supportsNativeBatch: z.boolean().optional(),
   supportedUpdateModes: z.array(z.enum(['rebuild', 'warm_start', 'incremental'])).optional(),
   resources: z.object({ training: resourceRequestSchema, inference: resourceRequestSchema }),
 })
@@ -95,7 +180,7 @@ export const predictionModelSchema = z.object({
       dataset_fingerprint: z.string(),
       definition,
       source_contracts: z.record(z.string(), z.unknown()),
-      artifact: z.record(z.string(), z.unknown()).nullable(),
+      artifact: predictionArtifactSchema.nullable(),
       replicas: z.array(predictionReplicaSchema),
     }),
   ),

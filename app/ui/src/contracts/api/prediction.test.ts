@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  predictionAlgorithmSchema,
   predictionDatasetSchema,
   predictionLocationIdSchema,
   predictionModelSchema,
@@ -96,6 +97,18 @@ const operation = {
 }
 
 describe('Prediction migrated location contracts', () => {
+  it('preserves optional native batch capability while accepting legacy descriptors', () => {
+    const descriptor = {
+      kind: 'knn',
+      implementationVersion: 'knn-v1',
+      preprocessingVersion: 'box-relative-v2',
+      directions: ['forward'],
+      representations: ['box-relative-v2'],
+      resources: { training: {}, inference: {} },
+    }
+    expect(predictionAlgorithmSchema.parse({ ...descriptor, supportsNativeBatch: true }).supportsNativeBatch).toBe(true)
+    expect(predictionAlgorithmSchema.parse(descriptor).supportsNativeBatch ?? false).toBe(false)
+  })
   it('preserves model revision names, Optimization origin and training lineage', () => {
     const lineage = { mode: 'rebuild', baseModel: { modelId: assetId, revision: 1 }, recipe: { seed: 7 } }
     const response = {

@@ -2,6 +2,7 @@
 import asyncio
 import os
 import unittest
+from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from prediction.datasets import dataset_change_set, freeze_dataset, retire_serve
 from prediction.db import Dataset, DatasetObject, DatasetRevision, ModelRevision, Operation, Replica, TrainingRun
 from prediction.grants import create_grant, read_granted_revision, release_grant, renew_grant
 from prediction.models import complete_model, model_view, reserve_model
+from prediction_contracts.quality import QUALITY_VALIDATION_V1, split_fingerprint
 from prediction.operations import expire_operation, list_operations
 import test_prediction_assets as assets
 from simulation.db import Measurement, RecordedData
@@ -180,6 +182,70 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(Operation, reserved["operation_id"])).state, "completed")
             self.assertEqual((await db.get(ModelRevision, (reserved["id"], 1))).state, "ready")
             await complete_model(db, reserved["id"], 1, self.completion(reserved["operation_id"]), self.owner, publish=False)
+
+    async def test_quality_report_is_required_bound_to_snapshot_and_preserved_with_execution_evidence(self):
+        async with self.sessions() as db:
+            identities = [self.measurement_id]
+            for width in range(3, 7):
+                measurement = Measurement(user_id=self.owner, experiment_id=self.experiment_id, vars={"width": width},
+                    material_snapshot={}, recorded_at=utcnow())
+                db.add(measurement)
+                await db.flush()
+                identities.append(measurement.id)
+                db.add(RecordedData(user_id=self.owner, measurement_id=measurement.id, experiment_record_id=self.record_id,
+                    data={"shape": [2], "storage": {"kind": "inline", "value": [width, width + 1]}}))
+            await db.commit()
+            dataset = await freeze_dataset(db, self.selection(), self.owner)
+            definition = {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1",
+                "preprocessingVersion": "box-relative-v2", "fingerprint": "sha256:" + "c" * 64,
+                "snapshotFingerprint": dataset["revisions"][0]["fingerprint"], "qualityValidation": QUALITY_VALIDATION_V1}
+            reserved = await reserve_model(db, self.model_request(dataset, definition=definition), self.owner)
+            submitted = await training.submit(db, reserved["operation_id"], self.owner)
+            job = await db.get(Job, submitted["training"]["jobId"])
+            job.launcher_id = self.launcher_id
+            revision = await db.get(ModelRevision, (reserved["id"], 1))
+            artifact = self.artifact(reserved, revision)
+            with self.assertRaises(HTTPException) as missing:
+                await training.complete_job(db, job, {"artifact": artifact})
+            self.assertEqual(missing.exception.status_code, 422)
+            split = {"version": 1, "seed": 0, "holdoutFraction": .2, "trainingMeasurementIds": identities[:4],
+                "validationMeasurementIds": identities[4:], "trainingGroupCount": 4, "validationGroupCount": 1, "excluded": []}
+            split["fingerprint"] = split_fingerprint(split)
+            quality = {"version": 1, "evaluation": "pre-save-holdout", "status": "complete",
+                "dataset": {"datasetId": dataset["id"], "revision": 1, "fingerprint": definition["snapshotFingerprint"]},
+                "definitionFingerprint": definition["fingerprint"], "split": split, "records": [{
+                    "recordId": self.record_id, "key": "temperature", "unit": "K", "status": "evaluated",
+                    "trainingMeasurementIds": identities[:4], "evaluatedMeasurementIds": identities[4:],
+                    "evaluatedGroupCount": 1, "excluded": [], "components": [{"component": "scalar", "mae": 1.,
+                        "rmse": 1., "maxAbsoluteError": 1.}]}]}
+            metrics = {"version": 1, "scope": "process-tree", "elapsedSeconds": 2., "peakRssBytes": 1024,
+                "rssStatus": "measured", "peakVramBytes": {}, "gpuStatus": "not-requested", "rssSamples": 2,
+                "gpuSamples": 0, "rssIntervalSeconds": .1, "gpuIntervalSeconds": .5, "sampledCpuSeconds": 1.,
+                "samplingShutdownSeconds": 0., "warnings": [], "phases": {"training": 1.}}
+            validation = {"version": 1, "manifestChecksum": artifact["manifestChecksum"],
+                "loadPassed": True, "predictPassed": True, "measurementId": self.measurement_id}
+            artifact.update(qualityReport=quality, trainingMetrics=metrics, executionMetrics=metrics, validation=validation)
+            with self.assertRaises(ValueError):
+                await training.complete_job(db, job, {"artifact": {**artifact,
+                    "validation": {**validation, "manifestChecksum": "a" * 64}}})
+            wrong = deepcopy(artifact)
+            wrong["qualityReport"]["dataset"]["datasetId"] = str(uuid4())
+            with self.assertRaises(HTTPException):
+                await training.complete_job(db, job, {"artifact": wrong})
+            await training.complete_job(db, job, {"artifact": artifact})
+            await db.commit()
+            self.assertEqual(revision.artifact["quality_report"], quality)
+            self.assertEqual(revision.artifact["validation"], validation)
+            self.assertEqual(revision.artifact["training_metrics"], metrics)
+            # Recovery describes another process attempt but cannot change model evidence.
+            replay = {**artifact, "executionMetrics": {**metrics, "elapsedSeconds": 8.}}
+            await training.complete_job(db, job, {"artifact": replay})
+            self.assertEqual(revision.artifact["execution_metrics"], metrics)
+            changed_quality = deepcopy(artifact)
+            changed_quality["qualityReport"]["records"][0]["components"][0]["mae"] = 5.
+            with self.assertRaises(HTTPException) as immutable:
+                await training.complete_job(db, job, {"artifact": changed_quality})
+            self.assertEqual(immutable.exception.status_code, 409)
 
     async def test_cancel_fences_late_completion_and_waits_for_cleanup(self):
         async with self.sessions() as db:

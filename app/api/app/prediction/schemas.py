@@ -89,6 +89,43 @@ class ModelComplete(RequestModel):
     verified: bool = True
     update: dict[str, Any] | None = None
     validation: dict[str, Any] | None = None
+    quality_report: dict[str, Any] | None = None
+    training_metrics: dict[str, Any] | None = None
+    execution_metrics: dict[str, Any] | None = None
+
+    @field_validator("training_metrics", "execution_metrics")
+    @classmethod
+    def valid_metrics(cls, value):
+        if value is None:
+            return value
+        import math
+
+        if type(value.get("version")) is not int or value["version"] != 1 or value.get("scope") != "process-tree":
+            raise ValueError("Unsupported Prediction execution metrics.")
+        for key in ("elapsedSeconds", "rssIntervalSeconds", "gpuIntervalSeconds", "sampledCpuSeconds", "samplingShutdownSeconds"):
+            number = value.get(key)
+            if type(number) not in (int, float) or not math.isfinite(number) or number < 0:
+                raise ValueError("Execution durations must be finite and nonnegative.")
+        if value.get("rssStatus") not in ("measured", "unavailable") or value.get("gpuStatus") not in (
+                "not-requested", "measured", "unavailable"):
+            raise ValueError("Execution metrics must identify unavailable measurements.")
+        memory = value.get("peakVramBytes")
+        phases = value.get("phases", {})
+        if not isinstance(memory, dict) or not isinstance(phases, dict) or len(memory) > 256 or len(phases) > 100:
+            raise ValueError("Execution metrics contain an invalid resource or phase inventory.")
+        warnings = value.get("warnings")
+        if not isinstance(warnings, list) or len(warnings) > 100 or any(
+                not isinstance(warning, str) or len(warning) > 2000 for warning in warnings):
+            raise ValueError("Execution warnings must be a bounded list of messages.")
+        for number in (value.get("peakRssBytes"), *memory.values()):
+            if number is not None and (type(number) is not int or number < 0):
+                raise ValueError("Measured memory must be a nonnegative byte count or unavailable.")
+        for key in ("rssSamples", "gpuSamples"):
+            if type(value.get(key)) is not int or value[key] < 0:
+                raise ValueError("Execution sample counts must be nonnegative integers.")
+        if any(type(number) not in (int, float) or not math.isfinite(number) or number < 0 for number in phases.values()):
+            raise ValueError("Execution phase durations must be finite and nonnegative.")
+        return value
 
 
 class DeleteRequest(RequestModel):

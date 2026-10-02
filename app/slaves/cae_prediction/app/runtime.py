@@ -10,6 +10,7 @@ import uuid
 
 import psutil
 from prediction_contracts import ALGORITHMS, EXECUTION_ID, PREDICTION_PROTOCOL_VERSION, algorithm_descriptor, validate_allocation
+from sdk.process_metrics import ProcessMetrics
 from sdk.protocol.execution import ResourceAllocation
 
 from .dataset import DatasetReader
@@ -74,6 +75,14 @@ class PredictorRuntime:
             return ModelExecutionContext(self.allocation, self._available_memory(), cancel, progress)
 
     def dispatch(self, action: str, payload: dict, cancel: threading.Event | None = None) -> dict:
+        if action not in ("model.load", "model.predict", "model.predict_batch"):
+            return self._dispatch(action, payload, cancel)
+        devices = tuple(self.allocation.gpu_devices) if self.allocation is not None else ()
+        with ProcessMetrics(gpu_devices=devices) as metrics:
+            result = self._dispatch(action, payload, cancel)
+        return {**result, "executionMetrics": metrics.result}
+
+    def _dispatch(self, action: str, payload: dict, cancel: threading.Event | None = None) -> dict:
         if payload.get("protocolVersion") != PREDICTION_PROTOCOL_VERSION or not isinstance(payload.get("requestId"), str) or not payload["requestId"]:
             raise PredictionError("protocol", "Prediction protocol v3 and requestId are required. Update API, UI and Predictor together.")
         if action != "predictor.hello" and payload.get("sessionId") != self.session_id:
@@ -168,14 +177,18 @@ class PredictorRuntime:
                 if (len(identifiers) != len(inputs) or any(not isinstance(identity, str) or not identity for identity in identifiers)
                         or len(set(identifiers)) != len(identifiers)):
                     raise PredictionError("invalid-batch", "Prediction candidate IDs must be unique nonempty strings.")
-                predictions = []
-                for item in inputs:
-                    check_cancel(cancel)
-                    prediction = bundle.predict(item["input"], self._model_context(cancel))
-                    predictions.append({"candidateId": item["candidateId"], **prediction,
-                        "provenance": {**prediction["provenance"], "manifestChecksum": artifact["manifestChecksum"]}})
+                descriptor = algorithm_descriptor(bundle.metadata["definition"])
+                if descriptor.get("supportsNativeBatch", False):
+                    predictions = bundle.predict_many([item["input"] for item in inputs], self._model_context(cancel))
+                else:
+                    predictions = []
+                    for item in inputs:
+                        check_cancel(cancel)
+                        predictions.append(bundle.predict(item["input"], self._model_context(cancel)))
                 check_cancel(cancel)
-                result = {"predictions": predictions}
+                result = {"predictions": [{**prediction, "candidateId": item["candidateId"],
+                    "provenance": {**prediction["provenance"], "manifestChecksum": artifact["manifestChecksum"]}}
+                    for item, prediction in zip(inputs, predictions)]}
             elif action == "model.release":
                 instance = payload["instance"]
                 stored = self.instances.get(instance.get("handle"))

@@ -207,7 +207,9 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.store.list("datasets"), [])  # Model preparation only stages the granted payload.
         artifact = prepared["artifact"]
         complete_body = {"request_id": prepare_id, "manifest_sha256": artifact["manifestChecksum"], "files": artifact["files"],
-            "profile": artifact["profile"], "input_layouts": artifact["inputLayouts"], "output_layouts": artifact["outputLayouts"], "verified": False}
+            "profile": artifact["profile"], "input_layouts": artifact["inputLayouts"], "output_layouts": artifact["outputLayouts"],
+            "validation": artifact["validation"], "training_metrics": artifact["trainingMetrics"],
+            "execution_metrics": artifact["executionMetrics"], "verified": False}
         hello = await self.rpc(source, "predictor.hello")
         self.assertFalse(hello["models"][0]["verified"])
         rejected = await self.client.post(f"/prediction/models/{reserved['id']}/revisions/1/complete", json=complete_body)
@@ -221,6 +223,8 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await training.reconcile(db)
         completed = await self.post(f"/prediction/models/{reserved['id']}/revisions/1/complete", {**complete_body, "verified": True})
         self.assertEqual(completed["revisions"][0]["replicas"][0]["state"], "present")
+        self.assertEqual(completed["revisions"][0]["artifact"]["training_metrics"], artifact["trainingMetrics"])
+        self.assertEqual(completed["revisions"][0]["artifact"]["validation"], artifact["validation"])
         model_copy = completed["revisions"][0]["replicas"][0]["id"]
         logical = {"modelId": reserved["id"], "revision": 1, "manifestChecksum": artifact["manifestChecksum"]}
         backup = await self.post("/prediction/operations", {"request_id": str(uuid4()), "kind": "backup", "asset_id": reserved["id"],
@@ -244,6 +248,8 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "target_storage_id": target.store.storage_id, "target_launcher_id": target.store.launcher_id})
         restored = await self.rpc(target, "artifact.restore", operationId=restore["id"], grant=restore["grant"])
         self.assertEqual(restored["operation"]["state"], "completed")
+        restored_manifest, _, _ = target.store.read("models", reserved["id"], 1)
+        self.assertEqual(restored_manifest["metadata"]["trainingMetrics"], artifact["trainingMetrics"])
         dataset_copy = restored["operation"]["details"]["result_replicas"]["dataset"]
         # A second backup sources the model from A and the exact restored Dataset from B.
         split = await self.post("/prediction/operations", {"request_id": str(uuid4()), "kind": "backup", "asset_id": reserved["id"],

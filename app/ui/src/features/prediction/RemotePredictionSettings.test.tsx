@@ -8,6 +8,7 @@ import type {
   PredictionReplica,
   PredictionStorage,
 } from '@/contracts/api/prediction'
+import { defaultPredictionQualityValidation } from '@/contracts/api/prediction'
 import type { PredictionContext } from './predictionContextData'
 import type { PredictionSetup } from './usePredictionModels'
 import { RemotePredictionSettings } from './RemotePredictionSettings'
@@ -259,6 +260,20 @@ async function show(initial = setup(), refresh = true) {
   }
   return { ...props, ...render(<RemotePredictionSettings {...props} />), props }
 }
+
+it('offers quality validation explicitly for new models and preserves the previous revision choice', async () => {
+  const evaluated = model('forward')
+  evaluated.revisions[0].definition.qualityValidation = defaultPredictionQualityValidation
+  mocks.models.mockResolvedValue([evaluated])
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+  expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).not.toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: /forward saved/ }))
+  fireEvent.click(screen.getByRole('button', { name: '새 버전 만들기' }))
+  expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+  expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).not.toBeChecked()
+})
 
 beforeEach(() => {
   vi.clearAllMocks()

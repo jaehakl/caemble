@@ -9,6 +9,8 @@ import shutil
 import stat
 import zipfile
 
+from prediction_contracts import validate_quality_report
+
 from .dataset import DatasetReader, references
 from .errors import PredictionError
 from .models import implementation_for
@@ -33,6 +35,14 @@ def validate_content(path: Path, manifest: dict, kind: str) -> None:
         metadata = content["metadata"]
         if metadata["modelId"] != identity or metadata["revision"] != revision:
             raise PredictionError("artifact-checksum", "Model archive identity differs from its manifest.")
+        try:
+            validate_quality_report(metadata.get("qualityReport"), metadata["definition"],
+                {"datasetId": metadata["datasetId"], "revision": metadata["datasetRevision"],
+                 "fingerprint": metadata["datasetFingerprint"]})
+        except ValueError as error:
+            raise PredictionError("artifact-checksum", str(error)) from error
+        if metadata.get("qualityReport") != manifest["metadata"].get("qualityReport"):
+            raise PredictionError("artifact-checksum", "Model quality report differs from its manifest.")
         expected = implementation_for(metadata["definition"]).validate_artifact(path, manifest, content)
     if names != expected:
         raise PredictionError("artifact-checksum", "Archive does not contain exactly the complete artifact file set.")

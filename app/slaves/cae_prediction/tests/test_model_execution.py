@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from prediction_contracts import ALGORITHMS
 from predictor.errors import PredictionError
 from predictor.runtime import PredictorRuntime
 from .model_fixtures import model_case
@@ -54,7 +55,7 @@ def test_training_load_and_inference_receive_allocated_context(pinned_case):
     assert {"stage": "training", "fraction": .5, "metrics": {"loss": 1.0}} in updates
     assert all(item["output"] == single["output"] for item in batch["predictions"])
     saved = (worker.store.path("models", "trained", 1) / "model.json").read_text(encoding="utf-8")
-    assert "fixture-gpu" not in saved and "available_ram_bytes" not in saved
+    assert all(field not in saved for field in ("available_ram_bytes", "vram_budget_bytes", "cpu_ids"))
     assert case.instances[0].close_calls == 1
     call(worker, "model.release", instance=loaded["instance"])
 
@@ -126,6 +127,86 @@ def test_batch_cancellation_stops_before_next_candidate_without_releasing_model(
     cancelled.clear()
     monkeypatch.setattr(model, "predict", predict)
     assert dispatch(worker, "model.predict", cancelled, instance=loaded["instance"], input=query)["output"][0]["values"] == [42]
+    call(worker, "model.release", instance=loaded["instance"])
+
+
+def test_native_batch_dispatch_preserves_outputs_identity_and_allocated_context(trained_case, monkeypatch):
+    case, worker, cancelled = trained_case, trained_case.worker, threading.Event()
+    monkeypatch.setitem(ALGORITHMS["fixture"], "supportsNativeBatch", True)
+    loaded = call(worker, "model.load", modelId="trained", revision=1)
+    inputs = [{"candidateId": f"candidate-{index}", "input": {"direction": "forward", "vars": {"x": value}}}
+              for index, value in enumerate((.5, 3))]
+    singles = [call(worker, "model.predict", instance=loaded["instance"], input=item["input"]) for item in inputs]
+    case.contexts.clear()
+    batch = dispatch(worker, "model.predict_batch", cancelled, instance=loaded["instance"], inputs=inputs)
+    assert [stage for stage, _ in case.contexts] == ["predict_many", "predict", "predict"]
+    context = case.contexts[0][1]
+    assert context.allocation == case.allocation and context.cancel is cancelled
+    assert all(item[1] is context for item in case.contexts)
+    for item, single, prediction in zip(inputs, singles, batch["predictions"]):
+        assert prediction["candidateId"] == item["candidateId"]
+        assert prediction["output"] == single["output"]
+        assert prediction["extrapolatedInputKeys"] == single["extrapolatedInputKeys"]
+        assert prediction["provenance"] == {**single["provenance"], "manifestChecksum": loaded["artifact"]["manifestChecksum"]}
+    for response in (loaded, *singles, batch):
+        metrics = response["executionMetrics"]
+        assert metrics["version"] == 1 and metrics["scope"] == "process-tree"
+        assert metrics["elapsedSeconds"] >= 0
+    assert len(worker.instances) == 1
+    call(worker, "model.release", instance=loaded["instance"])
+
+
+@pytest.mark.parametrize("failure", ["missing", "count", "identity", "not-list", "direction", "cancelled"])
+def test_native_batch_rejects_invalid_implementation_and_retains_loaded_model(trained_case, monkeypatch, failure):
+    case, worker, cancelled = trained_case, trained_case.worker, threading.Event()
+    monkeypatch.setitem(ALGORITHMS["fixture"], "supportsNativeBatch", True)
+    loaded = call(worker, "model.load", modelId="trained", revision=1)
+    model = case.instances[-1]
+    original = model.predict_many
+    def invalid_batch(values, context):
+        predictions = original(values, context)
+        if failure == "count":
+            return predictions[:-1]
+        if failure == "identity":
+            predictions[0]["fingerprint"] = "another-model"
+        if failure == "not-list":
+            return {"predictions": predictions}
+        if failure == "cancelled":
+            cancelled.set()
+        return predictions
+    monkeypatch.setattr(model, "predict_many", None if failure == "missing" else invalid_batch)
+    query = {"direction": "inverse" if failure == "direction" else "forward", "vars": {"x": .5}}
+    case.contexts.clear()
+    with pytest.raises(PredictionError) as rejected:
+        dispatch(worker, "model.predict_batch", cancelled, instance=loaded["instance"],
+                 inputs=[{"candidateId": str(index), "input": query} for index in range(2)])
+    assert rejected.value.code == ("cancelled" if failure == "cancelled" else
+                                   "unsupported-model" if failure in ("missing", "direction") else "invalid-batch")
+    if failure in ("missing", "direction"):
+        assert case.contexts == []
+    assert model.close_calls == 0 and loaded["instance"]["handle"] in worker.instances
+    cancelled.clear()
+    assert call(worker, "model.predict", instance=loaded["instance"],
+                input={"direction": "forward", "vars": {"x": .5}})["output"][0]["values"] == [42]
+    call(worker, "model.release", instance=loaded["instance"])
+
+
+def test_sequential_batch_recomputes_ram_after_each_prediction(trained_case, monkeypatch):
+    case, worker = trained_case, trained_case.worker
+    monkeypatch.setattr("predictor.runtime.psutil.virtual_memory", lambda: SimpleNamespace(available=1024**3))
+    loaded = call(worker, "model.load", modelId="trained", revision=1)
+    model = case.instances[-1]
+    predict = model.predict
+    def retain_after_prediction(values, context):
+        prediction = predict(values, context)
+        model.persistent_bytes += 8
+        return prediction
+    monkeypatch.setattr(model, "predict", retain_after_prediction)
+    case.contexts.clear()
+    call(worker, "model.predict_batch", instance=loaded["instance"], inputs=[
+        {"candidateId": str(index), "input": {"direction": "forward", "vars": {"x": .5}}} for index in range(3)])
+    assert [stage for stage, _ in case.contexts] == ["predict"] * 3
+    assert [context.available_ram_bytes for _, context in case.contexts] == [worker.memory_budget - value for value in (8, 16, 24)]
     call(worker, "model.release", instance=loaded["instance"])
 
 

@@ -213,7 +213,10 @@ async def complete_model(db, model_id, revision, body, user_id, *, commit=True, 
     if len({entry["name"] for entry in artifact["files"]}) != len(artifact["files"]):
         raise HTTPException(422, "Artifact file names must be unique.")
     if item.state == "ready":
-        if item.artifact != artifact:
+        # Attempt timing can change when a lost completion is recovered. Keep the
+        # first successful execution report; model bytes and training evidence stay immutable.
+        if ({key: value for key, value in item.artifact.items() if key != "execution_metrics"}
+                != {key: value for key, value in artifact.items() if key != "execution_metrics"}):
             raise HTTPException(409, "Saved model revision is immutable.")
         return await model_view(db, row)
     if not publish:
@@ -222,6 +225,12 @@ async def complete_model(db, model_id, revision, body, user_id, *, commit=True, 
         raise HTTPException(409, "Inverse Prediction preparation is retired. Existing saved files are retained.")
     if item.state != "reserved":
         raise HTTPException(410, "Model preparation was superseded by a newer request.")
+    from prediction_contracts import validate_quality_report
+    try:
+        validate_quality_report(body.quality_report, item.definition, {
+            "datasetId": item.dataset_id, "revision": item.dataset_revision, "fingerprint": item.dataset_fingerprint})
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     operation = await db.get(Operation, item.request_id)
     if operation is not None and operation.state == "cancelled":
         raise HTTPException(410, "Model preparation was cancelled.")

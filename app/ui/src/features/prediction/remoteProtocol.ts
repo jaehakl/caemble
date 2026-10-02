@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { predictionAlgorithmSchema } from '@/contracts/api/prediction'
+import {
+  predictionAlgorithmSchema,
+  predictionExecutionMetricsSchema,
+  predictionQualityReportSchema,
+} from '@/contracts/api/prediction'
 import {
   cohortDiagnosticSchema,
   legacyCohortDiagnosticSchema,
@@ -70,6 +74,10 @@ export const remoteArtifactSchema = z
     profile: legacyProfileSchema,
     inputLayouts: z.array(predictionTensorLayoutSchema),
     outputLayouts: z.array(predictionTensorLayoutSchema),
+    qualityReport: predictionQualityReportSchema.optional(),
+    trainingMetrics: predictionExecutionMetricsSchema.optional(),
+    executionMetrics: predictionExecutionMetricsSchema.optional(),
+    validation: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough()
 export type RemoteArtifact = z.infer<typeof remoteArtifactSchema>
@@ -129,6 +137,7 @@ export const remotePreparedSchema = z.object({
     .array(z.object({ label: identity }).passthrough())
     .transform((rules) => rules as unknown as readonly RecordedDataRule[]),
   artifact: remoteArtifactSchema.extend({ direction: z.literal('forward'), profile: remoteProfileSchema }),
+  executionMetrics: predictionExecutionMetricsSchema.optional(),
 })
 export type RemotePrepared = z.infer<typeof remotePreparedSchema>
 
@@ -146,6 +155,7 @@ export const remoteResultSchema = z.object({
     datasetId: identity,
     datasetRevision: z.number().int().positive(),
   }),
+  executionMetrics: predictionExecutionMetricsSchema.optional(),
 })
 
 export class RemotePredictionError extends Error {

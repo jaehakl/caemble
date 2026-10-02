@@ -12,6 +12,9 @@ import subprocess
 from time import perf_counter
 import traceback
 
+from sdk.process_metrics import ProcessMetrics
+from sdk.slave.execution import execution_context
+
 
 def physical_memory_bytes():
     if os.name == "nt":
@@ -84,11 +87,14 @@ def run_examples(keys, root, repo):
                    "catalogRevision": catalog_revision, "codeIdentity": code_identity(repo, builds)}
     (root / "environment.json").write_text(json.dumps(environment, indent=2), encoding="utf-8")
     results = []
+    allocation = execution_context()
     for key in keys:
         print(f"Example {key}: fresh nominal input and complete run (180 s budget)", flush=True)
         os.environ["CAEMBLE_CURRENT_TEST"] = f"example:{key}"
         started = perf_counter()
         record = {"key": key, "phases": {}}
+        metrics = ProcessMetrics(allocation.allocation.gpu_devices if allocation is not None else ())
+        metrics.__enter__()
         try:
             build_started = perf_counter()
             try:
@@ -108,6 +114,9 @@ def run_examples(keys, root, repo):
             record.update(outcome="failed", error="example exceeded its 180 s benchmark budget; cleanup completed")
         except Exception as error:
             record.update(outcome="failed", error=f"{type(error).__name__}: {error}", traceback=traceback.format_exc())
+        finally:
+            metrics.close()
+            record["executionMetrics"] = metrics.result
         record["duration"] = perf_counter() - started
         record["withinBudget"] = record["duration"] <= 180
         observed = summarize(root / "solver-events")

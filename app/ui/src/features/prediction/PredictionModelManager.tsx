@@ -12,6 +12,7 @@ import {
   startPredictionAssetOperation,
   verifyPredictionReplica,
 } from './assetOperations'
+import { PredictionModelReports } from './PredictionModelReports'
 
 export function PredictionModelManager({
   manager,
@@ -265,6 +266,7 @@ export function ModelDetail({
         {dataset?.name ?? '학습 데이터'} r{revision.dataset_revision}. 저장 모델은 해당 버전의 설정과 데이터를
         사용합니다.
       </p>
+      <PredictionModelReports artifact={revision.artifact} />
       {!managementOnly && executable && (
         <label className="block text-sm">
           실행 위치

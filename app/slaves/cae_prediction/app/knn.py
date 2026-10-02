@@ -11,53 +11,9 @@ import numpy as np
 
 from .errors import PredictionError
 from .storage import check_cancel
+from .representations import INTEGER_RANGES, layout_contract, validate_sample, value_count
 
 EXCLUSION_REASONS = ("missing-block", "extra-block", "invalid-tensor", "fixed-layout-mismatch", "layout-mismatch")
-INTEGER_RANGES = {
-    "int8": (-128, 127), "int16": (-32768, 32767), "int32": (-2147483648, 2147483647),
-    "int64": (-(2**53 - 1), 2**53 - 1), "uint8": (0, 255), "uint16": (0, 65535),
-    "uint32": (0, 4294967295), "uint64": (0, 2**53 - 1),
-}
-
-
-def value_count(layout: dict) -> int:
-    shape = layout["shape"]
-    if any(type(length) is not int or length < 0 for length in shape):
-        raise PredictionError("invalid-data", "Tensor shape requires nonnegative integer dimensions.")
-    count = math.prod(shape) * (2 if layout["dtype"] == "complex64" else 1)
-    return count + (shape[4] if layout.get("frequencyOutput") else 0)
-
-
-def layout_contract(layout: dict) -> dict:
-    contract = {key: layout.get(key) for key in ("key", "shape", "dtype")}
-    grid = layout.get("boxGrid")
-    if grid:
-        contract["boxGridContract"] = {
-            **{key: layout.get(key) for key in ("quantityKind", "unit")},
-            **{key: grid.get(key) for key in ("version", "sampling", "channels", "components", "channelUnits",
-                                            "frequencyKind", "configuration", "weighting")},
-            "axes": [{**axis, **({"ticks": None} if index == 1 and layout.get("frequencyOutput") else {})}
-                     for index, axis in enumerate(layout.get("axes", [])[3:])],
-        }
-    else:
-        contract.update({key: layout.get(key) for key in ("unit", "quantityKind")})
-        contract["axes"] = [{key: axis.get(key) for key in ("name", "unit")}
-                            for axis in layout.get("axes", [])]
-    return contract
-
-
-def validate_sample(sample: dict, expected: dict | None = None) -> np.ndarray:
-    layout = sample["layout"]
-    values = sample["values"]
-    if layout.get("dtype") not in ("float16", "float32", "float64", "complex64", *INTEGER_RANGES):
-        raise PredictionError("invalid-tensor", f"{layout['key']} has an unsupported numeric dtype.")
-    if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
-        raise PredictionError("invalid-tensor", f"{layout['key']} contains missing or nonfinite values.")
-    if len(values) != value_count(layout):
-        raise PredictionError("invalid-tensor", f"{layout['key']} values do not match its shape.")
-    if expected is not None and layout_contract(layout) != layout_contract(expected):
-        raise PredictionError("layout-mismatch", f"{layout['key']} dtype, shape, axis names or units differ.")
-    return np.asarray(values, dtype=np.float64)
 
 
 def coordinate_diagnostics(baseline: dict, actual: dict) -> list[dict]:

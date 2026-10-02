@@ -74,6 +74,7 @@ TEST_SUPPORT_TESTS = {
     "cpu_benchmark.py": ("test_cpu_executor", "test_ray_parallel_smoke", "test_fdtd_parallel_smoke"),
     "ray_parallel_fixtures.py": ("test_ray_parallel_smoke", "test_ray_detector_smoke", "test_ray_grating", "test_ray_grating_smoke"),
     "fdtd_fixtures.py": ("test_fdtd_*",),
+    "fdtd_cuda_fixtures.py": ("test_fdtd_cuda_lifecycle",),
     "batch_fixtures.py": ("test_cpu_executor",),
     "fixtures/continuous-geometry.json": ("test_continuous_geometry",),
     "acoustic_fixtures.py": ("test_acoustic_fdtd_accuracy", "test_pressure_acoustics"),

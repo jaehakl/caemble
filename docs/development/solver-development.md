@@ -629,6 +629,32 @@ pool을 생략합니다. 실행 seed와 큐 깊이·초기 순번·재삽입 이
 잔류 child를 기록합니다. 일반 회귀 검사에 포함하지 않으며 작은 FDTD의 결과는
 실제 큰 격자의 확장 성능을 대표하지 않습니다.
 
+CPU benchmark와 공식 예제 보고서는 SDK의 `ProcessMetrics`를 공유합니다.
+`executionMetrics`의 RSS는 25 ms 간격으로 측정한 process-tree RSS 합의 최대
+표본값이며 공유 페이지를 프로세스별로 합산합니다. OS의 정확한 peak나 hard
+limit을 뜻하지 않습니다. 할당 GPU가 있으면 별도 500 ms 주기로 PID별 VRAM을
+측정합니다. 측정 실패·표본 없음은 `unavailable`과 null로 남기고 0으로 바꾸지
+않습니다. GPU 할당이 없는 로컬 CPU 예제는 `not-requested`입니다. 실행 시간과
+측정 thread 종료 대기 시간은 구분하며 기존 예제의 전체 180초 예산은 유지합니다.
+관측 실패는 Solver 결과나 launcher의 자원 배정·종료 정책을 바꾸지 않습니다.
+작업 종료는 측정 thread를 최대 50 ms만 기다립니다. 진행 중인 OS GPU 조회는
+자기 thread에서 backend를 닫으며, 완료된 보고서에 늦은 표본을 추가하지 않습니다.
+
+실제 CUDA child의 결과·취소·workspace·mmap·GPU 정리는
+`python -m pytest tests/test_fdtd_cuda_lifecycle.py -m cuda`로 별도 검증합니다.
+이 검사는 작은 입력에서 테스트 child 안의 장치 선택만 고정하며 공개 Solver
+설정·ABI·자동 장치 선택을 변경하지 않습니다. GPU 메모리 측정이 불가능한
+환경의 skip은 GPU 정리 검증 성공이 아닙니다.
+
+공통 계약·계측의 대표 실행은 기존 Catalog의 `electro-thermal-notched-bar`와
+`pulsed-microheater`를 사용합니다. 전자는 DC→Heat 전달, 후자는 반복 전열
+연성과 구조 해석을 검증합니다. 별도 예제 원본을 만들지 않고 다음 명령으로
+각각 새 nominal 입력부터 정리까지 측정하며, 실행의 Catalog revision을 보고서에 남깁니다.
+
+```powershell
+python -m tests.run examples --key electro-thermal-notched-bar --key pulsed-microheater
+```
+
 각 child에는 임시 workspace가 하나씩 제공됩니다. Geometry triangulation과
 mesh는 process-local singleton이 아니라 Measurement run의 file-backed
 immutable cache를 사용할 수 있습니다. Canonical cache key에는

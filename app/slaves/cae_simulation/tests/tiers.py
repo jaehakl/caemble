@@ -43,6 +43,7 @@ MODULE_TIERS = {
     "tests/test_electrothermal_runtime.py": "smoke",
     "tests/test_executor_shutdown.py": "lowcost",
     "tests/test_fdtd_cuda.py": "validation",
+    "tests/test_fdtd_cuda_lifecycle.py": "validation",
     "tests/test_fdtd_detector_sampling.py": "lowcost",
     "tests/test_fdtd_device.py": "lowcost",
     "tests/test_fdtd_domain.py": "lowcost",

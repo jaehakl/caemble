@@ -7,12 +7,12 @@ import threading
 from pathlib import Path
 from typing import Protocol
 
-from prediction_contracts import algorithm_descriptor, validate_definition, validate_training_update
+from prediction_contracts import algorithm_descriptor, validate_quality_report, validate_training_update
 
 from .errors import PredictionError
 from .execution import ModelExecutionContext
 from .forward import KnnForwardModel
-from .storage import ArtifactStore
+from .storage import ArtifactStore, check_cancel
 
 
 class ForwardModel(Protocol):
@@ -56,6 +56,12 @@ class ForwardModelUpdateImplementation(ForwardModelImplementation, Protocol):
                update: dict, context: ModelExecutionContext) -> ForwardModel:
         """Return a new model from completed weights without changing the base object."""
         ...
+
+
+class ForwardBatchModel(ForwardModel, Protocol):
+    """Optional native batching; return one prediction per input, in input order."""
+
+    def predict_many(self, values: list[dict], context: ModelExecutionContext) -> list[dict]: ...
 
 
 IMPLEMENTATIONS: dict[str, type[ForwardModelImplementation]] = {"knn": KnnForwardModel}
@@ -138,6 +144,24 @@ class ModelBundle:
         return {**result, "provenance": {"modelId": self.metadata["modelId"], "modelRevision": self.metadata["revision"],
             "datasetId": self.metadata["datasetId"], "datasetRevision": self.metadata["datasetRevision"]}}
 
+    def predict_many(self, queries: list[dict], context: ModelExecutionContext) -> list[dict]:
+        if self.closing:
+            raise PredictionError("instance-invalidated", "Model is closing or already released.")
+        if any(not isinstance(query, dict) or query.get("direction") != "forward" for query in queries):
+            raise PredictionError("unsupported-model", "Prediction accepts Forward Vars input only.")
+        predict_many = getattr(self.implementation, "predict_many", None)
+        if not algorithm_descriptor(self.metadata["definition"]).get("supportsNativeBatch", False) or not callable(predict_many):
+            raise PredictionError("unsupported-model", "Model does not provide its declared native batch implementation.")
+        check_cancel(context.cancel)
+        results = predict_many([query["vars"] for query in queries], context)
+        check_cancel(context.cancel)
+        if (not isinstance(results, list) or len(results) != len(queries)
+                or any(not isinstance(result, dict) or result.get("direction") != "forward"
+                       or result.get("fingerprint") != self.metadata["definition"]["fingerprint"] for result in results)):
+            raise PredictionError("invalid-batch", "Native batch predictions must preserve input count and model identity.")
+        return [{**result, "provenance": {"modelId": self.metadata["modelId"], "modelRevision": self.metadata["revision"],
+            "datasetId": self.metadata["datasetId"], "datasetRevision": self.metadata["datasetRevision"]}} for result in results]
+
     def close(self) -> None:
         if self.closed:
             return
@@ -150,8 +174,9 @@ class ModelBundle:
         if self.closing:
             raise PredictionError("instance-invalidated", "Model is closing or already released.")
         summary = {key: self.metadata[key] for key in ("modelId", "revision", "operationId", "name", "formatVersion", "direction", "algorithm", "definition", "datasetId", "datasetRevision", "datasetFingerprint", "experimentId")}
-        if "update" in self.metadata:
-            summary["update"] = self.metadata["update"]
+        for key in ("update", "qualityReport", "trainingMetrics"):
+            if key in self.metadata:
+                summary[key] = self.metadata[key]
         profile = self.profile()
         summary.update({"profile": profile, "inputLayouts": self.implementation.input_layouts,
                         "outputLayouts": self.implementation.output_layouts})
@@ -172,6 +197,14 @@ class ModelBundle:
             raise PredictionError("artifact-checksum", "Saved model identity differs from the requested revision.")
         if metadata.get("direction") != "forward":
             raise PredictionError("unsupported-model", "Inverse Prediction is retired; its saved files remain available for management and backup.")
+        try:
+            validate_quality_report(metadata.get("qualityReport"), metadata["definition"], {
+                "datasetId": metadata["datasetId"], "revision": metadata["datasetRevision"],
+                "fingerprint": metadata["datasetFingerprint"]})
+        except ValueError as error:
+            raise PredictionError("artifact-checksum", str(error)) from error
+        if metadata.get("qualityReport") != manifest["metadata"].get("qualityReport"):
+            raise PredictionError("artifact-checksum", "Saved model quality report differs from its manifest.")
         implementation = implementation_for(metadata["definition"])
         artifact = {**manifest["metadata"], "storageId": store.storage_id, "launcherId": store.launcher_id,
                     "files": manifest["files"], "manifestChecksum": checksum, "verified": True}

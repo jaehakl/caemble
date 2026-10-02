@@ -14,6 +14,7 @@ import sys
 import time
 
 import psutil
+from sdk.process_metrics import ProcessMetrics
 
 from app.kernel.execution import SpawnSolverExecutor
 from app.kernel.execution.cpu import cpu_allocation
@@ -71,35 +72,23 @@ def main():
                 started = time.perf_counter()
                 process = subprocess.Popen([sys.executable, "-m", "tests.cpu_benchmark", "--report", str(options.report),
                                             "--case", case, "--cpu", str(budget)], stdout=output, stderr=logs)
-                peak = 0
-                cpu_times = {}
-                while process.poll() is None:
-                    rss = 0
-                    try:
-                        root = psutil.Process(process.pid)
-                        children = [root, *root.children(recursive=True)]
-                    except psutil.Error:
-                        children = []
-                    for child in children:
-                        try:
-                            rss += child.memory_info().rss
-                            timing = child.cpu_times()
-                            cpu_times[(child.pid, child.create_time())] = timing.user + timing.system
-                        except psutil.Error:
-                            pass
-                    peak = max(peak, rss)
-                    time.sleep(.025)
+                with ProcessMetrics(root_pid=process.pid) as metrics:
+                    process.wait()
                 wall = time.perf_counter() - started
             if process.returncode:
                 raise RuntimeError(f"benchmark failed: {stderr}")
             result = json.loads(stdout.read_text(encoding="utf-8"))
             log_text = stderr.read_text(encoding="utf-8")
-            result.update(totalSeconds=wall, peakRssBytes=peak, sampledCpuSeconds=sum(cpu_times.values()))
+            measured = metrics.result
+            result.update(totalSeconds=wall, peakRssBytes=measured["peakRssBytes"],
+                          sampledCpuSeconds=measured["sampledCpuSeconds"], executionMetrics=measured)
             result["runtimeTimings"] = [line for line in log_text.splitlines()
                                         if re.search(r"duration_ms=|solver batch setup|solver batches|Torch threads", line)]
             summary["cases"].append(result)
             (options.report / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-            print(f"{case} CPU={budget}: execution={result['executionSeconds']:.3f}s peakRSS={peak / 2**20:.1f}MiB", flush=True)
+            peak = measured["peakRssBytes"]
+            memory = "unavailable" if peak is None else f"{peak / 2**20:.1f}MiB"
+            print(f"{case} CPU={budget}: execution={result['executionSeconds']:.3f}s peakRSS={memory}", flush=True)
 
 
 if __name__ == "__main__":

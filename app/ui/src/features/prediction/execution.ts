@@ -1,4 +1,5 @@
 import type { RecordedDataRule, Vars } from '@caemble/execution/cad/model'
+import type { PredictionExecutionMetrics } from '@/contracts/api/prediction'
 import type {
   PredictionCohortDiagnosticGroup,
   PredictionCohortExclusionReason,
@@ -51,6 +52,7 @@ export type PredictionExecutionResult = Readonly<{
   queryDiagnostics: readonly PredictionQueryDiagnostic[]
   knn?: Readonly<{ neighbors: readonly PredictionNeighbor[] }>
   provenance?: PredictionProvenance
+  executionMetrics?: PredictionExecutionMetrics
 }>
 
 export type PredictionProvenance = Readonly<{
@@ -103,6 +105,7 @@ export type PreparedPredictionModel = Readonly<{
   recordProfiles: readonly PredictionRecordProfile[]
   rules: readonly RecordedDataRule[]
   provenance?: PredictionProvenance
+  executionMetrics?: PredictionExecutionMetrics
 }>
 
 export type PredictionRequest = Readonly<{ requestId: string; signal: AbortSignal }>

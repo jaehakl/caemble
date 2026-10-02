@@ -1,7 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/http'
-import { reconcileRemoteAssets } from './remoteAssets'
+import { reconcileRemoteAssets, registerRemoteArtifact } from './remoteAssets'
 import type { RemoteHello } from './remoteProtocol'
+import type { RemoteArtifact } from './remoteProtocol'
+import { executionMetricsFixture, qualityReportFixture } from './qualityReport.fixture'
 
 const mocks = vi.hoisted(() => ({ operation: vi.fn(), complete: vi.fn(), registerStorage: vi.fn() }))
 vi.mock('@/api/prediction', () => ({ predictionApi: mocks }))
@@ -24,6 +26,27 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.registerStorage.mockResolvedValue(undefined)
   mocks.complete.mockResolvedValue(undefined)
+})
+
+it('preserves report and execution evidence when reconciling a saved portable artifact', async () => {
+  await registerRemoteArtifact({
+    ...hello.models[0],
+    qualityReport: qualityReportFixture,
+    trainingMetrics: executionMetricsFixture,
+    executionMetrics: executionMetricsFixture,
+    validation: { loadPassed: true, predictPassed: true },
+  } as RemoteArtifact)
+  expect(mocks.complete).toHaveBeenCalledWith(
+    'model',
+    2,
+    expect.objectContaining({
+      quality_report: qualityReportFixture,
+      training_metrics: executionMetricsFixture,
+      execution_metrics: executionMetricsFixture,
+      validation: { loadPassed: true, predictPassed: true },
+    }),
+    expect.anything(),
+  )
 })
 
 it.each(['queued', 'completed'])('does not publish a server training receipt from hello (%s)', async (state) => {

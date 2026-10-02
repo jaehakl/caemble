@@ -85,6 +85,11 @@ def model_case(tmp_path, monkeypatch):
                     "output": [copy.deepcopy(self.output)], "extrapolatedInputKeys": extrapolated,
                     "constantInputKeysChanged": constant_changed, "queryDiagnostics": []}
 
+        def predict_many(self, values, context):
+            contexts.append(("predict_many", context))
+            check_cancel(context.cancel)
+            return [self.predict(value, context) for value in values]
+
         def write(self, path, cancel=None):
             check_cancel(cancel)
             (path / "model.json").write_bytes(encode_json({"metadata": self.metadata, "output": self.output}))

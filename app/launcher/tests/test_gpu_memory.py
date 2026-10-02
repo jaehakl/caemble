@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from app import gpu_memory
+from sdk import gpu_memory
 
 
 def test_nvidia_process_snapshot_rejects_unknown_usage(monkeypatch):
