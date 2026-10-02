@@ -93,11 +93,21 @@ it('explicitly selects an older saved revision and keeps its replica and Solver 
     dataset_id: 'dataset',
     dataset_revision: 1,
     dataset_fingerprint: 'data-hash',
-    definition: { fingerprint: 'definition' },
+    definition: { fingerprint: 'definition', algorithm: { kind: 'knn' } },
     source_contracts: {},
     artifact: { manifest_sha256: 'checksum' },
     replicas: [replica],
   }
+  vi.spyOn(predictionApi, 'algorithms').mockResolvedValue([
+    {
+      kind: 'knn',
+      implementationVersion: 'knn-v1',
+      preprocessingVersion: 'box-relative-v2',
+      directions: ['forward'],
+      representations: ['box-relative-v2'],
+      resources: { training: { gpu_count: 0 }, inference: { gpu_count: 0 } },
+    },
+  ])
   vi.spyOn(predictionApi, 'models').mockResolvedValue([
     {
       id: 'model',
@@ -107,8 +117,17 @@ it('explicitly selects an older saved revision and keeps its replica and Solver 
       current_revision: 2,
       delete_id: null,
       direction: 'forward',
-      algorithm: 'knn',
-      revisions: [revision, { ...revision, revision: 2 }],
+      algorithm: 'unsupported-newer-algorithm',
+      support_status: 'unsupported',
+      revisions: [
+        revision,
+        {
+          ...revision,
+          revision: 2,
+          support_status: 'unsupported',
+          definition: { fingerprint: 'new-definition', algorithm: { kind: 'unsupported-newer-algorithm' } },
+        },
+      ],
     },
   ])
   vi.spyOn(predictionApi, 'storages').mockResolvedValue([
@@ -146,7 +165,7 @@ it('explicitly selects an older saved revision and keeps its replica and Solver 
   await screen.findByText('Current error · 첫 평가에서 검증')
   fireEvent.click(screen.getByLabelText('kNN Hybrid Optimization'))
   await screen.findByText('Saved kNN')
-  fireEvent.change(screen.getByLabelText('저장된 kNN 모델'), { target: { value: 'model' } })
+  fireEvent.change(screen.getByLabelText('저장된 Forward 모델'), { target: { value: 'model' } })
   fireEvent.change(screen.getByLabelText('모델 revision'), { target: { value: '1' } })
   fireEvent.change(screen.getByLabelText('모델 복제본 · 실행 Launcher'), { target: { value: 'replica:launcher' } })
   expect(screen.getByLabelText('Solver 실행 시도 예산')).toHaveValue(8)

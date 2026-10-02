@@ -19,8 +19,7 @@ describe('Predictor Python wire contracts', () => {
       sessionId: 'session',
       storageId: 'storage',
       launcherId: 'launcher',
-      implementationVersion: 'knn-v1',
-      preprocessingVersion: 'box-relative-v2',
+      algorithmDescriptors: [],
       capabilities: {},
       datasets: [
         {
@@ -67,8 +66,7 @@ describe('Predictor Python wire contracts', () => {
       sessionId: 'session',
       storageId: 'storage',
       launcherId: 'launcher',
-      implementationVersion: 'knn-v1',
-      preprocessingVersion: 'box-relative-v2',
+      algorithmDescriptors: [],
       capabilities: {},
       datasets: [receipt],
       models: [],
@@ -78,7 +76,7 @@ describe('Predictor Python wire contracts', () => {
 
   it('keeps request and process identity ahead of an application error', () => {
     const response = {
-      protocolVersion: 2,
+      protocolVersion: 3,
       requestId: 'previous-request',
       sessionId: 'old-process',
       error: { code: 'dataset-missing', message: 'Missing Dataset.' },
@@ -121,8 +119,7 @@ describe('Predictor Python wire contracts', () => {
       sessionId: 'session',
       storageId: 'storage',
       launcherId: 'launcher',
-      implementationVersion: 'knn-v1',
-      preprocessingVersion: 'box-relative-v2',
+      algorithmDescriptors: [],
       capabilities: {},
       datasets: [],
       models: [

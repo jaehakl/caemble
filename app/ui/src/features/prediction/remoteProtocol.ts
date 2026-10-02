@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { predictionAlgorithmSchema } from '@/contracts/api/prediction'
 import {
   cohortDiagnosticSchema,
   legacyCohortDiagnosticSchema,
@@ -56,7 +57,7 @@ export const remoteArtifactSchema = z
     operationId: identity,
     name: identity,
     direction,
-    algorithm: z.literal('knn'),
+    algorithm: identity,
     definition: z.object({ fingerprint: identity }).passthrough(),
     datasetId: identity,
     datasetRevision: z.number().int().positive(),
@@ -99,8 +100,7 @@ export const remoteHelloSchema = z.object({
   sessionId: identity,
   storageId: identity,
   launcherId: identity,
-  implementationVersion: identity,
-  preprocessingVersion: identity,
+  algorithmDescriptors: z.array(predictionAlgorithmSchema),
   capabilities: z.unknown(),
   datasets: z.array(z.union([unavailableDatasetSchema, remoteDatasetSchema])),
   models: z.array(z.union([unavailableModelSchema, remoteArtifactSchema])),
@@ -110,7 +110,7 @@ export type RemoteHello = z.infer<typeof remoteHelloSchema>
 export const remotePreparedSchema = z.object({
   fingerprint: identity,
   instance: z.object({
-    executionId: z.literal('remote-knn'),
+    executionId: z.literal('remote-predictor'),
     sessionId: identity,
     generation: count,
     handle: identity,
@@ -159,14 +159,14 @@ export class RemotePredictionError extends Error {
 }
 
 export function parseRemoteEnvelope(value: unknown, requestId: string, sessionId?: string) {
-  if (value && typeof value === 'object' && 'protocolVersion' in value && value.protocolVersion !== 2)
+  if (value && typeof value === 'object' && 'protocolVersion' in value && value.protocolVersion !== 3)
     throw new RemotePredictionError(
       'unsupported-execution',
       'Predictor 통신 버전이 다릅니다. API·UI와 같은 릴리스로 Predictor를 업데이트하고 launcher를 다시 연결하세요.',
     )
   const envelope = z
     .object({
-      protocolVersion: z.literal(2),
+      protocolVersion: z.literal(3),
       requestId: identity,
       sessionId: identity,
       error: z.object({ code: identity, message: identity }).optional(),

@@ -45,6 +45,17 @@ async def connected_storage(db, storage_id, launcher_id, user_id):
 async def require_dataset_idle(db, dataset_id):
     from gpstation.service.state import utcnow
     from prediction.db import DatasetGrant
+    from prediction.db import TrainingRun
+    from gpstation.db import Job
+    from gpstation.service.job_service import JOB_TERMINAL_STATES
+    training = await db.scalar(select(TrainingRun.operation_id).join(Job, Job.id == TrainingRun.job_id).where(
+        TrainingRun.dataset_id == dataset_id,
+        (~Job.state.in_(JOB_TERMINAL_STATES)) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1))
+    if training is not None:
+        raise HTTPException(409, {"message": "Dataset is pinned by training. Wait for the training process to finish cleanup.",
+            "operation_id": training})
+    from prediction.training import release_finished_grants
+    await release_finished_grants(db, dataset_id)
     expiry = await db.scalar(select(DatasetGrant.expires_at).where(
         DatasetGrant.dataset_id == dataset_id, DatasetGrant.expires_at > utcnow()).order_by(DatasetGrant.expires_at.desc()).limit(1))
     if expiry is not None:

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from sdk.slave.object_storage import upload_object
+from prediction_contracts import PREDICTION_PROTOCOL_VERSION
 
 from app.runtime import EvaluationError, run_node
 
@@ -31,7 +32,7 @@ def prediction_batches(inputs: list[dict]) -> list[list[dict]]:
 
 def predictor_result(reply, *, session_id=None) -> dict:
     result = reply.payload
-    if not isinstance(result, dict) or result.get("protocolVersion") != 2:
+    if not isinstance(result, dict) or result.get("protocolVersion") != PREDICTION_PROTOCOL_VERSION:
         raise EvaluationError({"code": "prediction-protocol", "message": "Predictor returned an invalid response."})
     if result.get("error"):
         raise EvaluationError(result["error"])
@@ -68,9 +69,9 @@ async def predict(message: dict, context, runtime: dict) -> dict:
             # Connection admission is bounded independently from inference time.
             try:
                 async with asyncio.timeout(30):
-                    first = await client.run_job("predictor.hello", {"protocolVersion": 2, "requestId": str(uuid4())},
+                    first = await client.run_job("predictor.hello", {"protocolVersion": PREDICTION_PROTOCOL_VERSION, "requestId": str(uuid4())},
                         slave_app_id="predictor", auto_finish=False, timeout_seconds=30,
-                        resources={"cpu_cores": 1, "gpu_count": 0}, on_job_created=lambda job: jobs.append(job.id))
+                        resources=hybrid["resources"]["predictor"], on_job_created=lambda job: jobs.append(job.id))
             except Exception as error:
                 cause = error
                 while cause is not None and not isinstance(cause, TimeoutError):
@@ -84,7 +85,7 @@ async def predict(message: dict, context, runtime: dict) -> dict:
             if hello.get("storageId") != hybrid["storage_id"] or hello.get("launcherId") != hybrid["launcher_id"]:
                 raise EvaluationError({"code": "prediction-storage", "message": "Predictor connected to a different model storage."})
             async def call(action, **payload):
-                reply = await session.call(action, {"protocolVersion": 2, "requestId": str(uuid4()),
+                reply = await session.call(action, {"protocolVersion": PREDICTION_PROTOCOL_VERSION, "requestId": str(uuid4()),
                     "sessionId": session_id, **payload}, timeout_seconds=120)
                 return predictor_result(reply, session_id=session_id)
 

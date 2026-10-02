@@ -17,6 +17,7 @@ from gpstation.service.server_handlers import register_server_handler
 from gpstation.service.state import runtime
 from model_registry import register_models
 from optimization import evaluation, integration
+from prediction import training
 from optimization.controller import reconcile_once, start_controller, stop_controller
 from settings import settings
 from simulation.services import maintenance, recording
@@ -31,6 +32,7 @@ async def _cleanup_loop() -> None:
         try:
             async with SessionLocal() as db:
                 await expire_preflights(db)
+                await training.reconcile(db)
                 await cleanup_objects(db)
         except asyncio.CancelledError:
             raise
@@ -71,6 +73,7 @@ async def lifespan(app: FastAPI):
                     on_finished=integration.on_finished,
                 )
             async with SessionLocal() as db:
+                register_server_handler(training.HANDLER, training, on_finished=training.on_finished)
                 await JobService.recover_after_server_restart(db)
                 await fail_server_jobs(db, detail="server restarted", restarting=True)
             await reconcile_once(catalog)
@@ -101,7 +104,7 @@ def create_app() -> FastAPI:
     from gpstation.routers import v1, web
     from gpstation_adapter import v1_router, web_router
     from optimization.router import router as optimization_router
-    from optimization.predictor_jobs import router as evaluation_predictor_router
+    from optimization.predictor_router import router as evaluation_predictor_router
     from prediction.router import router as prediction_router
     from simulation.routers import (
         demo_experiment, execution, experiment, experiment_record, measurement, recorded_data,

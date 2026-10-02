@@ -3,8 +3,6 @@ import { predictionApi } from '@/api/prediction'
 import { ApiError } from '@/api/http'
 import type { PredictionOperation, PredictionOperationRequest } from '@/contracts/api/prediction'
 import type { PredictionAssetController, PredictionAssetWork } from './assetManagement'
-import { registerRemoteArtifact } from './remoteAssets'
-import { savedPredictionReferenceSchema } from './savedModels'
 import { RemotePredictionError } from './remoteProtocol'
 
 const datasetSourceSchema = z
@@ -84,6 +82,7 @@ export function retryPredictionAssetOperation(
   requested: PredictionOperation | string,
 ) {
   const identity = typeof requested === 'string' ? requested : requested.id
+  const requestId = crypto.randomUUID()
   return manager.run(`operation:${identity}`, '작업 상태 확인·계속', async (work) => {
     const operation = await predictionApi.operation(identity, { signal: work.signal })
     work.operation(operation)
@@ -106,15 +105,18 @@ export function retryPredictionAssetOperation(
       operation.kind === 'restore' || operation.kind === 'prepare' || operation.kind === 'verify'
         ? operation.target_launcher_id
         : operation.details.source_launcher_id
-    if (typeof launcherId === 'string') await work.connect(launcherId, operation.kind === 'prepare')
-    // A prepare receipt may have been registered by the hello reconciliation.
     if (operation.kind === 'prepare') {
-      const reconciled = await predictionApi.operation(operation.id, { signal: work.signal })
-      if (reconciled.state === 'completed') {
-        work.operation(reconciled)
-        return reconciled
-      }
+      if (!['failed', 'interrupted', 'pending', 'cancelled'].includes(operation.state)) return operation
+      if (operation.stage === 'superseded') throw new Error('새 버전으로 대체된 학습입니다. 새 작업을 시작하세요.')
+      const preflight = await predictionApi.preflightTraining(
+        operation.id,
+        { request_id: requestId },
+        { signal: work.signal },
+      )
+      work.operation(preflight)
+      return submitPredictionTraining(preflight, work, requestId)
     }
+    if (typeof launcherId === 'string') await work.connect(launcherId)
     const next = await predictionApi.retryOperation(operation.id, {}, { signal: work.signal })
     work.operation(next)
     return executePredictionAssetOperation(manager, next, work)
@@ -127,7 +129,7 @@ async function executePredictionAssetOperation(
   work: PredictionAssetWork,
 ) {
   if (['succeeded', 'completed'].includes(operation.state)) return operation
-  if (operation.kind === 'prepare') return resumePreparedModel(manager, operation, work)
+  if (operation.kind === 'prepare') return submitPredictionTraining(operation, work)
   const grant = operation.grant
   if (!grant) throw new Error('작업 전송 권한을 확인하지 못했습니다. 다시 시도하세요.')
   if (operation.kind === 'verify') {
@@ -321,87 +323,46 @@ async function executePredictionAssetOperation(
   return result
 }
 
-async function resumePreparedModel(
-  manager: PredictionAssetController,
+/** The browser protects local input, then hands execution ownership to the server. */
+export async function submitPredictionTraining(
   operation: PredictionOperation,
   work: PredictionAssetWork,
+  retryRequestId?: string,
 ) {
-  if (operation.details.direction === 'inverse')
-    throw new Error('Inverse 모델 준비는 지원 종료되었습니다. 기존 저장 파일은 유지됩니다.')
-  if (!operation.target_launcher_id) throw new Error('모델을 준비하던 장비를 확인할 수 없습니다.')
-  const remote = await work.connect(operation.target_launcher_id, true)
-  if (remote.hello!.storageId !== operation.target_storage_id) throw new Error('모델 준비 저장소가 변경되었습니다.')
-  const model = (
-    await predictionApi.models(typeof manager.experimentId === 'number' ? manager.experimentId : undefined, {
-      signal: work.signal,
-    })
-  ).find((item) => item.id === operation.asset_id)
-  const revision = model?.revisions.find((item) => item.revision === operation.revision)
-  if (!model || !revision || revision.state !== 'reserved')
-    throw new Error('이 준비 작업은 더 이상 유효하지 않습니다. 모델 목록을 확인하세요.')
-  if (model.direction !== 'forward') throw new Error('지원 종료된 모델은 다시 준비할 수 없습니다.')
-  const definition = z
-    .object({
-      fingerprint: z.string(),
-      snapshotFingerprint: z.string(),
-      implementationId: z.string(),
-      implementationVersion: z.string(),
-      preprocessingVersion: z.string(),
-      requiredRecordIds: z.array(z.number()).optional(),
-      contract: savedPredictionReferenceSchema.shape.contract.optional(),
-      algorithm: z.object({
-        kind: z.literal('knn'),
-        kMode: z.enum(['auto', 'manual']),
-        manualK: z.number().int().positive(),
-        weighting: z.enum(['uniform', 'distance']),
-      }),
-    })
-    .passthrough()
-    .parse(revision.definition)
-  const dataset = (
-    await predictionApi.datasets(typeof manager.experimentId === 'number' ? manager.experimentId : undefined, {
-      signal: work.signal,
-    })
-  ).find((item) => item.id === revision.dataset_id)
-  const source = dataset?.revisions.find((item) => item.revision === revision.dataset_revision)
-  if (!dataset || !source?.payload_available)
-    throw new Error(
-      '준비 당시의 Dataset 원본이 없습니다. 완료된 파일을 먼저 확인하거나 동일 revision 백업을 복원하세요.',
+  if (['completed', 'succeeded', 'queued', 'running', 'cancelling'].includes(operation.state)) return operation
+  if (['cancelled', 'superseded'].includes(operation.state))
+    throw new Error('중단되거나 대체된 학습입니다. 새 작업을 시작하세요.')
+  const training = operation.training
+  if (!training || !operation.target_launcher_id)
+    throw new Error('학습 작업의 실행 정보를 확인하지 못했습니다. 다시 조회하세요.')
+  if (training.cleanupPending) throw new Error('이전 학습 프로세스 정리가 끝난 뒤 다시 시도하세요.')
+  // API data also needs a saved-artifact check: recovery must not require deleted source data.
+  const remote = await work.connect(operation.target_launcher_id)
+  if (remote.hello!.storageId !== operation.target_storage_id)
+    throw new Error('등록된 학습 저장소와 연결된 저장소가 다릅니다.')
+  work.progress('저장 모델·학습 데이터 확인 중')
+  const pin = z
+    .object({ pinId: z.string(), operationId: z.string() })
+    .parse(
+      await remote.command(
+        'training.pin',
+        { grant: training.grant },
+        { requestId: crypto.randomUUID(), signal: work.signal },
+      ),
     )
-  const local = source.replicas.some(
-    (copy) => copy.storage_id === remote.hello!.storageId && ['present', 'unverified'].includes(copy.state),
-  )
-  const grant =
-    !local && source.api_payload_available
-      ? await predictionApi.grant(dataset.id, source.revision, { signal: work.signal })
-      : undefined
-  if (!local && !grant)
-    throw new Error('준비 당시 Dataset을 이 장비에서 사용할 수 없습니다. 같은 revision을 복원한 뒤 재시도하세요.')
-  try {
-    const prepared = await remote.prepare(
-      {
-        kind: 'dataset-revision',
-        direction: model.direction,
-        fingerprint: source.fingerprint,
-        dataset: grant
-          ? { grant }
-          : { datasetId: dataset.id, revision: source.revision, fingerprint: source.fingerprint },
-        model: { modelId: model.id, revision: revision.revision, operationId: revision.operation_id, name: model.name },
-      },
-      definition,
-      { requestId: crypto.randomUUID(), signal: work.signal },
-    )
-    try {
-      await registerRemoteArtifact(prepared.artifact)
-    } finally {
-      await remote.release(prepared.instance)
-    }
-    const result = await predictionApi.operation(operation.id, { signal: work.signal })
-    work.operation(result)
-    return result
-  } finally {
-    if (grant) await predictionApi.releaseGrant(dataset.id, grant.grant_id)
-  }
+  if (pin.operationId !== operation.id || pin.pinId !== training.pinId)
+    throw new Error('학습 데이터 사용 잠금이 현재 작업과 다릅니다.')
+  work.progress('독립 학습 작업 접수 중')
+  const submitted = retryRequestId
+    ? await predictionApi.retryTraining(
+        operation.id,
+        { request_id: retryRequestId, pin_id: pin.pinId },
+        { signal: work.signal },
+      )
+    : await predictionApi.submitTraining(operation.id, { pin_id: pin.pinId }, { signal: work.signal })
+  work.operation(submitted)
+  work.progress('학습 접수 완료 · 브라우저를 닫아도 계속됩니다.')
+  return submitted
 }
 
 export function verifyPredictionReplica(

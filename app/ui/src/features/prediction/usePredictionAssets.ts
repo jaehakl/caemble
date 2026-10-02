@@ -24,17 +24,33 @@ export function usePredictionAssets(
     }
   }, [manager])
   useEffect(() => {
-    if (
-      !scope ||
-      !state.operations.some(
-        (operation) => !['succeeded', 'completed', 'cancelled', 'failed', 'interrupted'].includes(operation.state),
-      )
+    if (!scope) return
+    const active = state.operations.some(
+      (operation) =>
+        operation.training?.cleanupPending ||
+        !['succeeded', 'completed', 'cancelled', 'failed', 'interrupted', 'superseded'].includes(operation.state),
     )
-      return
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let stopped = false
+    const schedule = () => {
+      if (timer) clearTimeout(timer)
+      if (active && !stopped)
+        timer = setTimeout(() => void manager.refresh().finally(schedule), document.hidden ? 5_000 : 2_000)
+    }
+    const reconnect = () => {
       void manager.refresh()
-    }, 5_000)
-    return () => clearInterval(timer)
+    }
+    schedule()
+    document.addEventListener('visibilitychange', reconnect)
+    window.addEventListener('online', reconnect)
+    window.addEventListener('focus', reconnect)
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', reconnect)
+      window.removeEventListener('online', reconnect)
+      window.removeEventListener('focus', reconnect)
+    }
   }, [manager, scope, state.operations])
   return manager
 }

@@ -115,11 +115,18 @@ class ArtifactStore:
         (self.path("leases", identity, revision) / f"{safe_id(handle)}.json").unlink(missing_ok=True)
 
     def assert_unused(self, identity: str, revision: int | None, kind: str = "models") -> None:
+        if kind == "datasets":
+            self.assert_dataset_idle(identity)
         directories = [self.path("read-leases", f"{kind}-{identity}", revision)]
         if kind == "models":
             directories.append(self.path("leases", identity, revision))
         for directory in directories:
             self._assert_no_live_leases(directory)
+
+    def assert_dataset_idle(self, identity: str) -> None:
+        pins = self.path("datasets", identity) / "training-pins"
+        if pins.exists() and any(pins.glob("*.json")):
+            raise PredictionError("dataset-in-use", "Wait for training and process cleanup before synchronizing or deleting this Dataset.")
 
     def _assert_no_live_leases(self, directory: Path) -> None:
         if not directory.exists():
@@ -274,6 +281,7 @@ class ArtifactStore:
                 self._remove(child)
 
     def publish_dataset(self, identity: str, revision: int) -> None:
+        self.assert_dataset_idle(identity)
         parent = self.path("datasets", identity)
         previous = parent / "latest"
         if previous.exists() and int(previous.read_text(encoding="utf-8")) > revision:

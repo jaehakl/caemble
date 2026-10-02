@@ -1,7 +1,7 @@
 """HTTP facade for owned Prediction assets and scoped Dataset downloads."""
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
@@ -11,11 +11,18 @@ from prediction.common import canonical_bytes
 from prediction.schemas import (DatasetGrantRequest, DatasetSelection, DeleteRequest,
     LocalDatasetRegistration, ModelComplete, ModelLeaseRequest, ModelReserve, StorageRegistration,
     ArchiveUpload, AssetRename, OperationComplete, OperationCreate, ReplicaRegistration)
+from prediction.schemas import TrainingSubmit, TrainingRetry, TrainingPreflight, TrainingPinReceipt
 from user_auth.schemas import UserData
 from user_auth.utils.auth_wrapper import require_roles
 
 router = APIRouter(prefix="/prediction", tags=["prediction"], dependencies=[Depends(require_web_csrf)])
 authenticated = require_roles(["admin", "user"])
+
+
+@router.get("/algorithms")
+async def algorithms(user: UserData = Depends(authenticated)):
+    from prediction_contracts import ALGORITHMS, algorithm_descriptor
+    return {"items": [algorithm_descriptor(kind) for kind in ALGORITHMS]}
 
 
 @router.get("/datasets")
@@ -86,7 +93,7 @@ async def reserve_model(body: ModelReserve, db: AsyncSession = Depends(get_db), 
 
 @router.post("/models/{model_id}/revisions/{revision}/complete")
 async def complete_model(model_id: UUID, revision: int, body: ModelComplete, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
-    return await models.complete_model(db, str(model_id), revision, body, user.id)
+    return await models.complete_model(db, str(model_id), revision, body, user.id, publish=False)
 
 
 @router.post("/models/{model_id}/delete")
@@ -151,16 +158,58 @@ async def create_operation(body: OperationCreate, db: AsyncSession = Depends(get
 
 @router.get("/operations/{operation_id}")
 async def get_operation(operation_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    from gpstation.service.batches import serialize_events
+    await serialize_events(db)
     row = await operations.owned_operation(db, str(operation_id), user.id)
     if row.kind.startswith("delete_") and row.state != "completed":
         await operations.process_cloud_deletions(db, row)
     await operations.expire_operation(db, row)
-    return operations.operation_view(row)
+    from prediction.training import operation_view
+    return await operation_view(db, row)
+
+
+@router.post("/operations/{operation_id}/submit")
+async def submit_training(operation_id: UUID, body: TrainingSubmit, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    from prediction.training import submit
+    return await submit(db, str(operation_id), user.id, pin_id=body.pin_id)
+
+
+@router.post("/operations/{operation_id}/training/preflight")
+async def preflight_training(operation_id: UUID, body: TrainingPreflight, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    from prediction.training import preflight
+    return await preflight(db, str(operation_id), body.request_id, user.id)
+
+
+@router.post("/operations/{operation_id}/retry")
+async def retry_training(operation_id: UUID, body: TrainingRetry, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
+    from prediction.training import submit
+    return await submit(db, str(operation_id), user.id, pin_id=body.pin_id, retry_request_id=body.request_id)
+
+
+@router.get("/operations/{operation_id}/training")
+async def training_authority(operation_id: UUID, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    from prediction.training import authority
+    _, _, result = await authority(db, str(operation_id), authorization)
+    return result
+
+
+@router.post("/operations/{operation_id}/training/pinned")
+async def acknowledge_training_pin(operation_id: UUID, body: TrainingPinReceipt, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    from prediction.training import acknowledge_pin
+    return await acknowledge_pin(db, str(operation_id), authorization, body.pinId, body.artifactSaved)
+
+
+@router.get("/training/jobs/{job_id}/attempts/{attempt_id}/dataset")
+async def training_dataset(job_id: UUID, attempt_id: UUID, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    from prediction.training import dataset_access
+    return await dataset_access(db, str(job_id), str(attempt_id), authorization)
 
 
 @router.post("/operations/{operation_id}/grants")
 async def operation_grant(operation_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
     row = await operations.owned_operation(db, str(operation_id), user.id)
+    if row.kind == "prepare":
+        raise HTTPException(409, "Use the training preflight and retry endpoints for model preparation.")
     await operations.issue_grant(db, row, retry=True)
     if row.kind.startswith("delete_"):
         await operations.process_cloud_deletions(db, row)
@@ -169,13 +218,15 @@ async def operation_grant(operation_id: UUID, db: AsyncSession = Depends(get_db)
 
 @router.post("/operations/{operation_id}/cancel")
 async def cancel_operation(operation_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
-    row = await operations.owned_operation(db, str(operation_id), user.id)
-    return await operations.stop_operation(db, row, cancel=True)
+    from prediction.training import cancel_operation
+    return await cancel_operation(db, str(operation_id), user.id)
 
 
 @router.post("/operations/{operation_id}/interrupt")
 async def interrupt_operation(operation_id: UUID, body: dict = Body(default={}), db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated)):
     row = await operations.owned_operation(db, str(operation_id), user.id)
+    if row.kind == "prepare":
+        raise HTTPException(409, "Browser disconnection does not interrupt server-owned training.")
     return await operations.stop_operation(db, row, error=str(body.get("error", "Connection interrupted."))[:1000])
 
 

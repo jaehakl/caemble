@@ -30,6 +30,7 @@ import uvicorn
 
 from simulation.services import recording
 from optimization import controller, evaluation, integration, predictor_jobs
+from optimization.predictor_router import router as predictor_router
 from optimization.db import StageSubmission, Optimization, Trial, Evaluation
 from optimization.router import authenticated, router
 from calculation.db import Calculation, CalculationSource
@@ -81,7 +82,7 @@ class HybridEndToEndTests(unittest.TestCase):
         base_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
         app = FastAPI()
         app.include_router(router)
-        app.include_router(predictor_jobs.router)
+        app.include_router(predictor_router)
         user = UserData(id=owner, roles=[RoleEnum.user])
         app.dependency_overrides[authenticated] = lambda: user
         app.dependency_overrides[require_web_csrf] = lambda: None

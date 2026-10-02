@@ -3,22 +3,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from pathlib import Path
 import re
 import shutil
 import stat
 import zipfile
 
-import numpy as np
-
 from .dataset import DatasetReader, references
 from .errors import PredictionError
-from .models import IMPLEMENTATION_VERSION, PREPROCESSING_VERSION
+from .models import implementation_for
 from .storage import check_cancel, encode_json, safe_id
 
 CHUNK_BYTES = 8 * 1024 * 1024
-ARRAY_NAMES = ("input", "output", "inputMinimums", "inputMaximums", "inputScales", "measurementIds")
 
 
 def validate_content(path: Path, manifest: dict, kind: str) -> None:
@@ -37,28 +33,7 @@ def validate_content(path: Path, manifest: dict, kind: str) -> None:
         metadata = content["metadata"]
         if metadata["modelId"] != identity or metadata["revision"] != revision:
             raise PredictionError("artifact-checksum", "Model archive identity differs from its manifest.")
-        definition = metadata["definition"]
-        if definition["implementationVersion"] != IMPLEMENTATION_VERSION or definition["preprocessingVersion"] != PREPROCESSING_VERSION:
-            raise PredictionError("unsupported-model", "Archive requires another implementation or preprocessing version.")
-        if metadata["formatVersion"] != 1 or metadata["algorithm"] != "knn" or not content["models"]:
-            raise PredictionError("artifact-version", "Only saved kNN model artifact v1 is supported.")
-        expected = {"model.json"} | {f"{index}-{name}.npy" for index in range(len(content["models"])) for name in ARRAY_NAMES}
-        for index, model in enumerate(content["models"]):
-            for name in ARRAY_NAMES:
-                with (path / f"{index}-{name}.npy").open("rb") as stream:
-                    version = np.lib.format.read_magic(stream)
-                    if version == (1, 0):
-                        shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
-                    elif version == (2, 0):
-                        shape, _, dtype = np.lib.format.read_array_header_2_0(stream)
-                    else:
-                        raise PredictionError("artifact-version", "Unsupported NumPy array format.")
-                    expected_shape = ((model["rowCount"], model["inputSize"] if name == "input" else model["outputSize"])
-                                      if name in ("input", "output") else
-                                      (model["rowCount"] if name == "measurementIds" else model["inputSize"],))
-                    if (shape != expected_shape or dtype.hasobject or dtype.kind not in "biuf"
-                            or stream.tell() + math.prod(shape) * dtype.itemsize != (path / f"{index}-{name}.npy").stat().st_size):
-                        raise PredictionError("artifact-checksum", "NumPy array dimensions or dtype differ from the saved model.")
+        expected = implementation_for(metadata["definition"]).validate_artifact(path, manifest, content)
     if names != expected:
         raise PredictionError("artifact-checksum", "Archive does not contain exactly the complete artifact file set.")
 

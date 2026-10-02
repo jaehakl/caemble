@@ -17,23 +17,31 @@ export function OptimizationHybridSettings({
   const assets = useQuery({
     queryKey: ['optimization-hybrid-assets', queryScope, experimentId],
     queryFn: async ({ signal }) => {
-      const [models, storages] = await Promise.all([
+      const [models, storages, algorithms] = await Promise.all([
         predictionApi.models(experimentId, { signal }),
         predictionApi.storages({ signal }),
+        predictionApi.algorithms({ signal }),
       ])
-      return { models, storages }
+      return { models, storages, algorithms }
     },
     refetchInterval: 15_000,
   })
-  const models = (assets.data?.models ?? []).filter(
-    (model) =>
-      model.state === 'active' &&
-      model.direction === 'forward' &&
-      model.algorithm === 'knn' &&
-      model.support_status !== 'retired',
-  )
+  const models = (assets.data?.models ?? []).flatMap((model) => {
+    if (model.state !== 'active' || model.direction !== 'forward') return []
+    const revisions = model.revisions.filter((revision) => {
+      const algorithm = revision.definition.algorithm as { kind?: unknown } | undefined
+      return (
+        revision.state === 'ready' &&
+        revision.artifact &&
+        revision.support_status !== 'unsupported' &&
+        revision.support_status !== 'retired' &&
+        assets.data?.algorithms.some((item) => item.kind === algorithm?.kind && item.directions.includes('forward'))
+      )
+    })
+    return revisions.length ? [{ ...model, revisions }] : []
+  })
   const model = models.find((item) => item.id === draft.modelId)
-  const revisions = model?.revisions.filter((item) => item.state === 'ready' && item.artifact) ?? []
+  const revisions = model?.revisions ?? []
   const revision = revisions.find((item) => String(item.revision) === draft.modelRevision)
   const routes = (revision?.replicas ?? []).flatMap((replica) => {
     const storage = assets.data?.storages.find((item) => item.storage_id === replica.storage_id)
@@ -47,7 +55,7 @@ export function OptimizationHybridSettings({
   return (
     <div className="space-y-3">
       <label className="block space-y-1">
-        <span>저장된 kNN 모델</span>
+        <span>저장된 Forward 모델</span>
         <select
           className="h-9 w-full rounded-md border bg-background px-2"
           value={draft.modelId}
@@ -115,12 +123,12 @@ export function OptimizationHybridSettings({
       </label>
       <p className="text-xs leading-relaxed text-muted-foreground">
         선택한 revision을 고정하고 예측한 후보를 실제 Solver로 검증합니다. 실패 후 Solver 재실행도 예산을 사용합니다.
-        예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher는 Evaluation과 Predictor에 사용할 CPU가
-        최소 2개 필요합니다.
+        예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher에는 Evaluation과 선택한 알고리즘의 추론에
+        필요한 CPU·RAM·GPU 자원이 함께 필요합니다.
       </p>
       {!assets.isPending && !models.length ? (
         <p className="text-xs text-muted-foreground">
-          이 Experiment의 저장된 Forward kNN 모델을 Prediction에서 먼저 준비하세요.
+          이 Experiment에서 지원되는 Forward 모델을 Prediction에서 먼저 준비하세요.
         </p>
       ) : null}
       {revision && !routes.length ? (

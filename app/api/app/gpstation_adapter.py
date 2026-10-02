@@ -11,6 +11,7 @@ from gpstation.service.job_service import JobService, build_job_wait_url, job_to
 from gpstation.service.web_service import is_admin
 from gpstation.utils.csrf import require_web_csrf
 from optimization.guards import require_unmanaged_execution, unmanaged_execution_clause
+from prediction.training import require_unmanaged_job
 from user_auth.schemas import UserData
 from user_auth.utils.auth_wrapper import require_roles
 
@@ -41,6 +42,8 @@ async def web_create_job(
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> JobCreateResult:
+    if body.slave_app_id == "predictor-training" or body.handler_type == "prediction.train":
+        raise HTTPException(422, "Training jobs must be submitted through Prediction operations.")
     if body.slave_app_id in {"cae", "evaluation"} or body.handler_type.startswith("cae."):
         raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Optimization endpoints.")
     job = await job_orchestrator.create_job(
@@ -65,6 +68,7 @@ async def web_kill_job(
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> OkResponse:
     await require_unmanaged_execution(db, job_id=job_id, user_id=None if is_admin(current_user) else current_user.id)
+    await require_unmanaged_job(db, job_id, None if is_admin(current_user) else current_user.id)
     job = await job_orchestrator.kill_job(
         db,
         job_id=job_id,
@@ -85,6 +89,8 @@ async def v1_create_job(
     principal: Principal = Depends(require_client),
     db: AsyncSession = Depends(get_db),
 ) -> JobCreateResult:
+    if body.slave_app_id == "predictor-training" or body.handler_type == "prediction.train":
+        raise HTTPException(422, "Training jobs must be submitted through Prediction operations.")
     if body.slave_app_id in {"cae", "evaluation"} or body.handler_type.startswith("cae."):
         raise HTTPException(422, "CAE jobs must be submitted through CAE Batch or Optimization endpoints.")
     job = await job_orchestrator.create_job(
@@ -109,6 +115,7 @@ async def v1_kill_job(
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
     await require_unmanaged_execution(db, job_id=job_id, user_id=principal.user_id)
+    await require_unmanaged_job(db, job_id, principal.user_id)
     job = await job_orchestrator.kill_job(
         db,
         job_id=job_id,

@@ -121,7 +121,7 @@ class KnnForwardModel:
 
     @classmethod
     def prepare(cls, dataset: dict, definition: dict, model_ref: dict,
-                memory_budget: int, cancel: threading.Event | None = None) -> "KnnForwardModel":
+                memory_budget: int, cancel: threading.Event | None = None, progress=None) -> "KnnForwardModel":
         if definition.get("snapshotFingerprint") != dataset["fingerprint"]:
             raise PredictionError("dataset-checksum", "Model definition references a different Dataset fingerprint.")
         algorithm = definition["algorithm"]
@@ -205,6 +205,37 @@ class KnnForwardModel:
             record_profiles.append({"recordId": record["id"], "name": record["name"],
                                     "error": self.metadata["errors"].get(str(record["id"])), "profile": profile})
         return record_profiles
+
+    def preparation_details(self) -> dict:
+        return {"errors": self.metadata["errors"], "recordProfiles": self.record_profiles(),
+                "rules": [rule for group in self.metadata["groups"] for rule in group["rules"]]}
+
+    @staticmethod
+    def validate_artifact(path: Path, manifest: dict, content: dict) -> set[str]:
+        """Inspect inert numerical headers, including retired Inverse backups."""
+        metadata = content["metadata"]
+        if metadata["formatVersion"] != 1 or metadata["algorithm"] != "knn" or not content["models"]:
+            raise PredictionError("artifact-version", "Unsupported kNN model artifact.")
+        array_names = ("input", "output", "inputMinimums", "inputMaximums", "inputScales", "measurementIds")
+        expected = {"model.json"} | {f"{index}-{name}.npy" for index in range(len(content["models"])) for name in array_names}
+        for index, model in enumerate(content["models"]):
+            for name in array_names:
+                file = path / f"{index}-{name}.npy"
+                with file.open("rb") as stream:
+                    version = np.lib.format.read_magic(stream)
+                    if version == (1, 0):
+                        shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
+                    elif version == (2, 0):
+                        shape, _, dtype = np.lib.format.read_array_header_2_0(stream)
+                    else:
+                        raise PredictionError("artifact-version", "Unsupported NumPy array format.")
+                    expected_shape = ((model["rowCount"], model["inputSize"] if name == "input" else model["outputSize"])
+                                      if name in ("input", "output") else
+                                      (model["rowCount"] if name == "measurementIds" else model["inputSize"],))
+                    if (shape != expected_shape or dtype.hasobject or dtype.kind not in "biuf"
+                            or stream.tell() + math.prod(shape) * dtype.itemsize != file.stat().st_size):
+                        raise PredictionError("artifact-checksum", "NumPy array dimensions or dtype differ from the saved model.")
+        return expected
 
     def predict(self, values: dict, cancel=None) -> dict:
         samples = vars_samples(values, self.metadata["varsSchema"])

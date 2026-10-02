@@ -161,7 +161,7 @@ def test_cancelled_restore_and_unavailable_dataset_never_publish_partial_files(t
         cancellation = threading.Event()
         cancellation.set()
         with pytest.raises(PredictionError, match="cancelled"):
-            source.dispatch("artifact.backup", {"protocolVersion": 2, "requestId": "cancel", "sessionId": source.session_id,
+            source.dispatch("artifact.backup", {"protocolVersion": 3, "requestId": "cancel", "sessionId": source.session_id,
                 "operationId": "backup", "grant": server.grant("backup")}, cancellation)
         result = call(source, "model.predict", instance=prepared["instance"], input={"direction": "forward", "vars": {"x": .5}})
         assert result["output"][0]["values"] == pytest.approx([15])

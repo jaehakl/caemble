@@ -27,7 +27,7 @@ function savedModel(): SavedPredictionModel {
 }
 function setupWithModel(): PredictionSetup {
   return {
-    executionId: 'remote-knn',
+    executionId: 'remote-predictor',
     recordIds: [5],
     calculationIds: [],
     routes: { forward: { storageId, launcherId } },
@@ -89,7 +89,7 @@ describe('Forward setup persistence', () => {
     const stored = localStorage.getItem('caemble.prediction.setup:owner-a:3')!
     expect(stored).not.toContain('private-')
     expect(stored).not.toContain('generation')
-    expect(JSON.parse(stored).version).toBe(3)
+    expect(JSON.parse(stored).version).toBe(4)
   })
   it.each([1, 2])(
     'migrates v%s Forward references and drops browser/Inverse settings without touching assets',
@@ -113,11 +113,25 @@ describe('Forward setup persistence', () => {
       )
       expect(restorePredictionSetup('owner-a', 3)).toEqual(expected)
       const written = JSON.parse(localStorage.getItem('caemble.prediction.setup:owner-a:3')!)
-      expect(written.version).toBe(3)
+      expect(written.version).toBe(4)
       expect(written.setup.models).not.toHaveProperty('inverse')
       expect(written.setup.algorithm).not.toHaveProperty('calculationWeights')
     },
   )
+  it('migrates v3 execution routing while preserving saved model identity and settings', () => {
+    const expected = setupWithModel()
+    localStorage.setItem(
+      'caemble.prediction.setup:owner-a:3',
+      JSON.stringify({
+        version: 3,
+        owner: 'owner-a',
+        experimentId: 3,
+        setup: { ...expected, executionId: 'remote-knn' },
+      }),
+    )
+    expect(restorePredictionSetup('owner-a', 3)).toEqual(expected)
+    expect(JSON.parse(localStorage.getItem('caemble.prediction.setup:owner-a:3')!).version).toBe(4)
+  })
   it('migrates an Inverse-only setup to an unselected remote setup', () => {
     localStorage.setItem(
       'caemble.prediction.setup:owner-a:3',
@@ -127,18 +141,23 @@ describe('Forward setup persistence', () => {
         experimentId: 3,
         setup: {
           ...setupWithModel(),
+          executionId: 'remote-knn',
           models: { inverse: { direction: 'inverse' } },
           recordIds: undefined,
         },
       }),
     )
-    expect(restorePredictionSetup('owner-a', 3)).toMatchObject({ executionId: 'remote-knn', recordIds: [], models: {} })
+    expect(restorePredictionSetup('owner-a', 3)).toMatchObject({
+      executionId: 'remote-predictor',
+      recordIds: [],
+      models: {},
+    })
   })
   it.each(['replicaId', 'storageId', 'launcherId'] as const)('rejects malformed persisted route %s', (field) => {
     localStorage.setItem(
       'caemble.prediction.setup:owner-a:3',
       JSON.stringify({
-        version: 3,
+        version: 4,
         owner: 'owner-a',
         experimentId: 3,
         setup: { ...setupWithModel(), routes: { forward: { storageId, launcherId, [field]: 'not-an-id' } } },

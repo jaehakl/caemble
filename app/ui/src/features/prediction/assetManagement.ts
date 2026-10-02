@@ -37,7 +37,7 @@ export type PredictionAssetsSnapshot = Readonly<{
 export type PredictionAssetWork = Readonly<{
   id: string
   signal: AbortSignal
-  connect: (launcherId: string, preparation?: boolean) => Promise<RemotePredictionExecution>
+  connect: (launcherId: string) => Promise<RemotePredictionExecution>
   progress: (message: string) => void
   operation: (operation: PredictionOperation) => void
 }>
@@ -47,6 +47,7 @@ type RunningTask = {
   jobIds: Set<string>
   operationId?: string
   operationState?: string
+  operationKind?: string
 }
 
 /** Owns management jobs independently of a dialog or an inference session. */
@@ -236,10 +237,11 @@ export class PredictionAssetController {
       operation: (operation) => {
         task.operationId = operation.id
         task.operationState = operation.state
+        task.operationKind = operation.kind
         this.updateTask(id, { operationId: operation.id, experimentId: operation.experiment_id ?? experimentId })
         this.update({ operations: [operation, ...this.snapshot.operations.filter((item) => item.id !== operation.id)] })
       },
-      connect: async (launcherId, preparation = false) => {
+      connect: async (launcherId) => {
         task.abort.signal.throwIfAborted()
         const existing = task.executions.get(launcherId)
         if (existing) return existing
@@ -249,15 +251,13 @@ export class PredictionAssetController {
             connect: (requestId) =>
               this.client.runJob(
                 'predictor.hello',
-                { protocolVersion: 2, requestId },
+                { protocolVersion: 3, requestId },
                 {
                   slaveAppId: 'predictor',
                   targetLauncherId: launcherId,
                   autoFinish: false,
                   timeoutMs: 600_000,
-                  resources: preparation
-                    ? { gpu_count: 0 }
-                    : { cpu_cores: 1, startup_ram_bytes: 256 * 1024 ** 2, gpu_count: 0 },
+                  resources: { cpu_cores: 1, startup_ram_bytes: 256 * 1024 ** 2, gpu_count: 0 },
                   onJobCreated: (job) => {
                     task.jobIds.add(job.id)
                     if (task.abort.signal.aborted) void this.client.cancelJob(job.id).catch(() => undefined)
@@ -280,7 +280,11 @@ export class PredictionAssetController {
       const waiting = task.operationState && !['completed', 'succeeded'].includes(task.operationState)
       this.updateTask(id, {
         state: waiting ? 'waiting' : 'succeeded',
-        message: waiting ? '파일 처리 확인 대기 · 작업을 다시 조회하거나 재시도하세요.' : '완료',
+        message: waiting
+          ? task.operationKind === 'prepare'
+            ? '학습 접수 완료 · 브라우저를 닫아도 계속됩니다.'
+            : '파일 처리 확인 대기 · 작업을 다시 조회하거나 재시도하세요.'
+          : '완료',
       })
       await this.refresh()
       return result
@@ -291,7 +295,7 @@ export class PredictionAssetController {
         : error instanceof Error
           ? error.message
           : String(error)
-      if (task.operationId && !cancelled)
+      if (task.operationId && task.operationKind !== 'prepare' && !cancelled)
         await predictionApi.interruptOperation(task.operationId, message).catch(() => undefined)
       this.updateTask(id, { state: cancelled ? 'cancelled' : 'failed', message })
       if (!cancelled) this.onActivity?.({ source: 'prediction', level: 'error', phase: 'assets', message })

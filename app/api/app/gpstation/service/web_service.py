@@ -114,6 +114,12 @@ async def reconcile_disconnected_launchers(
 async def cancel_launcher_instance(db: AsyncSession, launcher_id: str, instance_id: str,
                                    current_user: UserData) -> None:
     launcher = await scoped_launcher(db, launcher_id, current_user)
+    from gpstation.service.server_handlers import server_handlers
+    job = await db.scalar(select(Job).where(Job.launcher_id == launcher.id, Job.instance_id == instance_id,
+        Job.cleaned_at.is_(None)))
+    guard = getattr(server_handlers.get(job.handler_type), "require_external_control", None) if job else None
+    if guard is not None:
+        await guard(db, job)
     accepted = await job_orchestrator.reset_instance(db, launcher_id=launcher.id, instance_id=instance_id,
         user_id=None if is_admin(current_user) else current_user.id)
     if not accepted:
@@ -124,6 +130,11 @@ async def stop_launcher_instances(db: AsyncSession, launcher_id: str, current_us
     launcher = await scoped_launcher(db, launcher_id, current_user)
     jobs = list((await db.scalars(select(Job).where(Job.launcher_id == launcher.id,
         Job.reservation_id.is_not(None), Job.cleaned_at.is_(None)))).all())
+    from gpstation.service.server_handlers import server_handlers
+    for job in jobs:
+        guard = getattr(server_handlers.get(job.handler_type), "require_external_control", None)
+        if guard is not None:
+            await guard(db, job)
     for job in jobs:
         await job_orchestrator.kill_job(db, job_id=job.id,
             user_id=None if is_admin(current_user) else current_user.id,

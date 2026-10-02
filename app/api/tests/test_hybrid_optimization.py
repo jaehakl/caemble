@@ -337,7 +337,7 @@ class HybridOptimizationTests(unittest.IsolatedAsyncioTestCase):
             await db.flush()
             revision = ModelRevision(model_id=model.id, revision=1, request_id=str(uuid.uuid4()), request_hash="model",
                 state="ready", dataset_id=dataset.id, dataset_revision=1, dataset_fingerprint=hybrid["dataset_fingerprint"],
-                definition={"algorithm": {"kind": "knn"}}, source_contracts={
+                definition={"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1", "preprocessingVersion": "box-relative-v2"}, source_contracts={
                     "sourceHash": optimization.definition["source_hash"], "varsSchema": optimization.definition["vars_schema"],
                     "resultContracts": optimization.definition["result_contracts"], "records": []},
                 artifact={"manifest_sha256": hybrid["checksum"]})

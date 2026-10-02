@@ -1,19 +1,21 @@
 # Predictor slave
 
-This launcher executable prepares and persists CPU NumPy kNN models. Dataset files and
+This project provides separate launcher executables for durable Forward training and model inference.
+The first algorithm remains CPU NumPy kNN. Dataset files and
 model artifacts live outside process memory. Releasing a model handle never deletes files.
 
-## Protocol v2
+## Protocol v3
 
 Use the existing SDK `DataChannelMessage`, attachment transport and request cancellation.
-Each request payload has `protocolVersion: 2`, `requestId: string`, and (except hello)
+Each request payload has `protocolVersion: 3`, `requestId: string`, and (except hello)
 `sessionId: string` from hello. Responses use `<request type>.result` and preserve the
 SDK message ID. Successful payloads add `protocolVersion`, `requestId`, `sessionId`.
 Errors use the same result type and `{error: {code, message}}`; no local paths or tokens
-are returned. An instance is `{executionId:'remote-knn',sessionId,generation,handle}`.
+are returned. An instance is `{executionId:'remote-predictor',sessionId,generation,handle}`.
 
 ```ts
 type DatasetRef = { datasetId: string; revision: number; fingerprint: string };
+type TrainingGrant = { operation_id: string; token: string; manifest_url: string };
 type Grant = {
   manifest_url: string;
   object_url_template: string;
@@ -26,25 +28,15 @@ type Grant = {
   grant_id?: string;
   refresh_url?: string;
 };
-type Prepare = {
-  dataset: DatasetRef | { grant: Grant };
-  direction: "forward";
-  definition: PredictionModelDefinition;
-  model: {
-    modelId: string;
-    revision: number;
-    operationId: string;
-    name: string;
-  };
-};
-// predictor.hello {} -> {sessionId,storageId,launcherId,implementationVersion,
-//   preprocessingVersion,capabilities,datasets,models}
+// predictor.hello {} -> {sessionId,storageId,launcherId,algorithmDescriptors,capabilities,datasets,models}
 // dataset.import {importId:string,experimentId?:number} or {grant:Grant} -> {dataset:DatasetRef & summary}
 // dataset.list {} -> {datasets:summary[]}
 // dataset.sync {datasetId:string,experimentId?:number} -> {dataset:DatasetRef & summary}
 // dataset.preview {datasetId:string,experimentId?:number} -> {added:number,changed:number,removed:number}
 // dataset.delete {datasetId:string} -> {deleted:true}
-// model.prepare Prepare -> {...PreparedPredictionModel,artifact:Artifact}
+// training.pin {grant:TrainingGrant} -> {operationId,pinId}
+// training.unpin {grant:TrainingGrant} -> {operationId,pinId,released:true}
+// training.inspect {grant:TrainingGrant} -> {receipt,artifact}
 // model.load {modelId:string,revision:number,manifestChecksum?:string} -> {...PreparedPredictionModel,artifact:Artifact}
 // model.predict {instance:PredictionModelInstance,input:{direction:"forward",vars:Vars}}
 //   -> {...PredictionExecutionResult,provenance:{modelId,modelRevision,datasetId,datasetRevision}}
@@ -57,7 +49,7 @@ type Artifact = {
   operationId: string;
   name: string;
   direction: "forward" | "inverse";
-  algorithm: "knn";
+  algorithm: string;
   definition: Record<string, unknown>; // Preserve opaque legacy definition fields.
   datasetId: string;
   datasetRevision: number;
@@ -85,7 +77,7 @@ self-contained saved models remain usable after import or Dataset deletion.
 Vars schema, output contracts and preprocessing results belong to the model. Calculation
 selection, targets and weights are not model configuration. Dataset Calculation assets
 remain intact, but Forward preparation never decodes or requires their results.
-Server grants passed to `model.prepare` use temporary staging, which is removed after
+Server Dataset grants used by training use temporary staging, which is removed after
 loading; they do not create persistent local Dataset caches.
 Expiring grants renew through their pinned revision's `refresh_url` with the scoped
 bearer only. A 401 retries once after renewal. The returned revision, manifest hash,
@@ -122,9 +114,31 @@ Every loaded model handle holds a small PID/process-start lease; deletion is rej
 until all live sessions release their handles. Leases from terminated processes are
 pruned when deletion is retried, so restarting a launcher does not strand its files.
 
+## Durable training
+
+`predictor-training` runs `app.training` using the existing server-master WebSocket runtime.
+API-owned training operations freeze the Dataset revision, model definition and resources before
+queue admission. Browser close never cancels accepted work. `model.prepare` is removed from the
+WebRTC API; train first, then load a completed immutable revision explicitly.
+
+For a local Dataset, `training.pin` fetches its operation-scoped authority, persists a pin, and
+acknowledges it to the API before submission. Dataset sync and deletion remain blocked through
+queueing, execution and process cleanup. Pins use per-attempt IDs and survive browser/process
+loss. Sync/delete reconcile the scoped authority and remove pins only when cleanup is confirmed;
+an unavailable API never causes an automatic unpin. Grants in pin files are excluded from archives.
+
+A training job publishes a model artifact and durable receipt without loading an inference handle.
+Retry checks for this exact completed artifact before accessing the Dataset, so loss of the
+registration response never requires retraining. If no completed artifact exists, retry must
+revalidate the exact Dataset revision; it never selects the latest revision implicitly.
+Cancellation waits for the training thread to stop before the SDK reports process cleanup.
+Progress reports loading, training, saving and saved stages; algorithms may emit structured
+progress with a stage, fraction and metrics through the same callback. Checkpoint resumption
+belongs to a later algorithm implementation; no incomplete artifact appears in the model list.
+
 ## Portable copies and operations
 
-Protocol v2 is deployed together with the API and UI. Existing artifact files remain
+Protocol v3 is deployed together with the API and UI. Existing artifact files remain
 format v1 and are preserved byte for byte. A portable archive is a deterministic
 `ZIP_STORED` file containing `package.json`, the original `manifest.json`, and the
 manifest's exact file inventory. Model and optional Dataset use separate archives,
@@ -179,14 +193,15 @@ The caller attaches predictions to the current Candidate BoxGrid, preserving the
 Candidate geometry and the model/Dataset revision provenance.
 
 Only Forward Vars-to-BoxGrid models execute. Legacy Inverse metadata remains readable
-in model lists and archives; prepare/load/predict reject it with `unsupported-model`.
+in model lists and archives; training/load/predict reject it with `unsupported-model`.
 Existing Forward artifacts load without rewriting their definition or checksum.
 Legacy Inverse files can still be inspected, backed up, restored or explicitly removed.
 No model is automatically converted or deleted. Inverse design belongs to Optimization.
 
 `models.py` manages immutable model artifacts and selects a Forward implementation.
-`forward.py` implements kNN sample preparation, prediction and numerical file loading;
-`runtime.py` manages remote sessions and handles. A future algorithm implements the same
+`forward.py` owns kNN preparation, prediction, numerical file loading and archive validation;
+`runtime.py` manages remote sessions and handles. Shared algorithm/version/resource descriptors
+live in the NumPy-free `shared/prediction_contracts` package. A future algorithm implements the same
 Vars-to-BoxGrid boundary without changing Dataset or process lifecycle management.
 
 `CAEMBLE_PREDICTOR_OWNER_ID` and `CAEMBLE_PREDICTOR_API_URL` are trusted launcher

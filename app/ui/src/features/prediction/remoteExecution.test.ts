@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JobSession } from '@gpstation/v1-master-js-sdk'
 import { predictionApi } from '@/api/prediction'
 import { RemotePredictionExecution, type PredictionTransport } from './remoteExecution'
-import type { PredictionDatasetInput, PredictionModelDefinition, SavedPredictionModel } from './execution'
+import type { SavedPredictionModel } from './execution'
 import { RemotePredictionError } from './remoteProtocol'
 
 const launcherId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'
@@ -66,30 +66,6 @@ const artifact = {
   outputLayouts: [],
 }
 const request = (requestId: string, abort = new AbortController()) => ({ requestId, signal: abort.signal })
-const datasetInput: PredictionDatasetInput = {
-  kind: 'dataset-revision',
-  direction: 'forward',
-  fingerprint: artifact.datasetFingerprint,
-  dataset: {
-    datasetId: reference.datasetId,
-    revision: reference.datasetRevision,
-    fingerprint: artifact.datasetFingerprint,
-  },
-  model: {
-    modelId: reference.modelId,
-    revision: reference.modelRevision,
-    operationId: artifact.operationId,
-    name: artifact.name,
-  },
-}
-const definition: PredictionModelDefinition = {
-  fingerprint: reference.fingerprint,
-  snapshotFingerprint: artifact.datasetFingerprint,
-  implementationId: 'remote-knn',
-  implementationVersion: 'knn-v1',
-  preprocessingVersion: 'box-relative-v2',
-  algorithm: { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' },
-}
 
 function transportFixture() {
   const calls: Array<{ type: string; body: Record<string, unknown> }> = []
@@ -117,7 +93,7 @@ function transportFixture() {
         call: async <TInput, TResult>(type: string, input?: TInput) => {
           const body = input as Record<string, unknown>
           calls.push({ type, body })
-          const envelope = { protocolVersion: 2, requestId: wrongRequest ? 'wrong-request' : body.requestId, sessionId }
+          const envelope = { protocolVersion: 3, requestId: wrongRequest ? 'wrong-request' : body.requestId, sessionId }
           let result: unknown = { released: true }
           if (type === 'model.load' || type === 'model.prepare') {
             if (modelGate) {
@@ -130,7 +106,7 @@ function transportFixture() {
               : {
                   fingerprint: reference.fingerprint,
                   instance: {
-                    executionId: 'remote-knn',
+                    executionId: 'remote-predictor',
                     sessionId: instanceSession ?? sessionId,
                     generation: 1,
                     handle: 'wire-handle',
@@ -175,13 +151,21 @@ function transportFixture() {
       return {
         session,
         payload: {
-          protocolVersion: 2,
+          protocolVersion: 3,
           requestId,
           sessionId,
           storageId,
           launcherId,
-          implementationVersion: 'knn-v1',
-          preprocessingVersion: 'box-relative-v2',
+          algorithmDescriptors: [
+            {
+              kind: 'knn',
+              implementationVersion: 'knn-v1',
+              preprocessingVersion: 'box-relative-v2',
+              directions: ['forward'],
+              representations: ['box-relative-v2'],
+              resources: { training: { gpu_count: 0 }, inference: { gpu_count: 0 } },
+            },
+          ],
           capabilities: {},
           datasets: [],
           models: [],
@@ -287,38 +271,32 @@ describe('remote Prediction execution lifecycle', () => {
     },
   )
 
-  it.each(['load', 'prepare'] as const)(
-    'releases a late %s result after caller cancellation without deleting the artifact',
-    async (operation) => {
-      const fixture = transportFixture()
-      const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
-      const complete = fixture.delayNextModel()
-      const abort = new AbortController()
-      const promise =
-        operation === 'load'
-          ? remote.load(reference, request('model', abort), route)
-          : remote.prepare(datasetInput, definition, request('model', abort))
-      const rejected = expect(promise).rejects.toMatchObject({ name: 'AbortError' })
-      await vi.waitFor(() => expect(fixture.calls).toHaveLength(1))
-      abort.abort()
-      await rejected
-      complete()
-      await vi.waitFor(() => expect(fixture.calls.some((call) => call.type === 'model.release')).toBe(true))
-      expect(predictionApi.lease).toHaveBeenLastCalledWith(
-        reference.modelId,
-        2,
-        fixture.sessions[0].jobId,
-        true,
-        {
-          storage_id: storageId,
-        },
-        { signal: expect.any(AbortSignal) },
-      )
-      expect(fixture.transport.cancel).not.toHaveBeenCalled()
-      expect(fixture.calls.some((call) => call.type === 'model.delete')).toBe(false)
-      remote.dispose()
-    },
-  )
+  it('releases a late load result after caller cancellation without deleting the artifact', async () => {
+    const fixture = transportFixture()
+    const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
+    const complete = fixture.delayNextModel()
+    const abort = new AbortController()
+    const promise = remote.load(reference, request('model', abort), route)
+    const rejected = expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(fixture.calls).toHaveLength(1))
+    abort.abort()
+    await rejected
+    complete()
+    await vi.waitFor(() => expect(fixture.calls.some((call) => call.type === 'model.release')).toBe(true))
+    expect(predictionApi.lease).toHaveBeenLastCalledWith(
+      reference.modelId,
+      2,
+      fixture.sessions[0].jobId,
+      true,
+      {
+        storage_id: storageId,
+      },
+      { signal: expect.any(AbortSignal) },
+    )
+    expect(fixture.transport.cancel).not.toHaveBeenCalled()
+    expect(fixture.calls.some((call) => call.type === 'model.delete')).toBe(false)
+    remote.dispose()
+  })
 
   it.each([
     { manifestChecksum: 'c'.repeat(64) },
@@ -336,14 +314,9 @@ describe('remote Prediction execution lifecycle', () => {
     remote.dispose()
   })
 
-  it('checks the preparation operation and pinned Dataset fingerprint before owning an instance', async () => {
-    const fixture = transportFixture()
-    fixture.setArtifact({ operationId: 'another-operation' })
-    const remote = new RemotePredictionExecution(launcherId, { transport: fixture.transport })
-    await expect(remote.prepare(datasetInput, definition, request('prepare'))).rejects.toMatchObject({
-      code: 'model-mismatch',
-    })
-    expect(fixture.transport.cancel).toHaveBeenCalledWith(fixture.sessions[0].jobId, expect.any(AbortSignal))
+  it('exposes inference without a browser training entrypoint', () => {
+    const remote = new RemotePredictionExecution(launcherId, { transport: transportFixture().transport })
+    expect(remote).not.toHaveProperty('prepare')
     remote.dispose()
   })
 

@@ -50,6 +50,22 @@ async def owned_operation(db, identity, user_id):
 
 
 async def expire_operation(db, row):
+    from prediction.db import TrainingRun
+    if row.kind == "prepare":
+        from gpstation.service.batches import serialize_events
+        from prediction.training import cleanup_pending
+        await serialize_events(db)
+        row = await owned_operation(db, row.id, row.user_id)
+        run = await db.get(TrainingRun, row.id)
+        if run is not None:
+            job = await db.get(Job, run.job_id) if run.job_id else None
+            if (not cleanup_pending(job) and row.state == "pending" and run.preflight_expires_at is not None
+                    and run.preflight_expires_at <= utcnow()):
+                row.state, row.stage = "interrupted", "preflight-expired"
+                row.error = {"message": "Training was not submitted before its preflight expired. Prepare a retry."}
+                row.updated_at = utcnow()
+                await db.commit()
+            return
     if row.state in {"pending", "running"} and row.expires_at is not None and row.expires_at <= utcnow():
         row.state, row.stage = "interrupted", "interrupted"
         row.error = {"message": "The transfer connection expired. Retry to inspect completed files and continue registration."}
@@ -58,10 +74,18 @@ async def expire_operation(db, row):
 
 
 async def list_operations(db, user_id, experiment_id=None):
+    from gpstation.service.batches import serialize_events
+    await serialize_events(db)
     query = select(Operation).where(Operation.user_id == user_id)
     if experiment_id is not None:
         query = query.where(Operation.experiment_id == experiment_id)
     rows = (await db.scalars(query.order_by(Operation.created_at.desc()).limit(100))).all()
+    from prediction.db import TrainingRun
+    active = list((await db.scalars(query.join(TrainingRun, TrainingRun.operation_id == Operation.id)
+        .outerjoin(Job, Job.id == TrainingRun.job_id).where(
+            Operation.state.in_(["pending", "queued", "running"])
+            | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))))).all())
+    rows = sorted({row.id: row for row in [*rows, *active]}.values(), key=lambda row: row.created_at, reverse=True)
     for row in rows:
         if row.kind.startswith("delete_") and row.state != "completed":
             row = await owned_operation(db, row.id, user_id)
@@ -69,7 +93,8 @@ async def list_operations(db, user_id, experiment_id=None):
             await db.commit()
         await expire_operation(db, row)
     await db.commit()
-    return {"items": [operation_view(row) for row in rows]}
+    from prediction.training import operation_view as training_view
+    return {"items": [await training_view(db, row) for row in rows]}
 
 
 async def selected_replica(db, identity, kind, asset_id, revision, *, readable=True):
@@ -155,6 +180,10 @@ async def begin_deletion(db, operation, asset, body):
         copies = [await selected_replica(db, body.replica_id, body.asset_kind, asset.id, body.revision, readable=False)]
     else:
         if body.asset_kind == "model":
+            from prediction import training
+            for pending in (await db.scalars(select(Operation).where(Operation.asset_id == asset.id,
+                Operation.kind == "prepare", Operation.state.not_in(["completed", "cancelled"])))).all():
+                await training.cancel(db, pending)
             preparing = (await db.scalars(select(ModelRevision).where(ModelRevision.model_id == asset.id,
                 ModelRevision.state.in_(["reserved", "abandoned"])))).all()
             for revision in preparing:
@@ -261,6 +290,8 @@ async def finish_deletion(db, operation):
 
 
 async def create_operation(db, body, user_id):
+    from gpstation.service.batches import serialize_events
+    await serialize_events(db)
     identity = str(body.request_id)
     await lock_identity(db, f"{user_id}/{identity}")
     previous = await db.get(Operation, identity)
@@ -337,6 +368,11 @@ async def create_operation(db, body, user_id):
     await db.flush()
     await db.commit()
     if body.kind.startswith("delete_"):
+        if body.asset_kind == "model":
+            from prediction import training
+            for pending in (await db.scalars(select(Operation).where(Operation.asset_id == asset.id,
+                Operation.kind == "prepare", Operation.state == "cancelled"))).all():
+                await training.notify_cancel(db, pending)
         await process_cloud_deletions(db, operation)
     return await operation_response(db, operation)
 

@@ -138,6 +138,7 @@ class DatasetReader:
         metadata = {key: manifest[key] for key in ("datasetId", "revision", "fingerprint", "experimentId")}
         metadata["name"] = manifest.get("name", manifest["datasetId"])
         metadata.update(self.summary(manifest, "server-cache"))
+        self.store.assert_dataset_idle(manifest["datasetId"])
         self.store.discard_unpublished_dataset(manifest["datasetId"], cancel)
         existing_path = self.store.path("datasets", manifest["datasetId"], manifest["revision"])
         if existing_path.exists():
@@ -272,6 +273,7 @@ class DatasetReader:
                 old, new = rows(before), rows(manifest)
                 return {"added": len(new.keys() - old.keys()), "removed": len(old.keys() - new.keys()),
                         "changed": sum(old[key] != new[key] for key in old.keys() & new.keys())}
+            self.store.assert_dataset_idle(identity)
             self.store.discard_unpublished_dataset(identity, cancel)
             origin = {"datasetId": manifest["datasetId"], "revision": manifest["revision"], "fingerprint": manifest["fingerprint"]}
             content = {key: value for key, value in manifest.items() if key not in ("datasetId", "revision", "fingerprint", "name", "origin")}

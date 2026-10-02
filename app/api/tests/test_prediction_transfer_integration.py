@@ -22,10 +22,12 @@ import uvicorn
 
 import test_prediction_assets as fixtures
 from db import get_db, make_async_db_url
-from gpstation.db import Launcher
+from gpstation.db import Job, Launcher
+from gpstation.service.batches import finish_job
 from gpstation.service.state import utcnow
 from gpstation.utils.csrf import require_web_csrf
 from prediction.common import canonical_bytes
+from prediction import training
 from prediction.datasets import source_contracts
 from prediction.db import Dataset, DatasetGrant, DatasetRevision, Operation
 from prediction.replicas import managed_storage, put_replica
@@ -145,7 +147,7 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
         return response.json()
 
     async def rpc(self, worker, action, **payload):
-        return await asyncio.to_thread(worker.dispatch, action, {"protocolVersion": 2, "requestId": str(uuid4()),
+        return await asyncio.to_thread(worker.dispatch, action, {"protocolVersion": 3, "requestId": str(uuid4()),
             "sessionId": worker.session_id, **payload})
 
     async def worker(self, name, launcher_id=None):
@@ -179,26 +181,48 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await put_replica(db, "dataset", data["datasetId"], 1, api_store.storage_id,
                 artifact={"manifest_sha256": hashlib.sha256(canonical_bytes(data)).hexdigest(), "fingerprint": data["fingerprint"]})
             await db.commit()
-        grant = await self.post(f"/prediction/datasets/{data['datasetId']}/grants", {"revision": 1})
         prepare_id = str(uuid4())
         reserved = await self.post("/prediction/models/reserve", {"request_id": prepare_id, "name": "Portable model",
             "direction": "forward", "dataset_id": data["datasetId"], "dataset_revision": 1, "definition": definition,
             "storage_id": source.store.storage_id, "launcher_id": source.store.launcher_id})
-        prepared = await self.rpc(source, "model.prepare", dataset={"grant": grant}, direction="forward", definition=definition,
-            model={"modelId": reserved["id"], "revision": 1, "operationId": prepare_id, "name": "Portable model"})
+        async with self.sessions() as db:
+            launcher = await db.get(Launcher, self.launcher_id)
+            launcher.slave_app_ids = ["predictor", "predictor-training"]
+            launcher.job_modes = {"predictor": "webrtc", "predictor-training": "websocket"}
+            await db.commit()
+        pin = await self.rpc(source, "training.pin", grant=reserved["training"]["grant"])
+        submitted = await self.post(f"/prediction/operations/{prepare_id}/submit", {"pin_id": pin["pinId"]})
+        token = str(uuid4())
+        async with self.sessions() as db:
+            job = await db.get(Job, submitted["training"]["jobId"])
+            job.launcher_id, job.state = self.launcher_id, "running"
+            job.worker_token_hash = hashlib.sha256(token.encode()).hexdigest()
+            assigned = job.input
+            await db.commit()
+        def dataset_reference():
+            response = httpx.get(assigned["datasetAccessUrl"], headers={"Authorization": f"Bearer {token}"})
+            response.raise_for_status()
+            return response.json()
+        prepared = await asyncio.to_thread(source.training.train, assigned, dataset_reference)
         self.assertEqual(source.store.list("datasets"), [])  # Model preparation only stages the granted payload.
-        await self.post(f"/prediction/datasets/{data['datasetId']}/grants/{grant['grant_id']}/release", {})
         artifact = prepared["artifact"]
         complete_body = {"request_id": prepare_id, "manifest_sha256": artifact["manifestChecksum"], "files": artifact["files"],
             "profile": artifact["profile"], "input_layouts": artifact["inputLayouts"], "output_layouts": artifact["outputLayouts"], "verified": False}
         hello = await self.rpc(source, "predictor.hello")
         self.assertFalse(hello["models"][0]["verified"])
-        completed = await self.post(f"/prediction/models/{reserved['id']}/revisions/1/complete", complete_body)
-        self.assertEqual(completed["revisions"][0]["replicas"][0]["state"], "unverified")
+        rejected = await self.client.post(f"/prediction/models/{reserved['id']}/revisions/1/complete", json=complete_body)
+        self.assertEqual(rejected.status_code, 410)
+        async with self.sessions() as db:
+            job = await db.get(Job, submitted["training"]["jobId"])
+            result = await training.complete_job(db, job, prepared)
+            await finish_job(db, job, "succeeded", result=result)
+            job.cleaned_at = utcnow()
+            await db.commit()
+            await training.reconcile(db)
         completed = await self.post(f"/prediction/models/{reserved['id']}/revisions/1/complete", {**complete_body, "verified": True})
+        self.assertEqual(completed["revisions"][0]["replicas"][0]["state"], "present")
         model_copy = completed["revisions"][0]["replicas"][0]["id"]
         logical = {"modelId": reserved["id"], "revision": 1, "manifestChecksum": artifact["manifestChecksum"]}
-        await self.rpc(source, "model.release", instance=prepared["instance"])
         backup = await self.post("/prediction/operations", {"request_id": str(uuid4()), "kind": "backup", "asset_id": reserved["id"],
             "revision": 1, "source_replica_id": model_copy, "source_launcher_id": self.launcher_id, "include_dataset": True})
         payload = {"operationId": backup["id"], "grant": backup["grant"], "model": logical, "includeDataset": True,

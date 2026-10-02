@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   previewDataset: vi.fn(),
   createDataset: vi.fn(),
   reserve: vi.fn(),
+  submitTraining: vi.fn(),
   operation: vi.fn(),
   grant: vi.fn(),
   releaseGrant: vi.fn(),
@@ -49,7 +50,7 @@ vi.mock('@gpstation/v1-master-js-sdk', () => ({
 vi.mock('@/api/prediction', () => ({ predictionApi: mocks }))
 vi.mock('./remoteExecution', () => ({
   RemotePredictionExecution: class {
-    id = 'remote-knn'
+    id = 'remote-predictor'
     state = 'connected'
     implementationVersion = 'knn-v1'
     preprocessingVersion = 'box-relative-v2'
@@ -76,7 +77,8 @@ vi.mock('./remoteAssets', async (original) => ({
   reconcileRemoteAssets: mocks.reconcile,
   registerRemoteArtifact: mocks.registerArtifact,
 }))
-vi.mock('./assetOperations', () => ({
+vi.mock('./assetOperations', async (original) => ({
+  ...(await original<typeof import('./assetOperations')>()),
   startPredictionAssetOperation: mocks.startOperation,
   verifyPredictionReplica: vi.fn(),
   retryPredictionAssetOperation: mocks.retryOperation,
@@ -175,9 +177,32 @@ function model(direction: 'forward' | 'inverse'): PredictionModelRecord {
   }
 }
 
+function trainingOperation(state = 'pending') {
+  return {
+    id: operationId,
+    kind: 'prepare',
+    state,
+    stage: state,
+    asset_kind: 'model',
+    asset_id: forwardId,
+    revision: 1,
+    experiment_id: 1,
+    details: {},
+    target_storage_id: storageId,
+    target_launcher_id: launcherId,
+    training: {
+      pinId: operationId,
+      sourceKind: 'api',
+      cleanupPending: false,
+      resources: { gpu_count: 0 },
+      grant: { operation_id: operationId, token: 'training', manifest_url: 'https://example.com/training' },
+    },
+  }
+}
+
 function setup(): PredictionSetup {
   return {
-    executionId: 'remote-knn',
+    executionId: 'remote-predictor',
     datasetId,
     recordIds: [10],
     calculationIds: [],
@@ -242,8 +267,14 @@ beforeEach(() => {
     sessionId: 'session',
     storageId,
     launcherId,
-    implementationVersion: 'knn-v1',
-    preprocessingVersion: 'box-relative-v2',
+    algorithmDescriptors: [
+      {
+        kind: 'knn',
+        implementationVersion: 'knn-v1',
+        preprocessingVersion: 'box-relative-v2',
+        directions: ['forward'],
+      },
+    ],
     capabilities: {},
     datasets: [],
     models: [],
@@ -264,7 +295,12 @@ beforeEach(() => {
     { storage_id: backupStorageId, name: 'Backup store', kind: 'object_backup', checked_at: null, accesses: [] },
   ] satisfies PredictionStorage[])
   mocks.operations.mockResolvedValue([])
-  mocks.operation.mockResolvedValue({ id: operationId, state: 'completed' })
+  mocks.operation.mockResolvedValue(trainingOperation())
+  mocks.submitTraining.mockImplementation(async () => {
+    const completed = trainingOperation('completed')
+    mocks.operations.mockResolvedValue([completed])
+    return completed
+  })
   mocks.syncDataset.mockResolvedValue(dataset())
   mocks.previewDataset.mockResolvedValue({ added: 2, changed: 1, removed: 0 })
   mocks.reconcile.mockResolvedValue(undefined)
@@ -279,11 +315,94 @@ beforeEach(() => {
   mocks.interruptOperation.mockResolvedValue(undefined)
   mocks.prepare.mockResolvedValue({ instance: { handle: 'instance' }, artifact: { modelId: forwardId } })
   mocks.release.mockResolvedValue(undefined)
-  mocks.command.mockResolvedValue({ dataset: { datasetId, revision: 1, fingerprint: 'sha256:' + 'c'.repeat(64) } })
+  mocks.command.mockResolvedValue({
+    pinId: operationId,
+    operationId,
+    dataset: { datasetId, revision: 1, fingerprint: 'sha256:' + 'c'.repeat(64) },
+  })
   mocks.registerArtifact.mockResolvedValue(model('forward'))
 })
 
 describe('model-first Prediction management', () => {
+  it.each([false, true])(
+    'observes queued training and respects a changed selection (%s) when it completes',
+    async (changed) => {
+      const queued = trainingOperation('queued')
+      mocks.submitTraining.mockImplementation(async () => {
+        mocks.operations.mockResolvedValue([queued])
+        return queued
+      })
+      const { manager, onUse } = await show()
+      fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+      fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+      fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+      await waitFor(() => expect(manager.getSnapshot().tasks[0]?.state).toBe('waiting'))
+      expect(onUse).not.toHaveBeenCalled()
+      expect(screen.getByText(/모델 준비 · 대기 중/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '상태 확인·다시 시도' })).not.toBeInTheDocument()
+      if (changed) manager.currentSelectionKey = 'different-model'
+      mocks.operations.mockResolvedValue([trainingOperation('completed')])
+      await act(async () => {
+        await manager.refresh()
+      })
+      expect(onUse).toHaveBeenCalledTimes(changed ? 0 : 1)
+      expect(mocks.prepare).not.toHaveBeenCalled()
+      expect(mocks.registerArtifact).not.toHaveBeenCalled()
+    },
+  )
+
+  it('does not automatically select training completed after the management view was reopened', async () => {
+    const queued = trainingOperation('queued')
+    mocks.submitTraining.mockImplementation(async () => {
+      mocks.operations.mockResolvedValue([queued])
+      return queued
+    })
+    const { manager, onUse, props, unmount } = await show()
+    fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
+    fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
+    fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
+    await waitFor(() => expect(manager.getSnapshot().tasks[0]?.state).toBe('waiting'))
+    unmount()
+    mocks.operations.mockResolvedValue([trainingOperation('completed')])
+    await manager.refresh()
+    render(<RemotePredictionSettings {...props} />)
+    expect(onUse).not.toHaveBeenCalled()
+  })
+
+  it.each(['queued', 'cancelled'])(
+    'keeps Dataset mutation disabled during %s training until cleanup completes',
+    async (trainingState) => {
+      const operation = trainingOperation(trainingState)
+      mocks.operations.mockResolvedValue([
+        {
+          ...operation,
+          details: { dataset_id: datasetId },
+          training: { ...operation.training, cleanupPending: trainingState === 'cancelled' },
+        },
+      ])
+      await show()
+      fireEvent.click(screen.getByRole('tab', { name: '학습 데이터' }))
+      expect(screen.getByRole('button', { name: '학습 데이터 갱신' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: '새 데이터 확인' })).toBeEnabled()
+      expect(screen.getByText(/모델 학습에서 사용 중/)).toBeInTheDocument()
+    },
+  )
+
+  it('keeps unsupported Forward artifacts manageable without offering execution', async () => {
+    const saved = model('forward')
+    mocks.models.mockResolvedValue([
+      {
+        ...saved,
+        support_status: 'unsupported',
+        revisions: saved.revisions.map((revision) => ({ ...revision, support_status: 'unsupported' })),
+      },
+    ])
+    await show()
+    fireEvent.click(screen.getByRole('button', { name: /forward saved/ }))
+    expect(screen.getByRole('status')).toHaveTextContent('지원하지 않는 알고리즘·버전')
+    expect(screen.queryByRole('button', { name: '이 모델 사용' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '백업하기' })).toBeEnabled()
+  })
   it('keeps retired Inverse assets manageable while hiding execution and new-version actions', async () => {
     mocks.models.mockResolvedValue([model('inverse')])
     const { manager, onUse } = await show()
@@ -535,21 +654,15 @@ describe('model-first Prediction management', () => {
       }),
       expect.any(Object),
     )
-    expect(mocks.prepare).toHaveBeenCalledWith(
-      expect.objectContaining({
-        direction: 'forward',
-        dataset: { grant: expect.objectContaining({ token: 'scoped-token' }) },
-      }),
-      expect.any(Object),
-      expect.any(Object),
-    )
-    expect(mocks.release).toHaveBeenCalledWith({ handle: 'instance' })
-    expect(mocks.releaseGrant).toHaveBeenCalledWith(datasetId, operationId)
+    expect(mocks.submitTraining).toHaveBeenCalledWith(operationId, { pin_id: operationId }, expect.anything())
+    expect(mocks.prepare).not.toHaveBeenCalled()
+    expect(mocks.releaseGrant).not.toHaveBeenCalled()
+    expect(mocks.dispose).toHaveBeenCalled()
     expect(onChange).not.toHaveBeenCalled()
   })
 
   it('keeps selection when creation fails and exposes its retryable task after reopening', async () => {
-    mocks.prepare.mockRejectedValueOnce(new Error('장비 저장 공간 부족'))
+    mocks.submitTraining.mockRejectedValueOnce(new Error('학습 접수 응답 유실'))
     const { onUse, onChange, props, rerender, manager } = await show()
     fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
     fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
@@ -558,11 +671,11 @@ describe('model-first Prediction management', () => {
     rerender(<RemotePredictionSettings {...props} open={false} />)
     rerender(<RemotePredictionSettings {...props} />)
     fireEvent.click(screen.getByRole('tab', { name: '작업' }))
-    expect(screen.getByText('장비 저장 공간 부족')).toBeInTheDocument()
+    expect(screen.getByText('학습 접수 응답 유실')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다시 시도' })).toBeEnabled()
     expect(onUse).not.toHaveBeenCalled()
     expect(onChange).not.toHaveBeenCalled()
-    expect(mocks.releaseGrant).toHaveBeenCalledWith(datasetId, operationId)
+    expect(mocks.interruptOperation).not.toHaveBeenCalled()
   })
 
   it('continues an in-flight management task while its panel is closed', async () => {
@@ -616,7 +729,7 @@ describe('model-first Prediction management', () => {
 
   it('rejects a late creation selection after a newer workspace selection', async () => {
     let finish!: (value: unknown) => void
-    mocks.prepare.mockReturnValueOnce(
+    mocks.submitTraining.mockReturnValueOnce(
       new Promise((resolve) => {
         finish = resolve
       }),
@@ -625,13 +738,14 @@ describe('model-first Prediction management', () => {
     fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
     fireEvent.change(screen.getByLabelText('모델 생성 장비'), { target: { value: launcherId } })
     fireEvent.click(screen.getByRole('button', { name: '모델 만들고 사용' }))
-    await waitFor(() => expect(mocks.prepare).toHaveBeenCalledOnce())
+    await waitFor(() => expect(mocks.submitTraining).toHaveBeenCalledOnce())
     manager.currentSelectionKey = 'newer-selection'
     await act(async () => {
-      finish({ instance: { handle: 'instance' }, artifact: { modelId: forwardId } })
+      mocks.operations.mockResolvedValue([trainingOperation('completed')])
+      finish(trainingOperation('completed'))
     })
     await waitFor(() => expect(manager.getSnapshot().tasks[0].state).toBe('succeeded'))
-    expect(mocks.registerArtifact).toHaveBeenCalledOnce()
+    expect(mocks.registerArtifact).not.toHaveBeenCalled()
     expect(onUse).not.toHaveBeenCalled()
   })
 })

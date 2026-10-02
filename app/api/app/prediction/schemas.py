@@ -143,3 +143,20 @@ class OperationComplete(RequestModel):
 
 class AssetRename(RequestModel):
     name: str = Field(min_length=1, max_length=200)
+
+
+class TrainingSubmit(RequestModel):
+    pin_id: UUID | None = None
+
+
+class TrainingRetry(TrainingSubmit):
+    request_id: UUID
+
+
+class TrainingPreflight(RequestModel):
+    request_id: UUID
+
+
+class TrainingPinReceipt(RequestModel):
+    pinId: UUID
+    artifactSaved: bool = False

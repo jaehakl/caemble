@@ -6,6 +6,7 @@ import {
   predictionModelSchema,
   predictionStorageSchema,
   predictionOperationSchema,
+  predictionAlgorithmSchema,
   type PredictionDatasetSelection,
   type PredictionModelReservation,
   type PredictionOperationRequest,
@@ -13,6 +14,11 @@ import {
 
 export function createPredictionApi(client: CaembleClient) {
   return {
+    algorithms: (context?: RequestContext) =>
+      client.request('get', '/prediction/algorithms', undefined, {
+        ...context,
+        validate: (value) => z.object({ items: z.array(predictionAlgorithmSchema) }).parse(value).items,
+      }),
     datasets: (experimentId?: number, context?: RequestContext) =>
       client.request(
         'get',
@@ -121,6 +127,24 @@ export function createPredictionApi(client: CaembleClient) {
       }),
     retryOperation: (id: string, body: object = {}, context?: RequestContext) =>
       client.request('post', `/prediction/operations/${encodeURIComponent(id)}/grants`, body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    submitTraining: (id: string, body: { pin_id?: string } = {}, context?: RequestContext) =>
+      client.request('post', `/prediction/operations/${encodeURIComponent(id)}/submit`, body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    retryTraining: (id: string, body: { request_id: string; pin_id?: string }, context?: RequestContext) =>
+      client.request('post', `/prediction/operations/${encodeURIComponent(id)}/retry`, body, {
+        ...context,
+        csrf: 'required',
+        validate: (value) => predictionOperationSchema.parse(value),
+      }),
+    preflightTraining: (id: string, body: { request_id: string }, context?: RequestContext) =>
+      client.request('post', `/prediction/operations/${encodeURIComponent(id)}/training/preflight`, body, {
         ...context,
         csrf: 'required',
         validate: (value) => predictionOperationSchema.parse(value),

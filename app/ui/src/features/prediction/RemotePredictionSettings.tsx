@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { PredictionModelRecord } from '@/contracts/api/prediction'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,6 +13,7 @@ import { createPredictionModel } from './assetCreation'
 import { PredictionModelManager } from './PredictionModelManager'
 import { PredictionDatasetManager } from './PredictionDatasetManager'
 import { PredictionAssetTasks } from './PredictionAssetTasks'
+import { setupUsingSavedModel } from './remoteAssets'
 
 export type PredictionAssetSettingsProps = Readonly<{
   authenticated: boolean
@@ -54,9 +55,28 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
   const [name, setName] = useState('')
   const [previous, setPrevious] = useState<PredictionModelRecord | undefined>()
   const [refreshDataset, setRefreshDataset] = useState(false)
+  const [submitted, setSubmitted] = useState<{
+    selection: string
+    setup: PredictionSetup
+    result: NonNullable<Awaited<ReturnType<typeof createPredictionModel>>>
+  } | null>(null)
+  const observedCompletion = useRef<string | null>(null)
   const dataset = state.datasets.find((item) => item.id === datasetId)
   const unresolvedDataset = Boolean(datasetId) && !dataset
   const applyModel = onUse ?? onChange
+  useEffect(() => {
+    if (!submitted || observedCompletion.current === submitted.result.operationId) return
+    const operation = state.operations.find((item) => item.id === submitted.result.operationId)
+    if (!operation || !['completed', 'succeeded'].includes(operation.state)) return
+    const model = state.models.find((item) => item.id === submitted.result.modelId)
+    if (!model?.revisions.some((item) => item.revision === submitted.result.revision && item.state === 'ready')) return
+    observedCompletion.current = operation.id
+    if (manager.active && manager.currentSelectionKey === submitted.selection)
+      applyModel(
+        setupUsingSavedModel(submitted.setup, model, submitted.result.revision, submitted.result.route),
+        'forward',
+      )
+  }, [submitted, state.models, state.operations, manager, applyModel])
   const create = async () => {
     if (!context || !sourceHash || !varsSchema || unresolvedDataset) return
     const selection = manager.currentSelectionKey
@@ -75,9 +95,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
       previous,
       refreshDataset,
     })
-    if (next && manager.active && selection === manager.currentSelectionKey) {
-      applyModel(next, 'forward')
+    if (next && manager.active) {
+      setSubmitted({ selection, setup, result: next })
       setCreationOpen(false)
+      setTab('operations')
     }
   }
   return (
@@ -265,8 +286,8 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                     </select>
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    현재 선택한 BoxGrid와 k·거리 설정으로 원격 Forward 모델을 만듭니다. 파일 저장과 등록이 모두 성공하면
-                    선택 모델을 전환합니다.
+                    현재 선택한 BoxGrid와 k·거리 설정으로 원격 Forward 모델을 만듭니다. 접수한 학습은 브라우저를 닫아도
+                    계속됩니다. 학습 중 선택을 바꾸지 않았다면 완료 후 새 모델을 사용합니다.
                   </p>
                   <fieldset className="space-y-2 text-sm">
                     <legend>학습할 BoxGrid</legend>

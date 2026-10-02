@@ -99,7 +99,7 @@ export const context = {
 export const model: PreparedPredictionModel = {
   fingerprint: reference.fingerprint,
   provenance,
-  instance: { executionId: 'remote-knn', sessionId: 'session', generation: 1, handle: 'handle' },
+  instance: { executionId: 'remote-predictor', sessionId: 'session', generation: 1, handle: 'handle' },
   rules: [rule],
   errors: {},
   recordProfiles: [],
@@ -124,14 +124,11 @@ export const model: PreparedPredictionModel = {
 }
 export function remoteFixture() {
   return {
-    id: 'remote-knn',
+    id: 'remote-predictor',
     location: 'remote',
     sessionId: 'session',
-    implementationVersion: 'knn-v1',
-    preprocessingVersion: 'box-relative-v2',
     algorithms: ['knn'],
     directions: ['forward'],
-    prepare: vi.fn(),
     load: vi.fn(async () => model),
     predict: vi.fn(async () => ({
       direction: 'forward' as const,

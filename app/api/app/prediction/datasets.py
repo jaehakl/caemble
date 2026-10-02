@@ -120,6 +120,8 @@ async def list_datasets(db, user_id, experiment_id=None):
 
 
 async def freeze_dataset(db, selection, user_id, dataset_id=None):
+    from gpstation.service.batches import serialize_events
+    await serialize_events(db)
     identity = str(dataset_id) if dataset_id else str(uuid5(IDENTITY_NAMESPACE, f"{user_id}/dataset/{selection.request_id}"))
     await lock_identity(db, identity)
     row = await db.get(Dataset, identity)
@@ -183,6 +185,8 @@ async def freeze_dataset(db, selection, user_id, dataset_id=None):
 
 
 async def register_local_dataset(db, body, user_id):
+    from gpstation.service.batches import serialize_events
+    await serialize_events(db)
     await connected_storage(db, body.storage_id, body.launcher_id, user_id)
     identity = str(body.dataset_id)
     await lock_identity(db, identity)
@@ -211,6 +215,7 @@ async def register_local_dataset(db, body, user_id):
                 or row.experiment_id != body.experiment_id or body.expected_revision != row.current_revision
                 or body.revision != row.current_revision + 1):
             raise HTTPException(409, "Local Dataset changed. Reload before synchronizing.")
+        await require_dataset_idle(db, identity)
         source = await db.scalar(select(Replica).where(Replica.dataset_id == identity,
             Replica.revision == row.current_revision, Replica.storage_id == str(body.storage_id),
             Replica.state.not_in(["deleting", "deleted"])))

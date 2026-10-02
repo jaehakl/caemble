@@ -3,7 +3,7 @@ name = "caemble-evaluation-slave"
 version = "0.1.0"
 description = "Node Measurement build and Calculation worker"
 requires-python = ">=3.11,<3.15"
-dependencies = ["caemble-runtime-sdk[server-slave]", "gpstation-v1-master-python-sdk"]
+dependencies = ["caemble-runtime-sdk[server-slave]", "gpstation-v1-master-python-sdk", "prediction-contracts"]
 
 [tool.poetry]
 packages = [{ include = "app" }]
@@ -11,6 +11,7 @@ packages = [{ include = "app" }]
 [tool.poetry.dependencies]
 caemble-runtime-sdk = { path = "../../sdk", develop = true, extras = ["server-slave"] }
 gpstation-v1-master-python-sdk = { path = "../../sdk/master/python", develop = true }
+prediction-contracts = { path = "../../../shared/prediction_contracts", develop = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"

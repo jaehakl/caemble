@@ -1,11 +1,9 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '@/api/http'
-import type { PredictionDatasetRecord, PredictionModelRecord } from '@/contracts/api/prediction'
+import type { PredictionDatasetRecord, PredictionModelRecord, PredictionOperation } from '@/contracts/api/prediction'
 import { createPredictionModel, predictionDatasetSelection, type PredictionCreationInput } from './assetCreation'
 import type { PredictionAssetController, PredictionAssetWork } from './assetManagement'
 import type { PredictionContext } from './predictionContextData'
-import { remoteArtifactSchema } from './remoteProtocol'
 import { savedContractFromSource } from './savedModels'
 
 const mocks = vi.hoisted(() => ({
@@ -17,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   releaseGrant: vi.fn(),
   createOperation: vi.fn(),
   operation: vi.fn(),
-  complete: vi.fn(),
+  submitTraining: vi.fn(),
 }))
 vi.mock('@/api/prediction', () => ({ predictionApi: mocks }))
 
@@ -55,49 +53,11 @@ const input: PredictionCreationInput = {
   varsSchema,
   rules: [],
   resultContracts: {},
-  setup: { executionId: 'remote-knn', recordIds: [10], calculationIds: [], algorithm },
+  setup: { executionId: 'remote-predictor', recordIds: [10], calculationIds: [], algorithm },
   name: '온도 모델',
   launcherId,
   direction: 'forward',
 }
-const artifact = remoteArtifactSchema.parse({
-  modelId,
-  revision: 1,
-  operationId,
-  name: input.name,
-  direction: 'forward',
-  algorithm: 'knn',
-  definition: { fingerprint: 'saved-model' },
-  datasetId,
-  datasetRevision: 2,
-  datasetFingerprint: fingerprint,
-  storageId,
-  launcherId,
-  manifestChecksum: checksum,
-  formatVersion: 1,
-  verified: false,
-  files: [{ name: 'model.json', sha256: checksum, byteLength: 123 }],
-  inputLayouts: [],
-  outputLayouts: [],
-  profile: {
-    direction: 'forward',
-    rowCount: 3,
-    inputLayouts: [],
-    inputSize: 1,
-    outputSize: 1,
-    includedMeasurementIds: [1, 2, 3],
-    warningMeasurementIds: [],
-    diagnostics: [],
-    omittedDiagnosticGroups: 0,
-    excluded: {
-      'missing-block': 0,
-      'extra-block': 0,
-      'invalid-tensor': 0,
-      'fixed-layout-mismatch': 0,
-      'layout-mismatch': 0,
-    },
-  },
-})
 const model: PredictionModelRecord = {
   id: modelId,
   name: input.name,
@@ -172,15 +132,43 @@ const historical: PredictionDatasetRecord = {
   ],
 }
 
-function harness(recovered = false) {
+const trainingOperation = (state = 'pending', sourceKind: 'local' | 'api' = 'local') =>
+  ({
+    id: operationId,
+    kind: 'prepare',
+    state,
+    stage: state,
+    asset_id: modelId,
+    revision: 1,
+    target_storage_id: storageId,
+    target_launcher_id: launcherId,
+    training: {
+      pinId: datasetRequestId,
+      sourceKind,
+      cleanupPending: false,
+      resources: { gpu_count: 0 },
+      grant: { operation_id: operationId, token: 'scoped-pin', manifest_url: 'https://example.com/pin' },
+    },
+  }) as PredictionOperation
+
+function harness() {
   const remote = {
-    id: 'remote-knn',
-    implementationVersion: 'knn-v1',
-    preprocessingVersion: 'box-relative-v2',
-    hello: { storageId, launcherId, models: recovered ? [artifact] : [] },
-    command: vi.fn().mockResolvedValue({ receipt: { state: 'complete' } }),
-    prepare: vi.fn().mockResolvedValue({ instance: { handle: 'instance' }, artifact: { ...artifact, verified: true } }),
-    release: vi.fn().mockResolvedValue(undefined),
+    id: 'remote-predictor',
+    hello: {
+      storageId,
+      launcherId,
+      models: [],
+      algorithmDescriptors: [
+        {
+          kind: 'knn',
+          implementationVersion: 'knn-v1',
+          preprocessingVersion: 'box-relative-v2',
+          directions: ['forward'],
+        },
+      ],
+    },
+    command: vi.fn().mockResolvedValue({ pinId: datasetRequestId, operationId }),
+    dispose: vi.fn(),
   }
   const work = {
     signal: new AbortController().signal,
@@ -189,11 +177,15 @@ function harness(recovered = false) {
     progress: vi.fn(),
     id: 'task',
   } satisfies PredictionAssetWork
+  let retry!: () => Promise<unknown>
   const manager = {
-    run: <T>(_key: string, _label: string, action: (value: PredictionAssetWork) => Promise<T>) => action(work),
+    run: <T>(_key: string, _label: string, action: (value: PredictionAssetWork) => Promise<T>) => {
+      retry = () => action(work)
+      return action(work)
+    },
     getSnapshot: () => ({ storages: [{ storage_id: 'backup-storage', kind: 'object_backup' }] }),
   } as unknown as PredictionAssetController
-  return { remote, work, manager }
+  return { remote, work, manager, retry: () => retry() }
 }
 
 beforeEach(() => {
@@ -207,8 +199,8 @@ beforeEach(() => {
       .mockReturnValueOnce(restoreRequestId)
       .mockImplementation(() => webcrypto.randomUUID()),
   })
-  mocks.complete.mockResolvedValue(model)
-  mocks.operation.mockResolvedValue({ id: operationId, state: 'completed' })
+  mocks.operation.mockResolvedValue(trainingOperation())
+  mocks.submitTraining.mockResolvedValue(trainingOperation('queued'))
   mocks.reserve.mockResolvedValue({
     ...model,
     revisions: model.revisions.map((revision) => ({ ...revision, state: 'reserved' })),
@@ -223,7 +215,7 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
-describe('Prediction model creation recovery', () => {
+describe('independent Prediction training submission', () => {
   it('freezes explicit BoxGrid outputs without requiring Calculation data', () => {
     const selection = predictionDatasetSelection(
       { ...input, context: { ...input.context, calculations: [] } },
@@ -232,46 +224,11 @@ describe('Prediction model creation recovery', () => {
     expect(selection.record_ids).toEqual([10])
     expect(selection.calculation_ids).toEqual([])
   })
-  it('reuses the matching hello receipt without fetching training data or preparing again', async () => {
-    const { manager, remote, work } = harness(true)
-    const result = await createPredictionModel(manager, input)
-    expect(work.connect).toHaveBeenCalledWith(launcherId, true)
-    expect(mocks.complete).toHaveBeenCalledWith(
-      modelId,
-      1,
-      expect.objectContaining({
-        request_id: operationId,
-        manifest_sha256: checksum,
-        verified: false,
-      }),
-      { signal: undefined },
-    )
-    expect(result?.models?.forward).toMatchObject({ modelId, modelRevision: 1, datasetId, datasetRevision: 2 })
-    expect(result?.routes?.forward).toEqual({ replicaId: 'local-replica', storageId, launcherId })
-    for (const request of [mocks.datasets, mocks.createDataset, mocks.syncDataset, mocks.grant, mocks.reserve])
-      expect(request).not.toHaveBeenCalled()
-    expect(remote.prepare).not.toHaveBeenCalled()
-    expect(remote.command).not.toHaveBeenCalled()
-  })
 
-  it.each([409, 410])(
-    'does not fall back to training when published receipt registration is refused (%s)',
-    async (status) => {
-      const { manager, remote } = harness(true)
-      const rejected = new ApiError(status, 'Preparation was cancelled or superseded.', {})
-      mocks.complete.mockRejectedValue(rejected)
-      await expect(createPredictionModel(manager, input)).rejects.toBe(rejected)
-      expect(mocks.reserve).not.toHaveBeenCalled()
-      expect(mocks.grant).not.toHaveBeenCalled()
-      expect(mocks.createDataset).not.toHaveBeenCalled()
-      expect(remote.prepare).not.toHaveBeenCalled()
-    },
-  )
-
-  it('restores the exact historical Dataset before reserving a model and keeps its old revision', async () => {
-    const { manager, remote } = harness()
+  it('restores the exact historical Dataset, pins local input, and returns after server acceptance', async () => {
+    const { manager, remote, work } = harness()
     let finishRestore!: () => void
-    remote.command.mockReturnValue(
+    remote.command.mockReturnValueOnce(
       new Promise<void>((resolve) => {
         finishRestore = resolve
       }),
@@ -285,51 +242,74 @@ describe('Prediction model creation recovery', () => {
       ),
     )
     expect(mocks.reserve).not.toHaveBeenCalled()
-    expect(mocks.createOperation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'restore',
-        asset_kind: 'dataset',
-        asset_id: datasetId,
-        revision: 2,
-        source_replica_id: backupId,
-        target_storage_id: storageId,
-        target_launcher_id: launcherId,
-      }),
-      expect.anything(),
-    )
     finishRestore()
     const result = await running
     expect(mocks.reserve).toHaveBeenCalledWith(
       expect.objectContaining({
         dataset_id: datasetId,
         dataset_revision: 2,
-        definition: expect.objectContaining({ snapshotFingerprint: fingerprint }),
+        definition: expect.objectContaining({ snapshotFingerprint: fingerprint, implementationId: 'remote-predictor' }),
       }),
       expect.anything(),
     )
-    expect(remote.prepare).toHaveBeenCalledWith(
-      expect.objectContaining({
-        dataset: { datasetId, revision: 2, fingerprint },
-        model: { modelId, revision: 1, operationId, name: input.name },
-      }),
+    expect(remote.command).toHaveBeenLastCalledWith(
+      'training.pin',
+      { grant: trainingOperation().training!.grant },
       expect.anything(),
+    )
+    expect(mocks.submitTraining).toHaveBeenCalledWith(operationId, { pin_id: datasetRequestId }, expect.anything())
+    expect(work.operation).toHaveBeenLastCalledWith(trainingOperation('queued'))
+    expect(result).toEqual({ operationId, modelId, revision: 1, route: { storageId, launcherId } })
+    expect(mocks.grant).not.toHaveBeenCalled()
+    expect(mocks.syncDataset).not.toHaveBeenCalled()
+  })
+
+  it('does not start training when a local pin receipt belongs to another attempt', async () => {
+    const { manager, remote } = harness()
+    remote.command.mockResolvedValue({ pinId: 'old-pin', operationId })
+    await expect(createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3 })).rejects.toThrow(
+      /현재 작업/,
+    )
+    expect(mocks.submitTraining).not.toHaveBeenCalled()
+  })
+
+  it('checks saved artifacts for API data without granting Dataset payload to the browser', async () => {
+    const { manager, remote } = harness()
+    mocks.operation.mockResolvedValue(trainingOperation('pending', 'api'))
+    await createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3 })
+    expect(mocks.submitTraining).toHaveBeenCalledWith(operationId, { pin_id: datasetRequestId }, expect.anything())
+    expect(remote.command).toHaveBeenCalledWith(
+      'training.pin',
+      { grant: trainingOperation('pending', 'api').training!.grant },
       expect.anything(),
     )
     expect(mocks.grant).not.toHaveBeenCalled()
-    expect(mocks.syncDataset).not.toHaveBeenCalled()
-    expect(result?.models?.forward?.datasetRevision).toBe(2)
-    expect(remote.release).toHaveBeenCalledWith({ handle: 'instance' })
+  })
+
+  it('recovers a lost submission response from the existing operation without rereading its Dataset', async () => {
+    const { manager, remote, retry } = harness()
+    mocks.operation.mockResolvedValue(trainingOperation('pending', 'api'))
+    mocks.submitTraining.mockRejectedValueOnce(new Error('response lost'))
+    await expect(createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3 })).rejects.toThrow(
+      'response lost',
+    )
+    mocks.operation.mockResolvedValue(trainingOperation('completed', 'api'))
+    remote.command.mockClear()
+    const result = await retry()
+    expect(result).toEqual({ operationId, modelId, revision: 1, route: { storageId, launcherId } })
+    expect(mocks.reserve).toHaveBeenCalledOnce()
+    expect(mocks.submitTraining).toHaveBeenCalledOnce()
+    expect(mocks.datasets).not.toHaveBeenCalled()
+    expect(remote.command).not.toHaveBeenCalled()
   })
 
   it('stops before reservation when the historical backup cannot be restored', async () => {
     const { manager, remote } = harness()
-    const missing = new Error('The exact Dataset archive is unavailable.')
-    remote.command.mockRejectedValue(missing)
-    await expect(createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 2 })).rejects.toBe(
-      missing,
+    remote.command.mockRejectedValue(new Error('archive unavailable'))
+    await expect(createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 2 })).rejects.toThrow(
+      'archive unavailable',
     )
     expect(mocks.reserve).not.toHaveBeenCalled()
-    expect(remote.prepare).not.toHaveBeenCalled()
-    expect(mocks.grant).not.toHaveBeenCalled()
+    expect(mocks.submitTraining).not.toHaveBeenCalled()
   })
 })

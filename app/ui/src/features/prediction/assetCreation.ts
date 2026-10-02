@@ -1,6 +1,6 @@
 import { predictionApi } from '@/api/prediction'
+import { ApiError } from '@/api/http'
 import type {
-  PredictionDatasetGrant,
   PredictionDatasetRecord,
   PredictionDatasetSelection,
   PredictionModelRecord,
@@ -13,7 +13,7 @@ import type { PredictionDirection } from './types'
 import type { PredictionAssetController, PredictionAssetWork } from './assetManagement'
 import { predictionFingerprint } from './data'
 import { assertSavedPredictionCompatible, savedContractFromSource } from './savedModels'
-import { registerRemoteArtifact, setupUsingSavedModel } from './remoteAssets'
+import { submitPredictionTraining } from './assetOperations'
 
 export type PredictionCreationInput = Readonly<{
   context: PredictionContext
@@ -56,24 +56,27 @@ export function createPredictionModel(manager: PredictionAssetController, input:
   const datasetRequestId = crypto.randomUUID()
   const modelRequestId = crypto.randomUUID()
   const restoreRequestId = crypto.randomUUID()
+  let reservationAttempted = false
   return manager.run(`model:${input.previous?.id ?? input.direction}:create`, '모델 만들고 사용', async (work) => {
-    const remote = await work.connect(input.launcherId, true)
-    const hello = remote.hello!
-    const recovered = hello.models.find(
-      (artifact) => 'manifestChecksum' in artifact && artifact.operationId === modelRequestId,
-    )
-    if (recovered && 'manifestChecksum' in recovered) {
-      const registered = await registerRemoteArtifact(recovered)
-      work.operation(await predictionApi.operation(modelRequestId, { signal: work.signal }))
-      const replica = registered.revisions
-        .find((item) => item.revision === recovered.revision)
-        ?.replicas.find((item) => item.storage_id === hello.storageId)
-      return setupUsingSavedModel(input.setup, registered, recovered.revision, {
-        replicaId: replica?.id,
-        storageId: hello.storageId,
-        launcherId: hello.launcherId,
-      })
+    if (reservationAttempted) {
+      try {
+        const operation = await predictionApi.operation(modelRequestId, { signal: work.signal })
+        work.operation(operation)
+        await submitPredictionTraining(operation, work)
+        if (!operation.revision || !operation.target_storage_id || !operation.target_launcher_id)
+          throw new Error('예약한 모델 실행 위치를 확인하지 못했습니다.')
+        return {
+          operationId: operation.id,
+          modelId: operation.asset_id,
+          revision: operation.revision,
+          route: { storageId: operation.target_storage_id, launcherId: operation.target_launcher_id },
+        }
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error
+      }
     }
+    const remote = await work.connect(input.launcherId)
+    const hello = remote.hello!
     let dataset = input.dataset
     if (!dataset || input.refreshDataset) {
       work.progress('학습 데이터 revision 확정 중')
@@ -118,6 +121,9 @@ export function createPredictionModel(manager: PredictionAssetController, input:
       input.varsSchema,
       requiredRecordIds,
     )
+    const algorithm = hello.algorithmDescriptors.find((item) => item.kind === input.setup.algorithm.kind)
+    if (!algorithm?.directions.includes(input.direction))
+      throw new Error('이 Predictor에서 선택한 알고리즘의 Forward 학습을 지원하지 않습니다.')
     const meaning = {
       snapshotFingerprint: source.fingerprint,
       algorithm: {
@@ -127,8 +133,8 @@ export function createPredictionModel(manager: PredictionAssetController, input:
         weighting: input.setup.algorithm.weighting,
       },
       implementationId: remote.id,
-      implementationVersion: remote.implementationVersion,
-      preprocessingVersion: remote.preprocessingVersion,
+      implementationVersion: algorithm.implementationVersion,
+      preprocessingVersion: algorithm.preprocessingVersion,
       contract,
       direction: input.direction,
       requiredRecordIds,
@@ -163,6 +169,7 @@ export function createPredictionModel(manager: PredictionAssetController, input:
       )
     }
     work.progress('새 모델 revision 예약 중')
+    reservationAttempted = true
     const reserved = await predictionApi.reserve(
       {
         request_id: modelRequestId,
@@ -177,53 +184,16 @@ export function createPredictionModel(manager: PredictionAssetController, input:
       },
       { signal: work.signal },
     )
-    if (reserved.operation_id) {
-      const operation = await predictionApi.operation(reserved.operation_id, { signal: work.signal })
-      work.operation(operation)
-    }
-    if (reserved.revisions.find((item) => item.revision === reserved.reserved_revision)?.state === 'ready')
-      throw new Error(
-        '모델은 등록되었지만 이 위치에서 파일을 찾지 못했습니다. 저장 위치를 확인하거나 백업에서 복원하세요.',
-      )
-    let grant: PredictionDatasetGrant | undefined
-    try {
-      if (!local && apiPayload) grant = await predictionApi.grant(dataset.id, revision, { signal: work.signal })
-      work.progress('모델 준비·저장 중')
-      const prepared = await remote.prepare(
-        {
-          kind: 'dataset-revision',
-          direction: input.direction,
-          fingerprint: source.fingerprint,
-          dataset: grant ? { grant } : { datasetId: dataset.id, revision, fingerprint: source.fingerprint },
-          model: {
-            modelId: reserved.id,
-            revision: reserved.reserved_revision!,
-            operationId: reserved.operation_id!,
-            name: reserved.name,
-          },
-        },
-        definition,
-        { requestId: crypto.randomUUID(), signal: work.signal },
-      )
-      try {
-        work.progress('저장 파일 등록 중')
-        const complete = await registerRemoteArtifact(prepared.artifact)
-        if (reserved.operation_id)
-          work.operation(await predictionApi.operation(reserved.operation_id, { signal: work.signal }))
-        work.signal.throwIfAborted()
-        const replica = complete.revisions
-          .find((item) => item.revision === reserved.reserved_revision)
-          ?.replicas.find((item) => item.storage_id === hello.storageId)
-        return setupUsingSavedModel(input.setup, complete, reserved.reserved_revision!, {
-          replicaId: replica?.id,
-          storageId: hello.storageId,
-          launcherId: hello.launcherId,
-        })
-      } finally {
-        await remote.release(prepared.instance)
-      }
-    } finally {
-      if (grant) await predictionApi.releaseGrant(dataset.id, grant.grant_id)
+    if (!reserved.operation_id || !reserved.reserved_revision)
+      throw new Error('학습 작업 예약을 확인하지 못했습니다. 같은 작업을 다시 시도하세요.')
+    const operation = await predictionApi.operation(reserved.operation_id, { signal: work.signal })
+    work.operation(operation)
+    await submitPredictionTraining(operation, work)
+    return {
+      operationId: operation.id,
+      modelId: reserved.id,
+      revision: reserved.reserved_revision,
+      route: { storageId: hello.storageId, launcherId: hello.launcherId },
     }
   })
 }

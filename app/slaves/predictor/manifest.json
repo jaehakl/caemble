@@ -2,5 +2,8 @@
   "id": "predictor",
   "name": "Prediction",
   "module": "app",
-  "startup_timeout_seconds": 120
+  "startup_timeout_seconds": 120,
+  "entrypoints": [
+    {"id": "predictor-training", "name": "Prediction training", "module": "app.training", "job_mode": "websocket"}
+  ]
 }

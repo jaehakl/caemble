@@ -133,7 +133,7 @@ async def submit_predictions(db, optimization, candidates):
     from optimization.predictor_jobs import predictor_parent_available
 
     hybrid = optimization.definition["hybrid"]
-    if not await predictor_parent_available(db, hybrid["launcher_id"]):
+    if not await predictor_parent_available(db, hybrid["launcher_id"], hybrid["resources"]):
         return None
     definition = optimization.definition
     first_trial, _ = candidates[0]

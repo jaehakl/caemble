@@ -28,7 +28,7 @@ export type { PredictionContext, SavedPredictionCalculation } from './prediction
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
 export type PredictionSetup = Readonly<{
-  executionId: 'remote-knn'
+  executionId: 'remote-predictor'
   recordIds: readonly number[]
   calculationIds: readonly number[]
   algorithm: PredictionAlgorithm
@@ -38,7 +38,7 @@ export type PredictionSetup = Readonly<{
 }>
 
 export const defaultPredictionSetup: PredictionSetup = Object.freeze({
-  executionId: 'remote-knn',
+  executionId: 'remote-predictor',
   recordIds: Object.freeze([]),
   calculationIds: Object.freeze([]),
   algorithm: Object.freeze({ kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' }),

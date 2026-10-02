@@ -58,6 +58,8 @@ class SlaveApp:
 class SlaveAppRegistry:
     def __init__(self, apps: list[SlaveApp]) -> None:
         self.apps = {app.id: app for app in apps}
+        if len(self.apps) != len(apps):
+            raise ValueError("Launcher application IDs must be unique.")
         self.preparation_errors: dict[str, str] = {}
         self.reported_errors: dict[str, str] = {}
 
@@ -128,12 +130,27 @@ def load_default_registry() -> SlaveAppRegistry:
 def load_registry(plugins_dir: Path) -> SlaveAppRegistry:
     apps: list[SlaveApp] = []
     for manifest_path in sorted(plugins_dir.glob("*/manifest.json")):
-        apps.append(load_manifest(manifest_path))
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        apps.append(parse_entrypoint(payload, manifest_path))
+        entries = payload.get("entrypoints", [])
+        if not isinstance(entries, list):
+            raise ValueError(f"Invalid entrypoints in {manifest_path}")
+        for entry in entries:
+            if not isinstance(entry, dict) or not all(key in entry for key in ("id", "module", "job_mode")):
+                raise ValueError(f"Entrypoints require id, module and job_mode in {manifest_path}")
+            apps.append(parse_entrypoint(entry, manifest_path))
     return SlaveAppRegistry(apps)
 
 
 def load_manifest(manifest_path: Path) -> SlaveApp:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return parse_entrypoint(payload, manifest_path)
+
+
+def parse_entrypoint(payload: dict, manifest_path: Path) -> SlaveApp:
+    """An entrypoint shares its manifest's environment, but declares its own mode."""
+    if any(not isinstance(payload.get(key), str) or not payload[key].strip() for key in ("id", "module")):
+        raise ValueError(f"Entrypoints require nonempty id and module in {manifest_path}")
     job_mode = payload.get("job_mode", "webrtc")
     if job_mode not in {"webrtc", "websocket"}:
         raise ValueError(f"Invalid job_mode in {manifest_path}")

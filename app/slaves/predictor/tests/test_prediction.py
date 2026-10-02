@@ -27,13 +27,20 @@ def runtime(tmp_path):
 
 
 def call(worker, action, **payload):
-    return worker.dispatch(action, {"protocolVersion": 2, "requestId": "request-1", "sessionId": worker.session_id, **payload})
+    return worker.dispatch(action, {"protocolVersion": 3, "requestId": "request-1", "sessionId": worker.session_id, **payload})
+
+
+def prepare_saved(worker, *, dataset, direction, definition, model):
+    bundle = ModelBundle.prepare(worker.reader.load(dataset, definition=definition), direction, definition,
+                                 model, worker._available_memory())
+    bundle.save(worker.store)
+    return call(worker, "model.load", modelId=model["modelId"], revision=model["revision"])
 
 
 def prepare(worker, direction="forward", manifest=None, **algorithm):
     manifest = manifest or dataset()
     reference = stage(worker, manifest)
-    return call(worker, "model.prepare", dataset=reference, direction=direction, definition=definition(manifest, **algorithm),
+    return prepare_saved(worker, dataset=reference, direction=direction, definition=definition(manifest, **algorithm),
                 model={"modelId": f"model-{direction}", "revision": 1, "operationId": "operation-1", "name": direction})
 
 
@@ -80,11 +87,11 @@ def test_restart_reloads_without_dataset_or_training(tmp_path):
     script = r'''
 import importlib.util,json,sys
 from pathlib import Path
-package=Path(sys.argv[1]); spec=importlib.util.spec_from_file_location("predictor",package/"__init__.py",submodule_search_locations=[str(package)])
+package=Path(sys.argv[1]); sys.path.insert(0,str(package.parents[3]/"shared")); spec=importlib.util.spec_from_file_location("predictor",package/"__init__.py",submodule_search_locations=[str(package)])
 module=importlib.util.module_from_spec(spec);sys.modules["predictor"]=module;spec.loader.exec_module(module)
 from predictor.runtime import PredictorRuntime
 worker=PredictorRuntime(Path(sys.argv[2]),"owner-1","launcher-1","http://127.0.0.1:8000",128*1024*1024)
-base={"protocolVersion":2,"requestId":"restart","sessionId":worker.session_id}
+base={"protocolVersion":3,"requestId":"restart","sessionId":worker.session_id}
 loaded=worker.dispatch("model.load",dict(base,modelId="model-forward",revision=1))
 result=worker.dispatch("model.predict",dict(base,instance=loaded["instance"],input={"direction":"forward","vars":{"x":.5}}))
 print(json.dumps({"instance":loaded["instance"],"result":result,"datasets":worker.store.list("datasets")}))
@@ -218,7 +225,7 @@ def test_manual_local_sync_updates_added_removed_rows_and_keeps_saved_model(tmp_
     again = call(worker, "dataset.import", importId="source")["dataset"]
     assert again["datasetId"] == imported["datasetId"]
     assert again["operationId"] == imported["operationId"]
-    prepared = call(worker, "model.prepare", dataset=imported, direction="forward", definition=definition(manifest),
+    prepared = prepare_saved(worker, dataset=imported, direction="forward", definition=definition(manifest),
                     model={"modelId": "local-model", "revision": 1, "operationId": "op", "name": "Local"})
     manifest["revision"] = 7
     manifest["measurements"] = manifest["measurements"][1:]
@@ -357,7 +364,7 @@ def test_direct_scoped_grant_preparation_verifies_chunks_without_retaining_datas
                  "object_url_template": origin + "/prediction/datasets/dataset-1/revisions/1/objects/{object_id}",
                  "token": "scoped-token", "dataset_id": "dataset-1", "revision": 1, "fingerprint": manifest["fingerprint"],
                  "manifest_sha256": hashlib.sha256(raw).hexdigest()}
-        prepared = call(worker, "model.prepare", dataset={"grant": grant}, direction="forward", definition=definition(manifest),
+        prepared = prepare_saved(worker, dataset={"grant": grant}, direction="forward", definition=definition(manifest),
                         model={"modelId": "remote", "revision": 1, "operationId": "operation", "name": "Remote data"})
         result = call(worker, "model.predict", instance=prepared["instance"], input={"direction": "forward", "vars": {"x": .5}})
         assert result["output"][0]["values"] == pytest.approx([15])
@@ -385,7 +392,7 @@ def test_output_selection_ignores_calculation_contracts(tmp_path):
     manifest["calculationData"][0]["data"] = {"shape": [10 ** 12]}
     reference = stage(worker, manifest)
     model_definition = {**definition(manifest), "requiredRecordIds": [10]}
-    prepared = call(worker, "model.prepare", dataset=reference, direction="forward", definition=model_definition,
+    prepared = prepare_saved(worker, dataset=reference, direction="forward", definition=model_definition,
                     model={"modelId": "selected", "revision": 1, "operationId": "operation", "name": "Selected"})
     assert [item["recordId"] for item in prepared["recordProfiles"]] == [10]
     result = call(worker, "model.predict", instance=prepared["instance"], input={"direction": "forward", "vars": {"x": .5}})

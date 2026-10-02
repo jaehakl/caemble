@@ -66,8 +66,10 @@ subscription. Completed selected Measurements are fetched again for visualizatio
 Standalone CalculationData postprocessing runs explicitly in the browser or CLI;
 Forward Prediction runs saved models on the user's remote Predictor; the browser
 prepares Candidate BoxGrid context and optional Calculation postprocessing. Model
-references survive reloads, while execution handles are recreated. Neither model
-training nor interrupted postprocessing automatically resumes on reconnect.
+references survive reloads, while execution handles are recreated. Interrupted
+postprocessing does not automatically resume on reconnect. Accepted model
+training is a server-owned Job and continues after browser disconnects. A worker
+or server failure requires explicit retry after process cleanup.
 Optimizations separately own their persisted build/solve/calculate
 stages and continue server coordination after browser disconnects.
 Failed and cancelled runs require manual retry, which
@@ -264,10 +266,18 @@ callback therefore cannot leave Job completion and Optimization persistence out 
 The host adapter owns managed-job restrictions and Optimization list filtering, keeping
 those decisions out of the generic execution service.
 
-Future Datasets and Models should connect through stable identifiers, revisions
-and artifact references, never through a running process or a machine-local
-path. The execution boundary does not introduce Predictor training/inference,
-Dataset/Model management, or a general workflow engine.
+Prediction connects Datasets and Models through stable identifiers, revisions
+and artifact references. `shared/prediction_contracts` owns algorithm descriptors,
+supported versions and separate training/inference resource requirements without
+numerical dependencies. Predictor owns numerical adapters and artifact-content
+validation; the API owns preparation Operations, immutable revisions and replicas.
+The same Predictor environment exposes `predictor` for WebRTC inference/management
+and `predictor-training` for server-owned WebSocket training. Training publishes a
+complete model without installing an inference handle. Revision publication and
+successful Job completion share one transaction. Dataset revision pins block sync
+and file removal from submission until process cleanup; deletion requests can remain
+pending, and retry never substitutes the
+latest revision. Checkpoint resume belongs to a future algorithm implementation.
 
 ## Implementation map
 
@@ -277,6 +287,9 @@ Dataset/Model management, or a general workflow engine.
   uploads, Simulation batches, and result publication.
 - `app/api/app/optimization`: Optimizations, Trials, optimization decisions, and
   persisted stage coordination.
+- `app/api/app/prediction`: Dataset/Model assets, replicas and durable training Operations.
+- `shared/prediction_contracts`: numerical-library-free Forward contracts shared
+  by the API, Predictor and Evaluation workers.
 - `app/api/app/calculation`: Calculation source, contracts, and results.
 - `app/api/app/gpstation`: generic Job/Batch execution, events, and launchers.
 - `app/api/app/gpstation_adapter.py`: Caemble policy on the public job APIs.

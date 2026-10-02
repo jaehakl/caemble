@@ -41,7 +41,7 @@ it('predicts native BoxGrid without Calculation and attaches Candidate and immut
     candidate: { vars: { x: 0.5 }, sourceHash: 'source' },
     model: model.provenance,
   })
-  expect(remote.prepare).not.toHaveBeenCalled()
+  expect(remote).not.toHaveProperty('prepare')
   expect(calculate).not.toHaveBeenCalled()
   runtime.dispose()
 })

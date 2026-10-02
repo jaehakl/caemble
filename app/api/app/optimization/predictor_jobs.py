@@ -5,11 +5,11 @@ import hashlib
 import secrets
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import undefer
+from prediction_contracts import resource_requirements
 
-from db import get_db
 from gpstation.db import Job, Launcher
 from gpstation.models import JobAnswerWaitResult, JobCreateRequest
 from gpstation.service.execution import requested_resources, sync_attempt
@@ -17,10 +17,27 @@ from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.job_service import JOB_TERMINAL_STATES, job_to_data
 from prediction.db import ModelLease, ModelRevision, PredictionModel, Replica, StorageAccess
 
-router = APIRouter(prefix="/optimization/evaluation", tags=["optimization-evaluation"])
+def resources_fit_together(resources: dict, report: dict, *, available: bool = False) -> bool:
+    """Reserve room for the parent and its child before starting either process."""
+    cpu = sum(value.get("cpu_cores", 1) for value in resources.values())
+    ram = sum(value.get("startup_ram_bytes", 1) for value in resources.values())
+    cpu_budget = report.get("cpu_total", 0)
+    ram_budget = report.get("ram_budget_bytes", 0)
+    if available:
+        if not report.get("admission_open", True):
+            return False
+        cpu_budget -= report.get("cpu_reserved", 0)
+        ram_budget -= report.get("ram_used_bytes", 0) + report.get("ram_startup_reserved_bytes", 0)
+    demands = sorted((value.get("gpu_memory_bytes", 0) for value in resources.values()
+                      for _ in range(value.get("gpu_count", 0))), reverse=True)
+    devices = sorted((item.get("free_bytes" if available else "total_bytes", 0)
+                      for item in report.get("gpu_devices", []) if isinstance(item, dict)
+                      and (not available or not item.get("instance_id") and not item.get("reserved", False))), reverse=True)
+    return (cpu <= cpu_budget and ram <= ram_budget and len(demands) <= len(devices)
+            and all(required <= capacity for required, capacity in zip(demands, devices)))
 
 
-async def validate_hybrid_capacity(db, launcher_id, user_id) -> dict:
+async def validate_hybrid_capacity(db, launcher_id, user_id, definition: dict) -> dict:
     launcher = await db.get(Launcher, launcher_id)
     if launcher is None or launcher.user_id != user_id:
         raise HTTPException(404, "Predictor Launcher not found.")
@@ -29,27 +46,27 @@ async def validate_hybrid_capacity(db, launcher_id, user_id) -> dict:
             or modes.get("evaluation") != "websocket" or modes.get("predictor", "webrtc") != "webrtc"):
         raise HTTPException(422, "Hybrid requires Evaluation and Predictor on the selected Launcher.")
     report = launcher.resources or {}
-    resources = {name: requested_resources({"cpu_cores": 1, "gpu_count": 0}, report, name)
-                 for name in ("evaluation", "predictor")}
-    if report.get("cpu_total", 0) < 2:
-        raise HTTPException(422, "Hybrid requires a Launcher CPU budget of at least two cores.")
-    ram = sum(value.get("startup_ram_bytes", 1) for value in resources.values())
-    if ram > report.get("ram_budget_bytes", 0):
-        raise HTTPException(422, "Launcher RAM budget cannot hold Evaluation and Predictor together.")
+    try:
+        requirements = resource_requirements(definition, "inference")
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    resources = {
+        "evaluation": requested_resources({"cpu_cores": 1, "gpu_count": 0}, report, "evaluation", "cae.evaluation.predict"),
+        "predictor": requested_resources({"cpu_cores": 1, **requirements}, report, "predictor", "predictor.hello"),
+    }
+    if not resources_fit_together(resources, report):
+        raise HTTPException(422, "Launcher CPU, RAM or GPU budget cannot hold Evaluation and Predictor together.")
     return resources
 
 
-async def predictor_parent_available(db, launcher_id) -> bool:
+async def predictor_parent_available(db, launcher_id, resources: dict) -> bool:
     # The caller holds this row lock until parent creation commits, serializing
     # admissions from independent Optimizations sharing this Launcher.
     launcher = await db.scalar(select(Launcher).where(Launcher.id == launcher_id).with_for_update())
     if launcher is None:
         return False
     report = launcher.resources or {}
-    resources = await validate_hybrid_capacity(db, launcher_id, launcher.user_id)
-    available_ram = report.get("ram_budget_bytes", 0) - report.get("ram_used_bytes", 0) - report.get("ram_startup_reserved_bytes", 0)
-    if (report.get("cpu_total", 0) - report.get("cpu_reserved", 0) < 2
-            or sum(value.get("startup_ram_bytes", 1) for value in resources.values()) > available_ram):
+    if not resources_fit_together(resources, report, available=True):
         return False
     active = await db.scalar(select(Job.id).where(Job.target_launcher_id == launcher_id,
         Job.slave_app_id == "evaluation", Job.input["stage"].astext == "predict",
@@ -86,9 +103,8 @@ async def owned_child(db, parent, child_id):
     return child
 
 
-@router.post("/{parent_id}/attempts/{attempt_id}/predictor-jobs")
 async def create_child(parent_id: str, attempt_id: str, body: JobCreateRequest,
-                       authorization: str = Header(default=""), db=Depends(get_db)):
+                       authorization: str, db):
     parent = await authorized_parent(db, parent_id, attempt_id, authorization)
     if body.slave_app_id != "predictor" or body.handler_type != "predictor.hello":
         raise HTTPException(403, "Evaluation can create only its assigned Predictor session.")
@@ -96,7 +112,7 @@ async def create_child(parent_id: str, attempt_id: str, body: JobCreateRequest,
     launcher_id = hybrid["launcher_id"]
     if parent.launcher_id != launcher_id or parent.target_launcher_id != launcher_id:
         raise HTTPException(409, "Evaluation is running outside its pinned Predictor Launcher.")
-    resources = await validate_hybrid_capacity(db, launcher_id, parent.user_id)
+    resources = hybrid["resources"]
     binding = {"job_id": parent.id, "attempt_id": parent.attempt_id, "attempt_count": parent.attempt_count}
     previous = await db.scalar(select(Job).where(Job.artifact_metadata["optimization_parent"] == binding))
     if previous is not None:
@@ -133,10 +149,8 @@ async def create_child(parent_id: str, attempt_id: str, body: JobCreateRequest,
     return result
 
 
-@router.get("/{parent_id}/attempts/{attempt_id}/predictor-jobs/{child_id}/wait-answer", response_model=JobAnswerWaitResult)
 async def wait_answer(parent_id: str, attempt_id: str, child_id: str,
-                      wait_seconds: float = Query(default=30, ge=0, le=30),
-                      authorization: str = Header(default=""), db=Depends(get_db)):
+                      wait_seconds: float, authorization: str, db):
     parent = await authorized_parent(db, parent_id, attempt_id, authorization)
     await owned_child(db, parent, child_id)
     user_id = parent.user_id
@@ -152,9 +166,8 @@ async def wait_answer(parent_id: str, attempt_id: str, child_id: str,
         attempt_count=child.attempt_count, state=child.state, answer=child.answer, last_error=child.last_error)
 
 
-@router.post("/{parent_id}/attempts/{attempt_id}/predictor-jobs/{child_id}/kill")
 async def kill_child(parent_id: str, attempt_id: str, child_id: str,
-                     authorization: str = Header(default=""), db=Depends(get_db)):
+                     authorization: str, db):
     parent = await authorized_parent(db, parent_id, attempt_id, authorization, cleanup=True)
     child = await owned_child(db, parent, child_id)
     await db.commit()

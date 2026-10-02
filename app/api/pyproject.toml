@@ -22,6 +22,7 @@ dependencies = [
     "caemble-runtime-sdk",
     "websockets>=12,<16",
     "caemble-catalog",
+    "prediction-contracts",
     "pillow (>=12.3.0,<13.0.0)",
 ]
 
@@ -31,6 +32,7 @@ package-mode = false
 [tool.poetry.dependencies]
 caemble-runtime-sdk = { path = "../sdk", develop = true }
 caemble-catalog = { path = "../catalog", develop = true }
+prediction-contracts = { path = "../../shared/prediction_contracts", develop = true }
 
 [build-system]
 requires = ["poetry-core"]

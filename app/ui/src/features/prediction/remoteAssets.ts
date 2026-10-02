@@ -33,6 +33,14 @@ export async function reconcileRemoteAssets(hello: RemoteHello, signal?: AbortSi
   for (const artifact of hello.models) {
     if (!('manifestChecksum' in artifact)) continue
     try {
+      try {
+        const operation = await predictionApi.operation(artifact.operationId, { signal })
+        // A training Job publishes its receipt on the server; observing a file cannot finish it.
+        if (operation.training) continue
+      } catch (error) {
+        // Older completed files can predate the Operation ledger.
+        if (!(error instanceof ApiError) || error.status !== 404) throw error
+      }
       await registerRemoteArtifact(artifact, signal)
     } catch (error) {
       // Tombstones win over stale local registrations. Explicit deletion remains retryable.
@@ -77,6 +85,8 @@ export function savedModelReference(
     throw new Error('Inverse 모델은 지원 종료되어 자산 관리만 가능합니다.')
   const item = model.revisions.find((entry) => entry.revision === revision && entry.state === 'ready')
   if (!item) throw new Error('완성된 저장 모델 revision이 없습니다.')
+  if (item.support_status === 'unsupported' || item.support_status === 'retired')
+    throw new Error('이 모델 버전의 알고리즘은 현재 지원하지 않습니다. 저장 파일은 관리할 수 있습니다.')
   return savedPredictionReferenceSchema.parse({
     modelId: model.id,
     modelRevision: revision,
@@ -138,7 +148,7 @@ export function setupUsingSavedModel(
       : []
   return {
     ...setup,
-    executionId: 'remote-knn',
+    executionId: 'remote-predictor',
     datasetId: reference.datasetId,
     recordIds: selectedRecordIds.length ? selectedRecordIds : availableRecordIds,
     models: { forward: reference },

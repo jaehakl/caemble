@@ -557,6 +557,20 @@ dev = ["pre-commit", "tox"]
 testing = ["coverage", "pytest", "pytest-benchmark"]
 
 [[package]]
+name = "prediction-contracts"
+version = "0.1.0"
+description = "Shared Forward Prediction metadata and resource contracts"
+optional = false
+python-versions = ">=3.11,<3.15"
+groups = ["main"]
+files = []
+develop = true
+
+[package.source]
+type = "directory"
+url = "../../../shared/prediction_contracts"
+
+[[package]]
 name = "psutil"
 version = "7.2.2"
 description = "Cross-platform lib for process and system monitoring."
@@ -992,4 +1006,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "932b4b48f7eb75f719e81f59c5c17675677d3d1f2eb978b675f138b9c3094506"
+content-hash = "8a4dda5266bcaa6bc5da871cfbed8dd0e254fb346f1deebda65197a0a6e3266a"

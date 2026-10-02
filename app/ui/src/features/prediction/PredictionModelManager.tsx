@@ -173,7 +173,8 @@ export function ModelDetail({
   )
   const profile = revision.artifact?.profile as { rowCount?: number } | undefined
   const active = model.state === 'active'
-  const executable = model.direction === 'forward' && model.support_status !== 'retired'
+  const executable =
+    model.direction === 'forward' && revision.support_status !== 'retired' && revision.support_status !== 'unsupported'
   const useModel = () => {
     if (executable) onUse(setupUsingSavedModel(setup, model, revisionNumber, selectedRoute), 'forward')
   }
@@ -216,7 +217,8 @@ export function ModelDetail({
     <section className="space-y-3 rounded-lg border p-3" aria-label="모델 상세">
       {!executable && (
         <p role="status" className="text-sm">
-          Inverse 모델 · 지원 종료. 저장 파일의 백업·복원·관리는 계속 사용할 수 있습니다.
+          {model.direction === 'inverse' ? 'Inverse 모델 · 지원 종료.' : '지원하지 않는 알고리즘·버전입니다.'} 저장
+          파일의 백업·복원·관리는 계속 사용할 수 있습니다.
         </p>
       )}
       <div className="flex gap-2">

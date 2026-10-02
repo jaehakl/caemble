@@ -13,6 +13,8 @@ app/
   launcher/  per-user worker launcher
   slaves/    AI and CAE worker applications
   sdk/       worker protocol and JavaScript/Python master SDKs
+shared/
+  prediction_contracts/  Forward algorithm versions, capabilities, and resource requirements
 ```
 
 QuantityKind, Material, and Solver catalog data belongs only in

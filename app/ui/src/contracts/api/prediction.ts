@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { resourceRequestSchema } from './execution.ts'
 
 const id = z.string().uuid()
 // Migration 24 stored PostgreSQL UUID values without RFC version/variant bits.
@@ -6,6 +7,25 @@ const id = z.string().uuid()
 export const predictionLocationIdSchema = z.guid()
 const revision = z.number().int().nonnegative()
 const definition = z.object({ fingerprint: z.string().min(1) }).passthrough()
+export const predictionAlgorithmSchema = z.object({
+  kind: z.string().min(1),
+  implementationVersion: z.string().min(1),
+  preprocessingVersion: z.string().min(1),
+  directions: z.array(z.enum(['forward', 'inverse'])),
+  representations: z.array(z.string().min(1)),
+  supportsCheckpoints: z.boolean().optional(),
+  resources: z.object({ training: resourceRequestSchema, inference: resourceRequestSchema }),
+})
+export type PredictionAlgorithmDescriptor = z.infer<typeof predictionAlgorithmSchema>
+export const predictionTrainingSchema = z.object({
+  pinId: id,
+  sourceKind: z.enum(['local', 'api']),
+  resources: resourceRequestSchema,
+  jobId: id.nullable().optional(),
+  cleanupPending: z.boolean(),
+  grant: z.object({ operation_id: id, token: z.string().min(1), manifest_url: z.string().url() }),
+  progress: z.record(z.string(), z.unknown()).optional(),
+})
 export const predictionReplicaSchema = z.object({
   id: predictionLocationIdSchema,
   storage_id: predictionLocationIdSchema,
@@ -58,13 +78,14 @@ export const predictionDatasetSchema = z.object({
 export const predictionModelSchema = z.object({
   ...asset,
   direction: z.enum(['forward', 'inverse']),
-  support_status: z.enum(['supported', 'retired']).optional(),
+  support_status: z.enum(['supported', 'retired', 'unsupported']).optional(),
   algorithm: z.string().min(1),
   revisions: z.array(
     z.object({
       revision,
       operation_id: id,
       state: z.string(),
+      support_status: z.enum(['supported', 'retired', 'unsupported']).optional(),
       dataset_id: id,
       dataset_revision: revision,
       dataset_fingerprint: z.string(),
@@ -76,6 +97,7 @@ export const predictionModelSchema = z.object({
   ),
   reserved_revision: revision.optional(),
   operation_id: id.optional(),
+  training: predictionTrainingSchema.optional(),
 })
 export const predictionGrantSchema = z
   .object({
@@ -128,6 +150,7 @@ export const predictionOperationSchema = z.object({
   completed_at: z.string().nullable(),
   grant: predictionOperationGrantSchema.optional(),
   dataset_grant: predictionGrantSchema.optional(),
+  training: predictionTrainingSchema.optional(),
 })
 export type PredictionOperation = z.infer<typeof predictionOperationSchema>
 export type PredictionOperationGrant = z.infer<typeof predictionOperationGrantSchema>

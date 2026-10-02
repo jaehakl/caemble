@@ -81,27 +81,6 @@ export type PredictionSavedContract = Readonly<{
   records: Readonly<Record<number, string>>
 }>
 
-export type PredictionDatasetInput = Readonly<{
-  kind: 'dataset-revision'
-  direction: PredictionDirection
-  fingerprint: string
-  dataset: Readonly<{ datasetId: string; revision: number; fingerprint: string }> | Readonly<{ grant: unknown }>
-  model: Readonly<{ modelId: string; revision: number; operationId: string; name: string }>
-}>
-
-export type PredictionPreparationInput = PredictionDatasetInput
-
-export type PredictionModelDefinition = Readonly<{
-  fingerprint: string
-  snapshotFingerprint: string
-  algorithm: PredictionAlgorithm
-  implementationId: string
-  implementationVersion: string
-  preprocessingVersion: string
-  requiredRecordIds?: readonly number[]
-  contract?: PredictionSavedContract
-}>
-
 export type PredictionModelInstance = Readonly<{
   executionId: string
   sessionId: string
@@ -134,16 +113,9 @@ export interface PredictionExecution {
   readonly id: string
   readonly location: 'remote'
   readonly sessionId: string
-  readonly implementationVersion: string
-  readonly preprocessingVersion: string
-  readonly algorithms: readonly PredictionAlgorithm['kind'][]
+  readonly algorithms: readonly string[]
   readonly directions: readonly PredictionDirection[]
   readonly representations?: readonly string[]
-  prepare(
-    snapshot: PredictionPreparationInput,
-    definition: PredictionModelDefinition,
-    request: PredictionRequest,
-  ): Promise<PreparedPredictionModel>
   load(
     model: SavedPredictionModel,
     request: PredictionRequest,

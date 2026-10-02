@@ -14,15 +14,28 @@ from prediction.db import Dataset, DatasetRevision, ModelLease, ModelRevision, P
 
 async def model_view(db, row):
     from prediction.replicas import revision_replicas
+    from prediction_contracts import validate_definition
     revisions = (await db.scalars(select(ModelRevision).where(ModelRevision.model_id == row.id)
         .order_by(ModelRevision.revision.desc()))).all()
+    current = next((item for item in revisions if item.revision == row.current_revision), revisions[0] if revisions else None)
+    definition = current.definition if current is not None else {}
+    algorithm = definition.get("algorithm")
+    support_by_revision = {}
+    for revision in revisions:
+        support = "retired" if row.direction != "forward" else "supported"
+        if support == "supported":
+            try:
+                validate_definition(revision.definition)
+            except ValueError:
+                support = "unsupported"
+        support_by_revision[revision.revision] = support
     return {"id": row.id, "name": row.name, "experiment_id": row.experiment_id, "direction": row.direction,
-        "algorithm": next((item.definition.get("algorithm", {}).get("kind", "knn")
-            for item in revisions if item.revision == row.current_revision), "knn"),
-        "support_status": "supported" if row.direction == "forward" else "retired",
+        "algorithm": algorithm.get("kind", "unknown") if isinstance(algorithm, dict) else "unknown",
+        "support_status": support_by_revision.get(current.revision, "unsupported") if current else "unsupported",
         "state": row.state, "current_revision": row.current_revision,
         "delete_id": row.delete_id,
         "revisions": [{"revision": item.revision, "operation_id": item.request_id, "state": item.state,
+            "support_status": support_by_revision[item.revision],
             "dataset_id": item.dataset_id, "dataset_revision": item.dataset_revision,
             "dataset_fingerprint": item.dataset_fingerprint, "definition": item.definition,
             "source_contracts": item.source_contracts, "artifact": item.artifact,
@@ -39,6 +52,10 @@ async def list_models(db, user_id, experiment_id=None):
 
 
 async def reserve_model(db, body, user_id):
+    from gpstation.service.batches import serialize_events
+    from prediction_contracts import validate_definition
+    from prediction import training
+    await serialize_events(db)
     if body.direction != "forward":
         raise HTTPException(422, "Inverse Prediction is retired. Use Optimization for Inverse Design.")
     identity = str(body.model_id) if body.model_id else str(uuid5(IDENTITY_NAMESPACE, f"{user_id}/model/{body.request_id}"))
@@ -54,7 +71,10 @@ async def reserve_model(db, body, user_id):
         if previous is not None:
             if previous.request_hash != request_hash:
                 raise HTTPException(409, "Model operation ID was used with another definition.")
-            return {**await model_view(db, row), "reserved_revision": previous.revision, "operation_id": previous.request_id}
+            operation = await db.get(Operation, previous.request_id)
+            view = await training.operation_view(db, operation) if operation is not None else {}
+            return {**await model_view(db, row), "reserved_revision": previous.revision, "operation_id": previous.request_id,
+                **({"training": view["training"]} if "training" in view else {})}
         if body.expected_revision != row.current_revision or row.direction != body.direction:
             raise HTTPException(409, "Model changed or targets another direction. Reload before updating.")
     elif body.model_id:
@@ -69,13 +89,12 @@ async def reserve_model(db, body, user_id):
     if dataset_revision is None or (not server_payload and local_copy is None):
         raise HTTPException(409, "Restore the exact Dataset revision to the selected storage before preparing a model.")
     definition = body.definition
-    algorithm = definition.get("algorithm", {})
-    if (not isinstance(algorithm, dict) or algorithm.get("kind") != "knn"
-            or definition.get("direction", body.direction) != body.direction):
-        raise HTTPException(422, "Model definition must identify kNN and its requested direction.")
-    if (definition.get("calculationIds") or algorithm.get("calculationWeights")
-            or any(key in definition for key in ("targets", "constraints", "objectiveWeights"))):
-        raise HTTPException(422, "Forward models accept Vars and BoxGrid outputs, without Calculation objectives.")
+    try:
+        validate_definition(definition)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if definition.get("direction", body.direction) != body.direction:
+        raise HTTPException(422, "Model definition must identify its requested direction.")
     if definition.get("snapshotFingerprint", dataset_revision.fingerprint) != dataset_revision.fingerprint:
         raise HTTPException(409, "Model definition targets another Dataset fingerprint.")
     if row is None:
@@ -88,29 +107,38 @@ async def reserve_model(db, body, user_id):
     number = (await db.scalar(select(func.max(ModelRevision.revision)).where(ModelRevision.model_id == identity)) or 0) + 1
     await db.execute(update(ModelRevision).where(ModelRevision.model_id == identity,
         ModelRevision.state == "reserved").values(state="abandoned"))
-    await db.execute(update(Operation).where(Operation.asset_id == identity, Operation.kind == "prepare",
-        Operation.state.in_(["pending", "running", "interrupted"])).values(state="cancelled", stage="superseded",
-            error={"message": "A newer model preparation superseded this request."}, completed_at=utcnow()))
+    previous_operations = list((await db.scalars(select(Operation).where(Operation.asset_id == identity,
+        Operation.kind == "prepare", Operation.state.not_in(["completed", "cancelled"])))).all())
+    for previous_operation in previous_operations:
+        await training.cancel(db, previous_operation)
+        previous_operation.stage = "superseded"
     contracts = dataset_revision.summary.get("source_contracts")
     if contracts is None:
         contracts = source_contracts(dataset_revision.payload)
-    db.add(ModelRevision(model_id=identity, revision=number, request_id=str(body.request_id),
+    revision = ModelRevision(model_id=identity, revision=number, request_id=str(body.request_id),
         request_hash=request_hash, state="reserved", dataset_id=dataset.id, dataset_revision=body.dataset_revision,
         dataset_fingerprint=dataset_revision.fingerprint, definition=definition, source_contracts=contracts,
-        preparation={"storage_id": str(body.storage_id), "launcher_id": str(body.launcher_id)}))
-    db.add(Operation(id=str(body.request_id), request_id=str(body.request_id), request_hash=request_hash,
+        preparation={"storage_id": str(body.storage_id), "launcher_id": str(body.launcher_id)})
+    db.add(revision)
+    operation = Operation(id=str(body.request_id), request_id=str(body.request_id), request_hash=request_hash,
         user_id=user_id, kind="prepare", asset_kind="model", asset_id=identity, revision=number,
         experiment_id=dataset.experiment_id, state="pending", stage="preparing",
         expires_at=utcnow() + timedelta(minutes=15),
         details={"target_storage_id": str(body.storage_id), "target_launcher_id": str(body.launcher_id),
             "dataset_id": dataset.id, "dataset_revision": body.dataset_revision, "definition": definition,
-            "direction": body.direction, "name": body.name.strip()}))
+            "direction": body.direction, "name": body.name.strip()})
+    db.add(operation)
+    await db.flush()
+    await training.create_run(db, operation, revision, local_copy)
     row.name = body.name.strip()
     await db.commit()
-    return {**await model_view(db, row), "reserved_revision": number, "operation_id": str(body.request_id)}
+    for previous_operation in previous_operations:
+        await training.notify_cancel(db, previous_operation)
+    return {**await model_view(db, row), "reserved_revision": number, "operation_id": str(body.request_id),
+        "training": (await training.operation_view(db, operation))["training"]}
 
 
-async def complete_model(db, model_id, revision, body, user_id):
+async def complete_model(db, model_id, revision, body, user_id, *, commit=True, publish=True):
     row = await owned(db, PredictionModel, model_id, user_id)
     item = await db.get(ModelRevision, (row.id, revision))
     if item is None or item.request_id != str(body.request_id):
@@ -122,6 +150,8 @@ async def complete_model(db, model_id, revision, body, user_id):
         if item.artifact != artifact:
             raise HTTPException(409, "Saved model revision is immutable.")
         return await model_view(db, row)
+    if not publish:
+        raise HTTPException(410, "Model revisions are published only by their server-owned training job.")
     if row.direction != "forward":
         raise HTTPException(409, "Inverse Prediction preparation is retired. Existing saved files are retained.")
     if item.state != "reserved":
@@ -139,7 +169,8 @@ async def complete_model(db, model_id, revision, body, user_id):
         operation.completed_at = operation.updated_at = utcnow()
         operation.details = {**operation.details, "result_replicas": {"model": replica.id}}
     row.current_revision = revision
-    await db.commit()
+    if commit:
+        await db.commit()
     return await model_view(db, row)
 
 

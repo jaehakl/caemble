@@ -15,11 +15,11 @@ const algorithmSchema = z.object({
   weighting: z.enum(['uniform', 'distance']),
 })
 const setupSchema = z.object({
-  version: z.literal(3),
+  version: z.literal(4),
   owner: z.string(),
   experimentId: z.number().int().positive(),
   setup: z.object({
-    executionId: z.literal('remote-knn'),
+    executionId: z.literal('remote-predictor'),
     datasetId: z.string().uuid().optional(),
     recordIds: z.array(z.number().int().positive()),
     calculationIds: z.array(z.number().int().positive()),
@@ -50,20 +50,25 @@ const legacySchema = z.object({
     routes: z.object({ forward: predictionExecutionRouteSchema.optional() }).optional(),
   }),
 })
+const previousSetupSchema = setupSchema.extend({
+  version: z.literal(3),
+  setup: setupSchema.shape.setup.extend({ executionId: z.literal('remote-knn') }),
+})
 
 export function restorePredictionSetup(owner: string, experimentId: number): PredictionSetup | null {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(`caemble.prediction.setup:${owner}:${experimentId}`) ?? 'null')
     const legacy = legacySchema.safeParse(raw)
+    const previous = previousSetupSchema.safeParse(raw)
     const forward = legacy.success ? legacy.data.setup.models?.forward : undefined
     const value = setupSchema.parse(
       legacy.success
         ? {
             ...legacy.data,
-            version: 3,
+            version: 4,
             setup: {
               ...legacy.data.setup,
-              executionId: 'remote-knn',
+              executionId: 'remote-predictor',
               recordIds: Object.keys(forward?.contract.records ?? {}).map(Number),
               routes:
                 legacy.data.version === 1 && forward?.storageId && forward.launcherId
@@ -71,7 +76,9 @@ export function restorePredictionSetup(owner: string, experimentId: number): Pre
                   : legacy.data.setup.routes,
             },
           }
-        : raw,
+        : previous.success
+          ? { ...previous.data, version: 4, setup: { ...previous.data.setup, executionId: 'remote-predictor' } }
+          : raw,
     )
     if (value.owner !== owner || value.experimentId !== experimentId) return null
     if (
@@ -79,7 +86,7 @@ export function restorePredictionSetup(owner: string, experimentId: number): Pre
       value.setup.models.forward.contract.experimentId !== experimentId
     )
       return null
-    if (legacy.success) persistPredictionSetup(owner, experimentId, value.setup)
+    if (legacy.success || previous.success) persistPredictionSetup(owner, experimentId, value.setup)
     return value.setup
   } catch {
     return null
@@ -88,7 +95,7 @@ export function restorePredictionSetup(owner: string, experimentId: number): Pre
 
 export function persistPredictionSetup(owner: string, experimentId: number, setup: PredictionSetup) {
   try {
-    const value = setupSchema.parse({ version: 3, owner, experimentId, setup })
+    const value = setupSchema.parse({ version: 4, owner, experimentId, setup })
     localStorage.setItem(`caemble.prediction.setup:${owner}:${experimentId}`, JSON.stringify(value))
   } catch {
     /* Storage may be unavailable; persistence never blocks inference. */

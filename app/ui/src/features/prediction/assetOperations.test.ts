@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   createOperation: vi.fn(),
   operation: vi.fn(),
   retryOperation: vi.fn(),
+  preflightTraining: vi.fn(),
+  retryTraining: vi.fn(),
   interruptOperation: vi.fn(),
   completeOperation: vi.fn(),
   command: vi.fn(),
@@ -145,6 +147,47 @@ beforeEach(() => {
 })
 
 describe('Prediction management wire orchestration', () => {
+  it('pins a fresh retry attempt and keeps its request identity after a lost retry response', async () => {
+    const owner = await manager()
+    const failed = operation({
+      kind: 'prepare',
+      state: 'failed',
+      target_launcher_id: 'target',
+      target_storage_id: 'target-storage',
+    })
+    const preflight = {
+      ...failed,
+      state: 'pending',
+      training: {
+        pinId: 'fresh-pin',
+        sourceKind: 'api' as const,
+        resources: { gpu_count: 0 },
+        cleanupPending: false,
+        grant: { operation_id: failed.id, token: 'retry-pin', manifest_url: 'https://example.com/training' },
+      },
+    }
+    mocks.operation.mockResolvedValue(failed)
+    mocks.preflightTraining.mockResolvedValue(preflight)
+    mocks.command.mockResolvedValue({ pinId: 'fresh-pin', operationId: failed.id })
+    mocks.retryTraining
+      .mockRejectedValueOnce(new Error('reply lost'))
+      .mockResolvedValue({ ...preflight, state: 'queued' })
+    await retryPredictionAssetOperation(owner, failed)
+    expect(owner.getSnapshot().tasks[0].state).toBe('failed')
+    await owner.retryTask(owner.getSnapshot().tasks[0].id)
+    const requestId = mocks.preflightTraining.mock.calls[0][1].request_id
+    expect(mocks.preflightTraining).toHaveBeenNthCalledWith(2, failed.id, { request_id: requestId }, expect.anything())
+    expect(mocks.retryTraining).toHaveBeenNthCalledWith(
+      2,
+      failed.id,
+      { request_id: requestId, pin_id: 'fresh-pin' },
+      expect.anything(),
+    )
+    expect(mocks.command).toHaveBeenCalledWith('target', 'training.pin', { grant: preflight.training.grant })
+    expect(mocks.interruptOperation).not.toHaveBeenCalled()
+    expect(mocks.retryOperation).not.toHaveBeenCalled()
+    expect(owner.getSnapshot().tasks[0].state).toBe('waiting')
+  })
   it('rejects an unfinished legacy Inverse preparation without connecting or obtaining a new grant', async () => {
     const owner = await manager()
     mocks.operation.mockResolvedValue(

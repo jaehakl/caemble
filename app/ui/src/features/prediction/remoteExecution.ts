@@ -3,14 +3,11 @@ import { z } from 'zod'
 import { browserClient } from '@/api/http'
 import { describeResourceWait } from '@/features/runtime/resources'
 import { predictionApi } from '@/api/prediction'
-import { predictionGrantSchema } from '@/contracts/api/prediction'
 import {
   PredictionInstanceInvalidatedError,
   type PredictionExecution,
   type PredictionInput,
-  type PredictionModelDefinition,
   type PredictionModelInstance,
-  type PredictionPreparationInput,
   type PredictionRequest,
   type SavedPredictionModel,
   type PredictionExecutionRoute,
@@ -72,13 +69,23 @@ function withDeadline<T>(
 
 /** One wire call at a time. Aborting a caller does not break the SDK response/ACK exchange. */
 export class RemotePredictionExecution implements PredictionExecution {
-  readonly id = 'remote-knn'
+  readonly id = 'remote-predictor'
   readonly location = 'remote'
-  readonly implementationVersion = 'knn-v1'
-  readonly preprocessingVersion = 'box-relative-v2'
-  readonly algorithms = Object.freeze(['knn'] as const)
-  readonly directions = Object.freeze(['forward'] as const)
-  readonly representations = Object.freeze(['box-relative-v2'])
+  get algorithms() {
+    return this.helloValue?.algorithmDescriptors.map((item) => item.kind) ?? []
+  }
+  get directions() {
+    return [
+      ...new Set(
+        this.helloValue?.algorithmDescriptors.flatMap((item) =>
+          item.directions.filter((direction) => direction === 'forward'),
+        ) ?? [],
+      ),
+    ]
+  }
+  get representations() {
+    return [...new Set(this.helloValue?.algorithmDescriptors.flatMap((item) => item.representations) ?? [])]
+  }
   private readonly lifetime = new AbortController()
   private epoch = 0
   private readonly key = crypto.randomUUID()
@@ -103,6 +110,9 @@ export class RemotePredictionExecution implements PredictionExecution {
       transport?: PredictionTransport
       idleMs?: number
       storageId?: string
+      algorithm?: string
+      modelId?: string
+      modelRevision?: number
       onState?: (state: RemotePredictionState, message?: string) => void
       onWarning?: (message: string) => void
       onHello?: (hello: RemoteHello, signal?: AbortSignal) => Promise<void>
@@ -136,14 +146,30 @@ export class RemotePredictionExecution implements PredictionExecution {
             }, 2_000)
         }
         try {
+          const algorithms = await predictionApi.algorithms({ signal })
+          let kind = this.options.algorithm
+          if (!kind) {
+            const model = (await predictionApi.models(undefined, { signal })).find(
+              (item) => item.id === this.options.modelId,
+            )
+            const stored = model?.revisions.find((item) => item.revision === this.options.modelRevision)?.definition
+              .algorithm as { kind?: unknown } | undefined
+            if (typeof stored?.kind === 'string') kind = stored.kind
+          }
+          const algorithm = algorithms.find((item) => item.kind === kind)
+          if (!algorithm?.directions.includes('forward'))
+            throw new RemotePredictionError(
+              'unsupported-execution',
+              '선택한 모델의 Forward 알고리즘을 지원하지 않습니다.',
+            )
           return await client.runJob(
             'predictor.hello',
-            { protocolVersion: 2, requestId },
+            { protocolVersion: 3, requestId },
             {
               slaveAppId: 'predictor',
               targetLauncherId: launcherId,
               autoFinish: false,
-              resources: { gpu_count: 0 },
+              resources: algorithm.resources.inference,
               timeoutMs: 60_000,
               signal,
               onJobCreated: (job) => {
@@ -243,9 +269,7 @@ export class RemotePredictionExecution implements PredictionExecution {
       const hello = remoteHelloSchema.parse(parseRemoteEnvelope(result.payload, requestId))
       if (
         hello.launcherId !== this.launcherId ||
-        (this.options.storageId !== undefined && hello.storageId !== this.options.storageId) ||
-        hello.implementationVersion !== this.implementationVersion ||
-        hello.preprocessingVersion !== this.preprocessingVersion
+        (this.options.storageId !== undefined && hello.storageId !== this.options.storageId)
       )
         throw new RemotePredictionError('unsupported-execution', 'Predictor 장비 또는 구현 버전이 요청과 다릅니다.')
       this.helloValue = hello
@@ -278,10 +302,7 @@ export class RemotePredictionExecution implements PredictionExecution {
     const timeoutMs =
       type === 'artifact.backup' || type === 'artifact.restore'
         ? 1_800_000
-        : type.startsWith('artifact.') ||
-            type === 'model.prepare' ||
-            type === 'dataset.import' ||
-            type === 'dataset.sync'
+        : type.startsWith('artifact.') || type === 'dataset.import' || type === 'dataset.sync'
           ? 600_000
           : 60_000
     const response = await withDeadline(
@@ -290,7 +311,7 @@ export class RemotePredictionExecution implements PredictionExecution {
       () =>
         session.call(
           type,
-          { ...body, protocolVersion: 2, requestId, sessionId },
+          { ...body, protocolVersion: 3, requestId, sessionId },
           {
             timeoutMs,
           },
@@ -427,6 +448,18 @@ export class RemotePredictionExecution implements PredictionExecution {
       throw new RemotePredictionError('model-mismatch', 'Inverse 모델은 지원이 종료되어 실행할 수 없습니다.')
     const wire = remotePreparedSchema.parse(value)
     const artifact = wire.artifact
+    const algorithm = this.helloValue?.algorithmDescriptors.find((item) => item.kind === artifact.algorithm)
+    if (
+      !algorithm?.directions.includes('forward') ||
+      (artifact.definition.implementationVersion !== undefined &&
+        artifact.definition.implementationVersion !== algorithm.implementationVersion) ||
+      (artifact.definition.preprocessingVersion !== undefined &&
+        artifact.definition.preprocessingVersion !== algorithm.preprocessingVersion)
+    )
+      throw new RemotePredictionError(
+        'unsupported-execution',
+        '이 Predictor가 저장 모델의 알고리즘·버전을 지원하지 않습니다.',
+      )
     if (
       wire.instance.sessionId !== this.helloValue?.sessionId ||
       artifact.storageId !== this.helloValue.storageId ||
@@ -535,63 +568,6 @@ export class RemotePredictionExecution implements PredictionExecution {
       )
     )
       await this.lease(modelId, revision, session, true, route)
-  }
-
-  prepare(input: PredictionPreparationInput, definition: PredictionModelDefinition, request: PredictionRequest) {
-    if (input.kind !== 'dataset-revision' || input.direction !== 'forward')
-      return Promise.reject(new Error('원격 Prediction은 Forward Dataset revision 참조가 필요합니다.'))
-    return this.enqueue(
-      request,
-      async (session) => {
-        const grant = 'grant' in input.dataset ? predictionGrantSchema.parse(input.dataset.grant) : null
-        const dataset =
-          'datasetId' in input.dataset
-            ? input.dataset
-            : {
-                datasetId: grant!.dataset_id,
-                revision: grant!.revision,
-                fingerprint: grant!.fingerprint,
-              }
-        await this.lease(input.model.modelId, input.model.revision, session)
-        try {
-          const wire = this.checkedPrepared(
-            await this.rpc(
-              session,
-              'model.prepare',
-              {
-                dataset: input.dataset,
-                direction: input.direction,
-                definition,
-                model: input.model,
-              },
-              request.requestId,
-            ),
-            {
-              modelId: input.model.modelId,
-              modelRevision: input.model.revision,
-              datasetId: dataset.datasetId,
-              datasetRevision: dataset.revision,
-              direction: input.direction,
-              fingerprint: definition.fingerprint,
-            },
-          )
-          if (
-            wire.artifact.operationId !== input.model.operationId ||
-            wire.artifact.datasetFingerprint !== dataset.fingerprint ||
-            wire.artifact.datasetFingerprint !== definition.snapshotFingerprint
-          )
-            throw new RemotePredictionError('model-mismatch', '준비한 모델이 요청한 Dataset 또는 작업과 다릅니다.')
-          return this.ownPrepared(wire)
-        } catch (error) {
-          await this.releaseRejectedLease(input.model.modelId, input.model.revision, session, error)
-          throw error
-        }
-      },
-      false,
-      (late) => {
-        void this.release(late.instance).catch(() => undefined)
-      },
-    )
   }
 
   load(reference: SavedPredictionModel, request: PredictionRequest, route?: PredictionExecutionRoute) {

@@ -6,8 +6,10 @@ import threading
 from pathlib import Path
 from typing import Protocol
 
+from prediction_contracts import algorithm_descriptor, validate_definition
+
 from .errors import PredictionError
-from .forward import IMPLEMENTATION_VERSION, PREPROCESSING_VERSION, KnnForwardModel
+from .forward import KnnForwardModel
 from .storage import ArtifactStore
 
 
@@ -20,16 +22,22 @@ class ForwardModel(Protocol):
 
     def profile(self) -> dict: ...
     def record_profiles(self) -> list[dict]: ...
+    def preparation_details(self) -> dict: ...
     def predict(self, values: dict, cancel=None) -> dict: ...
     def write(self, path: Path, cancel=None) -> None: ...
 
 
+IMPLEMENTATIONS = {"knn": KnnForwardModel}
+
+
 def implementation_for(definition: dict):
-    if (definition.get("algorithm", {}).get("kind") != "knn"
-            or definition.get("implementationVersion") != IMPLEMENTATION_VERSION
-            or definition.get("preprocessingVersion") != PREPROCESSING_VERSION):
-        raise PredictionError("unsupported-model", "Model implementation or preprocessing version is not supported.")
-    return KnnForwardModel
+    try:
+        descriptor = algorithm_descriptor(definition)
+        if any(definition.get(key) != descriptor[key] for key in ("implementationVersion", "preprocessingVersion")):
+            raise ValueError("Model implementation or preprocessing version is not supported.")
+        return IMPLEMENTATIONS[descriptor["kind"]]
+    except (ValueError, KeyError, TypeError) as error:
+        raise PredictionError("unsupported-model", "Model implementation or preprocessing version is not supported.") from error
 
 
 class ModelBundle:
@@ -40,20 +48,24 @@ class ModelBundle:
 
     @classmethod
     def prepare(cls, dataset: dict, direction: str, definition: dict, model_ref: dict,
-                memory_budget: int, cancel: threading.Event | None = None) -> "ModelBundle":
+                memory_budget: int, cancel: threading.Event | None = None, progress=None) -> "ModelBundle":
         if direction != "forward" or definition.get("direction", "forward") != "forward":
             raise PredictionError("unsupported-model", "Inverse Prediction is retired. Use Optimization for inverse design.")
+        try:
+            validate_definition(definition)
+        except ValueError as error:
+            raise PredictionError("unsupported-model", str(error)) from error
+        if definition.get("snapshotFingerprint") != dataset["fingerprint"]:
+            raise PredictionError("dataset-checksum", "Model definition references a different Dataset fingerprint.")
         implementation = implementation_for(definition)
-        return cls(implementation.prepare(dataset, definition, model_ref, memory_budget, cancel))
+        return cls(implementation.prepare(dataset, definition, model_ref, memory_budget, cancel, progress))
 
     def profile(self) -> dict:
         return self.implementation.profile()
 
     def prepared(self, instance: dict, artifact: dict) -> dict:
         return {"fingerprint": self.metadata["definition"]["fingerprint"], "instance": instance,
-                "profile": self.profile(), "errors": self.metadata["errors"],
-                "recordProfiles": self.implementation.record_profiles(),
-                "rules": [rule for group in self.metadata["groups"] for rule in group["rules"]], "artifact": artifact}
+                "profile": self.profile(), **self.implementation.preparation_details(), "artifact": artifact}
 
     def predict(self, query: dict, cancel=None) -> dict:
         if query.get("direction") != "forward":

@@ -28,8 +28,10 @@ def grant_response(row, item, claims):
         "token": token, "expires_at": claims["exp"]}
 
 
-async def create_grant(db, identity, revision, user_id):
-    row = await owned(db, Dataset, identity, user_id)
+async def create_grant(db, identity, revision, user_id, *, pinned=False, commit=True):
+    row = await owned(db, Dataset, identity, user_id, active=not pinned)
+    if row.state not in {"active", "deleting"}:
+        raise HTTPException(410, "Dataset was deleted.")
     item = await db.get(DatasetRevision, (row.id, revision))
     if row.source_kind != "server" or row.current_revision != revision or item is None or item.payload is None:
         raise HTTPException(410, "Dataset payload is local, retired, or deleted.")
@@ -43,7 +45,8 @@ async def create_grant(db, identity, revision, user_id):
     claims = {"typ": "prediction_dataset", "sub": user_id, "dataset": row.id, "revision": revision,
         "fingerprint": item.fingerprint, "iat": issued, "renewal_exp": issued + RENEWAL_SECONDS,
         "exp": expires, "jti": grant_id}
-    await db.commit()
+    if commit:
+        await db.commit()
     return grant_response(row, item, claims)
 
 

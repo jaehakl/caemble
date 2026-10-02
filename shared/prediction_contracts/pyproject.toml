@@ -1,0 +1,14 @@
+[project]
+name = "prediction-contracts"
+version = "0.1.0"
+description = "Shared Forward Prediction metadata and resource contracts"
+requires-python = ">=3.11,<3.15"
+dependencies = []
+
+[tool.poetry]
+packages = [{ include = "prediction_contracts", from = ".." }]
+exclude = ["**/__pycache__/**", "pyproject.toml", "poetry.lock"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

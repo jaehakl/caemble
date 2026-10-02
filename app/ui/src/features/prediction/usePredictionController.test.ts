@@ -21,7 +21,7 @@ it('shares an in-flight load and cached instance across Candidate transactions',
   expect(await second).toBe(model)
   expect(await runtime.loadModel(reference, runtime.beginTransaction())).toBe(model)
   expect(remote.load).toHaveBeenCalledTimes(1)
-  expect(remote.prepare).not.toHaveBeenCalled()
+  expect(remote).not.toHaveProperty('prepare')
   expect(remote.release).not.toHaveBeenCalled()
   runtime.dispose()
 })
@@ -85,7 +85,7 @@ it('releases RAM without preparing or deleting saved files', async () => {
   await runtime.releaseLoadedModels()
   expect(remote.release).toHaveBeenCalledExactlyOnceWith(model.instance)
   expect(runtime.cachedModel()).toBeNull()
-  expect(remote.prepare).not.toHaveBeenCalled()
+  expect(remote).not.toHaveProperty('prepare')
   runtime.dispose()
 })
 

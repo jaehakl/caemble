@@ -170,7 +170,7 @@ it('opens directly and predicts BoxGrid with zero Calculations; Save & Run remai
     ),
   )
   expect(mocks.records).toHaveBeenCalledWith(['heat.T'])
-  expect(remote.prepare).not.toHaveBeenCalled()
+  expect(remote).not.toHaveProperty('prepare')
   expect(mocks.calculate).not.toHaveBeenCalled()
   expect(mocks.chrome).toHaveBeenLastCalledWith(expect.objectContaining({ canValidate: true }))
   fireEvent.click(screen.getByRole('button', { name: 'Save & Run test' }))
@@ -325,6 +325,7 @@ it('automatically retries a failed Candidate when a different accessible Launche
   } as unknown as PredictionAssetsSnapshot
   remote.predict.mockRejectedValueOnce(new Error('old route failed'))
   render(view())
+  const previousSelection = (mocks.assets as { currentSelectionKey: string }).currentSelectionKey
   await waitFor(() => expect(screen.getAllByText('old route failed').length).toBeGreaterThan(0))
   const replacement = remoteFixture()
   mocks.remote = replacement
@@ -332,6 +333,7 @@ it('automatically retries a failed Candidate when a different accessible Launche
     target: { value: `${nextStorage}:${nextLauncher}` },
   })
   await waitFor(() => expect(replacement.predict).toHaveBeenCalledOnce())
-  expect(replacement.prepare).not.toHaveBeenCalled()
+  expect((mocks.assets as { currentSelectionKey: string }).currentSelectionKey).not.toBe(previousSelection)
+  expect(replacement).not.toHaveProperty('prepare')
   expect(remote.dispose).toHaveBeenCalledOnce()
 })

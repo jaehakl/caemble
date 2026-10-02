@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import control
-from app.slave_registry import SlaveApp, SlaveAppRegistry, load_manifest
+from app.slave_registry import SlaveApp, SlaveAppRegistry, load_manifest, load_registry
 from test_worker_modes import make_manager, offer
 
 
@@ -98,3 +98,33 @@ def test_readiness_reports_node_error_without_repeating_it_on_every_probe(tmp_pa
     assert registry.ready_ids() == []
     assert registry.ready_ids() == []
     assert capsys.readouterr().out.count("Node executable unavailable") == 1
+
+
+def test_shared_environment_entrypoints_keep_independent_modes_and_readiness(tmp_path, monkeypatch):
+    project = tmp_path / "predictor"
+    project.mkdir()
+    manifest = {"id": "predictor", "module": "app", "entrypoints": [
+        {"id": "predictor-training", "module": "app.training", "job_mode": "websocket",
+         "readiness_args": ["-c", "raise SystemExit(1)"]}]}
+    (project / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(SlaveApp, "python_executable", property(lambda _: Path(sys.executable)))
+    registry = load_registry(tmp_path)
+    inference, training = registry.require("predictor"), registry.require("predictor-training")
+    assert inference.project_dir == training.project_dir == project
+    assert inference.python_executable == training.python_executable
+    assert inference.job_mode == "webrtc" and training.job_mode == "websocket"
+    assert registry.worker_subprocess_args(training.id)[1:] == ["-m", "app.training", "--worker"]
+    assert registry.ready_ids() == ["predictor"]
+
+
+@pytest.mark.parametrize("entry", [
+    {"id": "predictor", "module": "app.training", "job_mode": "websocket"},
+    {"id": "training", "module": "app.training"},
+    {"id": "training", "module": "app.training", "job_mode": "unknown"},
+])
+def test_entrypoint_ids_and_modes_are_explicit_and_unique(tmp_path, entry):
+    project = tmp_path / "predictor"
+    project.mkdir()
+    (project / "manifest.json").write_text(json.dumps({"id": "predictor", "module": "app", "entrypoints": [entry]}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_registry(tmp_path)

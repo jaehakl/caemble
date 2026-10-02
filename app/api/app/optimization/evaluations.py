@@ -1,6 +1,7 @@
 """Evaluation identity, compatibility projections and strict physical Solver budgets."""
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from prediction_contracts import validate_definition
 
 from gpstation.db import Job
 from gpstation.service.batches import SERVER_ACTIVE_STATES
@@ -83,9 +84,12 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
     replica = await db.get(Replica, str(request.replica_id))
     if model is None or model.user_id != user_id or model.experiment_id != experiment.id:
         raise HTTPException(404, "Owned model for this Experiment not found.")
-    if (model.state != "active" or model.direction != "forward" or revision is None or revision.state != "ready"
-            or revision.definition.get("algorithm", {}).get("kind") != "knn"):
-        raise HTTPException(409, "Hybrid requires the exact saved, ready forward kNN revision.")
+    if model.state != "active" or model.direction != "forward" or revision is None or revision.state != "ready":
+        raise HTTPException(409, "Hybrid requires the exact saved, ready Forward revision.")
+    try:
+        validate_definition(revision.definition)
+    except ValueError as error:
+        raise HTTPException(409, "The saved Forward model implementation is not supported.") from error
     checksum = (revision.artifact or {}).get("manifest_sha256")
     if (not checksum or replica is None or replica.model_id != model.id or replica.revision != request.model_revision
             or replica.state != "present" or replica.manifest_sha256 != checksum):
@@ -100,7 +104,7 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
             predicted = records.get(record["name"])
             if predicted is None or predicted.get("data_schema") != record["data_schema"]:
                 raise HTTPException(422, "The model must predict compatible Records for every objective and constraint.")
-    resources = await validate_hybrid_capacity(db, str(request.launcher_id), user_id)
+    resources = await validate_hybrid_capacity(db, str(request.launcher_id), user_id, revision.definition)
     return {**request.model_dump(mode="json"), "storage_id": replica.storage_id, "checksum": checksum,
         "dataset_id": revision.dataset_id, "dataset_revision": revision.dataset_revision,
         "dataset_fingerprint": revision.dataset_fingerprint, "model_definition": revision.definition,

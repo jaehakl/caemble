@@ -8,10 +8,15 @@ Commands and component-relative paths in this document are relative to `app/slav
 - `cae`: trusted-payload CAE simulation and Solver implementations.
 - `evaluation`: Node Measurement builds and Calculation for saved Optimizations.
 - `tts`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
-- `predictor`: CPU kNN Prediction, local Dataset copies and persistent model artifacts over WebRTC.
+- `predictor`: Forward Prediction, local Dataset copies and persistent model artifacts.
+  One environment provides WebRTC inference/management and the `predictor-training`
+  WebSocket executable for independent training Jobs. The current algorithm is CPU kNN.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.
+An optional `entrypoints` array declares additional executable IDs with explicit
+`module` and `job_mode`, sharing that manifest's directory and Python environment.
+Each entrypoint has independent readiness and startup settings; IDs must be unique.
 
 ## Install and run
 
@@ -83,7 +88,7 @@ are unavailable and start automatically after earlier instances finish cleanup.
 ## Predictor datasets and saved models
 
 Install `predictor` with `poetry install` in its own directory, then restart the
-launcher. It uses CPU NumPy and the existing WebRTC SDK; it does not require a GPU,
+launcher. It uses CPU NumPy and the existing WebRTC/WebSocket SDK; it does not require a GPU,
 the AI application, or a separate signaling service. In Prediction, select a saved
 Forward model revision and then its replica and launcher. Calculation is optional.
 Legacy Inverse assets remain available for management and backup/restore but cannot
@@ -103,6 +108,25 @@ verifies their lengths and SHA-256 checksums. It retains the latest Dataset payl
 Saved models are self-contained, so replacing or deleting a Dataset does not alter
 an existing model. Saving publishes a revision only after all artifact files and
 its manifest are complete. Local persistence alone does not create a backup.
+
+Accepted training belongs to a server Job, so closing a panel or browser does not
+cancel it. Use the model manager's explicit cancel action. A selected Dataset is
+locked against sync and file removal while training is queued, running or awaiting
+process cleanup. A deletion request can remain pending until then.
+CPU/GPU reservations and Dataset pins are released only after
+cleanup. A worker or server interruption requires explicit retry; checkpoints and
+automatic training resume are not implemented. If complete model files already
+exist, retry verifies and registers them without training or needing the Dataset.
+Otherwise retry requires the exact original Dataset revision and configuration.
+Pre-submission pins left by a disconnected browser are reconciled against API
+state on subsequent management access, never released solely by a local timeout.
+
+Training and inference use separate algorithm resource profiles through the
+existing Launcher ledger. Hybrid pins inference requirements with the model
+revision and checks room for both Evaluation and Predictor. Upgrade the API, UI,
+Launcher, Predictor and Evaluation together for Prediction protocol v3, including
+API migration `000000000026`. Existing
+artifact/archive v1 files and their checksums are preserved.
 
 The API identifies a Dataset or model independently of its storage locations.
 Local stores and object backups are replicas of an immutable revision; each local
@@ -188,8 +212,8 @@ independently of Vars and optional Calculation selection.
 
 Management jobs have a separate lifetime from inference and from the management
 panel. Closing the panel does not cancel a preparation, backup or restore. Transfer
-jobs request one CPU and 256 MiB startup RAM; model preparation uses the normal
-Predictor allocation. Backup and restore allow up to 30 minutes per RPC, while file
+jobs request one CPU and 256 MiB startup RAM; independent training uses its algorithm's
+training requirements and the Launcher's training defaults. Backup and restore allow up to 30 minutes per RPC, while file
 verification and removal allow up to 10 minutes. Resource admission still applies.
 After interruption, inspect the persisted operation and retry the same operation;
 completed transfers and registrations are reused. The UI switches a model selection
@@ -215,11 +239,20 @@ poetry run python -m pytest tests/test_webrtc_browser.py tests/test_predictor_br
 
 These tests substitute HTTP scheduling only. They verify binary transfers, new
 process identity after restart, cancellation, disconnect and confirmed resource
-cleanup. The Predictor test prepares Forward artifacts, backs up the
+cleanup. The Predictor test loads saved Forward fixtures, backs up the
 model, removes the source store, and restores into a different storage identity.
 A fresh third Predictor process loads the restored files and checks unchanged
 manifest checksums, provenance and predictions. They do not claim production
 signaling or NAT traversal verification.
+
+The independent training entrypoint also has a real process acceptance test. It
+uses a loopback HTTP Dataset grant and WebSocket server, trains without an inference
+session or browser, and verifies progress, saved artifacts and process/resource cleanup:
+
+```powershell
+$env:RUN_PREDICTOR_PROCESS_TESTS = '1'
+poetry run python -m pytest tests/test_predictor_training.py -q
+```
 
 ## Launcher resource policy
 

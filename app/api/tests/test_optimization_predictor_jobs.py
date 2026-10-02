@@ -17,6 +17,7 @@ import websockets
 import test_prediction_assets as fixtures
 from gpstation.db import Job, JobBatch, Launcher
 from gpstation.models import JobCreateRequest
+from sdk.protocol.execution import ResourceRequest
 from gpstation.service.state import utcnow
 from gpstation.service import worker_connection
 from gpstation.service.execution import execution_identity
@@ -40,6 +41,9 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
     async def seed(self):
         self.parent_id, self.attempt_id, self.model_id, self.replica_id = (str(uuid4()) for _ in range(4))
         self.authorization = "Bearer parent-worker-token"
+        self.model_definition = {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1", "preprocessingVersion": "box-relative-v2"}
+        self.resources = {"evaluation": {"cpu_cores": 1, "startup_ram_bytes": 100, "gpu_count": 0, "gpu_memory_bytes": 0},
+                          "predictor": {"cpu_cores": 1, "startup_ram_bytes": 200, "gpu_count": 0, "gpu_memory_bytes": 0}}
         self.body = JobCreateRequest(handler_type="predictor.hello", slave_app_id="predictor", offer={"type": "offer", "sdp": "fixture"})
         async with self.sessions() as db:
             launcher = await db.get(Launcher, self.launcher_id)
@@ -52,7 +56,7 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([dataset, model])
             await db.flush()
             db.add(ModelRevision(model_id=model.id, revision=1, request_id=str(uuid4()), request_hash="h", state="ready",
-                dataset_id=dataset.id, dataset_revision=1, dataset_fingerprint="f", definition={}, source_contracts={}, artifact={"manifest_sha256": "a" * 64}))
+                dataset_id=dataset.id, dataset_revision=1, dataset_fingerprint="f", definition=self.model_definition, source_contracts={}, artifact={"manifest_sha256": "a" * 64}))
             await db.flush()
             db.add(Replica(id=self.replica_id, model_id=model.id, revision=1, storage_id=self.storage_id,
                 state="present", manifest_sha256="a" * 64))
@@ -65,7 +69,7 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
                 artifact_metadata={"optimization_id": self.optimization_id},
                 worker_token_hash=hashlib.sha256(b"parent-worker-token").hexdigest(), input={"stage": "predict", "hybrid": {
                     "model_id": model.id, "revision": 1, "checksum": "a" * 64, "replica_id": self.replica_id,
-                    "storage_id": self.storage_id, "launcher_id": self.launcher_id}}))
+                    "storage_id": self.storage_id, "launcher_id": self.launcher_id, "resources": self.resources}}))
             await db.commit()
 
     async def create(self, db):
@@ -112,8 +116,23 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
             for change in ({"cpu_total": 1}, {"ram_budget_bytes": 250}):
                 launcher.resources = {**original, **change}
                 with self.assertRaises(HTTPException) as capacity:
-                    await predictor_jobs.validate_hybrid_capacity(db, self.launcher_id, self.owner)
+                    await predictor_jobs.validate_hybrid_capacity(db, self.launcher_id, self.owner, self.model_definition)
                 self.assertEqual(capacity.exception.status_code, 422)
+
+    async def test_child_uses_frozen_profile_after_defaults_or_client_request_change(self):
+        await self.seed()
+        async with self.sessions() as db:
+            pinned = {"cpu_cores": 3, "startup_ram_bytes": 500, "gpu_count": 1, "gpu_memory_bytes": 400}
+            parent = await db.get(Job, self.parent_id)
+            parent.input = {**parent.input, "hybrid": {**parent.input["hybrid"],
+                "resources": {**self.resources, "predictor": pinned}}}
+            launcher = await db.get(Launcher, self.launcher_id)
+            launcher.resources = {**launcher.resources, "defaults": {"predictor": {"cpu_cores": 8, "gpu_count": 0}}}
+            await db.commit()
+            body = self.body.model_copy(update={"resources": ResourceRequest(cpu_cores=1, gpu_count=0)})
+            response = await predictor_jobs.create_child(self.parent_id, self.attempt_id, body, self.authorization, db)
+            child = await db.get(Job, response["job"].id)
+            self.assertEqual(child.resources, pinned)
 
     async def test_parent_end_cancels_child_but_lease_waits_for_process_cleanup(self):
         await self.seed()
@@ -127,12 +146,12 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
             await predictor_jobs.reconcile_children(db)
             self.assertIsNotNone(child.cancel_requested_at)
             self.assertIsNotNone(await db.get(ModelLease, (self.model_id, 1, child.id)))
-            self.assertFalse(await predictor_jobs.predictor_parent_available(db, self.launcher_id))
+            self.assertFalse(await predictor_jobs.predictor_parent_available(db, self.launcher_id, self.resources))
             child.state, child.cleaned_at = "killed", utcnow()
             await db.commit()
             await predictor_jobs.reconcile_children(db)
             self.assertIsNone(await db.get(ModelLease, (self.model_id, 1, child.id)))
-            self.assertTrue(await predictor_jobs.predictor_parent_available(db, self.launcher_id))
+            self.assertTrue(await predictor_jobs.predictor_parent_available(db, self.launcher_id, self.resources))
 
     async def test_queued_child_cancel_releases_lease_without_a_process_receipt(self):
         await self.seed()
@@ -145,7 +164,7 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
             child = await db.get(Job, response["job"].id)
             self.assertEqual(child.state, "killed")
             self.assertIsNone(await db.get(ModelLease, (self.model_id, 1, child.id)))
-            self.assertTrue(await predictor_jobs.predictor_parent_available(db, self.launcher_id))
+            self.assertTrue(await predictor_jobs.predictor_parent_available(db, self.launcher_id, self.resources))
 
     async def test_resource_wait_code_crosses_worker_transport_before_terminal_commit(self):
         await self.seed()

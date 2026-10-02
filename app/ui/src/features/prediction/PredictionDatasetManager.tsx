@@ -24,6 +24,13 @@ export function PredictionDatasetManager({
   const [preview, setPreview] = useState<string | null>(null)
   const selectionVersion = useRef(0)
   const dataset = state.datasets.find((item) => item.id === datasetId)
+  const trainingUsesDataset = state.operations.some(
+    (operation) =>
+      operation.kind === 'prepare' &&
+      operation.details.dataset_id === datasetId &&
+      (operation.training?.cleanupPending ||
+        !['completed', 'succeeded', 'failed', 'interrupted', 'cancelled', 'superseded'].includes(operation.state)),
+  )
   const input =
     context && sourceHash && varsSchema
       ? { context, sourceHash, varsSchema, rules, resultContracts, setup, name: dataset?.name ?? '', dataset }
@@ -122,7 +129,7 @@ export function PredictionDatasetManager({
               type="button"
               size="sm"
               variant="outline"
-              disabled={!input || dataset.state !== 'active'}
+              disabled={!input || dataset.state !== 'active' || trainingUsesDataset}
               onClick={() => {
                 const requestId = crypto.randomUUID()
                 const selection = selectionVersion.current
@@ -148,6 +155,11 @@ export function PredictionDatasetManager({
               학습 데이터 갱신
             </Button>
           </div>
+          {trainingUsesDataset && (
+            <p role="status" className="text-xs text-muted-foreground">
+              모델 학습에서 사용 중입니다. 학습과 프로세스 정리가 끝난 뒤 갱신·삭제할 수 있습니다.
+            </p>
+          )}
           {preview && (
             <p role="status" className="text-sm">
               {preview}
@@ -191,6 +203,7 @@ export function PredictionDatasetManager({
                           type="button"
                           size="sm"
                           variant="outline"
+                          disabled={trainingUsesDataset}
                           onClick={() => {
                             if (
                               window.confirm(
@@ -223,6 +236,7 @@ export function PredictionDatasetManager({
               type="button"
               variant="destructive"
               size="sm"
+              disabled={trainingUsesDataset}
               onClick={() => {
                 if (window.confirm(`${dataset.name}의 모든 원본과 백업·복원본을 삭제할까요? 저장 모델은 유지됩니다.`))
                   void startPredictionAssetOperation(manager, {

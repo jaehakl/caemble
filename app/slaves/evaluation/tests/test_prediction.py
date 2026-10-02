@@ -21,6 +21,7 @@ class Client:
     def __init__(self, *, failure=None):
         self.failure = failure
         self.requests = []
+        self.job_requests = []
         self.session = SimpleNamespace(call=self.call, finish=AsyncMock(), close=AsyncMock())
         self.kill_job = AsyncMock()
 
@@ -31,15 +32,16 @@ class Client:
         return None
 
     async def run_job(self, action, payload, **kwargs):
+        self.job_requests.append((action, payload, kwargs))
         kwargs["on_job_created"](SimpleNamespace(id="child-job"))
         if self.failure == "connect":
             raise TimeoutError("No room for Predictor")
-        return SimpleNamespace(session=self.session, payload={"protocolVersion": 2, "sessionId": "session",
+        return SimpleNamespace(session=self.session, payload={"protocolVersion": 3, "sessionId": "session",
             "storageId": "storage", "launcherId": "launcher"})
 
     async def call(self, action, payload, **kwargs):
         self.requests.append((action, payload))
-        response = {"protocolVersion": 2, "sessionId": "session"}
+        response = {"protocolVersion": 3, "sessionId": "session"}
         if action == "model.load":
             if self.failure == "missing":
                 response["error"] = {"code": "missing-model", "message": "Pinned model is absent"}
@@ -63,7 +65,8 @@ def setup(monkeypatch, client, count=2):
     monkeypatch.setattr(prediction, "run_node", node)
     upload = AsyncMock(return_value={"kind": "caemble.object", "id": "artifact"})
     monkeypatch.setattr(prediction, "upload_object", upload)
-    message = {"hybrid": {"model_id": "model", "revision": 2, "checksum": "checksum", "storage_id": "storage", "launcher_id": "launcher"},
+    message = {"hybrid": {"model_id": "model", "revision": 2, "checksum": "checksum", "storage_id": "storage", "launcher_id": "launcher",
+                          "resources": {"predictor": {"cpu_cores": 2, "gpu_count": 1, "gpu_memory_bytes": 1024}}},
         "record_names": ["current"], "candidates": [{"candidate_id": str(index), "evaluation_id": f"evaluation-{index}", "build": {"vars": {"x": index}}} for index in range(count)]}
     context = SimpleNamespace(job_id="parent", assignment={"token": "only-parent-token", "attempt_id": "attempt",
         "websocket_url": "wss://example.invalid/api/v1/jobs/parent/stream"})
@@ -78,6 +81,8 @@ async def test_prediction_keeps_model_session_and_persists_retry_inputs(monkeypa
     assert result["provenance"] == {"model_id": "model", "revision": 2, "checksum": "checksum"}
     assert [action for action, _ in client.requests] == ["model.load", "model.predict_batch", "model.predict_batch", "model.release"]
     assert client.requests[0][1]["manifestChecksum"] == "checksum"
+    assert client.job_requests[0][1]["protocolVersion"] == 3
+    assert client.job_requests[0][2]["resources"] == message["hybrid"]["resources"]["predictor"]
     assert upload.await_count == 33
     assert b'"candidate_box_grids"' in upload.await_args.args[1]
     assert all("token" not in str(call.args) for call in node.await_args_list)

@@ -124,9 +124,11 @@ export function PredictionWorkspace({
 
   const reference = setup.models?.forward
   const route = setup.routes?.forward
-  const routeKey = predictionFingerprint([route, queryScope])
   const selectedModel = assetState.models.find((model) => model.id === reference?.modelId)
   const selectedRevision = selectedModel?.revisions.find((revision) => revision.revision === reference?.modelRevision)
+  const storedAlgorithm = selectedRevision?.definition.algorithm as { kind?: unknown } | undefined
+  const algorithm = typeof storedAlgorithm?.kind === 'string' ? storedAlgorithm.kind : undefined
+  const routeKey = predictionFingerprint([route, queryScope, reference?.modelId, reference?.modelRevision])
   const routes = selectedModel ? modelExecutionRoutes(selectedModel, reference!.modelRevision, assetState.storages) : []
   const selectedRoute = routes.find(
     (value) => value.storageId === route?.storageId && value.launcherId === route.launcherId,
@@ -135,8 +137,16 @@ export function PredictionWorkspace({
     (model) =>
       model.direction === 'forward' &&
       model.state === 'active' &&
-      model.revisions.some((revision) => revision.state === 'ready'),
+      model.revisions.some(
+        (revision) =>
+          revision.state === 'ready' &&
+          revision.support_status !== 'unsupported' &&
+          revision.support_status !== 'retired',
+      ),
   )
+  useLayoutEffect(() => {
+    assets.currentSelectionKey = crypto.randomUUID()
+  }, [assets, reference, route, setup.recordIds])
   const document = workbench.experimentDocument
   const candidateVars = workbench.candidateVars
   const candidateFingerprint = varsFingerprint(candidateVars)
@@ -202,6 +212,8 @@ export function PredictionWorkspace({
   else if (contextError) unavailable = contextError
   else if (!contextReady) unavailable = 'Experiment 출력 계약을 불러오는 중입니다.'
   else if (!reference) unavailable = '모델을 선택하거나 데이터·모델 관리에서 만드세요.'
+  else if (selectedRevision?.support_status === 'unsupported' || selectedRevision?.support_status === 'retired')
+    unavailable = '이 모델 버전의 알고리즘은 현재 지원하지 않습니다.'
   else if (!route) unavailable = '접근 가능한 모델 복사본을 가진 Launcher를 선택하세요.'
   else if (deletedRoute === routeKey) unavailable = '선택한 복사본을 해제했습니다. 다른 복사본을 선택하거나 복원하세요.'
   else if (selectedRoute && !selectedRoute.connected) unavailable = 'Launcher 연결 끊김'
@@ -346,6 +358,9 @@ export function PredictionWorkspace({
       create: () =>
         new RemotePredictionExecution(route.launcherId, {
           storageId: route.storageId,
+          algorithm,
+          modelId: reference?.modelId,
+          modelRevision: reference?.modelRevision,
           onState: (state, message) => {
             setRemoteState(state)
             setRemoteMessage(message ?? null)
@@ -355,7 +370,7 @@ export function PredictionWorkspace({
         }),
     }
     runtime.setExecution(binding)
-  }, [authenticated, onActivity, route, routeKey, runtime])
+  }, [authenticated, onActivity, route, routeKey, runtime, algorithm, reference?.modelId, reference?.modelRevision])
 
   useLayoutEffect(() => {
     runtime.invalidateTransaction()
@@ -637,7 +652,10 @@ export function PredictionWorkspace({
               return
             }
             const revision = model.revisions
-              .filter((item) => item.state === 'ready')
+              .filter(
+                (item) =>
+                  item.state === 'ready' && item.support_status !== 'unsupported' && item.support_status !== 'retired',
+              )
               .reduce((latest, item) => Math.max(latest, item.revision), 0)
             applySetup(
               setupUsingSavedModel(setup, model, revision, preferredModelRoute(model, revision, assetState.storages)),
@@ -661,7 +679,7 @@ export function PredictionWorkspace({
           typeof selectedRevision.definition.algorithm === 'object' &&
           'kind' in selectedRevision.definition.algorithm
             ? String(selectedRevision.definition.algorithm.kind)
-            : 'kNN'}{' '}
+            : '알고리즘 확인 중'}{' '}
           · revision {reference.modelRevision}
         </p>
       ) : null}

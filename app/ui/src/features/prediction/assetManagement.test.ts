@@ -61,6 +61,36 @@ beforeEach(() => {
 })
 
 describe('Prediction asset task ownership', () => {
+  it('does not interrupt server training when its submission response is lost', async () => {
+    const manager = new PredictionAssetController('owner', 12)
+    await manager.run('training:a', '학습', async (work) => {
+      work.operation({ ...operation('pending'), kind: 'prepare' })
+      throw new Error('response lost')
+    })
+    expect(mocks.interruptOperation).not.toHaveBeenCalled()
+    expect(mocks.cancelOperation).not.toHaveBeenCalled()
+    expect(manager.getSnapshot().tasks[0].state).toBe('failed')
+  })
+
+  it('disconnects observation without cancelling an accepted training Job', async () => {
+    const manager = new PredictionAssetController('owner', 12)
+    const submitted = {
+      ...operation('queued'),
+      kind: 'prepare',
+      training: { jobId: 'server-training' },
+    } as PredictionOperation
+    mocks.operations.mockResolvedValue([submitted])
+    await manager.run('training:a', '학습', async (work) => {
+      await work.connect('launcher')
+      work.operation(submitted)
+    })
+    await manager.disconnectOwner()
+    expect(mocks.cancelOperation).not.toHaveBeenCalled()
+    expect(mocks.cancelJob).not.toHaveBeenCalledWith('server-training')
+    expect(manager.getSnapshot().operations[0].state).toBe('queued')
+    await manager.cancelOperation('operation')
+    expect(mocks.cancelOperation).toHaveBeenCalledWith('operation')
+  })
   it('shares account tasks across views but keeps Experiment lists and selection tokens independent', async () => {
     const account = predictionAssetView('account-view-test', 'all')
     const first = predictionAssetView('account-view-test', 12)

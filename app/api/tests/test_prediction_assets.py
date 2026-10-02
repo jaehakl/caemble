@@ -193,7 +193,8 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
     def model_request(self, dataset, **changes):
         return ModelReserve(**{"request_id": str(uuid4()), "name": "Forward model", "direction": "forward",
             "dataset_id": dataset["id"], "dataset_revision": dataset["current_revision"],
-            "definition": {"algorithm": {"kind": "knn"}}, "storage_id": self.storage_id,
+            "definition": {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1",
+                "preprocessingVersion": "box-relative-v2"}, "storage_id": self.storage_id,
             "launcher_id": self.launcher_id, **changes})
 
     def completion(self, operation_id, **changes):
@@ -403,7 +404,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             replay = await complete_model(db, stored.id, 1, completion, self.owner)
             self.assertEqual(replay["support_status"], "retired")
-            self.assertEqual(replay["revisions"], finished["revisions"])
+            self.assertEqual(replay["revisions"], [{**item, "support_status": "retired"} for item in finished["revisions"]])
             self.assertEqual((await list_models(db, self.owner))["items"][0]["id"], stored.id)
             with self.assertRaises(HTTPException) as denied:
                 await reserve_model(db, self.model_request(dataset, model_id=stored.id, expected_revision=1), self.owner)

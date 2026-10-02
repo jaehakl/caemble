@@ -1111,6 +1111,20 @@ tests = ["coverage (>=7.4.2)", "defusedxml", "markdown2", "olefile", "packaging"
 xmp = ["defusedxml"]
 
 [[package]]
+name = "prediction-contracts"
+version = "0.1.0"
+description = "Shared Forward Prediction metadata and resource contracts"
+optional = false
+python-versions = ">=3.11,<3.15"
+groups = ["main"]
+files = []
+develop = true
+
+[package.source]
+type = "directory"
+url = "../../shared/prediction_contracts"
+
+[[package]]
 name = "psutil"
 version = "7.2.2"
 description = "Cross-platform lib for process and system monitoring."
@@ -1699,4 +1713,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "e206b3e09a9b9d1aaefd0987082e7a9a92bb978a34ff35634878b8716027f817"
+content-hash = "7ec7c481d5c60e5e0295232c5a80fc2a0317a6989e63fd5699516f174f980f1f"
