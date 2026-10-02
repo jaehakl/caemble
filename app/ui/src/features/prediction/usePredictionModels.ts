@@ -23,6 +23,7 @@ import { calculationOutputContract } from './metrics'
 import type { PredictionContext, SavedPredictionCalculation } from './predictionContextData'
 import { buildForwardModel, predictForwardRecorded } from './forwardModel'
 import type { PredictionRuntimeController } from './predictionRuntime'
+import { defaultKnnAlgorithm } from '@caemble/execution/prediction/modelDefinition'
 
 export type { PredictionContext, SavedPredictionCalculation } from './predictionContextData'
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
@@ -41,7 +42,7 @@ export const defaultPredictionSetup: PredictionSetup = Object.freeze({
   executionId: 'remote-predictor',
   recordIds: Object.freeze([]),
   calculationIds: Object.freeze([]),
-  algorithm: Object.freeze({ kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' }),
+  algorithm: defaultKnnAlgorithm,
 })
 
 /** Only the immutable model and selected outputs change prediction meaning. */

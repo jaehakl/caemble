@@ -66,6 +66,9 @@ class JobReserve(ExecutionMessage):
     slave_app_id: str
     job_mode: Literal["webrtc", "websocket"] = "webrtc"
     resources: ResourceRequest = Field(default_factory=ResourceRequest)
+    # Server-owned jobs can persist a complete request, including absent VRAM
+    # meaning a whole device. Retry must not inherit changed Launcher defaults.
+    resources_resolved: bool = Field(default=False, strict=True)
 
 
 class JobReserved(ExecutionMessage):

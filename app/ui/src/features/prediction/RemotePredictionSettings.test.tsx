@@ -9,6 +9,7 @@ import type {
   PredictionStorage,
 } from '@/contracts/api/prediction'
 import { defaultPredictionQualityValidation } from '@/contracts/api/prediction'
+import { defaultMlpAlgorithm } from '@caemble/execution/prediction/modelDefinition'
 import type { PredictionContext } from './predictionContextData'
 import type { PredictionSetup } from './usePredictionModels'
 import { RemotePredictionSettings } from './RemotePredictionSettings'
@@ -273,6 +274,23 @@ it('offers quality validation explicitly for new models and preserves the previo
   expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).toBeChecked()
   fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
   expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).not.toBeChecked()
+})
+
+it('restores the saved MLP recipe when using a model or preparing its next revision', async () => {
+  const saved = model('forward')
+  const algorithm = { ...defaultMlpAlgorithm, hiddenLayers: [16, 8], epochs: 900, seed: 12 }
+  saved.revisions[0].definition.algorithm = algorithm
+  expect(setupUsingSavedModel(setup(), saved, 1, { storageId, launcherId }).algorithm).toEqual(algorithm)
+  mocks.models.mockResolvedValue([saved])
+  const view = await show()
+  fireEvent.click(screen.getByRole('button', { name: /forward saved/ }))
+  fireEvent.click(screen.getByRole('button', { name: '새 버전 만들기' }))
+  expect(view.onChange).toHaveBeenCalledWith(expect.objectContaining({ algorithm }))
+  view.rerender(<RemotePredictionSettings {...view.props} setup={{ ...setup(), algorithm }} />)
+  expect(screen.getByLabelText('새 모델 알고리즘')).toHaveValue('mlp')
+  expect(screen.getByLabelText('MLP 은닉층 1 너비')).toHaveValue(16)
+  expect(screen.getByLabelText('MLP 학습 반복 횟수')).toHaveValue(900)
+  expect(screen.getByLabelText('MLP 난수 시드')).toHaveValue(12)
 })
 
 beforeEach(() => {

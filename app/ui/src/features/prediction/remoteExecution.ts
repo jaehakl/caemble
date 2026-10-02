@@ -146,7 +146,7 @@ export class RemotePredictionExecution implements PredictionExecution {
             }, 2_000)
         }
         try {
-          const algorithms = await predictionApi.algorithms({ signal })
+          const algorithms = await predictionApi.algorithms({ signal }, launcherId)
           let kind = this.options.algorithm
           if (!kind) {
             const model = (await predictionApi.models(undefined, { signal })).find(

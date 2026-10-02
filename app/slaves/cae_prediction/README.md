@@ -1,8 +1,39 @@
 # Predictor slave
 
 This project provides separate launcher executables for durable Forward training and model inference.
-The first algorithm remains CPU NumPy kNN. Dataset files and
+Algorithms are CPU NumPy kNN and PyTorch MLP (`mlp-v1`). Dataset files and
 model artifacts live outside process memory. Releasing a model handle never deletes files.
+
+## MLP execution and artifacts
+
+MLP implements Forward, ordinary rebuild and native batch prediction using the same
+`box-relative-v2` layouts and immutable revision lifecycle as kNN. Selected outputs
+must be real, non-modal BoxGrid Records. One network learns all selected outputs from
+the same complete, contract-compatible Measurement cohort; missing and incompatible
+Measurements appear in the shared cohort diagnostics. Complex and modal contracts are
+rejected explicitly.
+
+Defaults are `hiddenLayers: [32, 32]`, `epochs: 500`, `batchSize: 32`,
+`learningRate: 0.001`, `seed: 0`, with Tanh and Adam. Vars flatten in sorted schema
+order and normalize using fixed schema bounds. Output mean and deviation use only
+training Measurements; a held-out quality partition is never used for normalization
+or fitting. Constant output cells restore the exact saved float64 value.
+
+The API requests one GPU by default. Only the effective Launcher setting
+`gpu_count=0` selects CPU; unavailable or busy GPUs and CUDA errors never trigger CPU
+fallback. Managed allocation, visibility and the SDK's `configure_torch` thread policy
+apply before computation. RAM/VRAM estimates include weights, Adam state, gradients,
+minibatches and activations. CUDA's allocator is capped at the assigned VRAM budget.
+Cancellation is checked between minibatches; close is idempotent and releases owned
+device tensors. Standalone numerical fixtures may omit an allocation and run on CPU.
+
+`model.json` stores the definition, architecture, input/output layouts, units,
+Dataset identity and revision, normalization contract, training Measurement IDs,
+cohort diagnostics and loss. Named NumPy arrays contain weights, biases and scaling
+vectors; no pickle or Torch object serialization is used. Load and inert archive
+verification check the exact file inventory, checksums, shape, dtype, finite values
+and schema normalization. The same artifact loads on CPU and CUDA without the source
+Dataset. Torch is imported only for MLP execution, so management and kNN remain lazy.
 
 ## Protocol v3
 
@@ -270,8 +301,10 @@ No model is automatically converted or deleted. Inverse design belongs to Optimi
 
 `models.py` manages immutable model artifacts and selects a Forward implementation.
 `forward.py` owns kNN preparation, prediction, numerical file loading and archive validation;
+`mlp.py` owns the corresponding MLP boundaries, Torch execution and portable weight arrays.
 `representations.py` owns Vars flattening and checked BoxGrid decoding, including polar-to-Cartesian
-conversion. kNN still owns cohort selection, modal grouping, nearest-only selection and weighting.
+conversion. MLP reuses the complete-cohort selection primitive; modal grouping,
+nearest-only selection and distance weighting remain kNN-specific.
 `runtime.py` manages remote sessions and handles. Shared algorithm/version/resource descriptors
 live in the NumPy-free `shared/prediction_contracts` package. A future algorithm implements the same
 Vars-to-BoxGrid boundary without changing Dataset or process lifecycle management.

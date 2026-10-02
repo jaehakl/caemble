@@ -1,6 +1,6 @@
 # 원격 Prediction으로 BoxGrid 예측하기
 
-**Prediction**은 Candidate의 Vars를 원격 저장 모델에 넣어 하나 이상의 BoxGrid를 예측합니다. 현재는 CPU kNN 모델을 사용합니다. Calculation은 예측 결과에 적용하는 선택적 후처리이며, 선택하거나 실행하지 않아도 BoxGrid를 확인할 수 있습니다. 목표값·제약조건으로 설계 변수를 찾는 작업은 Optimization의 역할입니다.
+**Prediction**은 Candidate의 Vars를 원격 저장 모델에 넣어 하나 이상의 BoxGrid를 예측합니다. CPU kNN과 딥러닝 MLP 모델을 사용할 수 있습니다. Calculation은 예측 결과에 적용하는 선택적 후처리이며, 선택하거나 실행하지 않아도 BoxGrid를 확인할 수 있습니다. 목표값·제약조건으로 설계 변수를 찾는 작업은 Optimization의 역할입니다.
 
 ## 예측을 처음 사용한다면
 
@@ -44,17 +44,27 @@ Calculation을 바꾸면 현재 예측 결과로 후처리만 다시 실행합�
 
 Box의 위치·크기·회전과 공간축 좌표는 표본마다 달라도 됩니다. 기존 Box 내부 상대 셀 대응을 사용하며 새로운 좌표 보간이나 단위 변환은 하지 않습니다. 지원하지 않는 차이는 Record별 사유로 표시합니다. Dataset revision과 checksum 검증은 파일 무결성 검사이며 표본 간 좌표 일치 조건이 아닙니다.
 
-모달 출력은 같은 Task의 장과 고유주파수를 하나의 최근접 Measurement에서 함께 가져오며 고유벡터를 평균하지 않습니다. 복소수는 진폭·위상을 실수부·허수부로 변환하여 계산한 뒤 복원합니다. 진폭이 0이면 위상도 0입니다.
+kNN의 모달 출력은 같은 Task의 장과 고유주파수를 하나의 최근접 Measurement에서 함께 가져오며 고유벡터를 평균하지 않습니다. 복소수는 진폭·위상을 실수부·허수부로 변환하여 계산한 뒤 복원합니다. 진폭이 0이면 위상도 0입니다.
 
 **Auto k**는 학습 행 수 `n`의 `round(sqrt(n))`을 1~15와 해당 묶음 크기 안으로 제한합니다. **Manual k**는 묶음 크기 안의 양의 정수입니다. **Distance**는 가까운 이웃에 큰 가중치를 주고 **Uniform**은 같은 비중을 줍니다. Vars 거리는 varsSchema 범위로 정규화합니다. Predictor는 배정된 CPU·RAM 안에서 준비 가능 여부를 검사합니다.
 
 Console의 **Prediction**과 모델 세부 정보에서 포함·제외된 표본, 출력 오류와 모델 출처를 확인하세요.
 
+### 딥러닝 MLP
+
+새 모델을 만들 때 **MLP**를 선택하면 Vars에서 선택한 실수형·비모달 BoxGrid 전체를 예측하는 신경망을 학습합니다. 선택한 출력이 모두 있고 계약이 일치하는 공통 표본 묶음을 사용합니다. 복소수와 모달 출력은 지원하지 않습니다.
+
+기본 설정은 은닉층 `32, 32`, 학습 횟수 `500`, 배치 크기 `32`, 학습률 `0.001`, 시드 `0`입니다. 고급 설정에서 조정할 수 있으며 Tanh 활성함수와 Adam optimizer를 사용합니다. 입력은 Vars schema 범위로 정규화하고 출력 정규화는 학습 표본에서만 계산합니다. 정규화와 출력 단위는 저장 모델에 고정됩니다. 같은 시드라도 CPU와 GPU에서 학습한 가중치가 완전히 같지는 않을 수 있습니다.
+
+MLP 학습과 추론은 GPU를 기본으로 사용합니다. Launcher의 전역·앱별·작업별 설정을 합친 `gpu_count`가 `0`일 때만 CPU로 실행합니다. GPU가 사용 중이면 자원 반환을 기다리며, CUDA 오류가 발생하면 실패 사유를 표시합니다. GPU에서 학습한 모델도 CPU로 설정된 Launcher에서 재학습 없이 사용할 수 있습니다. 자세한 설정은 [Launcher 자원 정책](../../operations/workers.md#launcher-resource-policy)을 참고하세요.
+
+현재 MLP는 새 revision을 처음부터 학습하는 `rebuild`를 지원합니다. 이전 가중치 추가 학습, checkpoint 재개, 자동 모델 교체는 제공하지 않습니다.
+
 ## 원격 Dataset과 저장 모델
 
 **데이터·모델 관리**에는 모델, 학습 데이터와 관리 작업을 모았습니다. 저장 모델이 있으면 모델 생성 절차를 반복하지 않고 바로 선택할 수 있습니다. Launcher가 연결되지 않아도 API에 등록된 자산 목록은 확인할 수 있습니다.
 
-새 모델은 예측할 Record와 학습 Dataset revision, kNN 설정, 학습 장비를 선택해 만듭니다. 새 Forward Dataset은 Measurement·RecordedData를 사용하며 CalculationData를 요구하지 않습니다. 큰 서버 데이터는 학습 프로세스가 제한된 읽기 권한으로 직접 내려받습니다.
+새 모델은 예측할 Record와 학습 Dataset revision, 알고리즘 설정, 학습 장비를 선택해 만듭니다. 새 Forward Dataset은 Measurement·RecordedData를 사용하며 CalculationData를 요구하지 않습니다. 큰 서버 데이터는 학습 프로세스가 제한된 읽기 권한으로 직접 내려받습니다.
 
 ### 미학습 설계점으로 품질 평가
 

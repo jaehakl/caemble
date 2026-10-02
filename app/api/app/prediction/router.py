@@ -20,9 +20,20 @@ authenticated = require_roles(["admin", "user"])
 
 
 @router.get("/algorithms")
-async def algorithms(user: UserData = Depends(authenticated)):
+async def algorithms(launcher_id: UUID | None = None, db: AsyncSession = Depends(get_db),
+                     user: UserData = Depends(authenticated)):
+    from gpstation.db import Launcher
+    from prediction.resources import resolve_resources
     from prediction_contracts import ALGORITHMS, algorithm_descriptor
-    return {"items": [algorithm_descriptor(kind) for kind in ALGORITHMS]}
+    launcher = await db.get(Launcher, str(launcher_id)) if launcher_id is not None else None
+    if launcher_id is not None and (launcher is None or launcher.user_id != user.id):
+        raise HTTPException(404, "Predictor Launcher not found.")
+    items = [algorithm_descriptor(kind) for kind in ALGORITHMS]
+    if launcher is not None:
+        for item in items:
+            item["resources"] = {purpose: resolve_resources(item["kind"], purpose, launcher.resources or {})
+                                 for purpose in ("training", "inference")}
+    return {"items": items}
 
 
 @router.get("/datasets")

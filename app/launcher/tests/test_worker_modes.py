@@ -34,6 +34,19 @@ def offer(manager, index, app="cae"):
 
 
 @pytest.mark.asyncio
+async def test_server_resolved_reservation_rejects_incomplete_request_without_inheriting(tmp_path):
+    manager = make_manager(tmp_path)
+    value = {**offer(manager, 1), "resources_resolved": True}
+    await manager.reserve_job(value)
+    assert manager.send_control.call_args.args[0]["reason"] == "invalid_resources"
+    assert not manager.instances
+    value["resources"] = {"cpu_cores": 1, "startup_ram_bytes": GIB, "gpu_count": 0}
+    await manager.reserve_job(value)
+    assert manager.instances[value["instance_id"]].allocation["cpu_cores"] == 1
+    await manager.stop_all("test done")
+
+
+@pytest.mark.asyncio
 async def test_atomic_parallel_reservations_and_cleanup_admit_next(tmp_path):
     manager = make_manager(tmp_path)
     offers = [offer(manager, i) for i in range(4)]

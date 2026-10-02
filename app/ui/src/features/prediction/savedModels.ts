@@ -1,7 +1,8 @@
 import type { PredictionContext } from './predictionContextData'
 import type { VarsSchemaEntry } from '@caemble/execution/cad/model'
 import type { PredictionSavedContract, SavedPredictionModel } from './execution'
-import { predictionFingerprint } from './data'
+import { savedContractFromSource } from '@caemble/execution/prediction/modelDefinition'
+export { savedContractFromSource } from '@caemble/execution/prediction/modelDefinition'
 import { z } from 'zod'
 
 export const savedPredictionReferenceSchema = z.object({
@@ -21,21 +22,6 @@ export const savedPredictionReferenceSchema = z.object({
     records: z.record(z.string(), z.string()),
   }),
 })
-
-const sourceContractsSchema = z.object({
-  experimentId: z.number().int().positive(),
-  varsSchema: z.record(z.string(), z.unknown()),
-  records: z.array(z.object({ id: z.number(), contract_hash: z.string() })),
-})
-
-export function savedContractFromSource(source: unknown): PredictionSavedContract {
-  const parsed = sourceContractsSchema.parse(source)
-  return {
-    experimentId: parsed.experimentId,
-    varsSchemaFingerprint: predictionFingerprint([parsed.varsSchema]),
-    records: Object.fromEntries(parsed.records.map((record) => [record.id, record.contract_hash])),
-  }
-}
 
 export function savedPredictionContract(
   context: PredictionContext,

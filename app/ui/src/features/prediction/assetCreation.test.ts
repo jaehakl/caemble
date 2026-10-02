@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto'
+import { defaultMlpAlgorithm } from '@caemble/execution/prediction/modelDefinition'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PredictionDatasetRecord, PredictionModelRecord, PredictionOperation } from '@/contracts/api/prediction'
 import { defaultPredictionQualityValidation } from '@/contracts/api/prediction'
@@ -217,6 +218,33 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('independent Prediction training submission', () => {
+  it('submits MLP with its frozen recipe through the existing durable training lifecycle', async () => {
+    const { manager, remote } = harness()
+    remote.hello.algorithmDescriptors.push({
+      kind: 'mlp',
+      implementationVersion: 'mlp-v1',
+      preprocessingVersion: 'box-relative-v2',
+      directions: ['forward'],
+    })
+    await createPredictionModel(manager, {
+      ...input,
+      setup: { ...input.setup, algorithm: defaultMlpAlgorithm },
+      dataset: historical,
+      datasetRevision: 3,
+    })
+    expect(mocks.reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.objectContaining({
+          algorithm: defaultMlpAlgorithm,
+          implementationVersion: 'mlp-v1',
+          requiredRecordIds: [10],
+        }),
+      }),
+      expect.anything(),
+    )
+    expect(mocks.submitTraining).toHaveBeenCalledTimes(1)
+    expect(remote.command).toHaveBeenCalledWith('training.pin', expect.anything(), expect.anything())
+  })
   it('freezes opt-in quality splitting in the model fingerprint and keeps default training unchanged', async () => {
     const { manager } = harness()
     await createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3 })

@@ -66,6 +66,7 @@ class ModelReserve(RequestModel):
     direction: Literal["forward"] = "forward"
     dataset_id: UUID
     dataset_revision: int = Field(ge=1)
+    dataset_source: Literal["auto", "api"] = "auto"
     definition: dict[str, Any]
     storage_id: UUID
     launcher_id: UUID

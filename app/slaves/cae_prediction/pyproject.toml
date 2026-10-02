@@ -3,7 +3,7 @@ name = "caemble-predictor-slave"
 version = "0.1.0"
 description = "Persistent Forward model training and inference worker"
 requires-python = ">=3.11,<3.15"
-dependencies = ["caemble-runtime-sdk[slave,server-slave]", "prediction-contracts", "numpy>=1.26,<3"]
+dependencies = ["caemble-runtime-sdk[slave,server-slave]", "prediction-contracts", "numpy>=1.26,<3", "torch==2.13.0+cu126"]
 
 [tool.poetry]
 packages = [{ include = "app" }]
@@ -11,6 +11,12 @@ packages = [{ include = "app" }]
 [tool.poetry.dependencies]
 caemble-runtime-sdk = { path = "../../../shared/sdk", develop = true, extras = ["slave", "server-slave"] }
 prediction-contracts = { path = "../../../shared/prediction_contracts", develop = true }
+torch = { source = "pytorch-cu126" }
+
+[[tool.poetry.source]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+priority = "explicit"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8,<10"

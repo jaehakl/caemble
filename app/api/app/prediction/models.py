@@ -102,7 +102,10 @@ async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, f
     identity = str(body.model_id) if body.model_id else str(uuid5(IDENTITY_NAMESPACE, f"{user_id}/model/{body.request_id}"))
     await lock_identity(db, identity)
     row = await db.get(PredictionModel, identity)
-    request_hash = digest(body.model_dump(mode="json"))
+    request_payload = body.model_dump(mode="json")
+    if body.dataset_source == "auto":
+        request_payload.pop("dataset_source")  # Preserve receipts from before explicit API-source selection.
+    request_hash = digest(request_payload)
     if row is not None:
         row = await owned(db, PredictionModel, identity, user_id)
         if row.direction != "forward":
@@ -128,9 +131,9 @@ async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, f
         Replica.revision == body.dataset_revision, Replica.storage_id == str(body.storage_id),
         Replica.state.in_(["present", "unverified"])))
     server_payload = dataset_revision is not None and dataset.source_kind == "server" and dataset_revision.payload is not None
-    if force_api_source:
+    if force_api_source or body.dataset_source == "api":
         if not server_payload:
-            raise HTTPException(409, "Online updates require their retained server Dataset snapshot.")
+            raise HTTPException(409, "API-source training requires the exact retained server Dataset snapshot.")
         local_copy = None
     if dataset_revision is None or (not server_payload and local_copy is None):
         raise HTTPException(409, "Restore the exact Dataset revision to the selected storage before preparing a model.")

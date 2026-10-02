@@ -19,6 +19,7 @@ import { optimizationCommand } from './optimization'
 import { calculationCommand } from './calculation'
 import { dataCommand } from './data'
 import { datasetCommand } from './prediction'
+import { predictionTrainingCommand } from './predictionTraining'
 import {
   getAuthoringGuide,
   listAuthoringGuides,
@@ -49,6 +50,8 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   measurement inspect <id> | data inspect|slice|export <resource> <id> [--offset N --count N]
   data export --result <local-result> --out <empty-directory>
   dataset export <id> [--revision N] --out <empty-directory> | validate <directory>
+  prediction train --config <training.json> [--request-id UUID]
+  prediction status <operation-id> | watch <operation-id> [--timeout seconds] | cancel <operation-id>
   agent guide|context solver|experiment|calculation [--source <dir> --measurement <id>]
   reference search <query> | show <id> | export --out <dir>
   docs search <query> | show <document-id|scenario>
@@ -206,6 +209,7 @@ async function main() {
       result = await calculationCommand(group, command, context)
     else if (group === 'measurement' || group === 'data') result = await dataCommand(group, command, context)
     else if (group === 'dataset') result = await datasetCommand(command, context)
+    else if (group === 'prediction') result = await predictionTrainingCommand(command, context)
     else if (group === 'catalog') {
       await verifyPython(environment)
       result =

@@ -35,6 +35,16 @@ def test_full_device_default_and_live_measurement_guards():
         assert resource_fits({"gpu_count": 0}, value, "cae")
 
 
+def test_resolved_whole_device_request_does_not_inherit_new_partial_budget():
+    value = report(reserved=18)
+    value["defaults"] = {"predictor-training": {"vram_budget_gb": 2}}
+    request = {"cpu_cores": 1, "startup_ram_bytes": 100, "gpu_count": 1}
+    assert resource_fits(request, value, "predictor-training")
+    assert not resource_fits(request, value, "predictor-training", resolved=True)
+    assert resource_fits({**request, "vram_budget_gb": 2}, value, "predictor-training", resolved=True)
+    assert not resource_fits({"gpu_count": 1}, value, "predictor-training", resolved=True)
+
+
 def test_old_telemetry_cannot_admit_budgeted_gpu_requests():
     value = report(reserved=0)
     del value["gpu_devices"][0]["vram_reserved_bytes"]

@@ -27,9 +27,11 @@ BROWSER_RUNNER = APP_ROOT.parent / "shared/sdk/master/js/tests/webrtc-browser.mj
 
 
 class WebRtcHarness:
-    def __init__(self, slave: SlaveApp, directory: Path, scenario: str, *, extra_request=None):
+    def __init__(self, slave: SlaveApp, directory: Path, scenario: str, *, extra_request=None,
+                 resource_policy: ResourcePolicy | None = None):
         self.slave, self.directory, self.scenario = slave, directory, scenario
         self.extra_request = extra_request
+        self.resource_policy = resource_policy
         self.jobs: dict[str, dict] = {}
         self.events: list[dict] = []
         self.owner_id, self.launcher_id = str(uuid4()), str(uuid4())
@@ -70,15 +72,18 @@ class WebRtcHarness:
         self.url = f"http://127.0.0.1:{self.http.server_address[1]}"
         self.thread = Thread(target=self.http.serve_forever, daemon=True)
         self.thread.start()
-        policy = ResourcePolicy(gpu_count=0, cpu_cores=1, ram_budget_gb=8, ram_growth_headroom_bytes=GIB,
+        policy = self.resource_policy or ResourcePolicy(gpu_count=0, cpu_cores=1, ram_budget_gb=8, ram_growth_headroom_bytes=GIB,
                                 system_ram_headroom_bytes=GIB)
-        ledger = ResourceLedger(policy, cpu_ids=psutil.Process().cpu_affinity()[:1], total_ram=16 * GIB)
-        ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
+        ledger = ResourceLedger(policy, cpu_ids=psutil.Process().cpu_affinity()[:policy.cpu_cores or 1], total_ram=16 * GIB)
+        if self.resource_policy is None:
+            ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
         settings = LauncherSettings(_env_file=None, api_url=self.url, access_token="fixture",
             rtc_ice_servers_json="[]", rtc_memory_cache_enabled="false", worker_ready_timeout_seconds=30,
             predictor_storage_root=self.directory / "storage")
         self.manager = WorkerManager(settings, self.worker_message, SlaveAppRegistry([self.slave]), ledger=ledger)
         self.manager.launcher_id, self.manager.owner_id = self.launcher_id, self.owner_id
+        if self.resource_policy is not None:
+            await self.manager.initialize()
         return self
 
     async def __aexit__(self, *_):
@@ -144,11 +149,13 @@ class WebRtcHarness:
                 "attempt_count": 1, "reservation_id": str(uuid4())}
             job_id = identity["job_id"]
             self.jobs[job_id] = {**identity, "state": "queued", "answered": asyncio.Event(), "cleaned": False}
-            # Refresh the deterministic admission sample; resource behavior has its own live tests.
-            self.manager.ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
+            if self.resource_policy is None:
+                self.manager.ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
+            else:
+                await self.manager.sample_resources()
             assignment = {**identity, "type": "job.reserve", "job_mode": "webrtc",
                 "slave_app_id": self.slave.id, "handler_type": body["handler_type"],
-                "resources": {"cpu_cores": 1}, "offer": body["offer"]}
+                "resources": body.get("resources") or {"cpu_cores": 1}, "offer": body["offer"]}
             await self.manager.reserve_job(assignment)
             worker = self.manager.instances.get(identity["instance_id"])
             if worker is None:

@@ -92,10 +92,13 @@ def gpu_resources_fit(requests: list[dict], report: dict, *, available: bool = T
     return place(0)
 
 
-def resource_fits(request: dict, report: dict, slave_app_id: str, handler_type: str | None = None) -> bool:
+def resource_fits(request: dict, report: dict, slave_app_id: str, handler_type: str | None = None,
+                  *, resolved: bool = False) -> bool:
     if not report or not report.get("admission_open", False):
         return False
-    needed = requested_resources(request, report, slave_app_id, handler_type)
+    needed = request if resolved else requested_resources(request, report, slave_app_id, handler_type)
+    if resolved and any(type(needed.get(key)) is not int for key in ("cpu_cores", "startup_ram_bytes", "gpu_count")):
+        return False
     cpu = needed.get("cpu_cores", 1)
     ram = needed.get("startup_ram_bytes", 1)
     available_ram = max(0, report.get("ram_budget_bytes", 0) - report.get("ram_used_bytes", 0) - report.get("ram_startup_reserved_bytes", 0))

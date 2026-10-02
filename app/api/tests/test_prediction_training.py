@@ -14,11 +14,12 @@ from gpstation.service.batches import finish_job, serialize_events
 from gpstation.service.server_handlers import register_server_handler, server_handlers
 from gpstation.service.state import utcnow
 from prediction import training
-from prediction.common import require_dataset_idle
+from prediction.common import digest, require_dataset_idle
 from prediction.datasets import dataset_change_set, freeze_dataset, retire_server_payloads
 from prediction.db import Dataset, DatasetObject, DatasetRevision, ModelRevision, Operation, Replica, TrainingRun
 from prediction.grants import create_grant, read_granted_revision, release_grant, renew_grant
 from prediction.models import complete_model, model_view, reserve_model
+from prediction.replicas import put_replica
 from prediction_contracts.quality import QUALITY_VALIDATION_V1, split_fingerprint
 from prediction.operations import expire_operation, list_operations
 import test_prediction_assets as assets
@@ -123,6 +124,109 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             job.cleaned_at = utcnow()
             await db.flush()
             await require_dataset_idle(db, dataset["id"])
+
+    async def test_mlp_resources_freeze_at_reservation_and_survive_configuration_changes_and_retry(self):
+        async with self.sessions() as db:
+            launcher = await db.get(Launcher, self.launcher_id)
+            launcher.resources = {"defaults": {"predictor-training": {
+                "cpu_cores": 2, "startup_ram_bytes": 2 ** 20, "gpu_count": 1, "vram_budget_gb": 0.5}}}
+            dataset = await freeze_dataset(db, self.selection(), self.owner)
+            definition = {"algorithm": {"kind": "mlp"}, "implementationVersion": "mlp-v1",
+                          "preprocessingVersion": "box-relative-v2"}
+            reserved = await reserve_model(db, self.model_request(dataset, definition=definition), self.owner)
+            expected = {"cpu_cores": 2, "startup_ram_bytes": 2 ** 20, "gpu_count": 1, "vram_budget_gb": 0.5}
+            self.assertEqual(reserved["training"]["resources"], expected)
+            launcher.resources = {"defaults": {"predictor-training": {
+                "cpu_cores": 1, "startup_ram_bytes": 4 ** 20, "gpu_count": 0}}}
+            await db.commit()
+            initial = await training.submit(db, reserved["operation_id"], self.owner)
+            job = await db.get(Job, initial["training"]["jobId"])
+            self.assertEqual(job.resources, expected)
+            self.assertIs(job.artifact_metadata["resources_resolved"], True)
+            await self.mark_failed(db, job)
+            nonce = str(uuid4())
+            await training.preflight(db, reserved["operation_id"], nonce, self.owner)
+            retried = await training.submit(db, reserved["operation_id"], self.owner, retry_request_id=nonce)
+            self.assertEqual((await db.get(Job, retried["training"]["jobId"])).resources, expected)
+
+    async def test_training_freezes_absent_vram_budget_as_whole_device(self):
+        async with self.sessions() as db:
+            launcher = await db.get(Launcher, self.launcher_id)
+            launcher.resources = {"defaults": {"predictor-training": {
+                "cpu_cores": 2, "startup_ram_bytes": 2 ** 20, "gpu_count": 1}}}
+            dataset = await freeze_dataset(db, self.selection(), self.owner)
+            definition = {"algorithm": {"kind": "mlp"}, "implementationVersion": "mlp-v1",
+                          "preprocessingVersion": "box-relative-v2"}
+            reserved = await reserve_model(db, self.model_request(dataset, definition=definition), self.owner)
+            expected = deepcopy(reserved["training"]["resources"])
+            self.assertNotIn("vram_budget_gb", expected)
+            launcher.resources = {"defaults": {"predictor-training": {**expected, "vram_budget_gb": 0.5}}}
+            await db.commit()
+            submitted = await training.submit(db, reserved["operation_id"], self.owner)
+            job = await db.get(Job, submitted["training"]["jobId"])
+            self.assertEqual(job.resources, expected)
+            self.assertIs(job.artifact_metadata["resources_resolved"], True)
+            await self.mark_failed(db, job)
+            nonce = str(uuid4())
+            await training.preflight(db, reserved["operation_id"], nonce, self.owner)
+            retried = await training.submit(db, reserved["operation_id"], self.owner, retry_request_id=nonce)
+            retry_job = await db.get(Job, retried["training"]["jobId"])
+            self.assertEqual(retry_job.resources, expected)
+            self.assertIs(retry_job.artifact_metadata["resources_resolved"], True)
+
+    async def test_legacy_retry_preserves_previous_job_resources(self):
+        async with self.sessions() as db:
+            _, reserved = await self.reserve(db)
+            initial = await training.submit(db, reserved["operation_id"], self.owner)
+            job = await db.get(Job, initial["training"]["jobId"])
+            expected = deepcopy(job.resources)
+            await self.mark_failed(db, job)
+            operation = await db.get(Operation, reserved["operation_id"])
+            operation.details = {key: value for key, value in operation.details.items() if key != "resources_frozen"}
+            run = await db.get(TrainingRun, reserved["operation_id"])
+            run.resources = {"gpu_count": 0}
+            launcher = await db.get(Launcher, self.launcher_id)
+            launcher.resources = {"defaults": {"predictor-training": {"cpu_cores": 3, "startup_ram_bytes": 12345}}}
+            await db.commit()
+            nonce = str(uuid4())
+            await training.preflight(db, reserved["operation_id"], nonce, self.owner)
+            retried = await training.submit(db, reserved["operation_id"], self.owner, retry_request_id=nonce)
+            self.assertEqual((await db.get(Job, retried["training"]["jobId"])).resources, expected)
+            self.assertEqual(run.resources, expected)
+
+    async def test_api_source_bypasses_local_copy_pinning_and_requires_retained_server_payload(self):
+        async with self.sessions() as db:
+            dataset = await freeze_dataset(db, self.selection(), self.owner)
+            await put_replica(db, "dataset", dataset["id"], 1, self.storage_id)
+            await db.commit()
+            local = await reserve_model(db, self.model_request(dataset), self.owner)
+            self.assertEqual(local["training"]["sourceKind"], "local")
+            direct = await reserve_model(db, self.model_request(dataset, dataset_source="api"), self.owner)
+            self.assertEqual(direct["training"]["sourceKind"], "api")
+            self.assertEqual((await training.submit(db, direct["operation_id"], self.owner))["state"], "queued")
+            revision = await db.get(DatasetRevision, (dataset["id"], 1))
+            revision.payload = None
+            await db.commit()
+            with self.assertRaises(HTTPException) as error:
+                await reserve_model(db, self.model_request(dataset, dataset_source="api"), self.owner)
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertIn("retained server Dataset", str(error.exception.detail))
+
+    async def test_default_dataset_source_preserves_old_request_hash_and_explicit_source_is_idempotent(self):
+        async with self.sessions() as db:
+            dataset = await freeze_dataset(db, self.selection(), self.owner)
+            request = self.model_request(dataset)
+            reserved = await reserve_model(db, request, self.owner)
+            revision = await db.get(ModelRevision, (reserved["id"], 1))
+            self.assertEqual(revision.request_hash, digest(request.model_dump(mode="json", exclude={"dataset_source"})))
+            self.assertEqual((await reserve_model(db, request, self.owner))["reserved_revision"], 1)
+            with self.assertRaises(HTTPException) as conflict:
+                await reserve_model(db, request.model_copy(update={"dataset_source": "api"}), self.owner)
+            self.assertEqual(conflict.exception.status_code, 409)
+            direct_request = self.model_request(dataset, dataset_source="api")
+            first = await reserve_model(db, direct_request, self.owner)
+            replay = await reserve_model(db, direct_request, self.owner)
+            self.assertEqual(first["operation_id"], replay["operation_id"])
 
     async def test_retry_nonce_deduplicates_and_old_pin_only_releases_itself(self):
         async with self.sessions() as db:

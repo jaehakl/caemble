@@ -8,7 +8,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import undefer
-from prediction_contracts import resource_requirements
 from sdk.protocol.execution import ResourceRequest
 
 from gpstation.db import Job, Launcher
@@ -17,6 +16,7 @@ from gpstation.service.execution import gpu_resources_fit, requested_resources, 
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.job_service import JOB_TERMINAL_STATES, job_to_data
 from prediction.db import ModelLease, ModelRevision, PredictionModel, Replica, StorageAccess
+from prediction.resources import resolve_resources
 
 
 def resources_from_frozen_hybrid(resources: dict) -> dict:
@@ -63,12 +63,12 @@ async def validate_hybrid_capacity(db, launcher_id, user_id, definition: dict) -
         raise HTTPException(422, "Hybrid requires Evaluation and Predictor on the selected Launcher.")
     report = launcher.resources or {}
     try:
-        requirements = resource_requirements(definition, "inference")
+        requirements = resolve_resources(definition, "inference", report, default_cpu_cores=1)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     resources = {
         "evaluation": requested_resources({"cpu_cores": 1, "gpu_count": 0}, report, "evaluation", "cae.evaluation.predict"),
-        "predictor": requested_resources({"cpu_cores": 1, **requirements}, report, "predictor", "predictor.hello"),
+        "predictor": {"cpu_cores": 1, **requirements},
     }
     if not resources_fit_together(resources, report):
         raise HTTPException(422, "Launcher CPU, RAM or GPU budget cannot hold Evaluation and Predictor together.")

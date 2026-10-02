@@ -311,6 +311,13 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             copy = await db.get(Replica, state["active_model"]["replica_id"])
             original.state = "completed"
             await finish_updates(db, original)
+            # Reconciliation queued a prediction with the adopted revision. A
+            # completed Optimization must also finish its never-started jobs.
+            for job in (await db.scalars(select(Job).where(
+                    Job.artifact_metadata["optimization_id"].astext == original.id,
+                    Job.handler_type == "cae.evaluation.predict", Job.state == "queued"))).all():
+                self.assertIsNone(job.launcher_id)
+                await finish_job(db, job, "cancelled", "Fixture Optimization completed")
             with self.assertRaises(HTTPException) as retained:
                 await assert_copy_idle(db, copy)
             self.assertEqual(retained.exception.detail["optimization_id"], shared.id)

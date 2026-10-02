@@ -2,17 +2,12 @@ import { z } from 'zod'
 import { predictionLocationIdSchema } from '@/contracts/api/prediction'
 import { savedPredictionReferenceSchema } from './savedModels'
 import type { PredictionSetup } from './usePredictionModels'
+import { predictionAlgorithmSchema } from '@caemble/execution/prediction/modelDefinition'
 
 export const predictionExecutionRouteSchema = z.object({
   replicaId: predictionLocationIdSchema.optional(),
   storageId: predictionLocationIdSchema,
   launcherId: z.string().uuid(),
-})
-const algorithmSchema = z.object({
-  kind: z.literal('knn'),
-  kMode: z.enum(['auto', 'manual']),
-  manualK: z.number().int().positive(),
-  weighting: z.enum(['uniform', 'distance']),
 })
 const setupSchema = z.object({
   version: z.literal(4),
@@ -23,7 +18,7 @@ const setupSchema = z.object({
     datasetId: z.string().uuid().optional(),
     recordIds: z.array(z.number().int().positive()),
     calculationIds: z.array(z.number().int().positive()),
-    algorithm: algorithmSchema,
+    algorithm: predictionAlgorithmSchema,
     models: z.object({ forward: savedPredictionReferenceSchema.optional() }).optional(),
     routes: z.object({ forward: predictionExecutionRouteSchema.optional() }).optional(),
   }),
@@ -36,7 +31,7 @@ const legacySchema = z.object({
     executionId: z.enum(['browser-knn', 'remote-knn']),
     datasetId: z.string().uuid().optional(),
     calculationIds: z.array(z.number().int().positive()),
-    algorithm: algorithmSchema,
+    algorithm: predictionAlgorithmSchema,
     models: z
       .object({
         forward: savedPredictionReferenceSchema

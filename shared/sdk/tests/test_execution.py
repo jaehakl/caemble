@@ -14,6 +14,7 @@ import pytest
 import websockets
 
 from sdk.protocol.packets import receive_packet, send_packet
+from sdk.protocol.messages import JobReserve
 from sdk.slave.execution import EXECUTION_ENV, ExecutionChannel, configure_torch, cpu_threads, execution_context
 from sdk.slave.server import ServerSlaveApp, run_server_job, run_server_worker
 
@@ -38,6 +39,15 @@ def test_execution_fences_every_identity_field(managed):
         stale = {**managed["identity"], field: "stale"}
         with pytest.raises(ValueError, match="execution attempt"):
             context.require_identity(stale)
+
+
+def test_resolved_resources_flag_is_optional_and_survives_control_validation(managed):
+    request = {"type": "job.reserve", **managed["identity"], "handler_type": "prediction.train",
+               "slave_app_id": "predictor-training", "job_mode": "websocket"}
+    assert JobReserve.model_validate(request).resources_resolved is False
+    assert JobReserve.model_validate({**request, "resources_resolved": True}).model_dump()["resources_resolved"] is True
+    with pytest.raises(ValueError):
+        JobReserve.model_validate({**request, "resources_resolved": "true"})
 
 
 @pytest.mark.parametrize("version", [None, 2])

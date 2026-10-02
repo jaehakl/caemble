@@ -226,11 +226,12 @@ class ResourceLedger:
                            "waiting_reason": reason})
         return result
 
-    def reserve(self, instance_id: str, app_id: str, request: dict[str, Any], handler_type: str | None = None) -> tuple[dict[str, Any] | None, str | None]:
+    def reserve(self, instance_id: str, app_id: str, request: dict[str, Any], handler_type: str | None = None,
+                *, resolved: bool = False) -> tuple[dict[str, Any] | None, str | None]:
         # Caller holds lock, covering validation, mutation, and duplicate detection.
         if instance_id in self.reservations:
             return self.reservations[instance_id].allocation, None
-        values = self.defaults(app_id, handler_type)
+        values = {} if resolved else self.defaults(app_id, handler_type)
         explicit = {key: value for key, value in request.items() if value is not None}
         values.update(explicit)
         if explicit.get("gpu_count") == 0 and "vram_budget_gb" not in explicit:
@@ -240,6 +241,8 @@ class ResourceLedger:
         except ValueError:
             return None, "invalid_resources"
         cpu, startup, gpu_count = validated.cpu_cores, validated.startup_ram_bytes, validated.gpu_count
+        if cpu is None or startup is None or gpu_count is None:
+            return None, "invalid_resources"
         gpu_memory = gib_to_bytes(validated.vram_budget_gb) if validated.vram_budget_gb is not None else None
         if cpu > len(self.cpu_ids) or startup + self.growth_headroom > self.ram_budget:
             return None, "request_exceeds_capacity"

@@ -19,6 +19,7 @@ import psutil
 import pytest
 
 from app.slave_registry import SlaveApp
+from app.resources import ResourcePolicy
 from webrtc_harness import APP_ROOT, WebRtcHarness
 
 
@@ -48,8 +49,10 @@ finally:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("algorithm,gpu_count", [("knn", 0), ("mlp", 0), pytest.param("mlp", 1,
+    marks=pytest.mark.skipif(os.getenv("RUN_PREDICTOR_CUDA_TESTS") != "1", reason="Opt-in real CUDA inference"))])
 @pytest.mark.skipif(os.getenv("RUN_WEBRTC_BROWSER_TESTS") != "1", reason="Set RUN_WEBRTC_BROWSER_TESTS=1 for real browser tests")
-async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_removal(tmp_path):
+async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_removal(tmp_path, algorithm, gpu_count):
     directory = APP_ROOT / "slaves/cae_prediction"
     slave = SlaveApp("predictor", "Predictor", "app", directory)
     if not slave.python_executable.is_file():
@@ -62,7 +65,13 @@ async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_rem
         rule["result"]["tensorOrder"] = 0
         for axis in rule["result"]["axes"][:3]:
             axis.pop("ticks", None)
-    scenario = f"const definition={json.dumps(fixtures.definition(manifest))};\n" + """
+    definition = fixtures.definition(manifest)
+    if algorithm == "mlp":
+        definition.update(implementationVersion="mlp-v1", algorithm={"kind": "mlp", "hiddenLayers": [32, 32],
+            "epochs": 500, "batchSize": 32, "learningRate": .001, "seed": 0})
+    expected = 20 if algorithm == "mlp" else 15
+    query_x = 1 if algorithm == "mlp" else .5
+    scenario = f"const definition={json.dumps(definition)}, expected={expected}, queryX={query_x};\n" + """
       const options={slaveAppId:'predictor',targetLauncherId:launcherId,autoFinish:false,timeoutMs:30000};
       async function cleaned(jobId) {
         for(let attempt=0; attempt<200; attempt++) {
@@ -94,13 +103,18 @@ async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_rem
       const dataset={datasetId:imported.dataset.datasetId,revision:imported.dataset.revision,fingerprint:imported.dataset.fingerprint};
       const unchanged=await call(first,'dataset.sync',{datasetId:dataset.datasetId});
       if(unchanged.dataset.revision!==1) throw new Error('unchanged sync created a new revision');
-      const input={direction:'forward',vars:{x:.5}};
+      const input={direction:'forward',vars:{x:queryX}};
       const savedResponse=await fetch('/fixture/saved-model',{method:'POST',body:JSON.stringify({dataset,definition,
         model:{modelId:'browser-forward',revision:1,operationId:'prepare-forward',name:'Forward'}})});
       if(!savedResponse.ok) throw new Error(await savedResponse.text());
       const prepared=await call(first,'model.load',{modelId:'browser-forward',revision:1});
       const initial=await call(first,'model.predict',{instance:prepared.instance,input});
-      if(Math.abs(initial.output[0].values[0]-15)>1e-10) throw new Error('Forward prediction mismatch');
+      if(Math.abs(initial.output[0].values[0]-expected)>.02) throw new Error('Forward prediction mismatch: '+JSON.stringify(initial));
+      const batch=await call(first,'model.predict_batch',{instance:prepared.instance,
+        inputs:[{candidateId:'first',input},{candidateId:'second',input}]});
+      if(batch.predictions.length!==2 || batch.predictions[0].candidateId!=='first' ||
+          Math.abs(batch.predictions[0].output[0].values[0]-initial.output[0].values[0])>1e-4)
+        throw new Error('Batch prediction differs from single or loses candidate order');
       await call(first,'model.release',{instance:prepared.instance});
       if((await call(first,'model.list')).models.length!==1) throw new Error('release removed saved artifacts');
       await fetch('/fixture/change-dataset-source',{method:'POST'});
@@ -153,23 +167,28 @@ async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_rem
         stage(updated)
         return {"changed": True}
 
-    async with WebRtcHarness(slave, tmp_path, scenario, extra_request=change_source) as fixture:
+    policy = ResourcePolicy(gpu_count=gpu_count, cpu_cores=1, ram_budget_gb=8,
+        defaults={"predictor": {"cpu_cores": 1, **({"vram_budget_gb": 4} if gpu_count else {})}})
+    async with WebRtcHarness(slave, tmp_path, scenario, extra_request=change_source,
+                             resource_policy=policy if algorithm == "mlp" else None) as fixture:
         owner_hash = hashlib.sha256(fixture.owner_id.encode()).hexdigest()
         staging = tmp_path / "storage/owners" / owner_hash / "imports/browser-fixture"
         staging.mkdir(parents=True)
         stage(manifest)
         result = await fixture.run_browser(runner=APP_ROOT / "launcher/tests/prediction-browser.mjs", timeout=240)
-        assert result["preview"]["calculated"] == 15
+        assert result["preview"]["calculated"] == pytest.approx(expected, abs=.02 if algorithm == "mlp" else 1e-10)
         assert result["preview"]["candidateOrigin"] == [20, 30, 40]
         assert result["preview"]["sourceKind"] == "prediction"
         assert result["preview"]["canvasCount"] >= 1
-        assert result["forward"] == pytest.approx(15)
+        assert result["forward"] == pytest.approx(expected, abs=.02 if algorithm == "mlp" else 1e-10)
         assert result["outputs"] == result["reloaded"]
         assert result["firstPid"] != result["secondPid"]
         assert not psutil.pid_exists(result["firstPid"])
         assert not psutil.pid_exists(result["secondPid"])
         assert not fixture.manager.instances
         assert not fixture.manager.ledger.reservations
+        assert all(len(event["allocation"]["gpu_devices"]) == gpu_count
+                   for event in fixture.events if event["type"] == "job.reserved")
 
 
 @pytest.mark.asyncio

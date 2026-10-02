@@ -147,7 +147,8 @@ class WorkerManager:
             elif app.job_mode != message["job_mode"]:
                 reason = "job_mode_mismatch"
             else:
-                allocation, reason = self.ledger.reserve(instance_id, app.id, message.get("resources") or {}, message["handler_type"])
+                allocation, reason = self.ledger.reserve(instance_id, app.id, message.get("resources") or {},
+                    message["handler_type"], resolved=message.get("resources_resolved", False))
                 if allocation is not None:
                     worker = ManagedWorker(identity, app.id, message["handler_type"], app.job_mode, allocation)
                     self.instances[instance_id] = worker

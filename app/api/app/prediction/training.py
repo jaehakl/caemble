@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import secrets
 import time
 from datetime import timedelta
@@ -19,7 +20,8 @@ from gpstation.service.state import utcnow
 from prediction.common import connected_storage, owned
 from prediction.db import Dataset, DatasetGrant, DatasetRevision, ModelLease, ModelRevision, Operation, PredictionModel, Replica, TrainingRun
 from prediction.schemas import ModelComplete
-from prediction_contracts import resource_requirements, validate_definition
+from prediction_contracts import validate_definition
+from prediction.resources import resolve_resources
 from settings import settings
 
 HANDLER = "prediction.train"
@@ -71,11 +73,14 @@ async def require_unmanaged_job(db, job_id, user_id=None):
 
 
 async def create_run(db, operation, revision, local_copy):
+    launcher = await db.get(Launcher, operation.details["target_launcher_id"])
     run = TrainingRun(operation_id=operation.id, dataset_id=revision.dataset_id,
         dataset_revision=revision.dataset_revision, source_kind="local" if local_copy is not None else "api",
         source_replica_id=local_copy.id if local_copy is not None else None, pin_id=str(uuid4()),
-        resources=resource_requirements(revision.definition, "training"),
+        resources={"cpu_cores": 1, "startup_ram_bytes": 1024 ** 3,
+                   **resolve_resources(revision.definition, "training", launcher.resources or {})},
         retry_requests={}, preflight_expires_at=utcnow() + timedelta(seconds=PREFLIGHT_SECONDS))
+    operation.details = {**operation.details, "resources_frozen": True}
     db.add(run)
     return run
 
@@ -234,11 +239,18 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None, c
             copy = await db.get(Replica, run.source_replica_id)
             if copy is None or copy.state not in {"present", "unverified"}:
                 raise HTTPException(409, "The pinned Dataset copy is unavailable.")
-    resources = requested_resources(run.resources, launcher.resources or {}, APP_ID, HANDLER)
+    if not row.details.get("resources_frozen"):
+        # Older operations stored only algorithm requirements. Preserve an already
+        # submitted attempt, or resolve the remaining defaults once before submit.
+        run.resources = {"cpu_cores": 1, "startup_ram_bytes": 1024 ** 3, "gpu_count": 0,
+            **(deepcopy(previous.resources) if previous is not None and previous.resources else requested_resources(
+                run.resources, launcher.resources or {}, APP_ID, HANDLER))}
+        row.details = {**row.details, "resources_frozen": True}
+    resources = deepcopy(run.resources)
     job = Job(id=str(uuid4()), user_id=user_id, slave_app_id=APP_ID, handler_type=HANDLER,
         job_mode="websocket", target_launcher_id=launcher.id, state="queued", progress=[], resources=resources,
         attempt_count=1, attempt_id=str(uuid4()), execution_phase="queued",
-        artifact_metadata={"prediction_operation_id": row.id,
+        artifact_metadata={"prediction_operation_id": row.id, "resources_resolved": True,
             **({"optimization_id": row.details["online_origin"]["optimization_id"]}
                 if row.details.get("online_origin") is not None else {})},
         input={"operationId": row.id, "pinId": run.pin_id, "storageId": row.details["target_storage_id"],

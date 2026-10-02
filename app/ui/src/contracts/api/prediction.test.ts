@@ -108,6 +108,10 @@ describe('Prediction migrated location contracts', () => {
     }
     expect(predictionAlgorithmSchema.parse({ ...descriptor, supportsNativeBatch: true }).supportsNativeBatch).toBe(true)
     expect(predictionAlgorithmSchema.parse(descriptor).supportsNativeBatch ?? false).toBe(false)
+    const cpuFallbackResources = { training: { gpu_count: 0 }, inference: { gpu_count: 0 } }
+    expect(predictionAlgorithmSchema.parse({ ...descriptor, cpuFallbackResources }).cpuFallbackResources).toEqual(
+      cpuFallbackResources,
+    )
   })
   it('preserves model revision names, Optimization origin and training lineage', () => {
     const lineage = { mode: 'rebuild', baseModel: { modelId: assetId, revision: 1 }, recipe: { seed: 7 } }

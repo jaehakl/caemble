@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import { resourceRequestSchema } from './execution.ts'
+export {
+  defaultPredictionQualityValidation,
+  predictionQualityValidationSchema,
+  type PredictionQualityValidation,
+} from '@caemble/execution/contracts/prediction'
 
 const id = z.string().uuid()
 // Migration 24 stored PostgreSQL UUID values without RFC version/variant bits.
@@ -7,21 +12,6 @@ const id = z.string().uuid()
 export const predictionLocationIdSchema = z.guid()
 const revision = z.number().int().nonnegative()
 const definition = z.object({ fingerprint: z.string().min(1) }).passthrough()
-export const predictionQualityValidationSchema = z.object({
-  version: z.literal(1),
-  split: z.literal('design-point'),
-  holdoutFraction: z.literal(0.2),
-  seed: z.literal(0),
-  minimumGroups: z.literal(5),
-})
-export type PredictionQualityValidation = z.infer<typeof predictionQualityValidationSchema>
-export const defaultPredictionQualityValidation: PredictionQualityValidation = Object.freeze({
-  version: 1,
-  split: 'design-point',
-  holdoutFraction: 0.2,
-  seed: 0,
-  minimumGroups: 5,
-})
 const measurementIds = z.array(z.number().int().positive())
 const excludedMeasurements = z.array(z.object({ measurementId: z.number().int().positive(), reason: z.string() }))
 export const predictionQualityReportSchema = z.object({
@@ -101,6 +91,7 @@ export const predictionAlgorithmSchema = z.object({
   supportsNativeBatch: z.boolean().optional(),
   supportedUpdateModes: z.array(z.enum(['rebuild', 'warm_start', 'incremental'])).optional(),
   resources: z.object({ training: resourceRequestSchema, inference: resourceRequestSchema }),
+  cpuFallbackResources: z.object({ training: resourceRequestSchema, inference: resourceRequestSchema }).optional(),
 })
 export type PredictionAlgorithmDescriptor = z.infer<typeof predictionAlgorithmSchema>
 export const predictionTrainingSchema = z.object({
@@ -278,6 +269,7 @@ export type PredictionModelReservation = Readonly<{
   direction: 'forward'
   dataset_id: string
   dataset_revision: number
+  dataset_source?: 'auto' | 'api'
   definition: Readonly<Record<string, unknown>>
   storage_id: string
   launcher_id: string

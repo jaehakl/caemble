@@ -18,6 +18,8 @@ import { PredictionModelManager } from './PredictionModelManager'
 import { PredictionDatasetManager } from './PredictionDatasetManager'
 import { PredictionAssetTasks } from './PredictionAssetTasks'
 import { setupUsingSavedModel } from './remoteAssets'
+import { PredictionAlgorithmSettings } from './PredictionAlgorithmSettings'
+import { predictionAlgorithmSchema } from '@caemble/execution/prediction/modelDefinition'
 
 export type PredictionAssetSettingsProps = Readonly<{
   authenticated: boolean
@@ -195,6 +197,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                 onUse={applyModel}
                 onNewVersion={(model) => {
                   setPrevious(model)
+                  const algorithm = predictionAlgorithmSchema.safeParse(
+                    model.revisions.find((item) => item.revision === model.current_revision)?.definition.algorithm,
+                  )
+                  if (algorithm.success) onChange({ ...setup, algorithm: algorithm.data })
                   setName(model.name)
                   setDatasetId(
                     model.revisions.find((item) => item.revision === model.current_revision)?.dataset_id ?? '',
@@ -299,7 +305,7 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                     </select>
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    현재 선택한 BoxGrid와 k·거리 설정으로 원격 Forward 모델을 만듭니다. 접수한 학습은 브라우저를 닫아도
+                    현재 선택한 BoxGrid와 학습 설정으로 원격 Forward 모델을 만듭니다. 접수한 학습은 브라우저를 닫아도
                     계속됩니다. 학습 중 선택을 바꾸지 않았다면 완료 후 새 모델을 사용합니다.
                   </p>
                   <fieldset className="space-y-2 text-sm">
@@ -322,57 +328,10 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                       </label>
                     ))}
                   </fieldset>
-                  <div className="flex flex-wrap gap-3 text-sm">
-                    <label>
-                      이웃 수
-                      <select
-                        aria-label="새 모델 이웃 수 방식"
-                        className="ml-2 rounded border bg-background p-1"
-                        value={setup.algorithm.kMode}
-                        onChange={(event) =>
-                          onChange({
-                            ...setup,
-                            algorithm: { ...setup.algorithm, kMode: event.target.value as 'auto' | 'manual' },
-                          })
-                        }
-                      >
-                        <option value="auto">자동 k</option>
-                        <option value="manual">직접 지정</option>
-                      </select>
-                    </label>
-                    {setup.algorithm.kMode === 'manual' && (
-                      <Input
-                        aria-label="새 모델 k"
-                        type="number"
-                        min={1}
-                        step={1}
-                        className="w-24"
-                        value={setup.algorithm.manualK}
-                        onChange={(event) => {
-                          const value = Number(event.target.value)
-                          if (Number.isSafeInteger(value) && value > 0)
-                            onChange({ ...setup, algorithm: { ...setup.algorithm, manualK: value } })
-                        }}
-                      />
-                    )}
-                    <label>
-                      이웃 가중 방식
-                      <select
-                        aria-label="새 모델 거리 가중 방식"
-                        className="ml-2 rounded border bg-background p-1"
-                        value={setup.algorithm.weighting}
-                        onChange={(event) =>
-                          onChange({
-                            ...setup,
-                            algorithm: { ...setup.algorithm, weighting: event.target.value as 'distance' | 'uniform' },
-                          })
-                        }
-                      >
-                        <option value="distance">거리</option>
-                        <option value="uniform">균등</option>
-                      </select>
-                    </label>
-                  </div>
+                  <PredictionAlgorithmSettings
+                    algorithm={setup.algorithm}
+                    onChange={(algorithm) => onChange({ ...setup, algorithm })}
+                  />
                   <div className="space-y-1">
                     <label className="flex gap-2 text-sm">
                       <input

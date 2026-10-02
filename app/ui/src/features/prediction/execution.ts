@@ -1,5 +1,6 @@
 import type { RecordedDataRule, Vars } from '@caemble/execution/cad/model'
 import type { PredictionExecutionMetrics } from '@/contracts/api/prediction'
+import type { PredictionAlgorithm } from '@caemble/execution/prediction/modelDefinition'
 import type {
   PredictionCohortDiagnosticGroup,
   PredictionCohortExclusionReason,
@@ -11,12 +12,7 @@ import type {
   PredictionWeighting,
 } from './types'
 
-export type PredictionAlgorithm = Readonly<{
-  kind: 'knn'
-  kMode: 'auto' | 'manual'
-  manualK: number
-  weighting: PredictionWeighting
-}>
+export type { PredictionAlgorithm } from '@caemble/execution/prediction/modelDefinition'
 
 /** Numerical implementation details are optional at the application boundary. */
 export type PredictionModelProfile = Readonly<{
@@ -41,6 +37,14 @@ export type PredictionModelProfile = Readonly<{
     activeInputBlockCount: number
   }>
   resources?: Readonly<{ persistentBytes: number; workingSetBytes: number }>
+  mlp?: Extract<PredictionAlgorithm, { kind: 'mlp' }> &
+    Readonly<{
+      activation: 'tanh'
+      optimizer: 'adam'
+      inputScaling: 'range'
+      loss: number
+      initialLoss: number
+    }>
 }>
 
 export type PredictionExecutionResult = Readonly<{

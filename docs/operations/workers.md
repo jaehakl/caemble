@@ -11,7 +11,7 @@ Commands and component-relative paths in this document are relative to `app/slav
 - `tts_kokoro`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
 - `cae_prediction` (ID `predictor`): Forward Prediction, local Dataset copies and persistent model artifacts.
   One environment provides WebRTC inference/management and the `predictor-training`
-  WebSocket executable for independent training Jobs. The current algorithm is CPU kNN.
+  WebSocket executable for independent training Jobs. Algorithms include CPU kNN and PyTorch MLP.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.
@@ -286,7 +286,86 @@ $env:RUN_PREDICTOR_PROCESS_TESTS = '1'
 poetry run python -m pytest tests/test_predictor_training.py -q
 ```
 
+Set `RUN_PREDICTOR_CUDA_TESTS=1` as well to include real MLP CUDA execution.
+`tests/test_mlp_concurrency.py` checks concurrent WebRTC inference and server-owned
+training, cancellation of training while inference remains usable, and final
+process/reservation cleanup. Its CPU case uses `RUN_PREDICTOR_PROCESS_TESTS=1`;
+the CUDA case needs one GPU with two independently reservable 4 GiB budgets.
+
+The opt-in representative comparison runs the unchanged `hybrid-box-conductor`
+example at nine length/width combinations. From the checkout, after building the
+CLI and installing the API/Predictor environments, run:
+
+```powershell
+app/api/.venv/Scripts/python.exe app/api/tests/prediction_baseline.py
+```
+
+Each fresh build-and-solve condition has a 180-second budget. The report at
+`.work/mlp-example-acceptance.json` separates Solver data generation from model
+training, storage and fresh-process CPU/CUDA inference, and compares output errors
+on the same holdout split. This local comparison does not connect to the API DB.
+
 ## Launcher resource policy
+
+MLP uses one GPU by default. It uses CPU only when the effective Launcher profile
+sets `gpu_count = 0`; GPU unavailability, contention or a CUDA error never selects
+CPU automatically. The effective profile follows global settings, then
+`defaults.predictor-training` / `defaults.predictor`, then
+`defaults."prediction.train"` / `defaults."predictor.hello"`. kNN remains CPU-only.
+Training freezes the resolved request for retries. GPU IDs and execution budgets
+are not part of the portable model artifact. For simultaneous MLP training and
+inference, assign each profile a VRAM budget that includes CUDA context, weights,
+optimizer and working memory; an omitted budget reserves the whole device.
+
+### CLI model training
+
+Use an existing server Dataset revision with retained API payload, a registered
+Predictor storage and a connected Launcher. The CLI does not import, restore or
+create Datasets. The same configuration validation and model fingerprint builder
+serve the UI and CLI.
+
+```json
+{
+  "name": "Forward MLP",
+  "dataset_id": "<Dataset UUID>",
+  "dataset_revision": 1,
+  "storage_id": "<storage UUID>",
+  "launcher_id": "<Launcher UUID>",
+  "record_ids": [123, 124],
+  "algorithm": {
+    "kind": "mlp",
+    "hiddenLayers": [32, 32],
+    "epochs": 500,
+    "batchSize": 32,
+    "learningRate": 0.001,
+    "seed": 0
+  },
+  "quality_validation": true
+}
+```
+
+Replace the IDs with existing asset IDs and save the configuration as
+`training.json`. To train kNN, replace `algorithm` with
+`{"kind":"knn","kMode":"auto","manualK":1,"weighting":"distance"}`.
+Quality validation defaults to false and requires at least five distinct valid
+design points when enabled.
+
+```powershell
+.\caemble.cmd prediction train --config training.json --request-id <UUID>
+.\caemble.cmd prediction status <operation-id>
+.\caemble.cmd prediction watch <operation-id> --timeout 300
+.\caemble.cmd prediction cancel <operation-id>
+```
+
+The training request ID is printed before submission. If a response is lost,
+repeat the same configuration and `--request-id`; it does not create a second
+model or Job. An omitted ID creates a new request. A failed request is not retrained
+automatically. Use the existing UI retry action or submit a new request explicitly.
+Closing the CLI, interrupting `watch`, or reaching its timeout only stops observation.
+`cancel` explicitly requests cancellation. Watch continues through process cleanup,
+and status output excludes access grants and tokens.
+
+### Resource configuration
 
 Copy `app/launcher/resources.example.toml` to
 `app/launcher/resources.toml` in the same directory, or select a file with

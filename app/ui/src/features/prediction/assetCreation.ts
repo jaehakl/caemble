@@ -12,7 +12,7 @@ import type { PredictionContext } from './predictionContextData'
 import type { PredictionSetup } from './usePredictionModels'
 import type { PredictionDirection } from './types'
 import type { PredictionAssetController, PredictionAssetWork } from './assetManagement'
-import { predictionFingerprint } from './data'
+import { buildPredictionModelDefinition } from '@caemble/execution/prediction/modelDefinition'
 import { assertSavedPredictionCompatible, savedContractFromSource } from './savedModels'
 import { submitPredictionTraining } from './assetOperations'
 
@@ -126,25 +126,14 @@ export function createPredictionModel(manager: PredictionAssetController, input:
     const algorithm = hello.algorithmDescriptors.find((item) => item.kind === input.setup.algorithm.kind)
     if (!algorithm?.directions.includes(input.direction))
       throw new Error('이 Predictor에서 선택한 알고리즘의 Forward 학습을 지원하지 않습니다.')
-    const meaning = {
+    const definition = await buildPredictionModelDefinition({
       snapshotFingerprint: source.fingerprint,
-      algorithm: {
-        kind: input.setup.algorithm.kind,
-        kMode: input.setup.algorithm.kMode,
-        manualK: input.setup.algorithm.manualK,
-        weighting: input.setup.algorithm.weighting,
-      },
-      implementationId: remote.id,
-      implementationVersion: algorithm.implementationVersion,
-      preprocessingVersion: algorithm.preprocessingVersion,
-      contract,
-      direction: input.direction,
-      requiredRecordIds,
+      algorithm: input.setup.algorithm,
+      descriptor: algorithm,
+      sourceContracts: source.source_contracts,
+      recordIds: requiredRecordIds,
       ...(input.qualityValidation ? { qualityValidation: input.qualityValidation } : {}),
-    }
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(predictionFingerprint([meaning])))
-    const fingerprint = `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
-    const definition = { ...meaning, fingerprint }
+    })
     const local = source.replicas.find(
       (replica) => replica.storage_id === hello.storageId && ['present', 'unverified'].includes(replica.state),
     )

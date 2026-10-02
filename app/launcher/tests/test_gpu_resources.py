@@ -38,6 +38,31 @@ def test_default_gpu_and_explicit_cpu_profiles(gpu_ledger):
     assert ResourcePolicy(gpu_count=0).gpu_count == 0
 
 
+def test_resolved_training_request_keeps_whole_device_after_defaults_change(gpu_ledger):
+    ledger, sample, _ = gpu_ledger
+    request = {"cpu_cores": 1, "startup_ram_bytes": GIB, "gpu_count": 1}
+    # ai now has a six-GiB default, but the saved request selected a whole GPU.
+    allocation, reason = ledger.reserve("saved", "ai", request, resolved=True)
+    assert reason is None and allocation["vram_budget_bytes"] == {"GPU-a": 16 * GIB}
+    ledger.release("saved")
+    sample()
+    ordinary, _ = ledger.reserve("ordinary", "ai", request)
+    assert ordinary["vram_budget_bytes"] == {"GPU-a": 6 * GIB}
+    ledger.mark_running("ordinary")
+    for _ in range(3):
+        sample()
+    assert ledger.reserve("retry", "ai", request, resolved=True) == (None, "gpu_unavailable")
+    assert ledger.reserve("partial", "ai", {**request, "vram_budget_gb": 2}, resolved=True)[0]
+
+
+@pytest.mark.parametrize("missing", ["cpu_cores", "startup_ram_bytes", "gpu_count"])
+def test_resolved_requests_require_complete_numeric_defaults(gpu_ledger, missing):
+    ledger, _, _ = gpu_ledger
+    request = {"cpu_cores": 1, "startup_ram_bytes": GIB, "gpu_count": 0}
+    del request[missing]
+    assert ledger.reserve("incomplete", "ai", request, resolved=True) == (None, "invalid_resources")
+
+
 @pytest.mark.parametrize("free,admitted", [(8 * GIB + 1, True), (8 * GIB, True), (1, True), (0, False)])
 def test_live_free_memory_has_no_half_usage_cutoff(gpu_ledger, free, admitted):
     ledger, sample, _ = gpu_ledger

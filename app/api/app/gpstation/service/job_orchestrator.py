@@ -402,7 +402,8 @@ class JobOrchestrator:
             async with self.launcher_send_lock(launcher_id):
                 await self.send_launcher_message(launcher_id, {"type": "job.reserve", **execution_identity(job),
                     "handler_type": job.handler_type, "slave_app_id": job.slave_app_id,
-                    "job_mode": job.job_mode, "resources": job.resources or {}})
+                    "job_mode": job.job_mode, "resources": job.resources or {},
+                    "resources_resolved": (job.artifact_metadata or {}).get("resources_resolved") is True})
 
     async def _deliver_job_start(self, job, launcher_id) -> None:
         launcher = await self.runtime.get_launcher(launcher_id)

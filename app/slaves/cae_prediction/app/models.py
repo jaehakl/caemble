@@ -12,6 +12,7 @@ from prediction_contracts import algorithm_descriptor, validate_quality_report, 
 from .errors import PredictionError
 from .execution import ModelExecutionContext
 from .forward import KnnForwardModel
+from .mlp import TorchMlpForwardModel
 from .storage import ArtifactStore, check_cancel
 
 
@@ -64,7 +65,7 @@ class ForwardBatchModel(ForwardModel, Protocol):
     def predict_many(self, values: list[dict], context: ModelExecutionContext) -> list[dict]: ...
 
 
-IMPLEMENTATIONS: dict[str, type[ForwardModelImplementation]] = {"knn": KnnForwardModel}
+IMPLEMENTATIONS: dict[str, type[ForwardModelImplementation]] = {"knn": KnnForwardModel, "mlp": TorchMlpForwardModel}
 
 
 def implementation_for(definition: dict) -> type[ForwardModelImplementation]:

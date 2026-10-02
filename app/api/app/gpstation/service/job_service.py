@@ -194,7 +194,7 @@ class JobService:
             return None
         await serialize_events(db)
         candidates = (await db.execute(
-            select(Job, Launcher).options(defer(Job.input), defer(Job.artifact_metadata),
+            select(Job, Launcher, Job.artifact_metadata["resources_resolved"].as_boolean()).options(defer(Job.input), defer(Job.artifact_metadata),
                 defer(Job.progress), defer(Job.answer), defer(Job.offer))
             .outerjoin(JobBatch, JobBatch.id == Job.batch_id)
             .join(Launcher, and_(Launcher.user_id == Job.user_id,
@@ -211,12 +211,13 @@ class JobService:
                 Launcher.last_heartbeat_at.desc(), Launcher.connected_at.asc(), Launcher.id.asc())
             .with_for_update(of=Job, skip_locked=True)
         )).all()
-        for job, launcher in candidates:
+        for job, launcher, resources_resolved in candidates:
             snapshot = available_launchers[str(launcher.id)]
             report = snapshot["resources"]
             if snapshot.get("rejected", {}).get(job.id, -1) >= report.get("revision", 0):
                 continue
-            if not resource_fits(job.resources or {}, report, job.slave_app_id, job.handler_type):
+            if not resource_fits(job.resources or {}, report, job.slave_app_id, job.handler_type,
+                                 resolved=resources_resolved is True):
                 job.waiting_reason = "resources_unavailable"
                 continue
             now = utcnow()
@@ -237,6 +238,8 @@ class JobService:
                 batch.last_dispatched_at = func.clock_timestamp()
                 batch.state = "running"
             await job_event(db, job, "job.assigned")
+            # Only load metadata for the selected job, for reservation delivery.
+            await db.refresh(job, ["artifact_metadata"])
             await db.commit()
             return job, str(launcher.id)
         await db.commit()

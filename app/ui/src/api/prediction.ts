@@ -14,11 +14,16 @@ import {
 
 export function createPredictionApi(client: CaembleClient) {
   return {
-    algorithms: (context?: RequestContext) =>
-      client.request('get', '/prediction/algorithms', undefined, {
-        ...context,
-        validate: (value) => z.object({ items: z.array(predictionAlgorithmSchema) }).parse(value).items,
-      }),
+    algorithms: (context?: RequestContext, launcherId?: string) =>
+      client.request(
+        'get',
+        `/prediction/algorithms${launcherId ? `?launcher_id=${encodeURIComponent(launcherId)}` : ''}`,
+        undefined,
+        {
+          ...context,
+          validate: (value) => z.object({ items: z.array(predictionAlgorithmSchema) }).parse(value).items,
+        },
+      ),
     datasets: (experimentId?: number, context?: RequestContext) =>
       client.request(
         'get',

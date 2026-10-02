@@ -14,6 +14,7 @@ import {
   queryDiagnosticSchema,
 } from './protocolValidation'
 import type { RecordedDataRule } from '@caemble/execution/cad/model'
+import { predictionMlpAlgorithmSchema } from '@caemble/execution/prediction/modelDefinition'
 
 const identity = z.string().min(1)
 const count = z.number().int().nonnegative()
@@ -43,6 +44,15 @@ const legacyProfileSchema = z.object({
     })
     .optional(),
   resources: z.object({ persistentBytes: count, workingSetBytes: count }).optional(),
+  mlp: predictionMlpAlgorithmSchema
+    .extend({
+      activation: z.literal('tanh'),
+      optimizer: z.literal('adam'),
+      inputScaling: z.literal('range'),
+      loss: z.number().finite().nonnegative(),
+      initialLoss: z.number().finite().nonnegative(),
+    })
+    .optional(),
 })
 
 export const remoteProfileSchema = legacyProfileSchema.extend({

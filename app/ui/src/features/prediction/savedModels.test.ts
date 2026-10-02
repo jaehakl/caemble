@@ -4,6 +4,7 @@ import type { PredictionContext } from './predictionContextData'
 import { predictionSetupFingerprint, type PredictionSetup } from './usePredictionModels'
 import { assertSavedPredictionCompatible, savedContractFromSource, savedPredictionContract } from './savedModels'
 import { persistPredictionSetup, restorePredictionSetup } from './setupPersistence'
+import { defaultKnnAlgorithm, defaultMlpAlgorithm } from '@caemble/execution/prediction/modelDefinition'
 
 const launcherId = '10000000-0000-4000-8000-000000000001'
 const storageId = '10000000-0000-4000-8000-000000000002'
@@ -67,6 +68,14 @@ describe('Forward saved contracts', () => {
 })
 
 describe('Forward setup persistence', () => {
+  it('restores every MLP hyperparameter and retains the pinned model revision', () => {
+    const setup = {
+      ...setupWithModel(),
+      algorithm: { ...defaultMlpAlgorithm, hiddenLayers: [16, 8], epochs: 750, seed: 17 },
+    }
+    persistPredictionSetup('owner-a', 3, setup)
+    expect(restorePredictionSetup('owner-a', 3)).toEqual(setup)
+  })
   it('restores exact revisions and opaque migrated storage/replica IDs without a live handle', () => {
     const setup = {
       ...setupWithModel(),
@@ -188,7 +197,7 @@ describe('Forward setup persistence', () => {
         ...setup,
         calculationIds: [7],
         routes: { forward: { storageId, launcherId: '40000000-0000-4000-8000-000000000001' } },
-        algorithm: { ...setup.algorithm, manualK: 8 },
+        algorithm: { ...defaultKnnAlgorithm, manualK: 8 },
       }),
     ).toBe(predictionSetupFingerprint(setup))
     expect(

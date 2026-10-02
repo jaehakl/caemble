@@ -119,6 +119,27 @@ class ExecutionResourceDatabaseTests(unittest.IsolatedAsyncioTestCase):
         connection.recovering = False
         return launcher, connection
 
+    async def test_frozen_request_admission_and_delivery_preserve_whole_gpu(self):
+        batch, _ = await self.create()
+        await self.ready_job(batch.id)
+        launcher, connection = await self.launcher()
+        async with self.sessions() as db:
+            job = await db.scalar(select(Job).where(Job.batch_id == batch.id))
+            job.resources = {"cpu_cores": 1, "startup_ram_bytes": 1024 ** 2, "gpu_count": 1}
+            job.artifact_metadata = {**(job.artifact_metadata or {}), "resources_resolved": True}
+            await db.commit()
+        connection.resources = {**connection.resources,
+            "defaults": {"cae": {"vram_budget_gb": 2}}, "gpu_devices": [{"uuid": "GPU-a",
+                "total_bytes": 8 * 1024 ** 3, "free_bytes": 6 * 1024 ** 3,
+                "vram_reserved_bytes": 2 * 1024 ** 3, "admission_open": True}]}
+        with patch("gpstation.service.job_orchestrator.SessionLocal", self.sessions):
+            self.assertEqual(await self.orchestrator.dispatch_available_jobs(), 0)
+            connection.resources["gpu_devices"][0]["vram_reserved_bytes"] = 0
+            self.assertEqual(await self.orchestrator.dispatch_available_jobs(), 1)
+        offer = connection.websocket.send_json.call_args.args[0]
+        self.assertIs(offer["resources_resolved"], True)
+        self.assertNotIn("vram_budget_gb", offer["resources"])
+
     async def test_two_jobs_one_launcher_and_cleanup_isolates_sibling(self):
         batch, _ = await self.create(count=3)
         for index in range(1, 4):

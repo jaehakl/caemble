@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_CEILING
 import re
 
 from .quality import QUALITY_VALIDATION_V1, validate_quality_report, validate_quality_settings
+from .mlp import MLP_DEFAULT_ALGORITHM, validate_mlp_algorithm
 
 PREDICTION_PROTOCOL_VERSION = 3
 EXECUTION_ID = "remote-predictor"
@@ -24,6 +25,18 @@ ALGORITHMS = {
             "training": {"gpu_count": 0},
             "inference": {"gpu_count": 0},
         },
+    },
+    "mlp": {
+        "kind": "mlp",
+        "implementationVersion": "mlp-v1",
+        "preprocessingVersion": "box-relative-v2",
+        "directions": ["forward"],
+        "representations": ["box-relative-v2"],
+        "supportsCheckpoints": False,
+        "supportsNativeBatch": True,
+        "supportedUpdateModes": ["rebuild"],
+        "resources": {"training": {"gpu_count": 1}, "inference": {"gpu_count": 1}},
+        "cpuFallbackResources": {"training": {"gpu_count": 0}, "inference": {"gpu_count": 0}},
     },
 }
 
@@ -48,6 +61,8 @@ def validate_definition(definition: dict) -> dict:
     if any(definition.get(key) != descriptor[key] for key in ("implementationVersion", "preprocessingVersion")):
         raise ValueError("Model implementation or preprocessing version is not supported.")
     algorithm = definition["algorithm"]
+    if descriptor["kind"] == "mlp":
+        validate_mlp_algorithm(algorithm)
     validate_quality_settings(definition.get("qualityValidation"))
     if (definition.get("calculationIds") or algorithm.get("calculationWeights")
             or any(key in definition for key in ("targets", "constraints", "objectiveWeights"))):
@@ -55,11 +70,14 @@ def validate_definition(definition: dict) -> dict:
     return descriptor
 
 
-def resource_requirements(definition: dict | str, purpose: str) -> dict:
+def resource_requirements(definition: dict | str, purpose: str, *, configured_gpu_count: int | None = None) -> dict:
     descriptor = validate_definition(definition) if isinstance(definition, dict) else algorithm_descriptor(definition)
     if purpose not in ("training", "inference"):
         raise ValueError("Prediction resource purpose must be training or inference.")
-    return deepcopy(descriptor["resources"][purpose])
+    profiles = descriptor["resources"]
+    if type(configured_gpu_count) is int and configured_gpu_count == 0:
+        profiles = descriptor.get("cpuFallbackResources", profiles)
+    return deepcopy(profiles[purpose])
 
 
 def validate_training_update(update: dict | None, definition: dict) -> str:
@@ -110,7 +128,8 @@ def validate_training_update(update: dict | None, definition: dict) -> str:
 
 
 def validate_allocation(definition: dict, purpose: str, allocation: dict) -> None:
-    required = resource_requirements(definition, purpose)
+    # The trusted Launcher allocation determines the backend for this process.
+    required = resource_requirements(definition, purpose, configured_gpu_count=len(allocation.get("gpu_devices", [])))
     required.setdefault("cpu_cores", 1)
     for key in ("cpu_cores", "startup_ram_bytes"):
         if allocation.get(key, 0) < required.get(key, 0):

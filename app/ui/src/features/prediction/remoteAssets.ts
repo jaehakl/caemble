@@ -5,6 +5,7 @@ import type { SavedPredictionModel, PredictionExecutionRoute } from './execution
 import { savedPredictionReferenceSchema } from './savedModels'
 import { profileJson, type RemoteArtifact, type RemoteHello } from './remoteProtocol'
 import type { PredictionSetup } from './usePredictionModels'
+import { predictionAlgorithmSchema } from '@caemble/execution/prediction/modelDefinition'
 
 export function registerRemoteArtifact(artifact: RemoteArtifact, signal?: AbortSignal) {
   return predictionApi.complete(
@@ -145,6 +146,9 @@ export function setupUsingSavedModel(
   route: PredictionExecutionRoute | undefined,
 ): PredictionSetup {
   const reference = savedModelReference(model, revision)
+  const algorithm = predictionAlgorithmSchema.safeParse(
+    model.revisions.find((item) => item.revision === revision)?.definition.algorithm,
+  )
   const availableRecordIds = Object.keys(reference.contract?.records ?? {}).map(Number)
   const selectedRecordIds =
     setup.models?.forward?.modelId === reference.modelId
@@ -154,6 +158,7 @@ export function setupUsingSavedModel(
     ...setup,
     executionId: 'remote-predictor',
     datasetId: reference.datasetId,
+    ...(algorithm.success ? { algorithm: algorithm.data } : {}),
     recordIds: selectedRecordIds.length ? selectedRecordIds : availableRecordIds,
     models: { forward: reference },
     routes: { forward: route },

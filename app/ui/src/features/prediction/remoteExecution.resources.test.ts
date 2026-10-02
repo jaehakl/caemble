@@ -56,6 +56,10 @@ beforeEach(() => {
 it('requests the advertised inference resources independently of training requirements and algorithm name', async () => {
   const remote = new RemotePredictionExecution('launcher', { algorithm: 'test-tensor' })
   await remote.command('operation.inspect', {}, { requestId: 'inspect', signal: new AbortController().signal })
+  expect(mocks.algorithms).toHaveBeenCalledWith(
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    'launcher',
+  )
   expect(mocks.runJob).toHaveBeenCalledWith(
     'predictor.hello',
     expect.objectContaining({ protocolVersion: 3 }),

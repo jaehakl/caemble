@@ -13,14 +13,17 @@ import pytest
 import websockets
 
 from app.slave_registry import load_registry
+from app.resources import ResourcePolicy
 from sdk.protocol.packets import receive_packet, send_packet
 from webrtc_harness import APP_ROOT, WebRtcHarness
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("algorithm,gpu_count", [("knn", 0), ("mlp", 0), pytest.param("mlp", 1,
+    marks=pytest.mark.skipif(os.getenv("RUN_PREDICTOR_CUDA_TESTS") != "1", reason="Opt-in real CUDA training"))])
 @pytest.mark.skipif(os.getenv("RUN_PREDICTOR_PROCESS_TESTS") != "1",
                     reason="Set RUN_PREDICTOR_PROCESS_TESTS=1 for the real Predictor process test")
-async def test_server_training_finishes_and_releases_resources_without_inference_session(tmp_path):
+async def test_server_training_finishes_and_releases_resources_without_inference_session(tmp_path, algorithm, gpu_count):
     slave = load_registry(APP_ROOT / "slaves").require("predictor-training")
     assert slave.python_executable.is_file(), "Run poetry install in app/slaves/cae_prediction first."
     module = importlib.util.spec_from_file_location("training_fixtures", slave.project_dir / "tests/fixtures.py")
@@ -57,7 +60,9 @@ async def test_server_training_finishes_and_releases_resources_without_inference
                 await websocket.wait_closed()
                 return
 
-    async with WebRtcHarness(slave, tmp_path, "", extra_request=request) as fixture:
+    policy = ResourcePolicy(gpu_count=gpu_count, cpu_cores=1, ram_budget_gb=8,
+        defaults={"predictor-training": {"cpu_cores": 1, **({"vram_budget_gb": 4} if gpu_count else {})}})
+    async with WebRtcHarness(slave, tmp_path, "", extra_request=request, resource_policy=policy) as fixture:
         identity = {"launcher_id": fixture.launcher_id, "boot_id": fixture.manager.boot_id,
             "job_id": str(uuid4()), "instance_id": str(uuid4()), "attempt_id": str(uuid4()),
             "attempt_count": 1, "reservation_id": str(uuid4())}
@@ -75,11 +80,15 @@ async def test_server_training_finishes_and_releases_resources_without_inference
             "dataset": {key: dataset[key] for key in ("datasetId", "revision", "fingerprint")},
             "definition": fixtures.definition(dataset), "datasetAccessUrl": fixture.url + dataset_path}
         spec["definition"]["implementationId"] = "remote-predictor"
+        if algorithm == "mlp":
+            spec["definition"].update(implementationVersion="mlp-v1", algorithm={"kind": "mlp",
+                "hiddenLayers": [32, 32], "epochs": 500, "batchSize": 32, "learningRate": .001, "seed": 0})
         reservation = {"type": "job.reserve", **identity, "slave_app_id": "predictor-training",
             "handler_type": "prediction.train", "job_mode": "websocket", "resources": {"cpu_cores": 1}}
         async with websockets.serve(serve, "127.0.0.1", 0) as server:
             await fixture.manager.reserve_job(reservation)
             worker = fixture.manager.instances[identity["instance_id"]]
+            assert len(worker.allocation["gpu_devices"]) == gpu_count
             await fixture.manager.start_job({**reservation, "type": "job.start", "allocation": worker.allocation,
                 "websocket_url": f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}", "token": "attempt-scoped"})
             try:
@@ -90,7 +99,7 @@ async def test_server_training_finishes_and_releases_resources_without_inference
                 assert fixture.manager.ledger.reservations
             finally:
                 release_dataset.set()
-            await asyncio.wait_for(completed.wait(), timeout=30)
+            await asyncio.wait_for(completed.wait(), timeout=90)
             assert packets[-1]["type"] == "job.complete", packets[-1]
             artifact = packets[-1]["artifact"]
             assert artifact["modelId"] == "server-trained" and artifact["storageId"] == storage_id

@@ -10,6 +10,44 @@ import {
 import { executionMetricsFixture } from './qualityReport.fixture'
 
 describe('Predictor Python wire contracts', () => {
+  it('retains the MLP recipe and training loss in a saved profile', () => {
+    const mlp = {
+      kind: 'mlp',
+      hiddenLayers: [32, 32],
+      epochs: 500,
+      batchSize: 32,
+      learningRate: 0.001,
+      seed: 0,
+      activation: 'tanh',
+      optimizer: 'adam',
+      inputScaling: 'range',
+      loss: 0.002,
+      initialLoss: 1.5,
+    }
+    const profile = remoteProfileSchema.parse({
+      direction: 'forward',
+      rowCount: 2,
+      inputLayouts: [],
+      inputSize: 1,
+      outputSize: 1,
+      includedMeasurementIds: [1, 2],
+      warningMeasurementIds: [],
+      diagnostics: [],
+      omittedDiagnosticGroups: 0,
+      excluded: {
+        'missing-block': 0,
+        'extra-block': 0,
+        'invalid-tensor': 0,
+        'fixed-layout-mismatch': 0,
+        'layout-mismatch': 0,
+      },
+      mlp,
+    })
+    expect(profile.mlp).toEqual(mlp)
+    expect(profileJson(profile).mlp).toEqual(mlp)
+    expect(profile.knn).toBeUndefined()
+  })
+
   it('preserves optional load execution metrics while accepting existing prepared responses', () => {
     const profile = {
       direction: 'forward',
