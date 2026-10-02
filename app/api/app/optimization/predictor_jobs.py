@@ -9,13 +9,34 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import undefer
 from prediction_contracts import resource_requirements
+from sdk.protocol.execution import ResourceRequest
 
 from gpstation.db import Job, Launcher
 from gpstation.models import JobAnswerWaitResult, JobCreateRequest
-from gpstation.service.execution import requested_resources, sync_attempt
+from gpstation.service.execution import gpu_resources_fit, requested_resources, sync_attempt
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.job_service import JOB_TERMINAL_STATES, job_to_data
 from prediction.db import ModelLease, ModelRevision, PredictionModel, Replica, StorageAccess
+
+
+def resources_from_frozen_hybrid(resources: dict) -> dict:
+    """Read immutable pre-v3 profiles without changing their source fingerprints.
+
+    Public requests still reject old keys; only persisted Hybrid definitions use
+    this conversion when constructing a new request.
+    """
+    result = {}
+    for key, value in resources.items():
+        request = dict(value)
+        if "gpu_memory_bytes" in request:
+            amount = request.pop("gpu_memory_bytes")
+            if type(amount) is not int or amount < 0 or "vram_budget_gb" in request:
+                raise ValueError("Invalid historical Hybrid GPU budget")
+            if amount:
+                request["vram_budget_gb"] = amount / 1024**3
+        result[key] = ResourceRequest.model_validate(request).model_dump(exclude_none=True)
+    return result
+
 
 def resources_fit_together(resources: dict, report: dict, *, available: bool = False) -> bool:
     """Reserve room for the parent and its child before starting either process."""
@@ -28,13 +49,8 @@ def resources_fit_together(resources: dict, report: dict, *, available: bool = F
             return False
         cpu_budget -= report.get("cpu_reserved", 0)
         ram_budget -= report.get("ram_used_bytes", 0) + report.get("ram_startup_reserved_bytes", 0)
-    demands = sorted((value.get("gpu_memory_bytes", 0) for value in resources.values()
-                      for _ in range(value.get("gpu_count", 0))), reverse=True)
-    devices = sorted((item.get("free_bytes" if available else "total_bytes", 0)
-                      for item in report.get("gpu_devices", []) if isinstance(item, dict)
-                      and (not available or not item.get("instance_id") and not item.get("reserved", False))), reverse=True)
-    return (cpu <= cpu_budget and ram <= ram_budget and len(demands) <= len(devices)
-            and all(required <= capacity for required, capacity in zip(demands, devices)))
+    return (cpu <= cpu_budget and ram <= ram_budget
+            and gpu_resources_fit(list(resources.values()), report, available=available))
 
 
 async def validate_hybrid_capacity(db, launcher_id, user_id, definition: dict) -> dict:

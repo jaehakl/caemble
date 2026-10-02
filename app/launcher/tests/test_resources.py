@@ -41,9 +41,9 @@ def test_explicit_resource_file_overrides_default(tmp_path, monkeypatch):
 
 
 def ledger(ram=8 * GIB):
-    value = ResourceLedger(ResourcePolicy(cpu_cores=12, ram_budget_bytes=ram,
+    value = ResourceLedger(ResourcePolicy(gpu_count=0, cpu_cores=12, ram_budget_gb=ram / GIB,
         ram_growth_headroom_bytes=GIB, system_ram_headroom_bytes=GIB), cpu_ids=list(range(12)), total_ram=16 * GIB)
-    value.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[])
+    value.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
     return value
 
 
@@ -60,12 +60,12 @@ def test_live_growth_only_pauses_admission_and_recovers_after_cleanup():
     value.reserve("a", "cae", {})
     value.reservations["a"].running = True
     for _ in range(2):
-        value.sample({"a": 9 * GIB}, launcher_rss=0, available_ram=7 * GIB, gpus=[], now=value.sampled_at + 1)
+        value.sample({"a": 9 * GIB}, launcher_rss=0, available_ram=7 * GIB, gpus=[], gpu_process_metrics_complete=True, now=value.sampled_at + 1)
     assert value.reservations["a"].running_samples == 2
     assert value.reserve("b", "cae", {}) == (None, "ram_pressure")
     assert "a" in value.reservations
     value.release("a")
-    value.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[])
+    value.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
     assert value.reserve("b", "cae", {})[0]
 
 
@@ -73,25 +73,28 @@ def test_stale_or_incomplete_measurements_never_become_zero_usage():
     value = ledger()
     value.sampled_at = time.monotonic() - 4
     assert value.reserve("a", "cae", {}) == (None, "metrics_stale")
-    value.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], complete=False)
+    value.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True, complete=False)
     assert value.reserve("a", "cae", {}) == (None, "metrics_stale")
 
 
-def test_gpu_devices_are_exclusive_and_allocation_uses_uuids():
+def test_gpu_budget_request_reserves_capacity_and_uses_uuids():
     value = ledger()
     value.sample({}, launcher_rss=0, available_ram=16 * GIB,
-                 gpus=[{"uuid": "GPU-a", "total_bytes": 8 * GIB, "free_bytes": 7 * GIB}])
-    request = {"gpu_count": 1, "gpu_memory_bytes": 6 * GIB}
+                 gpus=[{"uuid": "GPU-a", "total_bytes": 8 * GIB, "free_bytes": 7 * GIB}], gpu_process_metrics_complete=True)
+    assert value.reserve("too-large", "ai", {"gpu_count": 1, "vram_budget_gb": 9}) == (None, "gpu_unavailable")
+    request = {"gpu_count": 1, "vram_budget_gb": 3}
     allocation, _ = value.reserve("a", "ai", request)
     assert allocation["gpu_devices"] == ["GPU-a"]
     assert value.reserve("b", "ai", request) == (None, "gpu_unavailable")
     value.release("a")
+    value.sample({}, launcher_rss=0, available_ram=16 * GIB,
+                 gpus=[{"uuid": "GPU-a", "total_bytes": 8 * GIB, "free_bytes": 7 * GIB}], now=value.sampled_at + 1, gpu_process_metrics_complete=True)
     assert value.reserve("b", "ai", request)[0]
 
 
 def test_physical_free_memory_subtracts_unmaterialized_startups():
     value = ledger()
-    value.sample({}, launcher_rss=0, available_ram=3 * GIB, gpus=[])
+    value.sample({}, launcher_rss=0, available_ram=3 * GIB, gpus=[], gpu_process_metrics_complete=True)
     assert value.reserve("a", "cae", {})[0]
     assert value.reserve("b", "cae", {}) == (None, "ram_pressure")
 
@@ -109,10 +112,10 @@ def test_handler_defaults_preserve_app_settings_and_requests_override():
 
 def test_cpu_only_request_clears_inherited_gpu_memory():
     value = ledger()
-    value.policy.defaults = {"ai": {"gpu_count": 1, "gpu_memory_bytes": 4 * GIB}}
+    value.policy.defaults = {"ai": {"gpu_count": 1, "vram_budget_gb": 9}}
     allocation, reason = value.reserve("a", "ai", {"gpu_count": 0})
     assert reason is None and allocation["gpu_devices"] == []
-    assert allocation["gpu_memory_bytes"] == 0
+    assert allocation["vram_budget_bytes"] == {}
 
 
 def test_repeated_timestamp_does_not_release_startup_allowance():
@@ -121,14 +124,14 @@ def test_repeated_timestamp_does_not_release_startup_allowance():
     value.reservations["a"].running = True
     stamp = value.sampled_at + 1
     for _ in range(2):
-        value.sample({"a": 100}, launcher_rss=0, available_ram=16 * GIB, gpus=[], now=stamp)
+        value.sample({"a": 100}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True, now=stamp)
     assert value.reservations["a"].running_samples == 1
     assert value.reservations["a"].unobserved_bytes == GIB - 100
 
 
 def test_coarse_report_allows_explicit_smaller_startup_request():
     value = ledger(3 * GIB)
-    value.sample({}, launcher_rss=GIB + GIB // 2, available_ram=16 * GIB, gpus=[])
+    value.sample({}, launcher_rss=GIB + GIB // 2, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
     assert value.report(["cae"])["admission_open"]
     assert value.reserve("a", "cae", {"startup_ram_bytes": GIB // 4})[0]
 

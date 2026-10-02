@@ -87,7 +87,7 @@ class CaeEndToEndTests(unittest.TestCase):
                       boot_id=launcher.boot_id, attempt_id=str(uuid.uuid4()), instance_id=str(uuid.uuid4()),
                       reservation_id=str(uuid.uuid4()), execution_phase="start_authorized", cleanup_state="pending",
                       allocation={"cpu_ids": [0], "cpu_cores": 1, "startup_ram_bytes": 1024 ** 3,
-                                  "ram_available_bytes": 1024 ** 3, "gpu_devices": [], "gpu_memory_bytes": 0},
+                                  "ram_available_bytes": 1024 ** 3, "gpu_devices": [], "vram_budget_bytes": {}},
                       input={"measurement": {"experiment": {"simulationProgram": {
                           "recordedData": {"result": schema}, "resultContracts": {"result": box_tensor()["provenance"]}}}}})
             db.add(job)

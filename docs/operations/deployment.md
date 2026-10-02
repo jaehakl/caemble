@@ -277,7 +277,11 @@ API migration과 웹 배포는 기존 `deployment/update.sh`가 담당하며, wo
 환경변수로 지정한 경로가 우선하며, 기본 경로는 실행 위치와 무관하게 launcher 폴더를 기준으로 한다.
 기존 `.data/resources.toml`은 같은 폴더의 `resources.toml`이 없을 때만 호환용으로 읽는다.
 생략한 CPU·RAM 예산은 각각 가용 논리 CPU와 물리 RAM의 절반이다. 앱·handler 기본값과
-API/CLI override, RAM 여유 계산 및 GPU 배타 할당은 [worker 운영 안내](workers.md)를 따른다.
+API/CLI override, RAM 여유 계산 및 GPU 공유 할당은 [worker 운영 안내](workers.md)를 따른다.
+일반 작업은 기본 GPU 1개를 요청한다. `ram_budget_gb`는 Launcher RAM 예산,
+`vram_budget_gb`는 작업당·장치당 VRAM 예산이며 모두 GiB 단위다. GPU별 예약 합계가
+장치 용량을 넘지 않도록 배정하고, 예산에 도달한 작업만 중단한다. 실행 프로토콜 3을 위해
+API·SDK·Launcher·worker를 함께 업그레이드한다. 기존 명시적 CPU 전용 설정은 유지된다.
 Launchers 화면은 예산과 인스턴스 상태를 표시하며 설정 파일은 장비에서 편집한다.
 `models.toml`, 모델 weight, cache,
 `.env`, `.venv`, VOICEVOX runtime은 장비 로컬에 둔다.
@@ -291,9 +295,30 @@ CAE manifest는 `websocket`을 선언하며 worker가 서버로 결과를 직접
 AI WebRTC 실행도 각각 확인한다. 배포 스크립트 자체는 이
 브라우저·실제 DB·실제 worker 검증을 대신하지 않는다.
 
+## VRAM 예산 전환 (revision 000000000027)
+
+활성 작업의 프로세스 트리 정리를 확인하고 Launcher와 API writer를 중단한 뒤
+새 release에서 `poetry run alembic upgrade head`를 적용한다. API·SDK·Launcher·worker·UI·CLI를
+같은 release로 갱신한다. 실행 프로토콜 3은 구버전 Launcher와 연결하지 않는다.
+
+Migration은 Job·attempt·training 요청의 `gpu_memory_bytes`를 1024³으로 나누어
+`vram_budget_gb`로 옮기고, 0은 생략한다. Evaluation 입력에 고정된 자식 요청도 변환한다.
+완료된 allocation 바이트 이력은 보존한다. 불변 Hybrid 정의와 fingerprint는 유지하며,
+그 정의에서 새 요청을 만들 때만 예전 자원 프로필을 변환한다.
+
+장비의 `resources.toml`은 자동 변경하지 않는다. `ram_budget_bytes`를 1024³으로 나눈
+`ram_budget_gb`로, 작업별 `gpu_memory_bytes`를 같은 방식으로 `vram_budget_gb`로 바꾼다.
+CLI는 `--vram-budget-gb`를 사용한다. 생략한 VRAM 예산은 전체 장치 독점 예약이다.
+작은 CUDA 작업으로 동시 실행, 예산 도달 종료, 다른 작업 지속, 자식 프로세스 정리와
+메모리 할당·해제 후 감시값을 확인한다.
+
+Rollback은 실행과 writer를 중단한 상태에서 `poetry run alembic downgrade 000000000026`을
+적용한 뒤 이전 release로 함께 되돌린다. 요청 예산은 올림한 바이트 값으로 복원되지만,
+완료된 allocation 이력은 변환하지 않는다. 운영 DB 적용과 장비 검증은 배포 단계에서 수행한다.
+
 ## 공통 실행·자원 계약 전환 (revision 000000000019)
 
-Execution protocol 2는 launcher 설치, boot, 연결 session, slave 인스턴스, Job,
+이 revision의 Execution protocol 2는 launcher 설치, boot, 연결 session, slave 인스턴스, Job,
 attempt와 예약을 구분한다. API·SDK·launcher·CAE/AI·UI·CLI를 같은 release로 갱신한다.
 이전 실행 메시지를 허용하는 호환 모드는 없다. 기존 완료 Measurement와 RecordedData는
 보존하며 입력 고정 및 Batch commit 절차도 유지한다.

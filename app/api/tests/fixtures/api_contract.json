@@ -11017,17 +11017,17 @@
               ],
               "title": "Gpu Count"
             },
-            "gpu_memory_bytes": {
+            "vram_budget_gb": {
               "anyOf": [
                 {
-                  "type": "integer",
-                  "minimum": 0.0
+                  "type": "number",
+                  "exclusiveMinimum": 0.0
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Gpu Memory Bytes"
+              "title": "Vram Budget Gb"
             }
           },
           "additionalProperties": false,

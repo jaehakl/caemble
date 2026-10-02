@@ -12,13 +12,13 @@ from optimization.predictor_jobs import resources_fit_together, validate_hybrid_
 
 def test_combined_resources_include_each_cpu_ram_and_gpu():
     resources = {"evaluation": {"cpu_cores": 1, "startup_ram_bytes": 100, "gpu_count": 0},
-                 "predictor": {"cpu_cores": 3, "startup_ram_bytes": 500, "gpu_count": 1, "gpu_memory_bytes": 400}}
-    report = {"cpu_total": 4, "ram_budget_bytes": 600, "gpu_devices": [{"total_bytes": 800, "free_bytes": 600}]}
+                 "predictor": {"cpu_cores": 3, "startup_ram_bytes": 500, "gpu_count": 1, "vram_budget_gb": 4}}
+    report = {"cpu_total": 4, "ram_budget_bytes": 600, "gpu_devices": [{"total_bytes": 8 * 1024**3, "vram_reserved_bytes": 0, "admission_open": True, "free_bytes": 6 * 1024**3}]}
     assert resources_fit_together(resources, report)
     assert resources_fit_together(resources, report, available=True)
     for changes in ({"cpu_reserved": 1}, {"ram_used_bytes": 1}, {"ram_startup_reserved_bytes": 1},
-                    {"admission_open": False}, {"gpu_devices": [{"total_bytes": 800, "free_bytes": 399}]},
-                    {"gpu_devices": [{"total_bytes": 800, "free_bytes": 600, "instance_id": "busy"}]}):
+                    {"admission_open": False}, {"gpu_devices": [{"total_bytes": 8 * 1024**3, "vram_reserved_bytes": 0, "admission_open": True, "free_bytes": 0}]},
+                    {"gpu_devices": [{"total_bytes": 8 * 1024**3, "vram_reserved_bytes": 0, "admission_open": True, "free_bytes": 6 * 1024**3, "vram_reserved_bytes": 8 * 1024**3}]}):
         assert not resources_fit_together(resources, {**report, **changes}, available=True)
     assert not resources_fit_together(resources, {**report, "gpu_devices": []})
 
@@ -28,15 +28,15 @@ class ResourceProfileTests(unittest.IsolatedAsyncioTestCase):
         definition = {"algorithm": {"kind": "test-forward"}}
         launcher = SimpleNamespace(user_id="owner", slave_app_ids=["evaluation", "predictor"],
             job_modes={"evaluation": "websocket", "predictor": "webrtc"}, resources={
-                "cpu_total": 4, "ram_budget_bytes": 600, "gpu_devices": [{"total_bytes": 800}],
+                "cpu_total": 4, "ram_budget_bytes": 600, "gpu_devices": [{"total_bytes": 8 * 1024**3, "vram_reserved_bytes": 0, "admission_open": True}],
                 "defaults": {"evaluation": {"startup_ram_bytes": 100}, "predictor": {"startup_ram_bytes": 200}}})
         db = SimpleNamespace(get=AsyncMock(return_value=launcher))
         original = deepcopy(launcher.resources)
         with patch("optimization.predictor_jobs.resource_requirements", return_value={
-                "cpu_cores": 3, "gpu_count": 1, "gpu_memory_bytes": 400, "startup_ram_bytes": 500}) as requirements:
+                "cpu_cores": 3, "gpu_count": 1, "vram_budget_gb": 4, "startup_ram_bytes": 500}) as requirements:
             resources = await validate_hybrid_capacity(db, "launcher", "owner", definition)
             requirements.assert_called_once_with(definition, "inference")
-            assert resources["predictor"] == {"cpu_cores": 3, "gpu_count": 1, "gpu_memory_bytes": 400, "startup_ram_bytes": 500}
+            assert resources["predictor"] == {"cpu_cores": 3, "gpu_count": 1, "vram_budget_gb": 4, "startup_ram_bytes": 500}
             assert resources["evaluation"]["cpu_cores"] == 1 and resources["evaluation"]["gpu_count"] == 0
             assert launcher.resources == original
             launcher.resources = {**original, "cpu_total": 3}

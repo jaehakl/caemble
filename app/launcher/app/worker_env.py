@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from sdk.slave.execution import NATIVE_THREAD_ENV
+from sdk.protocol.execution import EXECUTION_PROTOCOL_VERSION
 
 from app.settings import LauncherSettings
 
@@ -56,7 +57,7 @@ def subprocess_env(settings: LauncherSettings, execution: dict[str, Any] | None 
     if settings.rtc_memory_cache_enabled:
         env["GPSTATION_V1_RTC_MEMORY_CACHE_ENABLED"] = settings.rtc_memory_cache_enabled
     if execution is not None:
-        env["CAEMBLE_EXECUTION_JSON"] = json.dumps(execution)
+        env["CAEMBLE_EXECUTION_JSON"] = json.dumps({**execution, "execution_protocol": EXECUTION_PROTOCOL_VERSION})
         env["CAEMBLE_CAE_CPU_BUDGET"] = str(execution["allocation"]["cpu_cores"])
         env["CUDA_VISIBLE_DEVICES"] = ",".join(execution["allocation"]["gpu_devices"])
         for name in NATIVE_THREAD_ENV:

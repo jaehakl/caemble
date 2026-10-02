@@ -25,9 +25,9 @@ def managed(monkeypatch):
                      "job_id": "job", "attempt_id": "attempt", "attempt_count": 2, "reservation_id": "reservation"},
         "allocation": {"cpu_ids": psutil.Process().cpu_affinity()[:1], "cpu_cores": 1,
                        "startup_ram_bytes": 1024, "ram_available_bytes": 2048,
-                       "gpu_devices": [], "gpu_memory_bytes": 0},
+                       "gpu_devices": [], "vram_budget_bytes": {}},
     }
-    monkeypatch.setenv(EXECUTION_ENV, json.dumps(value))
+    monkeypatch.setenv(EXECUTION_ENV, json.dumps({**value, "execution_protocol": 3}))
     return value
 
 
@@ -38,6 +38,13 @@ def test_execution_fences_every_identity_field(managed):
         stale = {**managed["identity"], field: "stale"}
         with pytest.raises(ValueError, match="execution attempt"):
             context.require_identity(stale)
+
+
+@pytest.mark.parametrize("version", [None, 2])
+def test_worker_requires_budget_enforcement_protocol(managed, monkeypatch, version):
+    monkeypatch.setenv(EXECUTION_ENV, json.dumps({**managed, "execution_protocol": version}))
+    with pytest.raises(ValueError, match="protocol 3 required"):
+        execution_context()
 
 
 def test_allocated_native_threads_override_auto_and_cap_explicit_values(managed):

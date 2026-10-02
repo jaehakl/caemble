@@ -159,7 +159,7 @@ class GenericRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         identity = {key: reserve[key] for key in IDENTITY_FIELDS}
                         identity["session_id"] = "session"
                         allocation = {"cpu_ids": [0], "cpu_cores": 1, "startup_ram_bytes": 1024,
-                                      "ram_available_bytes": 4096, "gpu_devices": [], "gpu_memory_bytes": 0}
+                                      "ram_available_bytes": 4096, "gpu_devices": [], "vram_budget_bytes": {}}
                         messages = [
                             {"type": "job.reserved", "allocation": allocation},
                             {"type": "job.answer", "answer": {"type": "answer", "sdp": "generic-answer"}},

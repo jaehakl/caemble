@@ -17,7 +17,7 @@ class SignalPayload(BaseModel):
 
 class LauncherHello(BaseModel):
     type: Literal["launcher.hello"]
-    execution_protocol: Literal[2]
+    execution_protocol: Literal[3]
     installation_id: str = Field(min_length=1)
     boot_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
@@ -44,7 +44,7 @@ class LauncherHeartbeat(BaseModel):
 
 class LauncherAccepted(BaseModel):
     type: Literal["launcher.accepted"]
-    execution_protocol: Literal[2] = 2
+    execution_protocol: Literal[3] = 3
     launcher_id: str
     user_id: str | None = None
     boot_id: str

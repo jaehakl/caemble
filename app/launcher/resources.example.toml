@@ -1,8 +1,11 @@
 # Copy to resources.toml in this directory, or set CAEMBLE_RESOURCES_FILE.
 # Omitted CPU/RAM budgets use half the available CPUs/physical RAM.
 # cpu_cores = 12
-# ram_budget_bytes = 68719476736
+# ram_budget_gb = 64 # GiB (1024^3 bytes); positive fractions are allowed.
 startup_ram_bytes = 1073741824
+gpu_count = 1 # Default devices per job; explicit gpu_count = 0 requests CPU-only.
+# GPU jobs reserve their per-device VRAM budget until their process tree exits.
+# Missing vram_budget_gb reserves the whole device exclusively.
 sample_interval_seconds = 1.0
 metrics_max_age_seconds = 3.0 # Must be at least sample_interval_seconds.
 # ram_growth_headroom_bytes defaults to max(1 GiB, 10% of budget).
@@ -11,16 +14,15 @@ metrics_max_age_seconds = 3.0 # Must be at least sample_interval_seconds.
 
 [defaults.cae]
 # cpu_cores = 4 # Omitted: min(4, total launcher CPU budget).
-gpu_count = 0
+# gpu_count = 0 # Optional CPU-only override.
 
-# Explicitly configure AI GPU use for the installed models.
+# AI inherits one GPU. Its VRAM budget includes CUDA context, models and caches.
 [defaults.ai]
 # cpu_cores = 4
-gpu_count = 0
-# gpu_count = 1
-# gpu_memory_bytes = 8589934592
+# gpu_count = 0 # Optional CPU-only override.
+# vram_budget_gb = 8
 
 # Exact handler profiles override app defaults; API/CLI requests override both.
 #[defaults."ai.sdxl.inpaint"]
 #gpu_count = 1
-#gpu_memory_bytes = 8589934592
+#vram_budget_gb = 8

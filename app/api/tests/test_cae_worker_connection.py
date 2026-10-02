@@ -164,7 +164,7 @@ class WorkerConnectionTests(unittest.TestCase):
                 attempt_count=1, attempt_id=str(uuid.uuid4()), boot_id="boot",
                 instance_id=str(uuid.uuid4()), reservation_id=str(uuid.uuid4()), execution_phase="start_authorized",
                 allocation={"cpu_ids": [0], "cpu_cores": 1, "startup_ram_bytes": 1024,
-                    "ram_available_bytes": 1024**3, "gpu_devices": [], "gpu_memory_bytes": 0},
+                    "ram_available_bytes": 1024**3, "gpu_devices": [], "vram_budget_bytes": {}},
                 input={
                     "measurement": {
                         "experiment": {"simulationProgram": {"recordedData": {"signal": schema},

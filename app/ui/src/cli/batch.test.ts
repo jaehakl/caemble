@@ -27,17 +27,23 @@ describe('batch resource arguments', () => {
   it('keeps physical artifact inputs separate and normalizes memory units', () => {
     expect(batchResources({})).toBeUndefined()
     expect(
-      batchResources({ 'cpu-cores': '4', 'startup-ram-mib': '1024', 'gpu-count': '1', 'gpu-memory-mib': '2048' }),
-    ).toEqual({ cpu_cores: 4, startup_ram_bytes: 1024 ** 3, gpu_count: 1, gpu_memory_bytes: 2 * 1024 ** 3 })
+      batchResources({ 'cpu-cores': '4', 'startup-ram-mib': '1024', 'gpu-count': '1', 'vram-budget-gb': '2' }),
+    ).toEqual({ cpu_cores: 4, startup_ram_bytes: 1024 ** 3, gpu_count: 1, vram_budget_gb: 2 })
   })
   it.each([
     { 'cpu-cores': '0' },
     { 'cpu-cores': '1.5' },
     { 'startup-ram-mib': '-1' },
-    { 'gpu-count': '0', 'gpu-memory-mib': '1' },
+    { 'gpu-count': '0', 'vram-budget-gb': '1' },
     { 'gpu-count': 'not-a-number' },
+    { 'vram-budget-gb': '0' },
+    { 'vram-budget-gb': 'Infinity' },
   ])('rejects invalid requests before submission: %o', (options) => {
     expect(() => batchResources(options)).toThrow()
+  })
+  it('accepts fractional GiB and explains the removed MiB flag', () => {
+    expect(batchResources({ 'vram-budget-gb': '0.125' })).toEqual({ vram_budget_gb: 0.125 })
+    expect(() => batchResources({ 'gpu-memory-mib': '128' })).toThrow(/--vram-budget-gb.*MiB \/ 1024/)
   })
 })
 const environment: CommandContext['environment'] = {
@@ -52,7 +58,7 @@ const environment: CommandContext['environment'] = {
 }
 
 describe('batch submission resource resume', () => {
-  const resources = { cpu_cores: 4, startup_ram_bytes: 1024 ** 3, gpu_count: 1, gpu_memory_bytes: 2 * 1024 ** 3 }
+  const resources = { cpu_cores: 4, startup_ram_bytes: 1024 ** 3, gpu_count: 1, vram_budget_gb: 2 }
   const saved = { api: 'https://api.example', experimentId: 7, requestId: 'saved-request', resources }
   const stored = {
     directory: path.resolve('artifact'),
@@ -122,7 +128,7 @@ describe('batch submission resource resume', () => {
             'cpu-cores': '8',
             'startup-ram-mib': '1024',
             'gpu-count': '1',
-            'gpu-memory-mib': '2048',
+            'vram-budget-gb': '2',
             ...options,
           },
           args: ['artifact'],

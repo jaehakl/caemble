@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from decimal import Decimal, ROUND_CEILING
 
 PREDICTION_PROTOCOL_VERSION = 3
 EXECUTION_ID = "remote-predictor"
@@ -15,8 +16,8 @@ ALGORITHMS = {
         "representations": ["box-relative-v2"],
         "supportsCheckpoints": False,
         "resources": {
-            "training": {"gpu_count": 0, "gpu_memory_bytes": 0},
-            "inference": {"gpu_count": 0, "gpu_memory_bytes": 0},
+            "training": {"gpu_count": 0},
+            "inference": {"gpu_count": 0},
         },
     },
 }
@@ -58,8 +59,13 @@ def resource_requirements(definition: dict | str, purpose: str) -> dict:
 def validate_allocation(definition: dict, purpose: str, allocation: dict) -> None:
     required = resource_requirements(definition, purpose)
     required.setdefault("cpu_cores", 1)
-    for key in ("cpu_cores", "startup_ram_bytes", "gpu_memory_bytes"):
+    for key in ("cpu_cores", "startup_ram_bytes"):
         if allocation.get(key, 0) < required.get(key, 0):
             raise ValueError(f"Prediction allocation does not satisfy {key}.")
+    if required.get("vram_budget_gb") is not None:
+        budget = int((Decimal(str(required["vram_budget_gb"])) * 1024**3).to_integral_value(rounding=ROUND_CEILING))
+        if any(allocation.get("vram_budget_bytes", {}).get(device, 0) < budget
+               for device in allocation.get("gpu_devices", [])):
+            raise ValueError("Prediction allocation does not satisfy vram_budget_gb.")
     if len(allocation.get("gpu_devices", [])) < required.get("gpu_count", 0):
         raise ValueError("Prediction allocation does not satisfy its GPU requirement.")

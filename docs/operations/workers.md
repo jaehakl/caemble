@@ -304,29 +304,37 @@ takes precedence; per-job CPU requests belong in profiles or submission override
 
 ```toml
 cpu_cores = 12
-ram_budget_bytes = 68719476736
+ram_budget_gb = 64
 startup_ram_bytes = 1073741824
+gpu_count = 1
 
 [defaults.cae]
 cpu_cores = 4
-gpu_count = 0
 
 [defaults.ai]
 cpu_cores = 4
-gpu_count = 0
 
 [defaults."ai.sdxl.inpaint"]
 gpu_count = 1
-gpu_memory_bytes = 8589934592
+vram_budget_gb = 8
 ```
 
 Omitted machine budgets use half the logical CPUs available to the launcher
 (rounded down, minimum one) and half physical RAM. Per-job defaults are up to
-four CPUs, 1 GiB startup RAM, and no GPU. Application defaults are overlaid by a
+four CPUs, 1 GiB startup RAM, and one GPU. Set the top-level `gpu_count` to change
+the general default. Existing explicit CPU-only profiles remain CPU-only.
+Application defaults are overlaid by a
 handler profile and then explicit API/CLI resource fields. `gpu_count = 0`
-requests CPU-only execution; a positive count requires that many exclusively
-allocated devices. There is no automatic fallback from a required GPU to CPU.
-`gpu_memory_bytes` is the required free memory per device. GPU UUIDs are
+requests CPU-only execution; a positive count requires that many distinct
+devices, each with its own whole-lifetime VRAM budget. There is no automatic fallback
+from a required GPU to CPU, including on machines without a GPU.
+`ram_budget_gb` sets the launcher RAM budget; `vram_budget_gb` sets each job's
+budget on each assigned GPU. Both use GiB (1024³ bytes), accept finite positive
+fractions, and round up to integer bytes internally. An omitted VRAM budget
+reserves the entire selected device exclusively. Input `ram_budget_bytes`,
+`gpu_memory_bytes`, and the old `--gpu-memory-mib` CLI flag are rejected with
+conversion guidance; use `--vram-budget-gb`. Explicit CPU-only requests clear
+inherited VRAM budgets. GPU UUIDs are
 discovered through `nvidia-smi`; optional `gpu_devices = ["GPU-..."]` at the
 top level restricts the devices the launcher manages.
 
@@ -360,10 +368,47 @@ not prevent later memory growth or allocation failure. Other programs' usage
 reduces OS available RAM. The worker's advisory RAM allowance is also bounded
 by its CPU share of the launcher budget and checked against live available RAM.
 
-GPU admission leaves the larger of 1 GiB or 10% of device memory free in addition
-to the requested memory. A device remains exclusively reserved until the full
-attempt process tree exits, including any retained model or cache. No automatic
-preemption or GPU sharing is performed.
+GPU reservations are summed per device, including reserved, starting, running,
+and cleaning jobs. The sum may equal but never exceed the reported total capacity.
+For a device with exactly 24 GiB, reservations of 12 + 6 GiB leave room for another
+6 GiB job, but not 7 GiB. There is no fixed job-count or 50% usage limit. Decreased
+actual usage does not release a reservation; only full process-tree cleanup does.
+Multi-GPU assignments reserve every device atomically. Other programs are not
+subject to this ledger and can still cause physical allocation failures.
+
+Starts remain serialized per GPU. After `running`, a fresh sample establishes a
+baseline, then two distinct successive samples must show no decrease in free
+VRAM before another job can start. Missing/stale measurements or zero physical
+free memory block new GPU admissions. CPU-only work is unaffected by GPU telemetry.
+
+The launcher samples GPU usage for the entire contained process tree, including
+CUDA context overhead, models, tensors and caches, at the configured interval
+(default one second). WDDM uses native Windows PDH counters with CUDA UUID/LUID
+mapping; Linux/TCC uses NVIDIA per-process memory telemetry. PID lifetimes are
+checked across collection. N/A or failed measurements are never treated as zero.
+
+If usage on any assigned device reaches its budget, the job fails with
+`gpu_memory_budget_exceeded` and its process tree is stopped immediately. Other
+jobs continue. The budget stays reserved until cleanup is confirmed; automatic
+retry is not performed. Periodic sampling cannot prevent an instantaneous
+allocation from exceeding the budget before it is observed.
+
+When monitoring fails, new GPU admissions stop. After `metrics_max_age_seconds`
+(default three seconds), the launcher logs a warning and the Launchers page shows
+which running jobs can no longer be checked. Existing jobs continue. Warning and
+recovery transitions are logged once, not on every sample. Recovery resumes budget
+checks and stops any job already at its budget. Validate Windows counters with
+real allocation/free workloads on the deployment platform; some Windows versions
+have [known counter-reporting issues](https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/gpu-process-memory-counters-report-wrong-value).
+
+Protocol 3 reports per-device `vram_reserved_bytes` and `vram_used_bytes`, and
+per-instance `vram_budget_bytes`, `vram_used_bytes`, `vram_monitoring_status`
+(`healthy` or `unavailable`), and monitoring warnings.
+These machine-facing fields remain integer bytes. Upgrade API, SDK, launcher and
+workers together; protocol-2 peers cannot provide this budget contract. Stored
+request budgets are migrated to GiB while completed allocation history is retained.
+Restart the launcher after replacing old policy keys; user configuration files
+are never silently rewritten.
 
 ## Computation inside an instance
 
@@ -474,7 +519,7 @@ unversioned worker payloads; see the
 [CAE README](../development/cae.md) and [Solver development guide](../development/solver-development.md).
 
 The GPStation v1 API, attachment framing, and handler lifecycle are owned
-by `shared/sdk`. Execution protocol 2 requires the API, launcher, slave and master
+by `shared/sdk`. Execution protocol 3 requires the API, launcher, slave and master
 SDKs to be upgraded together; it does not version CAE payload formats. The CAE
 AST allowlist is an API guardrail rather than an OS sandbox, so production
 workers run under a dedicated account or container. Deployment and launcher/API

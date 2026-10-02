@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
@@ -10,6 +11,7 @@ import psutil
 from sdk.protocol.execution import ExecutionIdentity
 
 from app.containment import ProcessContainer, recover_container
+from app.gpu_memory import GpuProcessMonitor
 from app.journal import LauncherJournal
 from app.resources import ResourceLedger, ResourcePolicy, discover_gpus
 from app.settings import LauncherSettings
@@ -38,6 +40,9 @@ class ManagedWorker:
     cleanup_task: asyncio.Task | None = None
     stdout_task: asyncio.Task | None = None
     stderr_task: asyncio.Task | None = None
+    vram_used_bytes: dict[str, int] | None = None
+    vram_valid_at: float = field(default_factory=time.monotonic)
+    vram_monitoring_warning: str | None = None
 
 
 class WorkerManager:
@@ -58,6 +63,9 @@ class WorkerManager:
         self.completed: dict[str, dict[str, Any]] = {}
         self.metric_task: asyncio.Task | None = None
         self.stopping = False
+        self.gpu_monitor = GpuProcessMonitor()
+        self.gpu_valid_at = time.monotonic()
+        self.gpu_monitoring_warning: str | None = None
 
     async def initialize(self) -> None:
         if self.journal is not None:
@@ -74,11 +82,22 @@ class WorkerManager:
     def inventory(self) -> list[dict[str, Any]]:
         return [{**worker.identity, "slave_app_id": worker.slave_app_id, "handler_type": worker.handler_type,
                  "job_mode": worker.job_mode, "status": worker.status, "allocation": worker.allocation,
-                 "ram_used_bytes": self.ledger.reservations[worker.identity["instance_id"]].rss}
+                 "ram_used_bytes": self.ledger.reservations[worker.identity["instance_id"]].rss,
+                 "vram_used_bytes": worker.vram_used_bytes,
+                 "vram_monitoring_status": "healthy" if worker.vram_used_bytes is not None else "unavailable",
+                 "vram_monitoring_warning": worker.vram_monitoring_warning}
                 for worker in self.instances.values()]
 
     def resource_report(self) -> dict[str, Any]:
         report = self.ledger.report(self.registry.ids())
+        report["vram_monitoring_status"] = "healthy" if self.ledger.gpu_process_metrics_complete else "unavailable"
+        report["vram_monitoring_warning"] = self.gpu_monitoring_warning
+        for device in report["gpu_devices"]:
+            owners = [self.instances[owner] for owner in device["instance_ids"] if owner in self.instances]
+            device["vram_used_bytes"] = (sum(worker.vram_used_bytes.get(device["uuid"], 0) for worker in owners)
+                                         if all(worker.vram_used_bytes is not None for worker in owners) else None)
+            device["vram_monitoring_warning"] = self.gpu_monitoring_warning
+            device["vram_monitoring_status"] = report["vram_monitoring_status"]
         if self.stopping:
             report["admission_open"] = False
         return report
@@ -243,14 +262,22 @@ class WorkerManager:
             self.schedule_cleanup(worker)
         elif message_type in {"job.answer", "job.running", "job.progress"} and worker.terminal is None:
             if message_type == "job.running":
-                worker.status = "running"
-                self.ledger.reservations[worker.identity["instance_id"]].running = True
+                async with self.ledger.lock:
+                    if (self.instances.get(worker.identity["instance_id"]) is not worker
+                            or worker.terminal is not None or worker.status in {"cleaning", "cleanup_failed"}):
+                        return
+                    worker.status = "running"
+                    self.ledger.mark_running(worker.identity["instance_id"])
             await self.send_control(message)
 
-    async def emit_terminal(self, worker: ManagedWorker, message: dict[str, Any]) -> None:
+    async def emit_terminal(self, worker: ManagedWorker, message: dict[str, Any], *, stop_immediately: bool = False) -> None:
         if worker.terminal is None:
             worker.terminal = {**message, **worker.identity}
             self.persist_worker(worker)
+            if stop_immediately:
+                if worker.start_task is not None and not worker.start_task.done():
+                    worker.start_task.cancel()
+                self.schedule_cleanup(worker, grace=0)
             await self.send_control(worker.terminal)
 
     def schedule_cleanup(self, worker: ManagedWorker, grace: float = 3.0) -> None:
@@ -263,7 +290,7 @@ class WorkerManager:
         try:
             if worker.start_task is not None and worker.start_task is not asyncio.current_task():
                 await asyncio.gather(worker.start_task, return_exceptions=True)
-            if worker.process is not None and worker.process.returncode is None:
+            if grace > 0 and worker.process is not None and worker.process.returncode is None:
                 try:
                     await self.write_worker(worker, {"type": "stop", **worker.identity, "reason": "attempt cleanup"})
                     worker.process.stdin.close()
@@ -326,30 +353,103 @@ class WorkerManager:
         if self.metric_task is not None:
             self.metric_task.cancel()
             await asyncio.gather(self.metric_task, return_exceptions=True)
+        await asyncio.to_thread(self.gpu_monitor.close)
         if self.journal is not None:
             self.journal.close()
 
     async def sample_resources(self) -> None:
+        # Capture process lifetimes, not only PIDs: children may exit/reuse a PID
+        # while the OS GPU query is in flight.
+        captured = {}
+        for instance_id, worker in list(self.instances.items()):
+            try:
+                captured[instance_id] = (worker.container, process_identities(worker.container))
+            except (psutil.Error, OSError):
+                captured[instance_id] = (worker.container, None)
+        gpu_sample_started_at = time.monotonic()
+        gpus = None
+        process_usage = None
         try:
             gpus = await asyncio.to_thread(discover_gpus)
+            process_usage = await asyncio.to_thread(self.gpu_monitor.sample,
+                [gpu["uuid"] for gpu in self.ledger.selected_gpus(gpus)])
         except Exception:
-            gpus = None
+            # Keep device telemetry if only per-process telemetry failed.
+            pass
+        exceeded = []
         async with self.ledger.lock:
             complete = True
+            current_time = time.monotonic()
+            fresh = current_time - gpu_sample_started_at <= self.ledger.policy.metrics_max_age_seconds
+            process_complete = process_usage is not None and gpus is not None and fresh
             rss = {}
             for instance_id, worker in self.instances.items():
                 try:
                     rss[instance_id] = worker.container.rss() if worker.container is not None else 0
                 except (psutil.Error, OSError):
                     complete = False
+                devices = worker.allocation["gpu_devices"]
+                if not devices:
+                    continue
+                before_container, before_pids = captured.get(instance_id, (None, None))
+                try:
+                    after_pids = process_identities(worker.container)
+                except (psutil.Error, OSError):
+                    after_pids = None
+                valid = (fresh and process_usage is not None and before_pids is not None
+                         and before_container is worker.container and before_pids == after_pids
+                         and set(devices).issubset(process_usage))
+                if valid:
+                    worker.vram_used_bytes = {device: sum(process_usage[device].get(pid, 0) for pid in after_pids)
+                                              for device in devices}
+                    worker.vram_valid_at = gpu_sample_started_at
+                    if worker.terminal is None and any(worker.vram_used_bytes[device] >= budget
+                            for device, budget in worker.allocation["vram_budget_bytes"].items()):
+                        exceeded.append(worker)
+                else:
+                    worker.vram_used_bytes = None
+                    process_complete = False
+                warning = ("GPU 메모리 감시 불가: 작업은 계속 실행되지만 예산 초과를 확인할 수 없습니다."
+                           if current_time - worker.vram_valid_at > self.ledger.policy.metrics_max_age_seconds else None)
+                if warning != worker.vram_monitoring_warning:
+                    print(f"[{instance_id}] {warning or 'GPU 메모리 감시 복구'}", flush=True)
+                    worker.vram_monitoring_warning = warning
+            if process_complete:
+                self.gpu_valid_at = gpu_sample_started_at
+            warning = ("GPU 메모리 감시 불가: 신규 GPU 배정을 중단했습니다. 기존 작업은 계속 실행됩니다."
+                       if current_time - self.gpu_valid_at > self.ledger.policy.metrics_max_age_seconds else None)
+            if warning != self.gpu_monitoring_warning:
+                print(warning or "GPU 메모리 감시 복구", flush=True)
+                self.gpu_monitoring_warning = warning
             try:
                 own_rss, available = psutil.Process().memory_info().rss, psutil.virtual_memory().available
             except psutil.Error:
-                self.ledger.metrics_complete = False
-                return
-            self.ledger.sample(rss, launcher_rss=own_rss, available_ram=available, gpus=gpus, complete=complete)
+                complete = False
+                own_rss, available = self.ledger.launcher_rss, self.ledger.available_ram
+            self.ledger.sample(rss, launcher_rss=own_rss, available_ram=available, gpus=gpus, complete=complete,
+                               gpu_sample_started_at=gpu_sample_started_at,
+                               gpu_process_metrics_complete=process_complete)
+        # Schedule every offending tree's stop before any control send can wait
+        # on the network or another sender.
+        await asyncio.gather(*(self.emit_terminal(worker, {
+            "type": "job.error", "code": "gpu_memory_budget_exceeded",
+            "detail": "GPU memory usage reached the per-device budget.",
+            "vram_used_bytes": worker.vram_used_bytes, "vram_budget_bytes": worker.allocation["vram_budget_bytes"]},
+            stop_immediately=True) for worker in exceeded
+            if self.instances.get(worker.identity["instance_id"]) is worker and worker.terminal is None))
 
     async def monitor_resources(self) -> None:
         while True:
             await asyncio.sleep(self.ledger.policy.sample_interval_seconds)
             await self.sample_resources()
+
+
+def process_identities(container: ProcessContainer | None) -> dict[int, float]:
+    result = {}
+    if container is not None:
+        for pid in container.pids():
+            try:
+                result[pid] = psutil.Process(pid).create_time()
+            except psutil.NoSuchProcess:
+                continue
+    return result

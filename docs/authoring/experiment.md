@@ -88,9 +88,15 @@ Batch가 commit되면 독립 Job들이 대기열에 등록됩니다. Launcher �
 
 `--cpu-cores`는 Job 내부 계산까지 포함한 논리 CPU 수이고 `--startup-ram-mib`는
 시작 시점의 RAM 추정량입니다. RAM의 절대 상한이 아니며 launcher는 실행 중 관측한 사용량과
-OS 여유를 기준으로 새 Job을 배정합니다. `--gpu-count 0`은 CPU 실행, 양수는 해당 개수의
-GPU 배타 할당을 요청합니다. GPU가 필요한 경우 `--gpu-memory-mib`로 장치당 필요한
-가용 메모리도 지정할 수 있습니다. 필요한 GPU를 사용할 수 없으면 기다리며 자동 CPU
+OS 여유를 기준으로 새 Job을 배정합니다. 일반 기본값은 GPU 1개이며 기존 명시적 설정이
+우선합니다. `--gpu-count 0`은 CPU 실행, 양수는 해당 개수의 서로 다른 GPU를 요청합니다.
+GPU별 예약 예산 합계가 실제 전체 용량 이하여야 새 작업을 추가할 수 있습니다.
+`--vram-budget-gb`는 작업당·장치당 VRAM 예산이며, GiB(1024³ 바이트) 단위의 양의 소수를
+허용합니다. 생략하면 장치 전체를 예약하여 독점 실행합니다. 예산은 실제 사용량이 줄어도
+유지하며 프로세스 트리 종료 확인 후 반환합니다. 예를 들어 24 GiB 장치에서 12+6 GiB를
+예약했다면 추가 6 GiB는 가능하고 7 GiB는 대기합니다. 기존 `--gpu-memory-mib`는 거부합니다.
+실측 사용량이 예산에 도달하면 해당 작업만 중단합니다. 감시 장애 시 기존 작업은 경고와 함께
+계속 실행하고 신규 GPU 배정은 중단합니다. 필요한 GPU를 사용할 수 없으면 기다리며 자동 CPU
 전환은 하지 않습니다. 자세한 장비 정책은 [worker 운영 안내](../operations/workers.md)를 봅니다.
 
 `watch`는 진행 상태를 관찰합니다. **Ctrl+C나 관찰 시간 초과로 watch를 종료해도 원격 배치는 계속 실행됩니다.** 취소가 필요하면 `batch cancel <batch-id>`를 사용합니다. `batch show`가 반환한 Measurement ID를 `measurement inspect <measurement-id>`로 조회하고, 저장된 기록을 내려받아 수치를 확인합니다.

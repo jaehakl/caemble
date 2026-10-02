@@ -192,7 +192,25 @@ export function LaunchersWorkspace({
                       </dd>
                     </div>
                   </dl>
+                  {resources?.gpu_devices?.map((device) => (
+                    <div key={device.uuid} className="text-xs text-muted-foreground">
+                      <p>
+                        {device.uuid} · VRAM 예약 / 전체 {formatMemory(device.vram_reserved_bytes)} /{' '}
+                        {formatMemory(device.total_bytes)}
+                      </p>
+                      {device.vram_monitoring_warning ? (
+                        <p role="alert" className="text-destructive">
+                          {device.vram_monitoring_warning}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
                   {wait ? <p className="text-xs text-muted-foreground">{wait}</p> : null}
+                  {resources?.vram_monitoring_warning ? (
+                    <p role="alert" className="text-xs text-destructive">
+                      {resources.vram_monitoring_warning}
+                    </p>
+                  ) : null}
                 </CardHeader>
                 <CardContent className="space-y-2 border-t p-3">
                   {instances.length ? (
@@ -215,6 +233,19 @@ export function LaunchersWorkspace({
                                   {formatMemory(instance.ram_used_bytes)} · GPU{' '}
                                   {instance.allocation?.gpu_devices.length ?? 0}
                                 </p>
+                                {Object.entries(instance.allocation?.vram_budget_bytes ?? {}).map(
+                                  ([device, budget]) => (
+                                    <p key={device} className="text-muted-foreground">
+                                      {device} · VRAM 실측 / 예산 {formatMemory(instance.vram_used_bytes?.[device])} /{' '}
+                                      {formatMemory(budget)}
+                                    </p>
+                                  ),
+                                )}
+                                {instance.vram_monitoring_warning ? (
+                                  <p role="alert" className="text-destructive">
+                                    {instance.vram_monitoring_warning}
+                                  </p>
+                                ) : null}
                               </div>
                               <div className="flex shrink-0 gap-1">
                                 <Button

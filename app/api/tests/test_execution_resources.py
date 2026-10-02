@@ -1,4 +1,4 @@
-"""Protocol-2 scheduling tests use fake launchers and a disposable local database."""
+"""Protocol-3 scheduling tests use fake launchers and a disposable local database."""
 import os
 import unittest
 import uuid
@@ -20,7 +20,7 @@ from gpstation.service.job_service import JobService
 from gpstation.service.launcher_connection import handle_launcher_message, run_launcher_control
 from gpstation.service.state import RuntimeRegistry, runtime, utcnow
 from gpstation.service.worker_connection import worker_assignment, worker_cleaned
-from sdk.protocol.messages import JobCleaned, JobRejected, JobReserved, LauncherHello
+from sdk.protocol.messages import JobCleaned, JobRejected, JobReserved, JobError, LauncherHello
 from sdk.protocol.execution import ResourceRequest
 
 
@@ -35,6 +35,31 @@ class ResourceSelectionTests(unittest.TestCase):
 
 
 class SessionFencingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_budget_error_survives_worker_disconnect_and_duplicate_receipts(self):
+        registry = RuntimeRegistry()
+        await registry.register_launcher("launcher", AsyncMock(), "key", boot_id="boot", session_id="session")
+        orchestrator = JobOrchestrator(registry)
+        job = Job(id="job", launcher_id="launcher", boot_id="boot", instance_id="instance", attempt_id="attempt",
+                  attempt_count=1, reservation_id="reservation", state="failed", last_error="Worker connection interrupted.")
+        message = JobError(type="job.error", **execution_identity(job), session_id="session",
+                           code="gpu_memory_budget_exceeded", detail="GPU memory usage reached the per-device budget.")
+        db = AsyncMock()
+        db.scalar.return_value = "launcher"
+        with patch("gpstation.service.job_orchestrator.serialize_events", AsyncMock()), \
+             patch("gpstation.service.job_orchestrator.locked_execution", AsyncMock(return_value=job)), \
+             patch("gpstation.service.job_orchestrator.job_event", AsyncMock()) as event, \
+             patch("gpstation.service.job_orchestrator.finish_job", AsyncMock()) as finish:
+            for _ in range(2):
+                await orchestrator.handle_launcher_job_event(db, launcher_id="launcher", user_id="owner", message=message)
+            self.assertTrue(job.last_error.startswith("gpu_memory_budget_exceeded:"))
+            self.assertEqual(job.state, "failed")
+            finish.assert_not_called()  # No duplicate batch counters or retry.
+            event.assert_awaited_once()
+            job.state, job.last_error = "succeeded", None
+            await orchestrator.handle_launcher_job_event(db, launcher_id="launcher", user_id="owner", message=message)
+            self.assertIsNone(job.last_error)
+            self.assertEqual(job.state, "succeeded")
+
     async def test_legacy_launcher_receives_explicit_upgrade_error(self):
         websocket = AsyncMock()
         websocket.headers = {}
@@ -50,7 +75,7 @@ class SessionFencingTests(unittest.IsolatedAsyncioTestCase):
             await run_launcher_control(websocket)
         websocket.close.assert_awaited_once_with(code=1008)
         self.assertEqual(websocket.send_json.call_args.args[0], {"type": "error",
-            "detail": "Execution protocol 2 required; upgrade API, launcher, slave and SDK together"})
+            "detail": "Execution protocol 3 required; upgrade API, launcher, slave and SDK together"})
 
     async def test_old_control_finalizer_cannot_suspend_new_connection(self):
         registry = RuntimeRegistry()
@@ -106,7 +131,7 @@ class ExecutionResourceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 offer = connection.websocket.send_json.call_args.args[0]
                 self.assertEqual(offer["type"], "job.reserve")
                 allocation = {"cpu_ids": list(range(len(starts) * 4, len(starts) * 4 + 4)), "cpu_cores": 4,
-                    "startup_ram_bytes": 1024**2, "ram_available_bytes": 1024**3, "gpu_devices": [], "gpu_memory_bytes": 0}
+                    "startup_ram_bytes": 1024**2, "ram_available_bytes": 1024**3, "gpu_devices": [], "vram_budget_bytes": {}}
                 message = JobReserved.model_validate({**offer, "type": "job.reserved", "allocation": allocation})
                 async with self.sessions() as db:
                     await self.orchestrator.handle_launcher_job_event(db, launcher_id=launcher.id,
@@ -183,7 +208,7 @@ class ExecutionResourceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await self.orchestrator.dispatch_available_jobs()
             offer = connection.websocket.send_json.call_args.args[0]
             allocation = {"cpu_ids": [0, 1, 2, 3], "cpu_cores": 4, "startup_ram_bytes": 1024**2,
-                "ram_available_bytes": 1024**3, "gpu_devices": [], "gpu_memory_bytes": 0}
+                "ram_available_bytes": 1024**3, "gpu_devices": [], "vram_budget_bytes": {}}
             heartbeat = {"type": "launcher.heartbeat", "boot_id": "boot", "session_id": "session",
                 "status": "ready", "resources": connection.resources,
                 "instances": [{**offer, "status": "reserved", "allocation": allocation}]}
@@ -275,7 +300,7 @@ class ExecutionResourceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             row = await db.get(Launcher, launcher.id)
             row.session_id, row.status, row.reconnect_deadline = "resumed", "ready", None
             await db.commit()
-            hello = LauncherHello(type="launcher.hello", execution_protocol=2, installation_id="installation",
+            hello = LauncherHello(type="launcher.hello", execution_protocol=3, installation_id="installation",
                 boot_id="boot", session_id="resumed", launcher_name="parallel",
                 instances=[{**identity, "status": "running"}], resources=connection.resources)
             await self.orchestrator.reconcile_launcher(db, launcher_id=launcher.id, user_id=self.owner_id, hello=hello)

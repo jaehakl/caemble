@@ -14,10 +14,10 @@ from app.subprocess_manager import WorkerManager
 
 
 def make_manager(tmp_path, *, cores=12, ram=16 * GIB, journal=None):
-    policy = ResourcePolicy(cpu_cores=cores, ram_budget_bytes=ram, ram_growth_headroom_bytes=GIB,
+    policy = ResourcePolicy(gpu_count=0, cpu_cores=cores, ram_budget_gb=ram / GIB, ram_growth_headroom_bytes=GIB,
                             system_ram_headroom_bytes=GIB)
     ledger = ResourceLedger(policy, cpu_ids=list(range(cores)), total_ram=64 * GIB)
-    ledger.sample({}, launcher_rss=100, available_ram=32 * GIB, gpus=[])
+    ledger.sample({}, launcher_rss=100, available_ram=32 * GIB, gpus=[], gpu_process_metrics_complete=True)
     registry = SlaveAppRegistry([SlaveApp("cae", "CAE", "app", tmp_path, job_mode="websocket"),
                                  SlaveApp("ai", "AI", "app", tmp_path)])
     settings = SimpleNamespace(launcher_name="test", worker_ready_timeout_seconds=1)
@@ -210,10 +210,10 @@ async def test_real_bootstrapped_instances_overlap_and_keep_attempt_results(tmp_
     from pathlib import Path
     monkeypatch.setattr(SlaveApp, "python_executable", property(lambda _: Path(sys.executable)))
     app = SlaveApp("cae", "Fixture", "fixture_worker", tmp_path, job_mode="websocket")
-    policy = ResourcePolicy(cpu_cores=2, ram_budget_bytes=8 * GIB, ram_growth_headroom_bytes=GIB,
+    policy = ResourcePolicy(gpu_count=0, cpu_cores=2, ram_budget_gb=8, ram_growth_headroom_bytes=GIB,
                             system_ram_headroom_bytes=GIB)
     ledger = ResourceLedger(policy, cpu_ids=available[:2], total_ram=16 * GIB)
-    ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[])
+    ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
     events = []
     async def send(message):
         events.append((time.monotonic(), message))
@@ -323,7 +323,7 @@ async def test_new_boot_waits_for_recovery_before_persisting_cleanup_proof(tmp_p
 def test_hello_inventory_is_protocol_two(tmp_path):
     manager = make_manager(tmp_path)
     hello = launcher_hello_payload(manager.settings, manager.registry, manager, "session")
-    assert hello["execution_protocol"] == 2
+    assert hello["execution_protocol"] == 3
     assert hello["boot_id"] == manager.boot_id
     assert "current_job_id" not in hello
 

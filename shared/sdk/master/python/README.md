@@ -50,10 +50,12 @@ Set `auto_finish=False` to make more than one ordered call over the same WebRTC 
 
 Resource overrides belong to the job, not its input payload. Omitted fields use the launcher's
 app/handler profile. `gpu_count=0` requests CPU-only execution; positive counts require that
-many exclusive GPUs. `gpu_memory_bytes` is the requested free memory per GPU. These are
-admission requests, not hard RAM or VRAM limits. An open session keeps the same allocation
+many distinct GPUs. `vram_budget_gb` is the reserved per-device VRAM budget in GiB
+(1024³ bytes), with positive fractions allowed. Missing budgets reserve whole devices.
+Reaching the budget fails that job; monitoring outages warn and pause new admissions
+while existing jobs continue. RAM admission estimates remain advisory. An open session keeps the same allocation
 and exposes its immutable identity as `session.execution`. Start another job for calls that
-need different resources. Protocol 2 requires upgrading the API, launcher and SDK together.
+need different resources. Protocol 3 requires upgrading the API, launcher and SDK together.
 
 ```python
 first = await client.run_job(

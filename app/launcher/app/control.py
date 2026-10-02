@@ -152,7 +152,7 @@ async def handle_server_message(manager: WorkerManager, value: Any) -> None:
 def launcher_hello_payload(settings: LauncherSettings, registry: SlaveAppRegistry,
                            manager: WorkerManager, session_id: str, ready_ids: list[str] | None = None) -> dict[str, Any]:
     ids = ready_ids if ready_ids is not None else registry.ready_ids()
-    return {"type": "launcher.hello", "execution_protocol": 2, "launcher_name": settings.launcher_name,
+    return {"type": "launcher.hello", "execution_protocol": 3, "launcher_name": settings.launcher_name,
             "installation_id": manager.installation_id, "boot_id": manager.boot_id, "session_id": session_id,
             "slave_app_ids": ids, "job_modes": {app_id: registry.require(app_id).job_mode for app_id in ids},
             "storage_versions": {app_id: registry.require(app_id).storage_version for app_id in ids

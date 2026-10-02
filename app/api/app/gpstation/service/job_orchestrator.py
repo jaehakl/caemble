@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sdk.protocol.execution import gib_to_bytes
+
 import asyncio
 import time
 from contextlib import suppress
@@ -193,8 +195,11 @@ class JobOrchestrator:
             if job.execution_phase == "reserving":
                 requested = job.resources or {}
                 if any(requested.get(key) is not None and requested[key] != allocation[key]
-                       for key in ("cpu_cores", "startup_ram_bytes", "gpu_memory_bytes")) or (
-                       requested.get("gpu_count") is not None and requested["gpu_count"] != len(allocation["gpu_devices"])):
+                       for key in ("cpu_cores", "startup_ram_bytes")) or (
+                       requested.get("gpu_count") is not None and requested["gpu_count"] != len(allocation["gpu_devices"])) or (
+                       requested.get("vram_budget_gb") is not None and any(
+                           budget != gib_to_bytes(requested["vram_budget_gb"])
+                           for budget in allocation["vram_budget_bytes"].values())):
                     await finish_job(db, job, "failed", "Launcher allocation differs from requested resources.")
                     await db.commit()
                     async with self.launcher_send_lock(launcher_id):
@@ -209,6 +214,18 @@ class JobOrchestrator:
             if job.execution_phase == "start_authorized":
                 await self._deliver_job_start(job, launcher_id)
             self.wake_dispatcher()
+            return
+        if kind == "job.error" and value.get("code") == "gpu_memory_budget_exceeded":
+            detail = f"gpu_memory_budget_exceeded: {value['detail']}"
+            if job.state == "failed" and job.last_error != detail:
+                # Killing a process can close its worker socket before the
+                # control event arrives. Retain the measured failure cause.
+                job.last_error = detail
+                await job_event(db, job, "job.error", {"code": value["code"], "last_error": detail})
+            elif job.state not in JOB_TERMINAL_STATES:
+                await finish_job(db, job, "failed", detail, result={"code": value["code"]})
+            await db.commit()
+            await self.runtime.set_job_event(job.id)
             return
         if job.state in JOB_TERMINAL_STATES:
             await db.commit()

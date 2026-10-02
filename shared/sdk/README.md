@@ -3,13 +3,15 @@
 이 package는 Caemble launcher와 slave가 공유하는 GPStation message/runtime을 제공한다.
 Launcher manifest의 `job_mode`로 master와 연결하는 방식을 선택한다.
 
-실행 protocol 2는 launcher, boot, slave instance, Job, attempt와 reservation을 구분한다.
+실행 protocol 3는 launcher, boot, slave instance, Job, attempt와 reservation을 구분한다.
 API·launcher·slave·master SDK를 함께 갱신한다. Launcher는 attempt마다 새 프로세스를
 만들고 `sdk.slave.bootstrap`이 containment 준비 신호를 받은 뒤 앱을 import하게 한다.
 `CAEMBLE_EXECUTION_JSON`의 identity와 allocation은 `context.execution`에서 읽는다.
 CPU affinity·native thread 예산·GPU 노출은 import 전에 적용되며 물리 입력에 섞지 않는다.
 GPU ordinal은 할당된 visible 장치 안의 순서이다. RAM 값은 시작 추정량과 실행 시점의
-여유를 나타내며 hard memory limit이 아니다.
+여유를 나타내며 hard memory limit이 아니다. 요청의 `vram_budget_gb`는 GiB 단위
+장치별 VRAM 예산이며 allocation의 `vram_budget_bytes`는 GPU UUID별 확정 바이트 예산이다.
+Launcher가 프로세스 트리 사용량을 감시하여 예산 도달 시 해당 작업을 종료한다.
 
 전체 identity는 `launcher_id`, `boot_id`, `instance_id`, `job_id`, `attempt_id`,
 `attempt_count`, `reservation_id`이며 control/result JSON의 평면 필드로 전달한다.

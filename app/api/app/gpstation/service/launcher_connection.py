@@ -61,8 +61,8 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 websocket.receive_json(),
                 timeout=LAUNCHER_HELLO_TIMEOUT_SECONDS,
             )
-            if hello_payload.get("execution_protocol") != 2:
-                raise LauncherPolicyViolation("Execution protocol 2 required; upgrade API, launcher, slave and SDK together")
+            if hello_payload.get("execution_protocol") != 3:
+                raise LauncherPolicyViolation("Execution protocol 3 required; upgrade API, launcher, slave and SDK together")
             hello = parse_launcher_message(hello_payload)
             if not isinstance(hello, LauncherHello):
                 add_auth_audit(
@@ -122,7 +122,7 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 {
                     "type": "launcher.accepted",
                     "launcher_id": launcher_id,
-                    "execution_protocol": 2, "boot_id": hello.boot_id, "session_id": hello.session_id,
+                    "execution_protocol": 3, "boot_id": hello.boot_id, "session_id": hello.session_id,
                     "user_id": principal.user_id,
                     "instances": hello.instances,
                     "server_time": utcnow().isoformat(),

@@ -18,7 +18,7 @@ const descriptor = {
   representations: ['box-relative-v2'],
   resources: {
     training: { cpu_cores: 5, gpu_count: 2 },
-    inference: { cpu_cores: 2, startup_ram_bytes: 1024, gpu_count: 1, gpu_memory_bytes: 512 },
+    inference: { cpu_cores: 2, startup_ram_bytes: 1024, gpu_count: 1, vram_budget_gb: 0.5 },
   },
 }
 

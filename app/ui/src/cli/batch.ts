@@ -9,18 +9,23 @@ import type { CommandContext } from './types'
 import { resourceRequestSchema, type ResourceRequest } from '@/contracts/api/execution'
 
 export function batchResources(options: CommandContext['options']): ResourceRequest | undefined {
+  if (options['gpu-memory-mib'] !== undefined)
+    throw new CliError('Use --vram-budget-gb in GiB instead of --gpu-memory-mib (MiB / 1024).', 2)
   const fields = [
     ['cpu-cores', 'cpu_cores', 1],
     ['startup-ram-mib', 'startup_ram_bytes', 1024 ** 2],
     ['gpu-count', 'gpu_count', 1],
-    ['gpu-memory-mib', 'gpu_memory_bytes', 1024 ** 2],
+    ['vram-budget-gb', 'vram_budget_gb', 1],
   ] as const
   const supplied = Object.fromEntries(
     fields
       .filter(([flag]) => options[flag] !== undefined)
       .map(([flag, field, multiplier]) => {
         const value = Number(options[flag])
-        if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(value * multiplier))
+        if (field === 'vram_budget_gb') {
+          if (!Number.isFinite(value) || value <= 0 || value > Number.MAX_SAFE_INTEGER / 1024 ** 3)
+            throw new CliError('--vram-budget-gb requires a finite positive GiB value within the exact byte range.', 2)
+        } else if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(value * multiplier))
           throw new CliError(`--${flag} requires a nonnegative safe integer.`, 2)
         return [field, value * multiplier]
       }),

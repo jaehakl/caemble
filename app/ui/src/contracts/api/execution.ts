@@ -5,10 +5,15 @@ export const resourceRequestSchema = z
     cpu_cores: z.number().int().positive().optional(),
     startup_ram_bytes: z.number().int().positive().optional(),
     gpu_count: z.number().int().nonnegative().optional(),
-    gpu_memory_bytes: z.number().int().nonnegative().optional(),
+    vram_budget_gb: z
+      .number()
+      .finite()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER / 1024 ** 3)
+      .optional(),
   })
   .strict()
-  .refine((value) => value.gpu_count !== 0 || !value.gpu_memory_bytes, {
+  .refine((value) => value.gpu_count !== 0 || value.vram_budget_gb === undefined, {
     message: 'A CPU-only request cannot reserve GPU memory.',
   })
 
@@ -18,7 +23,9 @@ export const resourceAllocationSchema = z.object({
   startup_ram_bytes: z.number().int().positive(),
   ram_available_bytes: z.number().int().nonnegative(),
   gpu_devices: z.array(z.string()),
-  gpu_memory_bytes: z.number().int().nonnegative(),
+  vram_budget_bytes: z.record(z.string(), z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).optional(),
+  // Historical protocol-2 allocations are readable, but never accepted as new requests.
+  gpu_memory_bytes: z.number().int().nonnegative().optional(),
 })
 
 export const launcherInstanceSchema = z
@@ -34,6 +41,9 @@ export const launcherInstanceSchema = z
     state: z.string(),
     allocation: resourceAllocationSchema.nullable().optional(),
     ram_used_bytes: z.number().int().nonnegative().nullable().optional(),
+    vram_used_bytes: z.record(z.string(), z.number().int().nonnegative()).nullable().optional(),
+    vram_monitoring_status: z.enum(['healthy', 'unavailable']).optional(),
+    vram_monitoring_warning: z.string().nullable().optional(),
   })
   .passthrough()
 
@@ -47,7 +57,21 @@ export const launcherResourcesSchema = z
     ram_budget_bytes: z.number().int().nonnegative().optional(),
     ram_used_bytes: z.number().int().nonnegative().nullable().optional(),
     ram_startup_reserved_bytes: z.number().int().nonnegative().optional(),
-    gpu_devices: z.array(z.record(z.string(), z.unknown())).optional(),
+    gpu_devices: z
+      .array(
+        z
+          .object({
+            uuid: z.string(),
+            total_bytes: z.number().int().positive(),
+            vram_reserved_bytes: z.number().int().nonnegative().optional(),
+            vram_monitoring_status: z.enum(['healthy', 'unavailable']).optional(),
+            vram_monitoring_warning: z.string().nullable().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+    vram_monitoring_status: z.enum(['healthy', 'unavailable']).optional(),
+    vram_monitoring_warning: z.string().nullable().optional(),
   })
   .passthrough()
 

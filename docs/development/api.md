@@ -145,7 +145,7 @@ Launcher connections and the dispatcher are held in process memory. Run exactly
 one API worker/replica. Restart marks active executions failed, while committed
 queued inputs and incomplete uploads remain available.
 
-Execution protocol 2 requires a synchronized API, launcher, slave and master SDK
+Execution protocol 3 requires a synchronized API, launcher, slave and master SDK
 upgrade. A logical Job and its execution attempt are distinct. Full immutable
 execution identity scopes control messages, result packets and staging; each
 reconnect also gets a new control session. The dispatcher preserves owner checks,
@@ -153,13 +153,21 @@ slave compatibility and rotation between committed Batches while proposing more
 than one Job to a launcher. Resource shortage is a waiting condition.
 
 The API stores an optional `resources` request separately from domain `input`:
-`cpu_cores`, `startup_ram_bytes`, `gpu_count`, and `gpu_memory_bytes`. Missing
-fields inherit launcher application/handler profiles. The launcher performs the
-final atomic reservation from fresh local telemetry; only its accepted reservation
-can be authorized for startup. Reported server capacity is advisory. Explicit
-`gpu_count: 0` requests CPU-only execution; a positive count requires exclusive
-devices, with the requested free memory per GPU. RAM startup estimates are not
-peak reservations or hard limits. See [worker policy](../operations/workers.md).
+`cpu_cores`, `startup_ram_bytes`, `gpu_count`, and `vram_budget_gb`. Missing fields
+inherit launcher application/handler profiles. GPU count defaults to one;
+`gpu_count: 0` is CPU-only. `vram_budget_gb` is a positive finite GiB value
+(1024³ bytes), including fractions. Old `gpu_memory_bytes` input is rejected.
+An omitted budget reserves each selected GPU's whole capacity exclusively.
+
+GPU budget sums cannot exceed each device's total bytes. Reservations persist
+through cleanup, independently of current usage. Protocol-3 allocations carry
+`vram_budget_bytes` keyed by GPU UUID. Reports include per-device reserved/used
+bytes and per-instance usage and monitoring warnings. Budget exhaustion fails
+only that attempt with `gpu_memory_budget_exceeded`; telemetry outages pause new
+admissions and warn while existing jobs continue. All admission is finalized
+atomically by the launcher using fresh local telemetry. Historical protocol-2
+allocations remain readable; stored request budgets migrate to `vram_budget_gb`.
+See [worker policy](../operations/workers.md) for observation and monitoring limits.
 
 Launcher control reconnection has a default 30-second grace period, during which
 new assignments are paused and existing instances can be reconciled. A lost

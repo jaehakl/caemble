@@ -261,7 +261,7 @@ def test_shared_contract_rejects_malformed_definitions(invalid):
 
 def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_path, monkeypatch):
     descriptor = {**copy.deepcopy(ALGORITHMS["knn"]), "kind": "fixture", "implementationVersion": "fixture-v1"}
-    descriptor["resources"]["training"] = {"cpu_cores": 2, "gpu_count": 1, "gpu_memory_bytes": 128}
+    descriptor["resources"]["training"] = {"cpu_cores": 2, "gpu_count": 1, "vram_budget_gb": 0.125}
     monkeypatch.setitem(ALGORITHMS, "fixture", descriptor)
     implementation_calls = []
 

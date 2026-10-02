@@ -35,7 +35,7 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   experiment check [source] | build [source] --out <artifact> [--example <key>] [--count N] [--vars-mode nominal|random]
   experiment test <artifact> --out <results> [--timeout seconds]
   batch submit <artifact> --experiment <id> | list | show <id> | watch <id> | cancel <id> | retry <id>
-    submit resources: --cpu-cores N --startup-ram-mib N --gpu-count N --gpu-memory-mib N
+    submit resources: --cpu-cores N --startup-ram-mib N --gpu-count N --vram-budget-gb N
   optimization create <artifact> --experiment <id> --config <optimization.json> [--item N] [--request-id UUID]
   optimization list [--experiment <id>] | show <id> | trials <id> | watch <id> [--timeout seconds]
   optimization stop <id> | resume <id> | delete <id>
@@ -97,6 +97,7 @@ async function main() {
     'startup-ram-mib',
     'gpu-count',
     'gpu-memory-mib',
+    'vram-budget-gb',
     'version',
     'revision',
     'item',

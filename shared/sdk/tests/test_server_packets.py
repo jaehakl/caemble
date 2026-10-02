@@ -38,7 +38,7 @@ def test_webrtc_assignment_remains_default_and_server_mode_is_explicit() -> None
     allocation = dict(cpu_ids=[0], cpu_cores=1, startup_ram_bytes=1024, ram_available_bytes=4096)
     assigned = JobStart(type="job.start", **identity, allocation=allocation, handler_type="ai.test", slave_app_id="ai", offer={"type": "offer", "sdp": "sdp"})
     assert assigned.job_mode == "webrtc"
-    assert LauncherHello(type="launcher.hello", execution_protocol=2, installation_id="install", boot_id="boot", session_id="connection", launcher_name="current").job_modes == {}
+    assert LauncherHello(type="launcher.hello", execution_protocol=3, installation_id="install", boot_id="boot", session_id="connection", launcher_name="current").job_modes == {}
     with pytest.raises(ValueError):
         LauncherHello(type="launcher.hello", launcher_name="legacy")
     with pytest.raises(ValueError, match="require an offer"):

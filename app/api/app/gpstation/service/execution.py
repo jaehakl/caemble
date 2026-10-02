@@ -1,7 +1,10 @@
 """Execution identities are independent of either result transport."""
+from itertools import combinations
+
 from sqlalchemy import select
 
 from gpstation.db import ExecutionAttempt, Job
+from sdk.protocol.execution import gib_to_bytes
 
 IDENTITY_FIELDS = ("launcher_id", "boot_id", "instance_id", "job_id", "attempt_id", "attempt_count", "reservation_id")
 
@@ -41,10 +44,52 @@ def requested_resources(request: dict, report: dict, slave_app_id: str, handler_
     result = dict(defaults)
     for layer in (all_defaults.get(handler_type, {}), request):
         overrides = {key: value for key, value in layer.items() if value is not None}
-        if overrides.get("gpu_count") == 0 and "gpu_memory_bytes" not in overrides:
-            result["gpu_memory_bytes"] = 0
+        if overrides.get("gpu_count") == 0 and "vram_budget_gb" not in overrides:
+            result.pop("vram_budget_gb", None)
         result.update(overrides)
     return result
+
+
+def gpu_resources_fit(requests: list[dict], report: dict, *, available: bool = True) -> bool:
+    """Fit whole jobs onto distinct devices, using whole-lifetime VRAM budgets.
+
+    Combined capacity is a preflight; the launcher still serializes and observes
+    actual starts. Old telemetry cannot admit GPU jobs under the new contract.
+    """
+    devices = []
+    for item in report.get("gpu_devices", []):
+        if not isinstance(item, dict) or "vram_reserved_bytes" not in item:
+            continue  # Protocol-2 telemetry cannot promise budget enforcement.
+        total = item.get("total_bytes", 0)
+        reserved = item.get("vram_reserved_bytes", 0) if available else 0
+        if (type(total) is not int or total <= 0 or type(reserved) is not int
+                or reserved < 0 or reserved > total):
+            continue
+        if available and (item.get("admission_open") is not True or item.get("free_bytes", 0) <= 0):
+            continue
+        devices.append([total - reserved, total])
+    demands = [(value.get("gpu_count", 0), gib_to_bytes(value["vram_budget_gb"])
+                if value.get("vram_budget_gb") is not None else None)
+               for value in requests if value.get("gpu_count", 0)]
+    demands.sort(key=lambda value: (value[0], value[1] is None, value[1] or 0), reverse=True)
+
+    def place(index: int) -> bool:
+        if index == len(demands):
+            return True
+        count, memory = demands[index]
+        eligible = [i for i, (remaining, total) in enumerate(devices)
+                    if remaining >= (memory if memory is not None else total)]
+        for chosen in combinations(eligible, count):
+            amounts = {i: memory if memory is not None else devices[i][1] for i in chosen}
+            for i, amount in amounts.items():
+                devices[i][0] -= amount
+            if place(index + 1):
+                return True
+            for i, amount in amounts.items():
+                devices[i][0] += amount
+        return False
+
+    return place(0)
 
 
 def resource_fits(request: dict, report: dict, slave_app_id: str, handler_type: str | None = None) -> bool:
@@ -56,8 +101,4 @@ def resource_fits(request: dict, report: dict, slave_app_id: str, handler_type: 
     available_ram = max(0, report.get("ram_budget_bytes", 0) - report.get("ram_used_bytes", 0) - report.get("ram_startup_reserved_bytes", 0))
     if cpu > report.get("cpu_total", 0) - report.get("cpu_reserved", 0) or ram > available_ram:
         return False
-    gpus = [item for item in report.get("gpu_devices", []) if isinstance(item, dict) and not item.get("instance_id") and not item.get("reserved", False)
-            and item.get("free_bytes", 0) >= needed.get("gpu_memory_bytes", 0)]
-    if needed.get("gpu_count", 0) > len(gpus):
-        return False
-    return True
+    return gpu_resources_fit([needed], report)

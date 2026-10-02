@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from sdk.protocol.execution import ExecutionIdentity, ResourceAllocation
+from sdk.protocol.execution import EXECUTION_PROTOCOL_VERSION, ExecutionIdentity, ResourceAllocation
 
 EXECUTION_ENV = "CAEMBLE_EXECUTION_JSON"
 NATIVE_THREAD_ENV = (
@@ -33,6 +33,8 @@ def execution_context() -> ExecutionContext | None:
     if raw is None:
         return None
     value = json.loads(raw)
+    if value.get("execution_protocol") != EXECUTION_PROTOCOL_VERSION:
+        raise ValueError("Execution protocol 3 required; upgrade API, launcher, worker and SDK together.")
     return ExecutionContext(
         ExecutionIdentity.model_validate(value["identity"]),
         ResourceAllocation.model_validate(value["allocation"]),

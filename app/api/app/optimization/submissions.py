@@ -130,9 +130,10 @@ async def submit_stage(db, optimization, trial, catalog, evaluation=None):
 
 async def submit_predictions(db, optimization, candidates):
     """One physical Job owns up to 32 candidate evaluations and one model session."""
-    from optimization.predictor_jobs import predictor_parent_available
+    from optimization.predictor_jobs import predictor_parent_available, resources_from_frozen_hybrid
 
     hybrid = optimization.definition["hybrid"]
+    hybrid = {**hybrid, "resources": resources_from_frozen_hybrid(hybrid["resources"])}
     if not await predictor_parent_available(db, hybrid["launcher_id"], hybrid["resources"]):
         return None
     definition = optimization.definition

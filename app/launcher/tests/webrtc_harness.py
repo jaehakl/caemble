@@ -70,10 +70,10 @@ class WebRtcHarness:
         self.url = f"http://127.0.0.1:{self.http.server_address[1]}"
         self.thread = Thread(target=self.http.serve_forever, daemon=True)
         self.thread.start()
-        policy = ResourcePolicy(cpu_cores=1, ram_budget_bytes=8 * GIB, ram_growth_headroom_bytes=GIB,
+        policy = ResourcePolicy(gpu_count=0, cpu_cores=1, ram_budget_gb=8, ram_growth_headroom_bytes=GIB,
                                 system_ram_headroom_bytes=GIB)
         ledger = ResourceLedger(policy, cpu_ids=psutil.Process().cpu_affinity()[:1], total_ram=16 * GIB)
-        ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[])
+        ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
         settings = LauncherSettings(_env_file=None, api_url=self.url, access_token="fixture",
             rtc_ice_servers_json="[]", rtc_memory_cache_enabled="false", worker_ready_timeout_seconds=30,
             predictor_storage_root=self.directory / "storage")
@@ -145,7 +145,7 @@ class WebRtcHarness:
             job_id = identity["job_id"]
             self.jobs[job_id] = {**identity, "state": "queued", "answered": asyncio.Event(), "cleaned": False}
             # Refresh the deterministic admission sample; resource behavior has its own live tests.
-            self.manager.ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[])
+            self.manager.ledger.sample({}, launcher_rss=0, available_ram=16 * GIB, gpus=[], gpu_process_metrics_complete=True)
             assignment = {**identity, "type": "job.reserve", "job_mode": "webrtc",
                 "slave_app_id": self.slave.id, "handler_type": body["handler_type"],
                 "resources": {"cpu_cores": 1}, "offer": body["offer"]}

@@ -14,7 +14,7 @@ class ResourceRequest(TypedDict, total=False):
     cpu_cores: int
     startup_ram_bytes: int
     gpu_count: int
-    gpu_memory_bytes: int
+    vram_budget_gb: float
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,7 +12,7 @@ export type ResourceRequest = Readonly<{
   cpu_cores?: number;
   startup_ram_bytes?: number;
   gpu_count?: number;
-  gpu_memory_bytes?: number;
+  vram_budget_gb?: number;
 }>;
 
 export type LauncherView = {

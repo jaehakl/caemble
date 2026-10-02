@@ -42,8 +42,8 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
         self.parent_id, self.attempt_id, self.model_id, self.replica_id = (str(uuid4()) for _ in range(4))
         self.authorization = "Bearer parent-worker-token"
         self.model_definition = {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1", "preprocessingVersion": "box-relative-v2"}
-        self.resources = {"evaluation": {"cpu_cores": 1, "startup_ram_bytes": 100, "gpu_count": 0, "gpu_memory_bytes": 0},
-                          "predictor": {"cpu_cores": 1, "startup_ram_bytes": 200, "gpu_count": 0, "gpu_memory_bytes": 0}}
+        self.resources = {"evaluation": {"cpu_cores": 1, "startup_ram_bytes": 100, "gpu_count": 0},
+                          "predictor": {"cpu_cores": 1, "startup_ram_bytes": 200, "gpu_count": 0}}
         self.body = JobCreateRequest(handler_type="predictor.hello", slave_app_id="predictor", offer={"type": "offer", "sdp": "fixture"})
         async with self.sessions() as db:
             launcher = await db.get(Launcher, self.launcher_id)
@@ -82,7 +82,7 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
             second = await self.create(db)
             self.assertEqual(first["job"].id, second["job"].id)
             child = await db.get(Job, first["job"].id)
-            self.assertEqual(child.resources, {"cpu_cores": 1, "startup_ram_bytes": 200, "gpu_count": 0, "gpu_memory_bytes": 0})
+            self.assertEqual(child.resources, {"cpu_cores": 1, "startup_ram_bytes": 200, "gpu_count": 0})
             lease = await db.get(ModelLease, (self.model_id, 1, child.id))
             self.assertEqual(lease.replica_id, self.replica_id)
             db.expire(child, ["artifact_metadata"])
@@ -122,7 +122,7 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
     async def test_child_uses_frozen_profile_after_defaults_or_client_request_change(self):
         await self.seed()
         async with self.sessions() as db:
-            pinned = {"cpu_cores": 3, "startup_ram_bytes": 500, "gpu_count": 1, "gpu_memory_bytes": 400}
+            pinned = {"cpu_cores": 3, "startup_ram_bytes": 500, "gpu_count": 1, "vram_budget_gb": 4}
             parent = await db.get(Job, self.parent_id)
             parent.input = {**parent.input, "hybrid": {**parent.input["hybrid"],
                 "resources": {**self.resources, "predictor": pinned}}}

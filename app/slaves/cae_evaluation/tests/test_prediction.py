@@ -66,7 +66,7 @@ def setup(monkeypatch, client, count=2):
     upload = AsyncMock(return_value={"kind": "caemble.object", "id": "artifact"})
     monkeypatch.setattr(prediction, "upload_object", upload)
     message = {"hybrid": {"model_id": "model", "revision": 2, "checksum": "checksum", "storage_id": "storage", "launcher_id": "launcher",
-                          "resources": {"predictor": {"cpu_cores": 2, "gpu_count": 1, "gpu_memory_bytes": 1024}}},
+                          "resources": {"predictor": {"cpu_cores": 2, "gpu_count": 1, "vram_budget_gb": 1}}},
         "record_names": ["current"], "candidates": [{"candidate_id": str(index), "evaluation_id": f"evaluation-{index}", "build": {"vars": {"x": index}}} for index in range(count)]}
     context = SimpleNamespace(job_id="parent", assignment={"token": "only-parent-token", "attempt_id": "attempt",
         "websocket_url": "wss://example.invalid/api/v1/jobs/parent/stream"})

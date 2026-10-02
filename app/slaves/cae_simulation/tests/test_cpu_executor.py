@@ -53,6 +53,7 @@ def test_launcher_allocation_caps_cpu_and_advisory_batch_memory(monkeypatch):
     from app.kernel.execution.batches import ChildExecutionService
 
     monkeypatch.setenv("CAEMBLE_EXECUTION_JSON", json.dumps({
+        "execution_protocol": 3,
         "identity": {"launcher_id": "launcher", "boot_id": "boot", "instance_id": "instance", "job_id": "job",
                      "attempt_id": "attempt", "attempt_count": 1, "reservation_id": "reservation"},
         "allocation": {"cpu_ids": [0, 1], "cpu_cores": 2, "startup_ram_bytes": 100, "ram_available_bytes": 300},
