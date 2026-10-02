@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     voicevox_runtime_dir: str = "voicevox_runtime"
     voicevox_cpu_num_threads: int = Field(default=0, ge=0, le=65535)
+    voicevox_rust_log: str = "error,voicevox_core=info,voicevox_core_c_api=info,ort=error"
 
     def resolve_app_path(self, value: str) -> Path:
         path = Path(value).expanduser()

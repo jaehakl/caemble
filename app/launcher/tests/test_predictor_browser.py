@@ -31,8 +31,11 @@ from app.models import ModelBundle
 value = json.load(sys.stdin)
 runtime = PredictorRuntime(Path(value['root']), value['owner'], value['launcher'], value['api'])
 dataset = runtime.reader.load(value['dataset'], definition=value['definition'])
-bundle = ModelBundle.prepare(dataset, 'forward', value['definition'], value['model'], runtime.memory_budget)
-print(json.dumps(bundle.save(runtime.store)))
+bundle = ModelBundle.prepare(dataset, 'forward', value['definition'], value['model'], runtime._model_context())
+try:
+    print(json.dumps(bundle.save(runtime.store)))
+finally:
+    bundle.close()
 """
     process = await asyncio.create_subprocess_exec(str(slave.python_executable), "-c", script,
         cwd=slave.project_dir, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,

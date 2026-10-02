@@ -36,6 +36,26 @@ project, or absolute) and `VOICEVOX_CPU_NUM_THREADS` (0 means automatic, capped 
 the job's CPU allocation). Native libraries are loaded from that runtime tree.
 Linux entrypoints establish its shared-library search paths before loading Core.
 
+Native logging defaults to
+`VOICEVOX_RUST_LOG=error,voicevox_core=info,voicevox_core_c_api=info,ort=error`.
+This suppresses all ONNX Runtime warnings, including repeated CUDA graph-copy and
+CPU node-placement warnings; native errors and VOICEVOX initialization/handler logs
+remain visible. It only changes logging, not GPU assignment or inference behavior.
+To restore ONNX warnings for diagnosis, set this in the worker's `.env`:
+
+```dotenv
+VOICEVOX_RUST_LOG=error,voicevox_core=info,voicevox_core_c_api=info,ort=warn
+```
+
+The worker applies this filter before the first native call. An existing process
+environment `RUST_LOG` takes precedence for direct runs; Launcher does not forward
+that variable, so use the worker's `VOICEVOX_RUST_LOG` setting for managed jobs.
+Core initializes its logger once per process: deploy the updated worker code and
+start a new job (or a fresh smoke process) to apply changes. Existing jobs retain
+their filter. On Ubuntu, run `poetry run python -m app smoke --device cuda`, then
+check a new Launcher job and listen to its output; unit tests alone do not verify
+native logging or audio on that machine.
+
 Jobs use `slaveAppId: "tts_voicevox"`. Zero allocated GPUs selects CPU; one selects
 CUDA. Standalone smoke defaults to CPU and accepts `--device cuda`. Explicit smoke
 device selection cannot override a managed job's allocation.

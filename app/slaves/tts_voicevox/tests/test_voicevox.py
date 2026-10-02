@@ -11,6 +11,7 @@ import wave
 from unittest.mock import Mock, patch
 
 from app import runtime
+from app.settings import Settings
 from app.worker import create_app
 from sdk.slave import DataChannelMessage, SlaveContext
 
@@ -102,13 +103,16 @@ class NativeLifecycleTests(unittest.TestCase):
         self.library.voicevox_synthesizer_is_gpu_mode.return_value = True
         self.supported = ctypes.create_string_buffer(b'{"cpu":true,"cuda":true,"dml":false}')
         self.library.voicevox_onnxruntime_create_supported_devices_json.side_effect = self.supported_result
-        self.patches = [patch("app.runtime.ctypes.CDLL", return_value=self.library),
+        self.patches = [patch.dict(os.environ),
+                        patch("app.runtime.ctypes.CDLL", return_value=self.library),
                         patch.object(runtime.VoicevoxRuntime, "_configure_library")]
         if os.name == "nt":
             self.patches.append(patch("app.runtime.os.add_dll_directory", return_value=Mock()))
             self.patches.append(patch("app.runtime.ctypes.WinDLL", return_value=Mock()))
         for item in self.patches:
             item.start()
+        os.environ.pop("RUST_LOG", None)
+        os.environ.pop("VOICEVOX_RUST_LOG", None)
 
     def tearDown(self):
         for item in reversed(self.patches):
@@ -123,6 +127,63 @@ class NativeLifecycleTests(unittest.TestCase):
     def supported_result(self, *args):
         args[-1]._obj.value = ctypes.addressof(self.supported)
         return 0
+
+    def test_default_log_filter_is_set_before_loading_core(self):
+        self.library.voicevox_synthesizer_is_gpu_mode.return_value = False
+        configured = Settings(_env_file=None)
+        expected = "error,voicevox_core=info,voicevox_core_c_api=info,ort=error"
+        self.assertEqual(configured.voicevox_rust_log, expected)
+
+        def load_core(*args):
+            self.assertEqual(os.environ.get("RUST_LOG"), expected)
+            return self.library
+
+        with patch("app.runtime.settings", configured), patch("app.runtime.ctypes.CDLL", side_effect=load_core):
+            instance = runtime.VoicevoxRuntime(self.directory)
+            instance.initialize()
+            instance.close()
+
+    def test_dotenv_log_filter_reaches_first_native_call(self):
+        self.library.voicevox_synthesizer_is_gpu_mode.return_value = False
+        expected = "error,voicevox_core=info,voicevox_core_c_api=info,ort=warn"
+        dotenv = self.directory / ".env"
+        dotenv.write_text(f"VOICEVOX_RUST_LOG={expected}\n", encoding="utf-8")
+        configured = Settings(_env_file=dotenv)
+        self.assertEqual(configured.voicevox_rust_log, expected)
+        filename = self.library.voicevox_get_onnxruntime_lib_versioned_filename.return_value
+
+        def first_native_call():
+            self.assertEqual(os.environ.get("RUST_LOG"), expected)
+            return filename
+
+        self.library.voicevox_get_onnxruntime_lib_versioned_filename.side_effect = first_native_call
+        with patch("app.runtime.settings", configured):
+            instance = runtime.VoicevoxRuntime(self.directory)
+            instance.initialize()
+            instance.close()
+
+    def test_existing_rust_log_takes_precedence(self):
+        self.library.voicevox_synthesizer_is_gpu_mode.return_value = False
+        for explicit in ("ort=debug", ""):
+            with self.subTest(value=explicit), patch.dict(os.environ, {"RUST_LOG": explicit}), \
+                 patch("app.runtime.settings", Settings(_env_file=None)):
+                instance = runtime.VoicevoxRuntime(self.directory)
+                instance.initialize()
+                self.assertEqual(os.environ["RUST_LOG"], explicit)
+                instance.close()
+
+    def test_synthesis_error_is_not_hidden_by_log_filter(self):
+        self.library.voicevox_synthesizer_is_gpu_mode.return_value = False
+        self.library.voicevox_make_default_synthesis_options.return_value = runtime.VoicevoxSynthesisOptions()
+        self.library.voicevox_synthesizer_synthesis.return_value = 4
+        with patch("app.runtime.settings", Settings(_env_file=None)):
+            instance = runtime.VoicevoxRuntime(self.directory)
+            instance.initialize()
+            try:
+                with self.assertRaisesRegex(RuntimeError, "synthesize audio.*fixture native failure"):
+                    instance.synthesis({}, 3)
+            finally:
+                instance.close()
 
     def test_gpu_initialization_and_close_release_native_resources_once(self):
         instance = runtime.VoicevoxRuntime(self.directory, 2, "cuda")

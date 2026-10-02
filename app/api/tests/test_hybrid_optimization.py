@@ -1,9 +1,8 @@
-"""Hybrid search and strict Solver admission on disposable PostgreSQL; no Solver calls."""
+"""Hybrid persistence and strict Solver admission on disposable PostgreSQL; no Solver calls."""
 import asyncio
 import os
 import unittest
 import uuid
-from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -18,40 +17,10 @@ from optimization.algorithm import variables_fingerprint
 from optimization.controller import cancel_optimization
 from optimization.db import Evaluation, EvaluationSubmission, Optimization, StageSubmission, Trial
 from optimization.evaluations import ensure_evaluation, solver_budget
-from optimization.hybrid import advance_search, select_verifications
 from optimization.service import create_optimization, delete_optimization, list_trials, optimization_detail, resume_optimization, retry_evaluation
 from optimization.submissions import submit_predictions, submit_stage
 from prediction.db import Dataset, ModelRevision, PredictionModel, PredictionStorage, Replica, StorageAccess
 from simulation.db import Measurement
-
-
-class HybridSelectionTests(unittest.TestCase):
-    def test_feasible_best_and_normalized_maximin_exploration_with_ordinal_ties(self):
-        axes = [{"name": "x", "indices": [], "min": 0, "max": 100, "fixed": False},
-                {"name": "y", "indices": [], "min": 0, "max": 1, "fixed": False}]
-        trials = [SimpleNamespace(id=str(n), ordinal=n, variables={"x": x, "y": y})
-                  for n, x, y in [(1, 0, 0), (2, 1, 0), (3, 50, 1), (4, 50, 1), (5, 90, 0)]]
-        predictions = {trial.id: SimpleNamespace(result={"objective": trial.ordinal, "feasible": True, "violation": 0}) for trial in trials}
-        predictions["1"].result = {"objective": -100, "feasible": False, "violation": 1}
-        verified = [SimpleNamespace(variables={"x": 100, "y": 0})]
-        self.assertEqual(select_verifications(trials, predictions, verified, axes, "minimize", 2), ["2", "3"])
-        self.assertEqual(select_verifications(trials, predictions, verified, axes, "minimize", 1), ["2"])
-        self.assertEqual(select_verifications(trials, predictions, verified, axes, "minimize", 0), [])
-
-    def test_candidate_limit_reuses_unverified_predictions_without_moving_to_predicted_center(self):
-        trials = [SimpleNamespace(id=str(n), ordinal=n, round_index=0, variables={"x": [x]}, fingerprint=str(n))
-                  for n, x in [(1, 4), (2, 9), (3, 1)]]
-        evaluations = [SimpleNamespace(trial_id=trial.id, kind="prediction", state="succeeded",
-                      result={"objective": -trial.ordinal, "feasible": True, "violation": 0}) for trial in trials]
-        evaluations.append(SimpleNamespace(trial_id="1", kind="solver", state="succeeded",
-                           result={"objective": 10, "feasible": True, "violation": 0}))
-        settings = {"initial_vars": {"x": [4]}, "initial_step": 0.25, "min_step": 0.001, "max_trials": 3,
-                    "objective": {"direction": "minimize"}, "axes": [{"name": "x", "indices": [0], "min": 0, "max": 10, "fixed": False}]}
-        state, generated, selected, reason = advance_search(trials, evaluations, settings,
-            {"round_ordinals": [1], "selection": ["1"], "round_index": 0}, {"remaining": 2})
-        self.assertEqual((generated, selected, reason), ([], ["3", "2"], None))
-        self.assertEqual(state["incumbent_ordinal"], 1)
-        self.assertEqual(state["selections"][-1]["trial_ids"], selected)
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import os
 from pathlib import Path
 import threading
@@ -10,9 +10,11 @@ import uuid
 
 import psutil
 from prediction_contracts import ALGORITHMS, EXECUTION_ID, PREDICTION_PROTOCOL_VERSION, algorithm_descriptor, validate_allocation
+from sdk.protocol.execution import ResourceAllocation
 
 from .dataset import DatasetReader
 from .errors import PredictionError
+from .execution import ModelExecutionContext
 from .models import ModelBundle
 from .operations import ArtifactOperations
 from .storage import ArtifactStore, check_cancel
@@ -21,15 +23,16 @@ from .training_operations import TrainingOperations
 
 class PredictorRuntime:
     def __init__(self, root: Path, owner_id: str, launcher_id: str, api_url: str,
-                 memory_budget: int | None = None):
+                 memory_budget: int | None = None, *, allocation: ResourceAllocation | None = None):
         self.store = ArtifactStore(root, owner_id, launcher_id)
         self.session_id = str(uuid.uuid4())
         self.memory_budget = memory_budget if memory_budget is not None else int(psutil.virtual_memory().available * .7)
         self.reader = DatasetReader(self.store, api_url, self.memory_budget)
         self.operations = ArtifactOperations(self.store, api_url, self.memory_budget)
-        self.training = TrainingOperations(self.store, api_url, self.reader, self.memory_budget)
-        self.allocation = None
+        self.training = TrainingOperations(self.store, api_url, self.reader, self._model_context)
+        self.allocation = allocation
         self.instances: dict[str, tuple[dict, ModelBundle, dict]] = {}
+        self._failed_load_leases: dict[ModelBundle, ExitStack] = {}
         self.generation = 0
         self.lock = threading.RLock()
 
@@ -42,16 +45,18 @@ class PredictorRuntime:
         root = Path(os.environ.get("CAEMBLE_PREDICTOR_STORAGE_ROOT", default_root))
         allocation = context.execution.allocation
         available = min(psutil.virtual_memory().available, allocation.ram_available_bytes or allocation.startup_ram_bytes)
-        runtime = cls(root, owner, context.execution.identity.launcher_id, api_url, int(available * .7))
-        runtime.allocation = allocation.model_dump()
-        return runtime
+        return cls(root, owner, context.execution.identity.launcher_id, api_url, int(available * .7), allocation=allocation)
 
-    def _install(self, bundle: ModelBundle, artifact: dict) -> dict:
+    def _retain(self, bundle: ModelBundle, artifact: dict) -> dict:
         self.generation += 1
         instance = {"executionId": EXECUTION_ID, "sessionId": self.session_id,
                     "generation": self.generation, "handle": str(uuid.uuid4())}
-        self.store.lease(bundle.metadata["modelId"], bundle.metadata["revision"], instance["handle"])
         self.instances[instance["handle"]] = (instance, bundle, artifact)
+        self.store.lease(bundle.metadata["modelId"], bundle.metadata["revision"], instance["handle"])
+        return instance
+
+    def _install(self, bundle: ModelBundle, artifact: dict) -> dict:
+        instance = self._retain(bundle, artifact)
         return bundle.prepared(instance, artifact)
 
     def _instance(self, instance: dict):
@@ -63,6 +68,10 @@ class PredictorRuntime:
     def _available_memory(self) -> int:
         used = sum(bundle.persistent_bytes for _, bundle, _ in self.instances.values())
         return max(0, min(self.memory_budget - used, int(psutil.virtual_memory().available * .7)))
+
+    def _model_context(self, cancel=None, progress=None) -> ModelExecutionContext:
+        with self.lock:
+            return ModelExecutionContext(self.allocation, self._available_memory(), cancel, progress)
 
     def dispatch(self, action: str, payload: dict, cancel: threading.Event | None = None) -> dict:
         if payload.get("protocolVersion") != PREDICTION_PROTOCOL_VERSION or not isinstance(payload.get("requestId"), str) or not payload["requestId"]:
@@ -81,22 +90,39 @@ class PredictorRuntime:
             raise PredictionError("unsupported-operation", "Submit a durable training operation, then load its completed model revision.")
         if action == "model.load":
             identity, revision = payload["modelId"], payload["revision"]
-            with self.lock, self.store.transaction(cancel, operation_id=f"prepare-{identity}-{revision}"), self.store.read_lease(
-                    "models", identity, revision, cancel, allow_missing=True):
+            with self.lock, self.store.transaction(cancel, operation_id=f"prepare-{identity}-{revision}"), ExitStack() as read_access:
+                read_access.enter_context(self.store.read_lease("models", identity, revision, cancel, allow_missing=True))
                 if self.store.deleted(identity, revision):
                     raise PredictionError("deleted", "This model revision has been deleted.")
                 if self.allocation is not None:
                     manifest, _, _ = self.store.read("models", identity, revision, cancel=cancel, verify=False)
                     try:
-                        validate_allocation(manifest["metadata"]["definition"], "inference", self.allocation)
+                        validate_allocation(manifest["metadata"]["definition"], "inference", self.allocation.model_dump())
                     except ValueError as error:
                         raise PredictionError("resource-allocation", str(error)) from error
-                bundle, artifact = ModelBundle.load(self.store, identity, revision, self._available_memory(), cancel)
-                if payload.get("manifestChecksum") and payload["manifestChecksum"] != artifact["manifestChecksum"]:
-                    raise PredictionError("artifact-checksum", "Saved model manifest differs from the registered model revision.")
-                check_cancel(cancel)
-                with self.store.transaction(cancel):
-                    result = self._install(bundle, artifact)
+                bundle, artifact = ModelBundle.load(self.store, identity, revision, self._model_context(cancel))
+                try:
+                    if payload.get("manifestChecksum") and payload["manifestChecksum"] != artifact["manifestChecksum"]:
+                        raise PredictionError("artifact-checksum", "Saved model manifest differs from the registered model revision.")
+                    check_cancel(cancel)
+                    with self.store.transaction(cancel):
+                        result = self._install(bundle, artifact)
+                except BaseException:
+                    try:
+                        bundle.close()
+                    except BaseException:
+                        # A failed close still owns memory and must fence deletion.
+                        # Its unusable handle remains until this process is reaped.
+                        # Retain the read lease even if writing a model lease fails.
+                        self._failed_load_leases[bundle] = read_access.pop_all()
+                        if not any(stored[1] is bundle for stored in self.instances.values()):
+                            self._retain(bundle, artifact)
+                        raise
+                    for handle, (instance, retained, _) in list(self.instances.items()):
+                        if retained is bundle:
+                            self.store.release_lease(bundle.metadata["modelId"], bundle.metadata["revision"], handle)
+                            del self.instances[handle]
+                    raise
             return {**result, "protocolVersion": PREDICTION_PROTOCOL_VERSION, "requestId": payload["requestId"], "sessionId": self.session_id}
         if action in ("dataset.sync", "dataset.delete"):
             self.training.reconcile_dataset(payload["datasetId"], cancel)
@@ -127,7 +153,7 @@ class PredictorRuntime:
                 result = {"deleted": True}
             elif action == "model.predict":
                 _, bundle, _ = self._instance(payload["instance"])
-                result = bundle.predict(payload["input"], cancel)
+                result = bundle.predict(payload["input"], self._model_context(cancel))
                 check_cancel(cancel)
             elif action == "model.predict_batch":
                 _, bundle, artifact = self._instance(payload["instance"])
@@ -141,7 +167,7 @@ class PredictorRuntime:
                 predictions = []
                 for item in inputs:
                     check_cancel(cancel)
-                    prediction = bundle.predict(item["input"], cancel)
+                    prediction = bundle.predict(item["input"], self._model_context(cancel))
                     predictions.append({"candidateId": item["candidateId"], **prediction,
                         "provenance": {**prediction["provenance"], "manifestChecksum": artifact["manifestChecksum"]}})
                 check_cancel(cancel)
@@ -150,7 +176,12 @@ class PredictorRuntime:
                 instance = payload["instance"]
                 stored = self.instances.get(instance.get("handle"))
                 if stored and stored[0] == instance:
+                    stored[1].close()
                     self.store.release_lease(stored[1].metadata["modelId"], stored[1].metadata["revision"], instance["handle"])
+                    read_access = self._failed_load_leases.get(stored[1])
+                    if read_access is not None:
+                        read_access.close()
+                        del self._failed_load_leases[stored[1]]
                     del self.instances[instance["handle"]]
                 result = {"released": True}
             elif action == "model.list":

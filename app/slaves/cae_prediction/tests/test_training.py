@@ -10,12 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from prediction_contracts import ALGORITHMS, resource_requirements, validate_definition
-from predictor import models
+from prediction_contracts import resource_requirements, validate_definition
+from sdk.protocol.execution import ResourceAllocation
 from predictor.archives import create_archive, unpack_archive
 from predictor.errors import PredictionError
 from predictor.storage import encode_json
 from .fixtures import dataset, definition, stage
+from .model_fixtures import model_case
 from .test_prediction import call, runtime
 
 
@@ -163,7 +164,8 @@ def test_training_inspection_is_responsive_and_model_is_protected_during_trainin
 def test_allocated_session_preserves_deleted_revision_error(tmp_path):
     worker = runtime(tmp_path)
     worker.store.delete("models", "removed", 1)
-    worker.allocation = {"cpu_cores": 1, "gpu_devices": []}
+    worker.allocation = ResourceAllocation(cpu_ids=[0], cpu_cores=1, startup_ram_bytes=128 * 1024**2,
+                                          ram_available_bytes=128 * 1024**2)
     with pytest.raises(PredictionError) as raised:
         call(worker, "model.load", modelId="removed", revision=1)
     assert raised.value.code == "deleted"
@@ -259,54 +261,9 @@ def test_shared_contract_rejects_malformed_definitions(invalid):
         validate_definition(invalid)
 
 
-def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_path, monkeypatch):
-    descriptor = {**copy.deepcopy(ALGORITHMS["knn"]), "kind": "fixture", "implementationVersion": "fixture-v1"}
-    descriptor["resources"]["training"] = {"cpu_cores": 2, "gpu_count": 1, "vram_budget_gb": 0.125}
-    monkeypatch.setitem(ALGORITHMS, "fixture", descriptor)
-    implementation_calls = []
-
-    class FixtureModel:
-        def __init__(self, metadata):
-            self.metadata, self.persistent_bytes = metadata, 8
-            self.input_layouts, self.output_layouts = [], []
-
-        @classmethod
-        def prepare(cls, data, model_definition, model_ref, memory_budget, cancel=None, progress=None):
-            implementation_calls.append("prepare")
-            if progress:
-                progress({"stage": "training", "fraction": .5, "metrics": {"loss": 1.0}})
-            return cls({**model_ref, "formatVersion": 1, "direction": "forward", "algorithm": "fixture",
-                        "definition": model_definition, "datasetId": data["datasetId"], "datasetRevision": data["revision"],
-                        "datasetFingerprint": data["fingerprint"], "experimentId": data["experimentId"]})
-
-        def profile(self):
-            return {"rowCount": 1}
-
-        def preparation_details(self):
-            return {"rules": [], "recordProfiles": [], "errors": {}}
-
-        def predict(self, values, cancel=None):
-            return {"direction": "forward", "output": [], "value": 42}
-
-        def write(self, path, cancel=None):
-            (path / "model.json").write_bytes(encode_json({"metadata": self.metadata, "value": 42}))
-
-        @classmethod
-        def load(cls, metadata, content, path, files, memory_budget, cancel=None):
-            implementation_calls.append("load")
-            assert content["value"] == 42
-            return cls(metadata)
-
-        @staticmethod
-        def validate_artifact(path, manifest, content):
-            implementation_calls.append("validate")
-            assert content["value"] == 42
-            return {"model.json"}
-
-    monkeypatch.setitem(models.IMPLEMENTATIONS, "fixture", FixtureModel)
-    worker = runtime(tmp_path / "source")
-    spec = training_spec(worker)
-    spec["definition"].update(algorithm={"kind": "fixture"}, implementationVersion="fixture-v1")
+def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_path, monkeypatch, model_case):
+    worker, spec = model_case.worker, model_case.spec
+    implementation_calls = model_case.calls
     grant = authorize(monkeypatch, worker, spec)
     call(worker, "training.pin", grant=grant)
     updates = []
@@ -315,6 +272,8 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     assert resource_requirements(spec["definition"], "training")["gpu_count"] == 1
     assert resource_requirements(spec["definition"], "inference")["gpu_count"] == 0
     assert implementation_calls == ["prepare"]
+    assert model_case.contexts[0][1].allocation == model_case.allocation
+    assert model_case.instances[0].close_calls == 1
     assert worker.instances == {}
 
     spec.update(canPin=False, canRelease=True)
@@ -339,8 +298,20 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     assert recovered.instances == target.instances == {}
     loaded = call(target, "model.load", modelId="trained", revision=1)
     assert implementation_calls.count("load") == 1
-    assert loaded["rules"] == []
-    assert call(target, "model.predict", instance=loaded["instance"], input={"direction": "forward", "vars": {}})["value"] == 42
+    assert loaded["rules"] == dataset()["rules"]
+    assert loaded["profile"]["inputLayouts"] == [{"key": "x", "dtype": "float64", "shape": [], "minimum": 0, "maximum": 2}]
+    assert loaded["profile"]["includedMeasurementIds"] == [1, 2, 3]
+    assert loaded["profile"]["inputSize"] == loaded["profile"]["outputSize"] == 1
+    assert "knn" not in loaded["profile"]
+    assert loaded["recordProfiles"][0]["recordId"] == 10
+    predicted = call(target, "model.predict", instance=loaded["instance"], input={"direction": "forward", "vars": {"x": .5}})
+    assert predicted["output"][0]["values"] == [42]
+    assert predicted["output"][0]["layout"]["boxGrid"]["channels"] == ["value"]
+    assert predicted["fingerprint"] == spec["definition"]["fingerprint"]
+    assert predicted["extrapolatedInputKeys"] == predicted["constantInputKeysChanged"] == predicted["queryDiagnostics"] == []
+    assert "knn" not in predicted
+    call(target, "model.release", instance=loaded["instance"])
+    assert model_case.instances[-1].close_calls == 1
 
 
 def test_server_cancellation_waits_for_training_thread_cleanup(tmp_path, monkeypatch):

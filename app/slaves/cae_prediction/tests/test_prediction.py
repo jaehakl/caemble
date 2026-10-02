@@ -14,9 +14,10 @@ import numpy as np
 import pytest
 
 from predictor.errors import PredictionError
+from predictor.execution import ModelExecutionContext
 from predictor.knn import KnnModel
 from predictor.models import ModelBundle
-from predictor.forward import recorded_sample
+from predictor.representations import recorded_sample
 from predictor.runtime import PredictorRuntime
 from predictor.storage import ArtifactStore, encode_json
 from .fixtures import dataset, definition, stage
@@ -32,8 +33,11 @@ def call(worker, action, **payload):
 
 def prepare_saved(worker, *, dataset, direction, definition, model):
     bundle = ModelBundle.prepare(worker.reader.load(dataset, definition=definition), direction, definition,
-                                 model, worker._available_memory())
-    bundle.save(worker.store)
+                                 model, worker._model_context(None))
+    try:
+        bundle.save(worker.store)
+    finally:
+        bundle.close()
     return call(worker, "model.load", modelId=model["modelId"], revision=model["revision"])
 
 
@@ -292,8 +296,12 @@ def test_polar_and_modal_groups_use_correct_numerical_representation(tmp_path):
         for _ in range(5):
             value = [value]
         row["data"]["storage"]["value"] = value
-    bundle = ModelBundle.prepare(manifest, "forward", definition(manifest, kMode="manual", manualK=3), {"modelId": "m", "revision": 1, "operationId": "o", "name": "n"}, 1000000)
-    predicted = bundle.predict({"direction": "forward", "vars": {"x": .5}})
+    context = ModelExecutionContext(allocation=None, available_ram_bytes=1000000)
+    bundle = ModelBundle.prepare(manifest, "forward", definition(manifest, kMode="manual", manualK=3), {"modelId": "m", "revision": 1, "operationId": "o", "name": "n"}, context)
+    try:
+        predicted = bundle.predict({"direction": "forward", "vars": {"x": .5}}, context)
+    finally:
+        bundle.close()
     assert predicted["knn"]["neighbors"] == [{"measurementId": 1, "distanceSquared": .0625, "weight": 1.0}]
     assert predicted["output"][0]["values"][-1] == 100
     assert predicted["output"][0]["values"][:2] == pytest.approx([-np.cos(.1), np.sin(.1)])

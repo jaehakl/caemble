@@ -266,6 +266,14 @@ callback therefore cannot leave Job completion and Optimization persistence out 
 The host adapter owns managed-job restrictions and Optimization list filtering, keeping
 those decisions out of the generic execution service.
 
+`optimization/search.py` owns pure Hybrid decisions: candidate rounds and verification selection.
+Its `advance_search` boundary returns updated JSON state, candidate definitions, selected Trial IDs
+and a termination reason. `hybrid.py` supplies persisted inputs and applies those decisions through
+the existing Evaluation/Job services. Policies never submit jobs or reserve resources. The existing
+coordinate policy keeps candidate order and tie breaks deterministic, preserves unrelated state keys
+such as `runtime_id`, and changes its incumbent only from successful Solver evaluations. A policy
+change belongs behind this boundary, with JSON save/resume tests; no second scheduler is needed.
+
 Prediction connects Datasets and Models through stable identifiers, revisions
 and artifact references. `shared/prediction_contracts` owns algorithm descriptors,
 supported versions and separate training/inference resource requirements without
@@ -278,6 +286,13 @@ successful Job completion share one transaction. Dataset revision pins block syn
 and file removal from submission until process cleanup; deletion requests can remain
 pending, and retry never substitutes the
 latest revision. Checkpoint resume belongs to a future algorithm implementation.
+
+Predictor representation decoding is separate from kNN cohort and numerical policy. Each model call
+receives the existing allocation and its current additional RAM allowance through a local
+`ModelExecutionContext`; these process-local values are never serialized into model artifacts.
+The model owns an idempotent `close`, while runtime/training own when it is called and retain leases
+until cleanup succeeds. See the [Forward implementation guide](../../app/slaves/cae_prediction/README.md#adding-a-forward-implementation)
+for resource accounting, partial construction failures and registration steps.
 
 ## Implementation map
 

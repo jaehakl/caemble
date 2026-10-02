@@ -16,9 +16,9 @@ from .storage import check_cancel, encode_json, safe_id
 
 
 class TrainingOperations:
-    def __init__(self, store, api_url: str, reader, memory_budget: int):
+    def __init__(self, store, api_url: str, reader, model_context):
         self.store, self.api_url = store, api_url.rstrip("/")
-        self.reader, self.memory_budget = reader, memory_budget
+        self.reader, self.model_context = reader, model_context
         self.opener = build_opener(NoRedirect())
 
     def authority(self, grant: dict, cancel=None) -> dict:
@@ -184,9 +184,12 @@ class TrainingOperations:
                     if any(dataset[key] != spec["dataset"][key] for key in ("datasetId", "revision", "fingerprint")):
                         raise PredictionError("dataset-checksum", "Training input differs from its pinned Dataset revision.")
                     report("training")
-                    bundle = ModelBundle.prepare(dataset, "forward", spec["definition"], model, self.memory_budget, cancel, report)
-                    report("saving")
-                    artifact = bundle.save(self.store, cancel)
+                    bundle = ModelBundle.prepare(dataset, "forward", spec["definition"], model, self.model_context(cancel, report))
+                    try:
+                        report("saving")
+                        artifact = bundle.save(self.store, cancel)
+                    finally:
+                        bundle.close()
                 receipt.update(state="saved", artifact=artifact)
                 self.store.save_receipt(operation_id, receipt)
                 report("saved")

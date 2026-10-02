@@ -200,6 +200,8 @@ No model is automatically converted or deleted. Inverse design belongs to Optimi
 
 `models.py` manages immutable model artifacts and selects a Forward implementation.
 `forward.py` owns kNN preparation, prediction, numerical file loading and archive validation;
+`representations.py` owns Vars flattening and checked BoxGrid decoding, including polar-to-Cartesian
+conversion. kNN still owns cohort selection, modal grouping, nearest-only selection and weighting.
 `runtime.py` manages remote sessions and handles. Shared algorithm/version/resource descriptors
 live in the NumPy-free `shared/prediction_contracts` package. A future algorithm implements the same
 Vars-to-BoxGrid boundary without changing Dataset or process lifecycle management.
@@ -210,10 +212,43 @@ files and returns their exact inventory without constructing an inference model.
 implementation registry uses this contract for training, loading, completed-training recovery
 and archive validation. `artifact.verify` checks stored checksums without loading the model.
 `ForwardModel` declares the instance metadata, memory footprint, layouts, profile, preparation
-details, prediction and file-writing methods. Per-record profile construction belongs to the
+details, prediction, file-writing and resource-closing methods. Per-record profile construction belongs to the
 algorithm; management consumes its preparation details without assuming kNN groups or neighbors.
-Dataset compatibility and numerical preprocessing also remain algorithm-owned. Storage publication,
+Algorithms choose supported representations and Dataset cohorts explicitly; shared representation
+decoding does not select samples or silently convert incompatible output contracts. Storage publication,
 leases, cancellation, Dataset pins and resource allocation remain in the execution/management layers.
+
+### Adding a Forward implementation
+
+Register its serializable algorithm/version/representation and training/inference resource descriptors
+in `shared/prediction_contracts`, then register its `ForwardModelImplementation` in `models.py`.
+Keep numerical dependencies and model-specific definition validation in the Predictor implementation.
+Use the existing revision definition and artifact for model configuration and reproducibility metadata;
+do not put Calculation objectives, execution handles or device allocations in the saved model.
+
+`prepare`, `load` and `predict` receive a fresh `ModelExecutionContext` from `execution.py`.
+It borrows the existing SDK `ResourceAllocation`, a cancellation event and an optional progress callback
+for that call. Managed workers require Launcher allocation; standalone fixtures may omit it.
+Do not retain the context in the model. CPU/thread budgets and GPU visibility are already applied by
+the SDK before model imports; use the allocated visible devices and their VRAM budgets.
+Training progress uses the existing string stage or structured `{stage, fraction, metrics}` callback.
+
+`available_ram_bytes` is additional host RAM after all loaded models' `persistent_bytes` have been
+counted. Prepare/load check the new model plus scratch; prediction checks only additional scratch.
+`persistent_bytes` describes retained host RAM, not VRAM. The runtime recomputes the allowance for each
+call, including batched predictions. This does not create a new memory reservation or hard RAM limit.
+
+`close()` is synchronous, idempotent and independent of cancellation. Release owned arrays, device
+tensors and caches. The implementation cleans partial resources if prepare/load fails before returning
+a model. After return, the caller closes the model after training save (including failure), after a
+failed load installation, or on explicit release. A failed close blocks further prediction and keeps
+the installed handle, memory accounting and lease until release succeeds or its process exits.
+The Launcher remains responsible for process-tree cleanup before returning the execution reservation.
+
+Extend the small non-kNN fixture lifecycle test when changing these boundaries. It must prepare,
+publish, recover, archive/restore and predict a valid BoxGrid without kNN metadata. Preserve the
+existing numerical goldens and byte-identical legacy Forward archive tests; new models do not require
+changing API/Launcher job coordination. Checkpoint resume is a separate future model capability.
 
 `CAEMBLE_PREDICTOR_OWNER_ID` and `CAEMBLE_PREDICTOR_API_URL` are trusted launcher
 environment values required at session initialization. `CAEMBLE_PREDICTOR_STORAGE_ROOT`

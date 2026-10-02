@@ -177,6 +177,8 @@ class VoicevoxRuntime:
             for directory in sorted({path.parent for path in self.runtime_dir.rglob("*.dll")}):
                 self._dll_directory_handles.append(os.add_dll_directory(str(directory)))
 
+        # Core reads RUST_LOG once on its first C API call. Keep explicit overrides.
+        os.environ.setdefault("RUST_LOG", settings.voicevox_rust_log)
         library = ctypes.CDLL(str(core_library))
         self._configure_library(library)
 
