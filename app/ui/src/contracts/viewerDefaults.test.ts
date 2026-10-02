@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest'
-import { cameraPoseSchema, durableViewerSettings, experimentPresentationSchema } from './viewerDefaults'
+import {
+  cameraPoseSchema,
+  durableViewerSettings,
+  experimentPresentationSchema,
+} from '@caemble/execution/contracts/viewerDefaults'
 import initialView from '../../../api/tests/fixtures/viewer_initial_view.json'
 
 it('serializes the shared API initial-view fixture without dropping Viewer controls', () => {

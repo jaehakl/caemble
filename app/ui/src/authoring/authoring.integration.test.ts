@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { analyzeGeometrySource } from '../lib/cad/source/sourceAnalysis'
-import { analyzeCalculationDependencies } from '../lib/calculation/dependencies'
-import { compileNodeCalculation, runNodeCalculation } from '../platform/node/calculation'
+import { analyzeGeometrySource } from '@caemble/execution/cad/source/sourceAnalysis'
+import { analyzeCalculationDependencies } from '@caemble/execution/calculation/dependencies'
+import { compileNodeCalculation, runNodeCalculation } from '@caemble/execution/node/calculation'
 import { getAuthoringGuide, getAuthoringReference, listAuthoringGuides, searchAuthoringReference } from './index'
 import { calculationExamples, calculationInvalidExamples, geometrySyntaxExamples } from './examples'
 

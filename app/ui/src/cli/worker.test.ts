@@ -14,7 +14,7 @@ beforeAll(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'caemble-cli-worker-'))
   worker = path.join(directory, 'worker.cjs')
   await build({
-    entryPoints: [path.resolve('src/platform/node/worker.ts')],
+    entryPoints: [path.resolve('../../shared/execution/src/node/worker.ts')],
     outfile: worker,
     bundle: true,
     platform: 'node',

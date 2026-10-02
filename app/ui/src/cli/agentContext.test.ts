@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDbTables } from '@/api/api'
 import type { CaembleClient } from '@/api/http'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import { catalogCommand } from '@/platform/node/environment'
+import { catalogCommand } from '@caemble/execution/node/environment'
 import { buildAgentContext } from './agentContext'
 import type { CommandContext } from './types'
 
@@ -14,8 +14,8 @@ vi.mock('@/api/api', () => ({
   createDbTables: vi.fn(),
   getListRequest: () => ({ filter: {}, selected_ids: [], offset: 0, limit: 24 }),
 }))
-vi.mock('@/platform/node/environment', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/platform/node/environment')>()),
+vi.mock('@caemble/execution/node/environment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@caemble/execution/node/environment')>()),
   catalogCommand: vi.fn(async () => ({ catalogRevision: 'live-test-revision' })),
 }))
 
@@ -42,7 +42,7 @@ describe('bounded external agent context', () => {
     const context = {
       environment: {
         repo: path.resolve('../..'),
-        cae: path.resolve('../slaves/cae'),
+        cae: path.resolve('../slaves/cae_simulation'),
         python: 'unused',
         apiUrl: undefined,
         envPath: path.join(directory, '.env'),
@@ -121,7 +121,7 @@ describe('bounded external agent context', () => {
     const context = {
       environment: {
         repo: path.resolve('../..'),
-        cae: path.resolve('../slaves/cae'),
+        cae: path.resolve('../slaves/cae_simulation'),
         python: 'unused',
         apiUrl: undefined,
         token: undefined,
@@ -156,7 +156,7 @@ describe('bounded external agent context', () => {
     const context: CommandContext = {
       environment: {
         repo: path.resolve('../..'),
-        cae: path.resolve('../slaves/cae'),
+        cae: path.resolve('../slaves/cae_simulation'),
         python: 'unused',
         apiUrl: undefined,
         token: undefined,
@@ -176,7 +176,7 @@ describe('bounded external agent context', () => {
     expect(result.source.files[0]).toMatchObject({ file: 'entry.py', complete: false, nextLine: 1, includedBytes: 0 })
     expect(result.checkoutSources.slice(0, 2).map(({ file }) => file)).toEqual([
       'docs/development/solver-development.md',
-      'app/slaves/cae/AGENTS.md',
+      'app/slaves/cae_simulation/AGENTS.md',
     ])
     expect(result.checkoutSources.reduce((bytes, source) => bytes + source.includedBytes, 0)).toBeLessThanOrEqual(
       result.limits.checkoutBytes,

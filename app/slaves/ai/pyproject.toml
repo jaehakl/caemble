@@ -33,7 +33,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-caemble-runtime-sdk = { path = "../../sdk", develop = true, extras = ["slave"] }
+caemble-runtime-sdk = { path = "../../../shared/sdk", develop = true, extras = ["slave"] }
 torch = { version = "2.7.0+cu128", source = "pytorch-gpu" }
 torchvision = { version = "0.22.0+cu128", source = "pytorch-gpu" }
 llama-cpp-python = { version = "^0.3.28", source = "llama-cpp-python-cu130" }

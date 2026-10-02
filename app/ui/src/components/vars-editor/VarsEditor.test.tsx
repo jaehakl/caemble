@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { Vars } from '@/lib/cad/model'
+import type { Vars } from '@caemble/execution/cad/model'
 import { VarsEditor } from './VarsEditor'
 
 const schema = {

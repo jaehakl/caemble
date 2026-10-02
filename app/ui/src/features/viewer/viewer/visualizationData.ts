@@ -1,7 +1,11 @@
-import type { MeasurementVisualizations, RecordedResultContracts, ResultProvenance } from '@/contracts/results'
-import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
-import { flattenRecordedData, recordedDataRules } from '@/lib/cad/simulation/recordedData'
-import type { RecordedDataSchemaTree } from '@/lib/cad/simulation'
+import type {
+  MeasurementVisualizations,
+  RecordedResultContracts,
+  ResultProvenance,
+} from '@caemble/execution/contracts/results'
+import type { RecordedData, RecordedDataRule } from '@caemble/execution/cad/model'
+import { flattenRecordedData, recordedDataRules } from '@caemble/execution/cad/simulation/recordedData'
+import type { RecordedDataSchemaTree } from '@caemble/execution/cad/simulation'
 
 /** Adapt the isolated visualization channel at the Viewer boundary only. */
 export function visualizationData(visualizations: MeasurementVisualizations) {

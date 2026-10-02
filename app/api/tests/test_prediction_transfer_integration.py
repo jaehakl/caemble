@@ -36,7 +36,7 @@ from settings import settings
 from test_calculation_database import _database_url
 
 
-PREDICTOR = Path(__file__).resolve().parents[2] / "slaves" / "predictor"
+PREDICTOR = Path(__file__).resolve().parents[2] / "slaves" / "cae_prediction"
 spec = importlib.util.spec_from_file_location("predictor", PREDICTOR / "app" / "__init__.py",
                                             submodule_search_locations=[str(PREDICTOR / "app")])
 module = importlib.util.module_from_spec(spec)

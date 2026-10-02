@@ -1,5 +1,5 @@
-import { tessellateContinuousPrimitive, type ContinuousPrimitive, type IndexedSurface } from '../geometry/continuous'
-import { tessellateFiber } from '../geometry/fiber'
+import { tessellateContinuousPrimitive, type ContinuousPrimitive, type IndexedSurface } from '@caemble/execution/cad/geometry/continuous'
+import { tessellateFiber } from '@caemble/execution/cad/geometry/fiber'
 import initManifold, {
   type Manifold as ManifoldSolid,
   type ManifoldToplevel,
@@ -12,10 +12,10 @@ import type {
   CanonicalGeometryNodeV2,
   CanonicalGeometrySceneV2,
   CanonicalPrimitiveNodeV2,
-} from '../evaluation/canonicalTypes'
-import type { CadScene, CadSceneSurface, CadSceneTreeNode } from '../evaluation/types'
-import { canonicalSurfaceMemberEntries } from '../evaluation/canonical'
-import { cadSceneHash, type SerializableCadScene, type SerializableCadScenePart } from './meshSerialization'
+} from '@caemble/execution/cad/evaluation/canonicalTypes'
+import type { CadScene, CadSceneSurface, CadSceneTreeNode } from '@caemble/execution/cad/evaluation/types'
+import { canonicalSurfaceMemberEntries } from '@caemble/execution/cad/evaluation/canonical'
+import { cadSceneHash, type SerializableCadScene, type SerializableCadScenePart } from '@caemble/execution/cad/execution/meshSerialization'
 
 type Triangle = readonly [number, number, number]
 type SourceSurfaces = Readonly<{ nodeId: string; surfaceIndices: ReadonlyMap<number, number> }>
@@ -37,7 +37,7 @@ function solidBoundsCenter(solid: ManifoldSolid): Vec3 {
 }
 
 async function manifoldModule() {
-  const testWasmUrl = new URL('../../../../node_modules/manifold-3d/manifold.wasm', import.meta.url)
+  const testWasmUrl = new URL('../../../../../../node_modules/manifold-3d/manifold.wasm', import.meta.url)
   const testWasmPath = decodeURIComponent(testWasmUrl.pathname).replace(/^\/([A-Za-z]:\/)/u, '$1')
   manifoldModulePromise ??= initManifold({
     locateFile: () => (import.meta.env.MODE === 'test' ? testWasmPath : manifoldWasmUrl),

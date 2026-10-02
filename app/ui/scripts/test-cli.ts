@@ -36,7 +36,7 @@ assert.ok(run(['docs', 'search', 'Nginx']).some((page: { id: string }) => page.i
 assert.equal(run(['docs', 'show', 'archive.calculation-plan'], 2).error.exitCode, 2)
 const metadata = JSON.parse(readFileSync(path.join(repo, 'app/ui/dist-cli/build-info.json'), 'utf8'))
 for (const document of documents) {
-  const source = path.relative(path.join(repo, 'app/ui'), path.join(repo, document.sourcePath)).replace(/\\/g, '/')
+  const source = document.sourcePath
   assert.equal(
     metadata.inputs[source],
     createHash('sha256')

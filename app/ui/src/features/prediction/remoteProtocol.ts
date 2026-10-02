@@ -9,7 +9,7 @@ import {
   predictionTensorSampleSchema,
   queryDiagnosticSchema,
 } from './protocolValidation'
-import type { RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedDataRule } from '@caemble/execution/cad/model'
 
 const identity = z.string().min(1)
 const count = z.number().int().nonnegative()

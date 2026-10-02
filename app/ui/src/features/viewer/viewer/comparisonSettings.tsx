@@ -1,7 +1,7 @@
 import { initialViewerDisplay } from './viewerDisplay'
 import { createViewerSelection, type ViewerSelectionStore } from './viewerSelection'
 import type { createComparisonCamera } from './comparisonCamera'
-import { type ViewerDefaults, durableViewerSettings } from '@/contracts/viewerDefaults'
+import { type ViewerDefaults, durableViewerSettings } from '@caemble/execution/contracts/viewerDefaults'
 import {
   createContext,
   useCallback,

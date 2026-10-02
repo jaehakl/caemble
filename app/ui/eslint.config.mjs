@@ -5,14 +5,7 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: [
-      'dist/**',
-      'dist-cli/**',
-      'dist-cae/**',
-      'node_modules/**',
-      'src/lib/cad/api/*.d.ts',
-      'src/lib/cad/elements/generated.ts',
-    ],
+    ignores: ['dist/**', 'dist-cli/**', 'dist-cae/**', 'node_modules/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

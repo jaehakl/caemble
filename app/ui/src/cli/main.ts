@@ -12,7 +12,7 @@ import {
   executionEnvironment,
   resolveEnvironment,
   verifyPython,
-} from '@/platform/node/environment'
+} from '@caemble/execution/node/environment'
 import { experimentCommand } from './experiment'
 import { batchCommand } from './batch'
 import { optimizationCommand } from './optimization'
@@ -157,7 +157,9 @@ async function main() {
         try {
           if (
             createHash('sha256')
-              .update(await readFile(path.join(environment.repo, 'app/ui', file)))
+              .update(
+                await readFile(path.join(environment.repo, metadata.sourceRoot === 'repository' ? '' : 'app/ui', file)),
+              )
               .digest('hex') !== hash
           )
             stale.push(file)
@@ -251,7 +253,7 @@ async function main() {
           for (const file of ['caemble-core.d.ts', 'cad-jsx.d.ts'])
             await writeFile(
               path.join(String(values.out), file),
-              await readFile(path.join(environment.repo, 'app/ui/src/lib/cad/api', file), 'utf8'),
+              await readFile(path.join(environment.repo, 'shared/execution/src/cad/api', file), 'utf8'),
               'utf8',
             )
           result = { directory: path.resolve(String(values.out)) }

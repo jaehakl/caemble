@@ -2,20 +2,20 @@
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { readCatalogExamples } from '../../../../scripts/catalog-example-support'
-import { compileNodeCadDocument } from '@/platform/node/cadCompiler'
-import { extractCatalogSourceReferences } from '@/lib/catalog/references'
-import { experimentTypeScriptPaths } from '../source/moduleResolution'
-import { catalogRuntimeTypes } from './catalogTypeEnvironment'
+import { compileNodeCadDocument } from '@caemble/execution/node/cadCompiler'
+import { extractCatalogSourceReferences } from '@caemble/execution/catalog/references'
+import { experimentTypeScriptPaths } from '@caemble/execution/cad/source/moduleResolution'
+import { catalogRuntimeTypes } from '@caemble/execution/cad/compiler/catalogTypeEnvironment'
 import { compileVirtualCadDocument } from './virtualCompiler'
-import type { CadCompilationInput } from './compilerProtocol'
-import type { CadCompilationError } from './compilationError'
-import { inspectCompiledDocument } from '../execution/userModule'
+import type { CadCompilationInput } from '@caemble/execution/cad/compiler/compilerProtocol'
+import type { CadCompilationError } from '@caemble/execution/cad/compiler/compilationError'
+import { inspectCompiledDocument } from '@caemble/execution/cad/execution/userModule'
 
 const mocks = vi.hoisted(() => ({ compile: vi.fn() }))
 vi.mock('./compilerClient', () => ({ compileInWorker: mocks.compile }))
 
 // Read real contracts from the canonical SQLite catalog, never duplicate material data.
-const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+const { examples, catalog } = readCatalogExamples(path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'))
 const templates = [
   examples.find(
     (entry) =>
@@ -56,7 +56,7 @@ export default experiment({
       }
       const input = { sourceHash: `rank-${JSON.stringify(shape)}`, sources, catalogTypes: 'export {}' }
       const compileNode = () =>
-        compileNodeCadDocument(sources, input.sourceHash, catalog, path.resolve('src/lib/cad/api'))
+        compileNodeCadDocument(sources, input.sourceHash, catalog, path.resolve('../../shared/execution/src/cad/api'))
       if ((shape?.length ?? 0) > 2) {
         await expect(compileVirtualCadDocument(input)).rejects.toMatchObject({ errorType: 'type' })
         expect(compileNode).toThrow()
@@ -112,7 +112,7 @@ export default experiment({
     expect(browserError?.errorType).toBe('type')
     let nodeDiagnostics: { file: string; code: string; range: unknown }[] = []
     try {
-      compileNodeCadDocument(sources, 'positions', catalog, path.resolve('src/lib/cad/api'))
+      compileNodeCadDocument(sources, 'positions', catalog, path.resolve('../../shared/execution/src/cad/api'))
     } catch (cause) {
       nodeDiagnostics = (cause as { diagnostics: typeof nodeDiagnostics }).diagnostics
     }
@@ -135,7 +135,9 @@ export default experiment({
           { catalog },
         ),
       ).rejects.toThrow(path)
-      expect(() => compileNodeCadDocument({ [path]: '' }, 'forbidden', catalog, 'src/lib/cad/api')).toThrow(path)
+      expect(() =>
+        compileNodeCadDocument({ [path]: '' }, 'forbidden', catalog, '../../shared/execution/src/cad/api'),
+      ).toThrow(path)
     },
   )
 

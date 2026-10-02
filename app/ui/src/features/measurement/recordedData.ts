@@ -1,18 +1,18 @@
 import type {
   RecordedData,
-} from '@/lib/cad/model'
+} from '@caemble/execution/cad/model'
 import type {
   RecordedDataSchemaTree,
   ResolvedDataSchema,
-} from '@/lib/cad/simulation'
+} from '@caemble/execution/cad/simulation'
 import type {
   MeasurementRecordedData,
   MeasurementRecordedDataLeaf,
   MeasurementRecordedDataNode,
 } from '@/api'
 import type { SavedRecordedData } from '@/features/cae-workbench/types'
-import { recordedDataRules } from '@/lib/cad/simulation/recordedData'
-export { experimentRecordContracts, flattenRecordedData, recordedDataRules } from '@/lib/cad/simulation/recordedData'
+import { recordedDataRules } from '@caemble/execution/cad/simulation/recordedData'
+export { experimentRecordContracts, flattenRecordedData, recordedDataRules } from '@caemble/execution/cad/simulation/recordedData'
 
 const namePattern = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/u
 

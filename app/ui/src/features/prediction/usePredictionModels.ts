@@ -1,6 +1,6 @@
 import type { CalculationDataOutput } from '@/api'
-import type { RecordedResultContracts } from '@/contracts/results'
-import type { BoxGridData } from '@/contracts/boxGrid'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import type { BoxGridData } from '@caemble/execution/contracts/boxGrid'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { runCalculation } from '@/lib/calculation'
 import {
@@ -9,7 +9,7 @@ import {
   type RecordedDataRule,
   type Vars,
   type VarsSchemaEntry,
-} from '@/lib/cad/model'
+} from '@caemble/execution/cad/model'
 import { buildCalculationRecordedData } from '../calculation/calculationRecordedData'
 import { predictionFingerprint } from './data'
 import type {

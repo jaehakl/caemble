@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
+import { createDataTensorAccessor, isDataTensor } from '@caemble/execution/cad/model/dataTensor'
 import { PredictionRuntimeController } from './predictionRuntime'
 import { calculatePrediction, predictCandidate, predictionSetupFingerprint } from './usePredictionModels'
 import { calculation, context, grid, model, remoteFixture, rule, setup, varsSchema } from './forward.fixture'

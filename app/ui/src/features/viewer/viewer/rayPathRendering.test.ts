@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRayPathRenderGeometries } from './rayPathRendering'
-import type { PolylineBundle } from '@/lib/cad/model'
+import type { PolylineBundle } from '@caemble/execution/cad/model'
 
 describe('equivalent lens path rendering', () => {
   it('leaves the internal reference-plane jump undrawn while preserving both external rays', () => {

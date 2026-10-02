@@ -167,7 +167,7 @@ develop = true
 
 [package.source]
 type = "directory"
-url = "../catalog"
+url = "../../shared/catalog"
 
 [[package]]
 name = "caemble-runtime-sdk"
@@ -189,7 +189,7 @@ slave = ["aiortc (>=1.9,<2.0)"]
 
 [package.source]
 type = "directory"
-url = "../sdk"
+url = "../../shared/sdk"
 
 [[package]]
 name = "certifi"
@@ -1713,4 +1713,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "7ec7c481d5c60e5e0295232c5a80fc2a0317a6989e63fd5699516f174f980f1f"
+content-hash = "604143459e28cd086d0b513f51bded43e235d39f6304258fde51820dbd047260"

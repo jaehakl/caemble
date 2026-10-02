@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseMeasurementRecordedDataResponse } from '@/contracts/api/measurementValidators'
 import { recordedDataTreeSnapshot } from './recordedData'
-import { createCalculationInput } from '@/lib/calculation/input'
+import { createCalculationInput } from '@caemble/execution/calculation/input'
 
 function recordedDataLeaf(overrides: Readonly<Record<string, unknown>> = {}) {
   return {

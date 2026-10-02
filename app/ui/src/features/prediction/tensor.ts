@@ -1,1 +1,1 @@
-export * from '@/lib/prediction/tensor'
+export * from '@caemble/execution/prediction/tensor'

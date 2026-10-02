@@ -1,8 +1,11 @@
 /// <reference lib="webworker" />
 
-import { executeCalculation } from './execute'
-import { assertCalculationRunnerOperationEnvelope, type CalculationRunnerResultEnvelope } from './protocol'
-import { CalculationExecutionError } from './types'
+import { executeCalculation } from '@caemble/execution/calculation/execute'
+import {
+  assertCalculationRunnerOperationEnvelope,
+  type CalculationRunnerResultEnvelope,
+} from '@caemble/execution/calculation/protocol'
+import { CalculationExecutionError } from '@caemble/execution/calculation/types'
 
 function handleOperation(value: unknown) {
   assertCalculationRunnerOperationEnvelope(value)

@@ -1,5 +1,5 @@
 import { recordedResultContractsSchema } from '../resultValidators'
-import type { MeasurementResults } from './measurement'
+import type { MeasurementResults } from '@caemble/execution/contracts/api/measurement'
 import { z } from 'zod'
 import type {
   MeasurementRecordedData,
@@ -7,7 +7,7 @@ import type {
   MeasurementRecordedDataNode,
   PersistedMeasurementRecord,
   PersistedRecordedDataRecord,
-} from './measurement'
+} from '@caemble/execution/contracts/api/measurement'
 import { databaseIdSchema, parseGetListResponse } from './validators'
 
 const objectSchema = z.object({}).passthrough()

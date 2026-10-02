@@ -1,5 +1,5 @@
-import type { VarsSchemaEntry } from '@/lib/cad/model'
-import { tensorElementCount } from '@/lib/cad/model/tensor'
+import type { VarsSchemaEntry } from '@caemble/execution/cad/model'
+import { tensorElementCount } from '@caemble/execution/cad/model/tensor'
 
 export type TensorRectangle = Readonly<{
   rowStart: number

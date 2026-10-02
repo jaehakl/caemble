@@ -47,10 +47,10 @@ print(json.dumps(bundle.save(runtime.store)))
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.getenv("RUN_WEBRTC_BROWSER_TESTS") != "1", reason="Set RUN_WEBRTC_BROWSER_TESTS=1 for real browser tests")
 async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_removal(tmp_path):
-    directory = APP_ROOT / "slaves/predictor"
+    directory = APP_ROOT / "slaves/cae_prediction"
     slave = SlaveApp("predictor", "Predictor", "app", directory)
     if not slave.python_executable.is_file():
-        pytest.fail("Run poetry install in app/slaves/predictor before this acceptance test.")
+        pytest.fail("Run poetry install in app/slaves/cae_prediction before this acceptance test.")
     spec = importlib.util.spec_from_file_location("predictor_fixtures", directory / "tests/fixtures.py")
     fixtures = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fixtures)
@@ -172,7 +172,7 @@ async def test_predictor_browser_loads_and_reloads_after_process_and_dataset_rem
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.getenv("RUN_WEBRTC_BROWSER_TESTS") != "1", reason="Set RUN_WEBRTC_BROWSER_TESTS=1 for real browser tests")
 async def test_predictor_browser_backups_restore_after_original_storage_loss(tmp_path):
-    directory = APP_ROOT / "slaves/predictor"
+    directory = APP_ROOT / "slaves/cae_prediction"
     slave = SlaveApp("predictor", "Predictor", "app", directory)
     fixtures_spec = importlib.util.spec_from_file_location("portable_fixtures", directory / "tests/fixtures.py")
     fixtures = importlib.util.module_from_spec(fixtures_spec)

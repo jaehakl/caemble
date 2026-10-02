@@ -4,9 +4,9 @@ import { ViewerResultSettings } from './ViewerDisplayControls'
 import { ViewerSceneOnly } from './ViewerSceneLayers'
 import { useViewerComparison, useViewerSetting } from './comparisonSettings'
 import { useContext, useMemo } from 'react'
-import type { RecordedResultContract } from '@/contracts/results'
-import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
-import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
+import type { RecordedResultContract } from '@caemble/execution/contracts/results'
+import type { RecordedData, RecordedDataRule } from '@caemble/execution/cad/model'
+import { createDataTensorAccessor, isDataTensor } from '@caemble/execution/cad/model/dataTensor'
 import RecordedDataResults from './RecordedDataResults'
 
 export function ResultTensorView({

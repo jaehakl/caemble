@@ -22,7 +22,7 @@ from webrtc_harness import APP_ROOT, WebRtcHarness
                     reason="Set RUN_PREDICTOR_PROCESS_TESTS=1 for the real Predictor process test")
 async def test_server_training_finishes_and_releases_resources_without_inference_session(tmp_path):
     slave = load_registry(APP_ROOT / "slaves").require("predictor-training")
-    assert slave.python_executable.is_file(), "Run poetry install in app/slaves/predictor first."
+    assert slave.python_executable.is_file(), "Run poetry install in app/slaves/cae_prediction first."
     module = importlib.util.spec_from_file_location("training_fixtures", slave.project_dir / "tests/fixtures.py")
     fixtures = importlib.util.module_from_spec(module)
     module.loader.exec_module(fixtures)

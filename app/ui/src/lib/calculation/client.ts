@@ -7,14 +7,14 @@ import {
   assertCalculationRunnerStartedEnvelope,
   type CalculationRunRequest,
   type CalculationRunnerOperationEnvelope,
-} from './protocol'
+} from '@caemble/execution/calculation/protocol'
 import {
   CalculationExecutionError,
   type CalculationInput,
   type CalculationLogEntry,
   type NormalizedCalculationOutput,
-} from './types'
-import { assertCalculationInput, normalizeCalculationRunnerOutput } from './validation'
+} from '@caemble/execution/calculation/types'
+import { assertCalculationInput, normalizeCalculationRunnerOutput } from '@caemble/execution/calculation/validation'
 
 const runnerStartupTimeoutMs = 10_000
 let calculationRevision = 0

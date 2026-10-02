@@ -1,0 +1,23 @@
+{
+  "name": "caemble",
+  "private": true,
+  "workspaces": [
+    "app/ui",
+    "shared/execution",
+    "shared/sdk/master/js"
+  ],
+  "scripts": {
+    "check": "npm run check --workspace caemble-ui && npm run check --workspace @caemble/execution && npm test --workspace @gpstation/v1-master-js-sdk",
+    "build": "npm run build --workspace caemble-ui"
+  },
+  "overrides": {
+    "dompurify": "3.4.14"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "msw": false
+  },
+  "engines": {
+    "node": ">=24.14.0"
+  }
+}

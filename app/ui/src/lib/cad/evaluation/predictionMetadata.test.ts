@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from 'vitest'
-import { evaluateCadMetadata, evaluateCadScene } from './evaluator'
-import { canonicalGeometrySceneDraft } from './canonical'
-import { cadElementDefinitions } from './registry'
-import { h } from './jsx'
-import { resolveBoxGridGeometry, validateDetectorBox } from '../simulation/boxGrid'
-import type { KernelOutputRequest, KernelTaskConfig } from '../simulation/kernelContract'
+import { evaluateCadMetadata, evaluateCadScene } from '@caemble/execution/cad/evaluation/evaluator'
+import { canonicalGeometrySceneDraft } from '@caemble/execution/cad/evaluation/canonical'
+import { cadElementDefinitions } from '@caemble/execution/cad/evaluation/registry'
+import { h } from '@caemble/execution/cad/evaluation/jsx'
+import { resolveBoxGridGeometry, validateDetectorBox } from '@caemble/execution/cad/simulation/boxGrid'
+import type { KernelOutputRequest, KernelTaskConfig } from '@caemble/execution/cad/simulation/kernelContract'
 
 afterEach(() => vi.restoreAllMocks())
 

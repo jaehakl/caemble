@@ -1,9 +1,9 @@
-import type { RecordedResultContracts } from '@/contracts/results'
-import type { ResultVisualization } from '@/contracts/solver'
-import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
-import { createDataTensorAccessor, type DataTensorAccessor } from '@/lib/cad/model/dataTensor'
-import type { ResultMetadata } from '@/contracts/resultMetadata'
-import { tensorComponentIndices, type TensorComponent } from '@/lib/calculation/boxGridProject'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import type { ResultVisualization } from '@caemble/execution/contracts/solver'
+import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@caemble/execution/cad/model'
+import { createDataTensorAccessor, type DataTensorAccessor } from '@caemble/execution/cad/model/dataTensor'
+import type { ResultMetadata } from '@caemble/execution/contracts/resultMetadata'
+import { tensorComponentIndices, type TensorComponent } from '@caemble/execution/calculation/boxGridProject'
 
 export type RecordedMeshField = Readonly<{
   cellType?: 'tet4' | 'tri3'

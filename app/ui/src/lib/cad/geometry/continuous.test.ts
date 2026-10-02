@@ -9,15 +9,18 @@ import {
   transformSurface,
   type ContinuousPrimitive,
   type IndexedSurface,
-} from './continuous'
-import { evaluateFiber, normalizeFiber, tessellateFiber } from './fiber'
-import { canonicalGeometryScene } from '../evaluation/canonical'
-import { evaluateCadScene } from '../evaluation/evaluator'
-import { h } from '../evaluation/jsx'
+} from '@caemble/execution/cad/geometry/continuous'
+import { evaluateFiber, normalizeFiber, tessellateFiber } from '@caemble/execution/cad/geometry/fiber'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
+import { evaluateCadScene } from '@caemble/execution/cad/evaluation/evaluator'
+import { h } from '@caemble/execution/cad/evaluation/jsx'
 import { renderCanonicalGeometryScene } from '../execution/manifoldRender'
 
 const fixtures = JSON.parse(
-  readFileSync(new URL('../../../../../slaves/cae/tests/fixtures/continuous-geometry.json', import.meta.url), 'utf8'),
+  readFileSync(
+    new URL('../../../../../slaves/cae_simulation/tests/fixtures/continuous-geometry.json', import.meta.url),
+    'utf8',
+  ),
 ) as { kind: ContinuousPrimitive; parameters: Record<string, number>; surfaces: number[] }[]
 function signedVolume(value: IndexedSurface) {
   return value.triangles.reduce((sum, [i, j, k]) => {

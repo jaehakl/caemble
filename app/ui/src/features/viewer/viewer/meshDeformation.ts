@@ -1,5 +1,5 @@
-import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
-import { tensorComponentIndices } from '@/lib/calculation/boxGridProject'
+import { convertUcumValue, type UcumUnit } from '@caemble/execution/cad/model'
+import { tensorComponentIndices } from '@caemble/execution/calculation/boxGridProject'
 import { meshFieldScalarValue, type RecordedMeshField, type MeshFieldView } from './meshFields'
 
 /** Returns displacement in the target mesh's node order, only for the same recorded domain. */

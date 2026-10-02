@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCaembleClient } from '@/api/http'
 import { submitArtifact } from '@/api/submitArtifact'
-import { openArtifact } from '@/platform/node/artifact'
+import { openArtifact } from '@caemble/execution/node/artifact'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { batchCommand, batchResources } from './batch'
 import type { CommandContext } from './types'
 
-vi.mock('@/platform/node/artifact', () => ({ openArtifact: vi.fn() }))
+vi.mock('@caemble/execution/node/artifact', () => ({ openArtifact: vi.fn() }))
 vi.mock('@/api/submitArtifact', () => ({ submitArtifact: vi.fn() }))
 vi.mock('node:fs', async (original) => {
   const actual = await original<typeof import('node:fs')>()
@@ -42,7 +42,7 @@ describe('batch resource arguments', () => {
 })
 const environment: CommandContext['environment'] = {
   repo: 'D:/caemble',
-  cae: 'D:/caemble/app/slaves/cae',
+  cae: 'D:/caemble/app/slaves/cae_simulation',
   python: '',
   envPath: 'D:/caemble/.env',
   apiUrl: 'https://api.example',

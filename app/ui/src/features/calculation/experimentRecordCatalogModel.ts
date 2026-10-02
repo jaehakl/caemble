@@ -1,5 +1,5 @@
 import type { ExperimentRecordedDataRecord } from '@/api'
-import type { RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedDataRule } from '@caemble/execution/cad/model'
 import type { CalculationRecordedDataSummary } from './calculationRecordedData'
 
 export type ExperimentRecordCatalogStatus = 'unselected' | 'loading' | 'ready' | 'missing' | 'invalid'

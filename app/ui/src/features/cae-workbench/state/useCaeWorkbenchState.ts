@@ -1,6 +1,6 @@
 import type { CalculationDefinition } from '@/api'
 import type { Optimization } from '@/contracts/api/optimization'
-import type { ExperimentPresentationUpdate } from '@/contracts/viewerDefaults'
+import type { ExperimentPresentationUpdate } from '@caemble/execution/contracts/viewerDefaults'
 import { experimentQueryKeys } from '@/features/experiment/queryKeys'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -16,8 +16,8 @@ import {
   experimentTaskPaths,
   type ExperimentSourceBundle,
   type ExperimentSourceDocument,
-} from '@/lib/cad/source'
-import { varsFingerprint, type Tensor, type Vars } from '@/lib/cad/model'
+} from '@caemble/execution/cad/source'
+import { varsFingerprint, type Tensor, type Vars } from '@caemble/execution/cad/model'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import { measurementsQueryOptions } from '@/features/measurement/queryOptions'
 import { useCaeDataSelection } from '@/features/measurement/useCaeDataSelection'

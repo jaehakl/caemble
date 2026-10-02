@@ -1,6 +1,6 @@
 # CAD element 추가하기
 
-Commands and component-relative paths in this document are relative to `app/ui/src/lib/cad`, unless stated otherwise.
+Component-relative paths in this document are relative to `shared/execution/src/cad`, unless stated otherwise. Run npm generation commands from `app/ui`.
 
 각 CAD 태그는 역할에 따라 `primitives` 또는 `operations` 아래의 자체 디렉터리에서 공개 형태와 실행 코드를 분리합니다. `definition.ts`는 props 타입과 authoring metadata를 내보내며 JSCAD를 import하지 않습니다. `runtime.ts`는 신뢰된 props로 Geometry를 생성합니다. element 고유 props만 metadata에 기록하고 공통 `id`, `position`, `rotation`, `scale` 설명은 `authoringContract.ts` 한 곳에서 관리합니다. Primitive의 `authoringName`은 PascalCase이고 operation은 registry `tag`와 같은 lowercase 이름을 사용합니다. 전용 transform wrapper처럼 공통 transform을 받지 않으면 `standardTransforms: false`로 선언합니다.
 

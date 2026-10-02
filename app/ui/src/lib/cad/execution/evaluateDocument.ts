@@ -15,10 +15,10 @@ import {
   type CadEvaluationInput,
   type ExperimentSourceDocument,
   type ExperimentSourceBundle,
-} from '../source/document'
-import type { UcumUnit } from '../model/units'
-import { deserializeCadScene } from './mesh'
-import type { CadScene } from '../evaluation/types'
+} from '@caemble/execution/cad/source/document'
+import type { UcumUnit } from '@caemble/execution/cad/model/units'
+import { deserializeCadScene } from '@caemble/execution/cad/execution/mesh'
+import type { CadScene } from '@caemble/execution/cad/evaluation/types'
 import type {
   CadDiagnostic,
   CadEvaluationRequest,
@@ -27,13 +27,13 @@ import type {
   CadInspectionResponse,
   CadGeometryPreviewRequest,
   CadGeometryPreviewResponse,
-} from '../worker/protocol'
+} from '@caemble/execution/cad/worker/protocol'
 import type { EvaluatedExperimentSnapshot } from './snapshot'
-import type { PredictionCandidateSnapshot } from './snapshotTypes'
-import type { CadPredictionRequest, CadPredictionResponse } from '../worker/protocol'
-import type { VarsSchemaEntry } from '../model/vars'
-import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
-import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+import type { PredictionCandidateSnapshot } from '@caemble/execution/cad/execution/snapshotTypes'
+import type { CadPredictionRequest, CadPredictionResponse } from '@caemble/execution/cad/worker/protocol'
+import type { VarsSchemaEntry } from '@caemble/execution/cad/model/vars'
+import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import type { CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
 
 export type CatalogRuntimeSliceFetcher = (bundle: ExperimentSourceBundle) => Promise<CatalogRuntimeSlice>
 

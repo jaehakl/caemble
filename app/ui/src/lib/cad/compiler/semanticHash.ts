@@ -1,7 +1,7 @@
 import { parse } from '@babel/parser'
-import { EXPERIMENT_SIMULATION_PATH, type CadSourceDocument } from '../source/document'
+import { EXPERIMENT_SIMULATION_PATH, type CadSourceDocument } from '@caemble/execution/cad/source/document'
 import { compileCadDocument } from './monacoCompiler'
-import type { CompiledCadDocument, CompiledCadSource } from './types'
+import type { CompiledCadDocument, CompiledCadSource } from '@caemble/execution/cad/compiler/types'
 
 const ignoredAstFields = new Set([
   'comments',

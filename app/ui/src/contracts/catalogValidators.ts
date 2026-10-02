@@ -1,8 +1,8 @@
 import { resultVisualizationSchema } from './resultValidators'
-import { BOX_GRID_AXES, assertBoxGridProfile } from './boxGrid'
+import { BOX_GRID_AXES, assertBoxGridProfile } from '@caemble/execution/contracts/boxGrid'
 import { calculationDefinitionSchema } from './api/calculationValidators'
 import { z } from 'zod'
-import { assertMetadataSchema, type ResultMetadataSchema } from './resultMetadata'
+import { assertMetadataSchema, type ResultMetadataSchema } from '@caemble/execution/contracts/resultMetadata'
 import type {
   CatalogExperimentDetail,
   CatalogExperimentListItem,
@@ -16,7 +16,7 @@ import type {
   CatalogSearchItem,
   CatalogSolverDetail,
   CatalogSolverListItem,
-} from './catalog'
+} from '@caemble/execution/contracts/catalog'
 
 const nonnegativeIntegerSchema = z.number().int().nonnegative()
 

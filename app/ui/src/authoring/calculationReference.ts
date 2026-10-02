@@ -1,16 +1,19 @@
-import { CALCULATION_MONACO_DECLARATION, CALCULATION_SOURCE_SKELETON } from '../lib/calculation/declarations'
-import { CALCULATION_MATHJS_REFERENCE } from '../lib/calculation/mathjsManifest'
+import {
+  CALCULATION_MONACO_DECLARATION,
+  CALCULATION_SOURCE_SKELETON,
+} from '@caemble/execution/calculation/declarations'
+import { CALCULATION_MATHJS_REFERENCE } from '@caemble/execution/calculation/mathjsManifest'
 import {
   CALCULATION_INPUT_MAX_BYTES,
   CALCULATION_OUTPUT_MAX_ELEMENTS,
   CALCULATION_TIMEOUT_MS,
-} from '../lib/calculation/types'
+} from '@caemble/execution/calculation/types'
 
 import {
   CALCULATION_ALLOWED_RUNTIME_GLOBALS,
   CALCULATION_BLOCKED_MEMBER_NAMES,
   CALCULATION_BLOCKED_GLOBAL_NAMES,
-} from '../lib/calculation/policyContract'
+} from '@caemble/execution/calculation/policyContract'
 const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n')
 export const calculationAuthoringReference = {
   language: 'javascript',

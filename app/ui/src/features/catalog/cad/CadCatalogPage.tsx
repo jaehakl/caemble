@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { cadAuthoringContract, cadElementCatalog } from '@/lib/cad/catalog'
+import { cadAuthoringContract, cadElementCatalog } from '@caemble/execution/cad/catalog'
 
 type CadCatalogEntry = (typeof cadElementCatalog)[number]
 

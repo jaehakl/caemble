@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import type { CalculationDataAnalysisItem, MeasurementRecord } from '../src/api'
-import type { CatalogMaterialModel } from '../src/contracts/catalog'
+import type { CatalogMaterialModel } from '@caemble/execution/contracts/catalog'
 import {
   analyzeRelationships,
   buildAnalysisDataset,
@@ -18,7 +18,7 @@ const modelDefinitions = JSON.parse(
       'utf8',
       '-c',
       "import json,sys\nsys.path.insert(0,sys.argv[2])\nfrom caemble_catalog import open_catalog\nwith open_catalog(sys.argv[1]) as c: print(json.dumps([c.material_model('optics.frequency-sampled-complex-index@1')]))",
-      path.resolve('../catalog/caemble_catalog/catalog.sqlite3'),
+      path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'),
       path.resolve('../catalog'),
     ],
     { encoding: 'utf8' },

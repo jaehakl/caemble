@@ -1,4 +1,4 @@
-import type { CalculationInput, NormalizedCalculationOutput } from '../lib/calculation/types'
+import type { CalculationInput, NormalizedCalculationOutput } from '@caemble/execution/calculation/types'
 
 /** Synthetic data, deliberately independent of Catalog records and server measurements. */
 export const calculationExampleInput: CalculationInput = {

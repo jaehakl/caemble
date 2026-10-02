@@ -1,11 +1,11 @@
 import { useViewerSetting } from '@/features/viewer/viewer/comparisonSettings'
-import { materialVarsHash } from '@/lib/material/resolution'
+import { materialVarsHash } from '@caemble/execution/material/resolution'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { WorkbenchViewer, type WorkbenchViewerProps } from './WorkbenchViewer'
-import type { DataTensor } from '@/lib/cad/model'
+import type { DataTensor } from '@caemble/execution/cad/model'
 import { calculationExampleInput } from '@/authoring/examples'
-import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
 
 function selectResult(value: string) {
   fireEvent.keyDown(screen.getByRole('button', { name: /^Output ·/ }), { key: 'ArrowDown' })

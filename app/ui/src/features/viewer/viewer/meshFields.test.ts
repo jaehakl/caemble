@@ -1,4 +1,4 @@
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import {
@@ -6,8 +6,8 @@ import {
   createDataTensor,
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
-} from '@/lib/cad/model/dataTensor'
-import type { DataSchema, RecordedData, RecordedDataRule } from '@/lib/cad/model'
+} from '@caemble/execution/cad/model/dataTensor'
+import type { DataSchema, RecordedData, RecordedDataRule } from '@caemble/execution/cad/model'
 import {
   createMeshFieldRenderData,
   parseRecordedMeshFields,
@@ -16,8 +16,8 @@ import {
 } from './meshFields'
 import { meshHarmonicAtPhase } from './meshDeformation'
 import { resultVisualizationSchema } from '@/contracts/resultValidators'
-import { projectArtifactRecordingSchema } from '@/lib/cad/simulation/outputRecording'
-import type { KernelArtifactDataSpec } from '@/contracts/solver'
+import { projectArtifactRecordingSchema } from '@caemble/execution/cad/simulation/outputRecording'
+import type { KernelArtifactDataSpec } from '@caemble/execution/contracts/solver'
 
 const view: MeshFieldView = {
   component: 'magnitude',

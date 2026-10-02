@@ -1,0 +1,46 @@
+{
+  "name": "@caemble/execution",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./material": "./src/material/index.ts",
+    "./quantitykind": "./src/quantitykind/index.ts",
+    "./cad/model": "./src/cad/model/index.ts",
+    "./cad/simulation": "./src/cad/simulation/index.ts",
+    "./cad/source": "./src/cad/source/index.ts",
+    "./cad/simulation/kernelContract": "./src/cad/simulation/kernelContract/index.ts",
+    "./*.json": "./src/*.json",
+    "./*": "./src/*.ts",
+    "./cad/api/*.d.ts": "./src/cad/api/*.d.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@babel/generator": "^7.29.7",
+    "@babel/parser": "^7.29.7",
+    "@babel/traverse": "^7.29.7",
+    "@babel/types": "^7.29.7",
+    "@fhir-toolkit/ucum": "0.2.0",
+    "@jridgewell/trace-mapping": "0.3.31",
+    "@jscad/modeling": "^2.13.0",
+    "mathjs": "15.2.0",
+    "typescript": "5.9.3",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=24.14.0"
+  }
+}

@@ -1,25 +1,25 @@
-import { evaluateBuildInput, buildEvaluatedMeasurement } from '@/lib/cae/build'
+import { evaluateBuildInput, buildEvaluatedMeasurement } from '@caemble/execution/cae/build'
 /// <reference lib="webworker" />
 
-import { cadSnapshotTransferables } from '../execution/meshSerialization'
+import { cadSnapshotTransferables } from '@caemble/execution/cad/execution/meshSerialization'
 import { serializeEvaluatedDocumentSnapshot } from '../execution/snapshot'
-import { canonicalGeometryScene } from '../evaluation/canonical'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
 import { renderCanonicalGeometryScene } from '../execution/manifoldRender'
-import { runtimeDiagnostic } from '../execution/runtimeDiagnostics'
+import { runtimeDiagnostic } from '@caemble/execution/cad/execution/runtimeDiagnostics'
 import {
   evaluateCompiledGeometryModule,
   executeCompiledDocument,
   inspectCompiledDocument,
   prepareCompiledPrediction,
-} from '../execution/userModule'
-import { CadModelError } from '../model/core'
-import { assertExperimentAuthoringSemantics } from '../simulation/authoringSemantics'
+} from '@caemble/execution/cad/execution/userModule'
+import { CadModelError } from '@caemble/execution/cad/model/core'
+import { assertExperimentAuthoringSemantics } from '@caemble/execution/cad/simulation/authoringSemantics'
 import {
   assertRunnerOperationEnvelope,
   type RunnerOperationEnvelope,
   type RunnerOperationResultEnvelope,
 } from '@/platform/isolated-runner/protocol'
-import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
 
 function handleOperation(value: unknown) {
   assertRunnerOperationEnvelope(value)

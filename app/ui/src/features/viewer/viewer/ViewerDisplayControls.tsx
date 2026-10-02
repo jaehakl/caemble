@@ -14,7 +14,7 @@ import {
   DropdownMenuContent as PopoverContent,
   DropdownMenuTrigger as PopoverTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
 import { GeometryDisplayButton, ViewerOutputMenuHost, ViewerToolButton, ViewerToolMenu } from './ViewerTools'
 import { visualizationGroups, type GeometryMode, type VisualizationSelection } from './viewerDisplay'
 import { useViewerComparison, useViewerSetting, ViewerControls } from './comparisonSettings'

@@ -1,8 +1,8 @@
 // @vitest-environment node
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { CatalogRuntimeSlice } from '../../contracts/catalog'
-import { compileNodeCadDocument } from './cadCompiler'
+import type { CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
+import { compileNodeCadDocument } from '@caemble/execution/node/cadCompiler'
 
 const emptyCatalog: CatalogRuntimeSlice = {
   catalogRevision: 'syntax-fixture',
@@ -37,7 +37,12 @@ describe('Node CAD compiler diagnostics', () => {
 export const Part: Geometry = () => <Box size="invalid" />
 `
     try {
-      compileNodeCadDocument({ 'geometry.tsx': source }, 'typed-hash', emptyCatalog, path.resolve('src/lib/cad/api'))
+      compileNodeCadDocument(
+        { 'geometry.tsx': source },
+        'typed-hash',
+        emptyCatalog,
+        path.resolve('../../shared/execution/src/cad/api'),
+      )
       throw new Error('Expected type rejection.')
     } catch (cause) {
       expect(cause).toMatchObject({

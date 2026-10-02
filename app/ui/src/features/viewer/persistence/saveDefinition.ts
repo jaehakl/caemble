@@ -1,7 +1,7 @@
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
 import { dbTables, type CalculationDefinition, type ExperimentRecordContract, type SaveExperimentResponse } from '@/api'
 import { rawCodeHash } from '@/lib/cad/compiler/semanticHash'
-import type { CadSourceDocument, ExperimentSourceBundle } from '@/lib/cad/source'
+import type { CadSourceDocument, ExperimentSourceBundle } from '@caemble/execution/cad/source'
 import type { DefinitionFormValues, ExperimentSaveMode } from './SaveDefinitionDialog'
 
 function canonicalBundle(bundle: ExperimentSourceBundle) {

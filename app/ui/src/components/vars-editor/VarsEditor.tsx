@@ -1,8 +1,8 @@
 import { useId, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { TensorEditor, type TensorEditorHandle } from '@/components/tensor-editor'
-import { flattenVarsTensor, type Vars } from '@/lib/cad/model'
-import type { VarsSchema } from '@/lib/cad/model/vars'
+import { flattenVarsTensor, type Vars } from '@caemble/execution/cad/model'
+import type { VarsSchema } from '@caemble/execution/cad/model/vars'
 
 export type VarsEditorProps = Readonly<{
   schema: VarsSchema

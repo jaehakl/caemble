@@ -5,8 +5,8 @@ import {
   type ProjectionAxis,
   type BoxGridProjectionOptions,
   type TensorDirection,
-} from '@/lib/calculation/boxGridProject'
-import type { CalculationAxis, CalculationInputLeaf } from '@/lib/calculation/types'
+} from '@caemble/execution/calculation/boxGridProject'
+import type { CalculationAxis, CalculationInputLeaf } from '@caemble/execution/calculation/types'
 
 export type PlotKind = 'histogram' | 'line' | 'heatmap' | 'cloud'
 export type BoxGridAnimation = 'off' | 'oscillation' | ProjectionAxis | 'component'

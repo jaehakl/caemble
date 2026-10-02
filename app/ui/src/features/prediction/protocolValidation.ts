@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { predictionNumericDtypes } from './types'
 import { predictionTensorValueCount } from './tensor'
-import { assertBoxGridData, type BoxGridData } from '@/contracts/boxGrid'
+import { assertBoxGridData, type BoxGridData } from '@caemble/execution/contracts/boxGrid'
 
 const nonnegativeIntegerSchema = z.number().int().nonnegative()
 const positiveIntegerSchema = z.number().int().positive()

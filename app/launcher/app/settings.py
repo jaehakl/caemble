@@ -4,7 +4,7 @@ from pathlib import Path
 from socket import gethostname
 from urllib.parse import urlparse, urlunparse
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -79,6 +79,13 @@ class LauncherSettings(BaseSettings):
             "GPSTATION_V1_RTC_MEMORY_CACHE_ENABLED",
         ),
     )
+
+    @field_validator("state_dir")
+    @classmethod
+    def resolve_state_directory(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            value = APP_ROOT / value
+        return value.resolve()
 
     @property
     def control_websocket_url(self) -> str:

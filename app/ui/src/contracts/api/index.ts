@@ -1,7 +1,7 @@
-export type * from './calculation'
+export type * from '@caemble/execution/contracts/api/calculation'
 export type * from './common'
-export type * from './experiment'
-export type * from './measurement'
+export type * from '@caemble/execution/contracts/api/experiment'
+export type * from '@caemble/execution/contracts/api/measurement'
 export type * from './runtime'
 export type * from './tables'
 

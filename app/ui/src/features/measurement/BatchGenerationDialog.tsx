@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { Vars } from '@/lib/cad/model'
+import type { Vars } from '@caemble/execution/cad/model'
 import { sampleMeasurementVars } from './measurementSpace'
 
 export function BatchGenerationDialog({

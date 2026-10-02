@@ -1,0 +1,40 @@
+import type { CadScene } from '../evaluation/types'
+import type { CanonicalGeometrySceneV2 } from '../evaluation/canonicalTypes'
+import type { Vars } from '../model/types'
+import type { VarsSchemaEntry } from '../model/vars'
+import type { SimulationProgramManifest } from '../simulation/types'
+import type { SerializableCadScene } from './meshSerialization'
+
+export type EvaluatedExperimentSnapshot = Readonly<{
+  interactions?: import('../../contracts/material').InteractionSnapshot
+  kind: 'experiment'
+  sourceHash: string
+  variables: Readonly<Vars>
+  varsSchema: Readonly<Record<string, VarsSchemaEntry>>
+  scene: CanonicalGeometrySceneV2
+  taskScenes: Readonly<Record<string, CanonicalGeometrySceneV2>>
+  renderScene: SerializableCadScene
+  taskRenderScenes: Readonly<Record<string, SerializableCadScene>>
+  simulationProgram: SimulationProgramManifest
+}>
+
+export type EvaluatedDocumentSnapshot = EvaluatedExperimentSnapshot
+/** Prediction inputs are not a validated, executable or renderable CAD snapshot. */
+export type PredictionCandidateSnapshot = Readonly<{
+  geometrySources: readonly ('experiment' | 'task')[]
+  sourceHash: string
+  variables: Readonly<Vars>
+  varsSchema: Readonly<Record<string, VarsSchemaEntry>>
+  records: readonly string[]
+  simulationProgram: SimulationProgramManifest
+}>
+export type MeasurementExperimentSnapshot = Readonly<
+  Omit<EvaluatedExperimentSnapshot, 'renderScene' | 'taskRenderScenes'>
+>
+
+export type EvaluatedRuntimeDocumentSnapshot = Readonly<
+  Omit<EvaluatedExperimentSnapshot, 'scene' | 'taskScenes' | 'renderScene' | 'taskRenderScenes'> & {
+    scene: CadScene
+    taskScenes: Readonly<Record<string, CadScene>>
+  }
+>

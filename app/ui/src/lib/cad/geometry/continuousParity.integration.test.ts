@@ -8,20 +8,23 @@ import {
   tessellateContinuousPrimitive,
   type ContinuousPrimitive,
   type IndexedSurface,
-} from './continuous'
-import { evaluateFiber, normalizeFiber, tessellateFiber } from './fiber'
-import { cadElementCatalog } from '../elements/generated'
+} from '@caemble/execution/cad/geometry/continuous'
+import { evaluateFiber, normalizeFiber, tessellateFiber } from '@caemble/execution/cad/geometry/fiber'
+import { cadElementCatalog } from '@caemble/execution/cad/elements/generated'
 import { readCatalogExamples } from '../../../../scripts/catalog-example-support'
-import { compileNodeCadDocument } from '../../../platform/node/cadCompiler'
-import { executeCompiledDocument } from '../execution/userModule'
-import { canonicalGeometryScene } from '../evaluation/canonical'
-import { installCatalogRuntimeSlice } from '../../catalog/runtime'
+import { compileNodeCadDocument } from '@caemble/execution/node/cadCompiler'
+import { executeCompiledDocument } from '@caemble/execution/cad/execution/userModule'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
 
 it('UI and worker evaluate the shared definitions, normals and tessellation identically', () => {
-  const directory = fileURLToPath(new URL('../../../../../slaves/cae/', import.meta.url))
+  const directory = fileURLToPath(new URL('../../../../../slaves/cae_simulation/', import.meta.url))
   const python = directory + (process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python')
   const fixtures = JSON.parse(
-    readFileSync(new URL('../../../../../slaves/cae/tests/fixtures/continuous-geometry.json', import.meta.url), 'utf8'),
+    readFileSync(
+      new URL('../../../../../slaves/cae_simulation/tests/fixtures/continuous-geometry.json', import.meta.url),
+      'utf8',
+    ),
   ) as { kind: ContinuousPrimitive; parameters: Record<string, unknown>; surfaces: number[] }[]
   const fiber = normalizeFiber({
     path: {
@@ -86,7 +89,9 @@ print(json.dumps(result,default=lambda value:value.tolist() if isinstance(value,
 })
 
 it('compiles and evaluates the public Geometry reference examples through generated JSX declarations', async () => {
-  const database = fileURLToPath(new URL('../../../../../catalog/caemble_catalog/catalog.sqlite3', import.meta.url))
+  const database = fileURLToPath(
+    new URL('../../../../../../shared/catalog/caemble_catalog/catalog.sqlite3', import.meta.url),
+  )
   const { catalog } = readCatalogExamples(database)
   installCatalogRuntimeSlice(catalog)
   const declarations = fileURLToPath(new URL('../api/', import.meta.url))

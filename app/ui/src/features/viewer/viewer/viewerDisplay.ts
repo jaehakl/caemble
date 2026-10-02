@@ -1,5 +1,5 @@
-import type { RecordedResultContracts } from '@/contracts/results'
-import type { ViewerDefaults } from '@/contracts/viewerDefaults'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import type { ViewerDefaults } from '@caemble/execution/contracts/viewerDefaults'
 
 export type GeometryMode = 0.5 | 0.9
 export type VisualizationSelection = Record<string, string>

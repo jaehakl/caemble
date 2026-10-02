@@ -18,7 +18,15 @@ export type {
   EvaluatedRuntimeDocumentSnapshot,
   MeasurementExperimentSnapshot,
 } from './snapshot'
-export { applyMaterialSnapshot, buildMeasurement } from './measurement'
-export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './measurement'
-export { deserializeCadScene, serializeCadScene } from './mesh'
-export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './mesh'
+export { applyMaterialSnapshot, buildMeasurement } from '@caemble/execution/cad/execution/measurement'
+export type {
+  BuiltMeasurement,
+  MeasurementMaterialResolution,
+  TaskMaterialResolution,
+} from '@caemble/execution/cad/execution/measurement'
+export { deserializeCadScene, serializeCadScene } from '@caemble/execution/cad/execution/mesh'
+export type {
+  SerializableCadMesh,
+  SerializableCadScene,
+  SerializableCadScenePart,
+} from '@caemble/execution/cad/execution/mesh'

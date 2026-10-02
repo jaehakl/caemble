@@ -1,5 +1,5 @@
 import { transforms } from '@jscad/modeling'
-import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
+import { convertUcumValue, type UcumUnit } from '@caemble/execution/cad/model'
 import type { CadViewerSelectionMatch, JscadViewerLayer } from './model'
 import { createRenderParts, type RenderPartSelection } from './renderParts'
 

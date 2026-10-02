@@ -13,9 +13,10 @@ export default defineConfig(({ mode }) => ({
     fs: {
       allow: [
         fileURLToPath(new URL('.', import.meta.url)),
+        fileURLToPath(new URL('../../shared/execution', import.meta.url)),
         fileURLToPath(new URL('../../docs/authoring', import.meta.url)),
         fileURLToPath(new URL('../../docs/manual', import.meta.url)),
-        fileURLToPath(new URL('../sdk/master/js', import.meta.url)),
+        fileURLToPath(new URL('../../shared/sdk/master/js', import.meta.url)),
       ],
     },
   },
@@ -27,7 +28,10 @@ export default defineConfig(({ mode }) => ({
         url: 'http://localhost/',
       },
     },
-    include: mode === 'integration' ? ['src/**/*.integration.test.{ts,tsx}'] : ['src/**/*.{test,spec}.{ts,tsx}'],
+    include:
+      mode === 'integration'
+        ? ['src/**/*.integration.test.{ts,tsx}']
+        : ['src/**/*.{test,spec}.{ts,tsx}', '../../shared/execution/src/**/*.{test,spec}.{ts,tsx}'],
     exclude: [...configDefaults.exclude, ...(mode === 'integration' ? [] : ['src/**/*.integration.test.{ts,tsx}'])],
     restoreMocks: true,
     setupFiles: ['./src/test/setup.ts'],

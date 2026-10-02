@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { MaterialCatalog } from '@/features/catalog/materials/MaterialCatalogPage'
 
 vi.mock('@/documentation/knowledge', () => ({ catalogDocsKnowledge: [], manualDocsKnowledge: [] }))
-vi.mock('@/lib/cad/catalog', () => ({ cadElementCatalog: [] }))
+vi.mock('@caemble/execution/cad/catalog', () => ({ cadElementCatalog: [] }))
 
 const materialModel = vi.hoisted(() => ({
   key: 'em.drude-isotropic@1',

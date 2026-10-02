@@ -1,0 +1,308 @@
+import { convertUcumValue } from '../cad/model/units'
+import { assertBoxGridData, BOX_GRID_AXES } from '../contracts/boxGrid'
+import { assertResultMetadata, type ResultMetadataSchema } from '../contracts/resultMetadata'
+import {
+  CALCULATION_INPUT_MAX_BYTES,
+  CALCULATION_OUTPUT_MAX_ELEMENTS,
+  CalculationExecutionError,
+  calculationDtypes,
+  calculationInputDtypes,
+  type CalculationInput,
+  type NormalizedCalculationOutput,
+} from './types'
+
+const pathPattern = /^[A-Za-z_][A-Za-z0-9_]{0,62}(?:\.[A-Za-z_][A-Za-z0-9_]{0,62})*$/u
+const integerRanges = Object.freeze({
+  int8: [-128, 127],
+  int16: [-32_768, 32_767],
+  int32: [-2_147_483_648, 2_147_483_647],
+  uint8: [0, 255],
+  uint16: [0, 65_535],
+  uint32: [0, 4_294_967_295],
+} as const)
+const inputDtypes = new Set<string>(calculationInputDtypes)
+
+function secureRecord(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${path} must be an object.`)
+  return value as Record<string, unknown>
+}
+
+function secureShape(value: unknown, path: string): readonly number[] {
+  if (!Array.isArray(value) || value.some((length) => !Number.isSafeInteger(length) || length < 0)) {
+    throw new Error(`${path} must contain non-negative safe integers.`)
+  }
+  return value as readonly number[]
+}
+
+function validateAxes(value: unknown, shape: readonly number[], path: string) {
+  if (!Array.isArray(value) || value.length !== shape.length) {
+    throw new Error(`${path} must contain exactly ${shape.length} axes.`)
+  }
+  return Object.freeze(
+    value.map((rawAxis, index) => {
+      const axis = secureRecord(rawAxis, `${path}[${index}]`)
+      const unexpected = Object.keys(axis).filter((key) => !['name', 'ticks', 'unit'].includes(key))
+      if (unexpected.length > 0)
+        throw new Error(`${path}[${index}] contains unsupported fields: ${unexpected.join(', ')}.`)
+      if (typeof axis.name !== 'string' || axis.name.trim() === '')
+        throw new Error(`${path}[${index}].name is invalid.`)
+      if (
+        !Array.isArray(axis.ticks) ||
+        axis.ticks.length !== shape[index] ||
+        axis.ticks.some((tick) => typeof tick !== 'number' || !Number.isFinite(tick))
+      ) {
+        throw new Error(`${path}[${index}].ticks must contain ${shape[index]} finite numbers.`)
+      }
+      if (axis.unit !== undefined) {
+        if (typeof axis.unit !== 'string' || axis.unit.trim() === '')
+          throw new Error(`${path}[${index}].unit is invalid.`)
+        convertUcumValue(1, axis.unit, axis.unit, `${path}[${index}].unit`)
+      }
+      return Object.freeze({
+        name: axis.name,
+        ticks: Object.freeze([...(axis.ticks as number[])]),
+        ...(axis.unit === undefined ? {} : { unit: axis.unit }),
+      })
+    }),
+  )
+}
+
+function validateInputAxes(value: unknown, shape: readonly number[], path: string) {
+  if (!Array.isArray(value) || value.length !== shape.length) {
+    throw new Error(`${path} must contain exactly ${shape.length} axes.`)
+  }
+  value.forEach((rawAxis, index) => {
+    const axis = secureRecord(rawAxis, `${path}[${index}]`)
+    const unexpected = Object.keys(axis).filter((key) => !['name', 'ticks', 'unit'].includes(key))
+    if (unexpected.length > 0)
+      throw new Error(`${path}[${index}] contains unsupported fields: ${unexpected.join(', ')}.`)
+    if (typeof axis.name !== 'string' || axis.name.trim() === '') throw new Error(`${path}[${index}].name is invalid.`)
+    if (
+      !Array.isArray(axis.ticks) ||
+      axis.ticks.length !== shape[index] ||
+      axis.ticks.some((tick) => typeof tick !== 'string' && (typeof tick !== 'number' || !Number.isFinite(tick)))
+    ) {
+      throw new Error(`${path}[${index}].ticks must contain ${shape[index]} finite numbers or strings.`)
+    }
+    if (axis.unit !== undefined) {
+      if (typeof axis.unit !== 'string' || axis.unit.trim() === '')
+        throw new Error(`${path}[${index}].unit is invalid.`)
+      convertUcumValue(1, axis.unit, axis.unit, `${path}[${index}].unit`)
+    }
+  })
+}
+
+export function assertCalculationInput(value: unknown): asserts value is CalculationInput {
+  const input = secureRecord(value, 'Calculation input')
+  Object.entries(input).forEach(([path, rawLeaf]) => {
+    if (!pathPattern.test(path)) throw new Error(`Calculation input path is invalid: ${path}`)
+    const leaf = secureRecord(rawLeaf, `Calculation input ${path}`)
+    const unexpected = Object.keys(leaf).filter(
+      (key) =>
+        ![
+          'dtype',
+          'shape',
+          'data',
+          'axes',
+          'quantityKind',
+          'tensorOrder',
+          'unit',
+          'boxGrid',
+          'metadata',
+          'metadataSchema',
+        ].includes(key),
+    )
+    if (unexpected.length > 0)
+      throw new Error(`Calculation input ${path} contains unsupported fields: ${unexpected.join(', ')}.`)
+    if (typeof leaf.dtype !== 'string' || !inputDtypes.has(leaf.dtype)) {
+      throw new Error(`Calculation input ${path}.dtype is invalid.`)
+    }
+    const shape = secureShape(leaf.shape, `Calculation input ${path}.shape`)
+    if (shape.length !== 7 || shape.some((length) => length < 1) || !leaf.boxGrid) {
+      throw new Error(`Calculation input ${path} must be a nonempty seven-axis Box Grid Output.`)
+    }
+    assertBoxGridData(leaf.boxGrid, shape)
+    assertResultMetadata(leaf.metadataSchema as ResultMetadataSchema | undefined, leaf.metadata, `${path}.metadata`)
+    if (
+      !Number.isInteger(leaf.tensorOrder) ||
+      (leaf.tensorOrder as number) < 0 ||
+      (leaf.tensorOrder as number) > shape.length
+    ) {
+      throw new Error(`Calculation input ${path}.tensorOrder is invalid.`)
+    }
+    validateInputAxes(leaf.axes, shape, `Calculation input ${path}.axes`)
+    if ((leaf.axes as { name: string }[]).some((axis, index) => axis.name !== BOX_GRID_AXES[index])) {
+      throw new Error(`Calculation input ${path} must use the canonical Box Grid axis order.`)
+    }
+    const size = shape.reduce((product, length) => product * length, 1)
+    const validScalar = (item: unknown) =>
+      typeof item === 'number' &&
+      Number.isFinite(item) &&
+      (leaf.dtype !== 'float32' || Number.isFinite(Math.fround(item)))
+    if (!Array.isArray(leaf.data) || leaf.data.length !== size || leaf.data.some((item) => !validScalar(item))) {
+      throw new Error(`Calculation input ${path}.data must contain ${size} row-major scalar values.`)
+    }
+    if (leaf.boxGrid.channels.length === 2) {
+      const components = leaf.boxGrid.components.length
+      for (let offset = 0; offset < leaf.data.length; offset += components * 2) {
+        for (let component = 0; component < components; component++) {
+          const amplitude =
+            leaf.dtype === 'float32' ? Math.fround(leaf.data[offset + component]) : leaf.data[offset + component]
+          const phase =
+            leaf.dtype === 'float32'
+              ? Math.fround(leaf.data[offset + components + component])
+              : leaf.data[offset + components + component]
+          if (amplitude < 0 || phase < -Math.PI || phase >= Math.PI || (amplitude === 0 && phase !== 0)) {
+            throw new Error(
+              `Calculation input ${path} polar channels require non-negative amplitude, phase in [-pi, pi), and zero phase at zero amplitude.`,
+            )
+          }
+        }
+      }
+    }
+    if (leaf.quantityKind !== undefined && typeof leaf.quantityKind !== 'string') {
+      throw new Error(`Calculation input ${path}.quantityKind is invalid.`)
+    }
+    if (leaf.unit !== undefined) {
+      if (typeof leaf.unit !== 'string' || leaf.unit.trim() === '')
+        throw new Error(`Calculation input ${path}.unit is invalid.`)
+      convertUcumValue(1, leaf.unit, leaf.unit, `Calculation input ${path}.unit`)
+    }
+  })
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(value)).byteLength
+  if (payloadBytes > CALCULATION_INPUT_MAX_BYTES) {
+    throw new CalculationExecutionError(
+      'input-too-large',
+      `Calculation input payload is ${payloadBytes.toLocaleString()} bytes; the limit is ${CALCULATION_INPUT_MAX_BYTES.toLocaleString()} bytes.`,
+    )
+  }
+}
+
+function isMathJsMatrix(value: unknown): value is {
+  isMatrix: true
+  size: () => unknown
+  toArray: () => unknown
+} {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'isMatrix' in value &&
+    value.isMatrix === true &&
+    'size' in value &&
+    typeof value.size === 'function' &&
+    'toArray' in value &&
+    typeof value.toArray === 'function'
+  )
+}
+
+function inferOutputShape(value: unknown): readonly number[] {
+  if (isMathJsMatrix(value)) return secureShape(value.size(), 'Calculation output Math.js Matrix size')
+  if (typeof value === 'number') return Object.freeze([])
+  if (!Array.isArray(value)) throw new Error('Calculation output data must be a real scalar, array, or Math.js Matrix.')
+  if (value.length === 0) return Object.freeze([0])
+  const childShape = inferOutputShape(value[0])
+  if (childShape.length >= 3) throw new Error('Calculation output rank must be 0, 1, 2, or 3.')
+  if (value.some((item) => JSON.stringify(inferOutputShape(item)) !== JSON.stringify(childShape)))
+    throw new Error('Calculation output data is ragged.')
+  return Object.freeze([value.length, ...childShape])
+}
+
+function flattenOutputData(value: unknown, shape: readonly number[], path: string): number | readonly number[] {
+  const matrix = isMathJsMatrix(value) ? value.toArray() : value
+  if (!shape.length) {
+    if (typeof matrix !== 'number') throw new Error(`${path} must be a real scalar.`)
+    return matrix
+  }
+  if (!Array.isArray(matrix)) throw new Error(`${path} must be an array or Math.js Matrix.`)
+  const size = shape.reduce((a, b) => a * b, 1)
+  if (matrix.every((item) => !Array.isArray(item))) {
+    if (matrix.length !== size) throw new Error(`${path} does not match shape.`)
+    return Object.freeze([...matrix]) as readonly number[]
+  }
+  const flat: number[] = []
+  const visit = (item: unknown, depth: number) => {
+    if (depth === shape.length) {
+      if (typeof item !== 'number') throw new Error(`${path} must contain real numbers.`)
+      flat.push(item)
+      return
+    }
+    if (!Array.isArray(item) || item.length !== shape[depth])
+      throw new Error(`${path} is ragged or does not match shape.`)
+    item.forEach((child) => visit(child, depth + 1))
+  }
+  visit(matrix, 0)
+  return Object.freeze(flat)
+}
+
+function defaultAxes(shape: readonly number[]) {
+  const names = shape.length === 1 ? ['index'] : ['row', 'column', 'depth']
+  return Object.freeze(
+    shape.map((length, index) =>
+      Object.freeze({
+        name: names[index],
+        ticks: Object.freeze(Array.from({ length }, (_, tick) => tick)),
+      }),
+    ),
+  )
+}
+
+export function normalizeCalculationOutput(value: unknown): NormalizedCalculationOutput {
+  const output = secureRecord(value, 'Calculation output')
+  const unexpected = Object.keys(output).filter((key) => !['dtype', 'data', 'axes'].includes(key))
+  if (unexpected.length > 0)
+    throw new Error(`Calculation output contains unsupported fields: ${unexpected.join(', ')}.`)
+  return normalizeOutputParts(output, inferOutputShape(output.data), true)
+}
+
+function normalizeOutputParts(
+  output: Record<string, unknown>,
+  shape: readonly number[],
+  allowMissingAxes: boolean,
+): NormalizedCalculationOutput {
+  if (!calculationDtypes.includes(output.dtype as (typeof calculationDtypes)[number])) {
+    throw new Error('Calculation output dtype is invalid.')
+  }
+  if (shape.length > 3) throw new Error('Calculation output rank must be 0, 1, 2, or 3.')
+  const size = shape.reduce((product, length) => product * length, 1)
+  if (size > CALCULATION_OUTPUT_MAX_ELEMENTS) {
+    throw new CalculationExecutionError(
+      'output-too-large',
+      `Calculation output contains ${size.toLocaleString()} elements; the limit is ${CALCULATION_OUTPUT_MAX_ELEMENTS.toLocaleString()}.`,
+    )
+  }
+  const data = flattenOutputData(output.data, shape, 'Calculation output data')
+  const values = typeof data === 'number' ? [data] : data
+  values.forEach((item) => {
+    if (typeof item !== 'number' || !Number.isFinite(item)) {
+      throw new Error(
+        'Calculation output data must contain only finite real numbers; Complex, NaN, and Infinity are invalid.',
+      )
+    }
+  })
+  const dtype = output.dtype as (typeof calculationDtypes)[number]
+  const range = dtype in integerRanges ? integerRanges[dtype as keyof typeof integerRanges] : undefined
+  if (range && values.some((item) => !Number.isInteger(item) || item < range[0] || item > range[1])) {
+    throw new Error(`Calculation output data contains a value outside the ${dtype} range.`)
+  }
+  if (dtype === 'float32' && values.some((item) => !Number.isFinite(Math.fround(item)))) {
+    throw new Error('Calculation output data contains a value outside the float32 finite range.')
+  }
+  if (!allowMissingAxes && output.axes === undefined) throw new Error('Normalized Calculation output axes are missing.')
+  const axes =
+    output.axes === undefined ? defaultAxes(shape) : validateAxes(output.axes, shape, 'Calculation output axes')
+  return Object.freeze({
+    dtype,
+    shape: Object.freeze([...shape]) as NormalizedCalculationOutput['shape'],
+    data,
+    axes,
+  })
+}
+
+export function normalizeCalculationRunnerOutput(value: unknown): NormalizedCalculationOutput {
+  const output = secureRecord(value, 'Normalized Calculation output')
+  const unexpected = Object.keys(output).filter((key) => !['dtype', 'shape', 'data', 'axes'].includes(key))
+  if (unexpected.length > 0) {
+    throw new Error(`Normalized Calculation output contains unsupported fields: ${unexpected.join(', ')}.`)
+  }
+  return normalizeOutputParts(output, secureShape(output.shape, 'Normalized Calculation output shape'), false)
+}

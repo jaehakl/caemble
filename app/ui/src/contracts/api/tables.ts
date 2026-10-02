@@ -1,6 +1,6 @@
-import type { CalculationDataRecord, CalculationRecord } from './calculation'
-import type { ExperimentRecordedDataRecord, SavedExperimentRecord } from './experiment'
-import type { MeasurementRecord, RecordedDataRecord } from './measurement'
+import type { CalculationDataRecord, CalculationRecord } from '@caemble/execution/contracts/api/calculation'
+import type { ExperimentRecordedDataRecord, SavedExperimentRecord } from '@caemble/execution/contracts/api/experiment'
+import type { MeasurementRecord, RecordedDataRecord } from '@caemble/execution/contracts/api/measurement'
 import type { UserRecord } from './runtime'
 
 export type DbTableRecordMap = Readonly<{

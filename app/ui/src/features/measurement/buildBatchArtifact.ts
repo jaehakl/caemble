@@ -1,12 +1,12 @@
 import { dbTables, getListRequest } from '@/api'
 import { sha256Bytes } from '@/api/submitArtifact'
-import { BUILD_VERSION, type BuildArtifact } from '@/contracts/build'
-import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
+import { BUILD_VERSION, type BuildArtifact } from '@caemble/execution/contracts/build'
+import type { MeasurementMaterialSnapshot } from '@caemble/execution/contracts/api/measurement'
 import { fetchCatalogRuntimeSlice } from '@/features/viewer/workspace/catalogRuntime'
 import { prepareBrowserMeasurement } from '@/platform/browser/build'
 import { BrowserArtifactStore } from '@/platform/browser/artifactStore'
-import { parseArtifactInput } from '@/lib/cae/artifact'
-import type { Vars } from '@/lib/cad/model/types'
+import { parseArtifactInput } from '@caemble/execution/cae/artifact'
+import type { Vars } from '@caemble/execution/cad/model/types'
 
 export type BrowserBatchIntent = Readonly<{
   request_id: string

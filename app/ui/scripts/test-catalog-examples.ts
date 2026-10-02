@@ -3,16 +3,16 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { compileCatalogExample, readCatalogExamples } from './catalog-example-support'
-import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
-import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
-import { assertExperimentAuthoringSemantics } from '../src/lib/cad/simulation/authoringSemantics'
-import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
-import { extractCatalogSourceReferences } from '../src/lib/catalog/references'
-import { resolveSceneMaterials } from '../src/lib/material/document'
-import { buildMeasurement } from '../src/lib/cad/execution/measurement'
-import type { Tensor } from '../src/lib/cad/model/types'
+import { executeCompiledDocument, inspectCompiledDocument } from '@caemble/execution/cad/execution/userModule'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
+import { assertExperimentAuthoringSemantics } from '@caemble/execution/cad/simulation/authoringSemantics'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { extractCatalogSourceReferences } from '@caemble/execution/catalog/references'
+import { resolveSceneMaterials } from '@caemble/execution/material/document'
+import { buildMeasurement } from '@caemble/execution/cad/execution/measurement'
+import type { Tensor } from '@caemble/execution/cad/model/types'
 import { parseCatalogRuntimeSlice } from '../src/contracts/catalogValidators'
-import { commandJson, resolveEnvironment } from '../src/platform/node/environment'
+import { commandJson, resolveEnvironment } from '@caemble/execution/node/environment'
 
 const { values: options, positionals } = parseArgs({
   args: process.argv.slice(2),
@@ -20,7 +20,7 @@ const { values: options, positionals } = parseArgs({
   options: { key: { type: 'string', multiple: true }, report: { type: 'string' } },
 })
 assert.ok(positionals.length <= 2, 'Expected optional database and output directory, followed by --key <key>.')
-const database = path.resolve(positionals[0] ?? '../catalog/caemble_catalog/catalog.sqlite3')
+const database = path.resolve(positionals[0] ?? '../../shared/catalog/caemble_catalog/catalog.sqlite3')
 const outputDirectory = path.resolve(positionals[1] ?? 'node_modules/.tmp/catalog-examples')
 const { examples, catalog, meta } = readCatalogExamples(database)
 assert.ok(meta.experimentCount > 0, 'The Catalog must contain executable Examples.')

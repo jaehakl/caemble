@@ -1,9 +1,9 @@
-import { createExperimentSourceBundle } from './cad/source/document'
-import { DRAFT_TASK_KERNEL } from './catalog/draftTask'
+import { createExperimentSourceBundle } from '@caemble/execution/cad/source/document'
+import { DRAFT_TASK_KERNEL } from '@caemble/execution/catalog/draftTask'
 
 const starterExperimentCode = `import { experiment } from '@caemble/core'
 import { StarterStructure } from './geometry'
-import { StarterMaterial } from './material'
+import { StarterMaterial } from '@caemble/execution/material'
 
 export default experiment({
   lengthUnit: 'mm',

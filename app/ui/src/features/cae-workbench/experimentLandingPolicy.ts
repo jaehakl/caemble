@@ -1,5 +1,5 @@
 import type { WorkbenchDraft } from '@/features/cae-workbench/types'
-import type { ExperimentSourceBundle } from '@/lib/cad/source'
+import type { ExperimentSourceBundle } from '@caemble/execution/cad/source'
 
 export function draftNeedsLandingPreservation(draft: WorkbenchDraft | null, starterBundle: ExperimentSourceBundle) {
   if (!draft) return false

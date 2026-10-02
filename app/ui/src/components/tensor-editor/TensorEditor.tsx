@@ -14,7 +14,7 @@ import {
 import { Brush, ChevronLeft, ChevronRight, Eraser, Redo2, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { flattenVarsTensor, varsTensorFromFlat, type Tensor } from '@/lib/cad/model'
+import { flattenVarsTensor, varsTensorFromFlat, type Tensor } from '@caemble/execution/cad/model'
 import { fitTensorDisplayDomain } from './displayDomain'
 import {
   clampVarsValue,

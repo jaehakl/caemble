@@ -14,15 +14,16 @@ and provider-backed features.
 
 ## Local development
 
-Build the repository-local browser SDK once, then install and run the UI:
+The UI, shared execution package and browser SDK use root npm workspaces and one
+root `package-lock.json`. Install once at the repository root, then build the SDK
+and run the UI:
 
 ```powershell
-Push-Location ../sdk/master/js
+Push-Location ../..
 npm ci
-npm run build
 Pop-Location
 
-npm ci
+npm run build:sdk
 npm run dev
 ```
 
@@ -41,7 +42,7 @@ npm run build
 `dist-cli`. Use `npm run build-ui` or `npm run build:node` for either target. The Node output includes the common CLI/evaluator worker; full `npm run build` packages both targets in `deployment/caemble.tar.gz`. Run development CLI output directly with `node dist-cli/caemble.cjs`.
 The CLI requires Node 24.14 or later and uses this checkout's CAE Poetry
 environment for Python checks and local simulations. Install its test tools
-with `poetry install --with dev` in `../slaves/cae`.
+with `poetry install --with dev` in `../slaves/cae_simulation`.
 
 From the repository root, `caemble.cmd doctor` (Windows) or `sh ./caemble doctor`
 reports the resolved checkout, interpreter, modules and Catalog revision.
@@ -68,21 +69,25 @@ implementation-derived language references remain in `src/authoring`.
   remains a compatibility re-export, not the source of new contracts.
 - `src/api`: HTTP transport and the existing `dbTables` endpoint facade.
 - `src/cli`: command composition; local execution and remote submission remain separate.
-- `src/platform/node`: compiler, process/file adapters and local result readers.
+- `shared/execution/src/node` (repository root): Node compiler, process/file
+  adapters and local result readers, exposed through `@caemble/execution/node/*`.
 - `src/platform/browser`: isolated client build and durable IndexedDB artifacts.
-- `src/lib/cae`: shared build semantics and artifact interpretation without I/O.
+- `shared/execution/src` (repository root): platform-neutral CAD and Measurement
+  build semantics, Calculation execution, artifact interpretation and contracts.
 - `src/platform/isolated-runner`: the generic cross-origin iframe runner client,
   frame, and protocol.
-- `src/lib/cad`, `src/lib/material`, and `src/lib/quantitykind`: framework-free
-  domain models, compilation, evaluation, and serialization.
+- `src/lib/cad`: browser compilation, Workers, iframe adapters and render products.
 - `src/shared`: application-independent UI and layout primitives.
 
 Dependencies flow from app/routes into workbench/features, then into
 domain/platform and contracts/shared. `npm run check:dependencies` rejects
-cycles and reverse imports.
+cycles and reverse imports. `shared/execution` cannot import UI modules; browser
+entrypoints cannot import its Node adapters. Monaco and browser Worker wiring stay
+in the UI.
 
 Keep `dbTables` keys, method names, endpoints, and `recordType` compatibility
-stable. New serialized types belong to their owning `src/contracts` module;
+stable. New serialized types belong to their owning contracts module in the UI
+or shared execution package, according to their consumers;
 validate unknown HTTP, storage, WebSocket, and Worker payloads at the boundary.
 
 ## Validation

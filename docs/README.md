@@ -30,7 +30,7 @@ other manual pages by title, keywords, or body. `docs show experiment`,
 - [Multi-material electrothermal FEM and quasi-static thermal deformation](development/electrothermal.md)
 - [CAD elements](development/cad-elements.md)
 - [Documentation maintenance](development/documentation.md)
-- [SDKs](../app/sdk/README.md): independently distributed SDK documentation stays with the packages.
+- [SDKs](../shared/sdk/README.md): independently distributed SDK documentation stays with the packages.
 
 ## Operations
 
@@ -48,7 +48,7 @@ higher-priority instructions still govern the task. See the
 [official instructions guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 
 The [root AGENTS.md](../AGENTS.md) names the required scenario documents and
-[CAE instructions](../app/slaves/cae/AGENTS.md). Start a new session after changing
+[CAE instructions](../app/slaves/cae_simulation/AGENTS.md). Start a new session after changing
 startup instructions. Tell the agent the outcome and scope, for example:
 
 > Develop an Experiment in this checkout. Read the Experiment guide and relevant

@@ -9,7 +9,7 @@ import type {
   CalculationDataScalar,
   CalculationUpsertResponse,
   PersistedCalculationRecord,
-} from './calculation'
+} from '@caemble/execution/contracts/api/calculation'
 import { databaseIdSchema, parseGetListResponse } from './validators'
 
 export const calculationDefinitionSchema = z

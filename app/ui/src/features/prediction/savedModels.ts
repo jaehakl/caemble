@@ -1,5 +1,5 @@
 import type { PredictionContext } from './predictionContextData'
-import type { VarsSchemaEntry } from '@/lib/cad/model'
+import type { VarsSchemaEntry } from '@caemble/execution/cad/model'
 import type { PredictionSavedContract, SavedPredictionModel } from './execution'
 import { predictionFingerprint } from './data'
 import { z } from 'zod'

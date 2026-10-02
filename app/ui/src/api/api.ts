@@ -1,6 +1,9 @@
 import { readMeasurementResults } from './measurementResults'
-import { experimentPresentationSchema, type ExperimentPresentationUpdate } from '@/contracts/viewerDefaults'
-import type { CalculationUpsertResponse } from '@/contracts/api/calculation'
+import {
+  experimentPresentationSchema,
+  type ExperimentPresentationUpdate,
+} from '@caemble/execution/contracts/viewerDefaults'
+import type { CalculationUpsertResponse } from '@caemble/execution/contracts/api/calculation'
 import { externalizeObjects } from './objectStorage'
 import { calculationDataOutputSchema } from '@/contracts/api/calculationValidators'
 import { parseCalculationUpsertResponse } from '@/contracts/api/calculationValidators'

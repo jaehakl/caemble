@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
 const uiRoot = fileURLToPath(new URL('.', import.meta.url))
-const sdkRoot = fileURLToPath(new URL('../sdk/master/js', import.meta.url))
+const sdkRoot = fileURLToPath(new URL('../../shared/sdk/master/js', import.meta.url))
 const slavesRoot = fileURLToPath(new URL('../slaves', import.meta.url))
 
 // https://vite.dev/config/
@@ -21,6 +21,8 @@ export default defineConfig(({ mode }) => ({
       allow: [
         uiRoot,
         sdkRoot,
+        fileURLToPath(new URL('../../shared/execution', import.meta.url)),
+        fileURLToPath(new URL('../../node_modules', import.meta.url)),
         slavesRoot,
         fileURLToPath(new URL('../../docs/authoring', import.meta.url)),
         fileURLToPath(new URL('../../docs/manual', import.meta.url)),
@@ -73,7 +75,7 @@ export default defineConfig(({ mode }) => ({
       name: 'caemble-browser-boundary',
       generateBundle() {
         const forbidden = [...this.getModuleIds()].filter((id) =>
-          /\/src\/(cli|platform\/node)\//.test(id.replace(/\\/g, '/')),
+          /(\/src\/(cli|platform\/node)\/|\/shared\/execution\/src\/node\/)/.test(id.replace(/\\/g, '/')),
         )
         if (forbidden.length) throw new Error(`Browser bundle imports Node execution: ${forbidden.join(', ')}`)
         const privateDocs = [...this.getModuleIds()].filter((id) =>

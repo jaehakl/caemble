@@ -1,13 +1,13 @@
 import { useContext, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChartLine, Grid2X2, Box, LockKeyhole, ArrowLeftRight, ArrowUpDown, ArrowUpRight, Square } from 'lucide-react'
-import type { CalculationInputLeaf } from '@/lib/calculation/types'
+import type { CalculationInputLeaf } from '@caemble/execution/calculation/types'
 import {
   boxGridTensorComponents,
   projectionAxes,
   type ProjectionAxis,
   type ProjectionReduction,
-} from '@/lib/calculation/boxGridProject'
+} from '@caemble/execution/calculation/boxGridProject'
 import {
   boxGridVectorComponents,
   type BoxGridAnimation,

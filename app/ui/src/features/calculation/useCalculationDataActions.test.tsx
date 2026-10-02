@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { calculationExampleInput } from '@/authoring/examples'
-import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
 import { useCalculationDataActions } from './useCalculationDataActions'
 
 const mocks = vi.hoisted(() => ({

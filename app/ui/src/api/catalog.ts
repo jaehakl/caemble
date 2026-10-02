@@ -12,7 +12,7 @@ import type {
   CatalogSolverDetail,
   CatalogSolverListItem,
   ListQuery,
-} from '@/contracts/catalog'
+} from '@caemble/execution/contracts/catalog'
 import {
   parseCatalogExperimentDetail,
   parseCatalogExperimentList,
@@ -57,7 +57,7 @@ export type {
   CatalogSearchItem,
   CatalogSolverDetail,
   CatalogSolverListItem,
-} from '@/contracts/catalog'
+} from '@caemble/execution/contracts/catalog'
 
 export const catalogQueryKeys = {
   root: ['catalog'] as const,

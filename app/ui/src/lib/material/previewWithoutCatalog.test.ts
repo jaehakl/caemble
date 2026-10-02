@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { activeCatalogRuntimeSlice } from '@/lib/catalog/runtime'
-import { evaluateCadScene } from '@/lib/cad/evaluation/evaluator'
-import { h } from '@/lib/cad/evaluation/jsx'
-import { Material } from '@/lib/cad/model/material'
+import { activeCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { evaluateCadScene } from '@caemble/execution/cad/evaluation/evaluator'
+import { h } from '@caemble/execution/cad/evaluation/jsx'
+import { Material } from '@caemble/execution/cad/model/material'
 
 describe('Geometry preview without a Catalog', () => {
   it('evaluates an unassigned Material role without requiring model definitions', () => {

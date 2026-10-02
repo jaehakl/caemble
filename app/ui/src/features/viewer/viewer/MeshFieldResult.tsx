@@ -16,7 +16,7 @@ import { MeshPlayback } from './MeshPlayback'
 import JscadViewer from './JscadViewer'
 import { createMeshFieldRenderData, meshMaterialColors, type MeshFieldView, type RecordedMeshField } from './meshFields'
 import type { JscadViewerLayer } from './model'
-import { tensorComponentIndices, type TensorDirection } from '@/lib/calculation/boxGridProject'
+import { tensorComponentIndices, type TensorDirection } from '@caemble/execution/calculation/boxGridProject'
 
 const noFields: readonly RecordedMeshField[] = Object.freeze([])
 const noLayers: readonly JscadViewerLayer[] = Object.freeze([])

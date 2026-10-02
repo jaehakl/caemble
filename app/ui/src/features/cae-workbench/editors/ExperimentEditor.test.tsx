@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
-import { createCadSourceDocument, createExperimentSourceBundle } from '@/lib/cad/source'
+import { createCadSourceDocument, createExperimentSourceBundle } from '@caemble/execution/cad/source'
 import { ExperimentEditor } from './ExperimentEditor'
 
 vi.mock('@/lib/cad/authoring', () => ({ loadMonaco: () => new Promise(() => {}) }))

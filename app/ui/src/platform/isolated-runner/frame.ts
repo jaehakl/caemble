@@ -1,13 +1,13 @@
-import { cadSnapshotTransferables } from '@/lib/cad/execution/meshSerialization'
-import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import { cadSnapshotTransferables } from '@caemble/execution/cad/execution/meshSerialization'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
 import {
   assertCalculationRunnerOperationEnvelope,
   assertCalculationRunnerLogEnvelope,
   assertCalculationRunnerResultEnvelope,
   calculationRunnerRejectionEnvelope,
   type CalculationRunnerOperationEnvelope,
-} from '@/lib/calculation/protocol'
-import { CALCULATION_TIMEOUT_MS, type CalculationExecutionErrorCode } from '@/lib/calculation/types'
+} from '@caemble/execution/calculation/protocol'
+import { CALCULATION_TIMEOUT_MS, type CalculationExecutionErrorCode } from '@caemble/execution/calculation/types'
 import {
   assertRunnerCancelOperationEnvelope,
   assertRunnerOperationEnvelope,

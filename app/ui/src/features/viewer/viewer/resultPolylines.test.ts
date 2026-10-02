@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { expect, it } from 'vitest'
-import type { RecordedResultContracts } from '@/contracts/results'
-import type { RecordedDataRule } from '@/lib/cad/model'
-import { createDataTensor } from '@/lib/cad/model/dataTensor'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import type { RecordedDataRule } from '@caemble/execution/cad/model'
+import { createDataTensor } from '@caemble/execution/cad/model/dataTensor'
 import { parseResultPolylines } from './resultPolylines'
 import { parseRecordedMeshFields } from './meshFields'
 

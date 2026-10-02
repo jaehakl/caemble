@@ -1,17 +1,17 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { assertResultMetadata, type ResultMetadataSchema } from '@/contracts/resultMetadata'
-import { BOX_GRID_AXES } from '@/contracts/boxGrid'
+import { assertResultMetadata, type ResultMetadataSchema } from '@caemble/execution/contracts/resultMetadata'
+import { BOX_GRID_AXES } from '@caemble/execution/contracts/boxGrid'
 import {
   createAttachmentDataTensor,
   createDataTensorAccessor,
   persistDataTensor,
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
-} from '@/lib/cad/model/dataTensor'
-import type { DataSchema, RecordedDataRule } from '@/lib/cad/model/descriptor'
-import { createCalculationInput } from '@/lib/calculation/input'
-import { assertCalculationInput } from '@/lib/calculation/validation'
+} from '@caemble/execution/cad/model/dataTensor'
+import type { DataSchema, RecordedDataRule } from '@caemble/execution/cad/model/descriptor'
+import { createCalculationInput } from '@caemble/execution/calculation/input'
+import { assertCalculationInput } from '@caemble/execution/calculation/validation'
 
 const metadataSchema: ResultMetadataSchema = {
   pressureOffset: { dtype: 'float64', quantityKind: 'Pressure', unit: 'Pa' },

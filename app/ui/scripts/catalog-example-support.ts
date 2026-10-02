@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
-import type { CatalogExperimentDetail, CatalogMeta, CatalogRuntimeSlice } from '../src/contracts/catalog'
-import type { CompiledCadDocument } from '../src/lib/cad/compiler/types'
-import { compileNodeCadDocument } from '../src/platform/node/cadCompiler'
+import type { CatalogExperimentDetail, CatalogMeta, CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
+import type { CompiledCadDocument } from '@caemble/execution/cad/compiler/types'
+import { compileNodeCadDocument } from '@caemble/execution/node/cadCompiler'
 
 export function readCatalogExamples(database: string) {
   return JSON.parse(
@@ -26,7 +26,7 @@ with open_catalog(sys.argv[1]) as c:
  print(json.dumps(dict(examples=examples,catalog=runtime,meta=c.meta())))
 `,
         database,
-        path.resolve('../catalog'),
+        path.resolve('../../shared/catalog'),
       ],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
     ),
@@ -41,6 +41,6 @@ export function compileCatalogExample(
     example.sourceBundle.files,
     example.bundleHash,
     catalog,
-    path.resolve('src/lib/cad/api'),
+    path.resolve('../../shared/execution/src/cad/api'),
   )
 }

@@ -1,5 +1,5 @@
-import type { CadScenePart, CadSceneTreeNode } from '@/lib/cad/evaluation/types'
-import type { UcumUnit } from '@/lib/cad/model'
+import type { CadScenePart, CadSceneTreeNode } from '@caemble/execution/cad/evaluation/types'
+import type { UcumUnit } from '@caemble/execution/cad/model'
 
 export type CadViewerSource = 'experiment' | 'task'
 

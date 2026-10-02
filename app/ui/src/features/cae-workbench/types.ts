@@ -1,6 +1,6 @@
 import type { CalculationDefinition, MeasurementRecord, RecordedDataRecord, SavedExperimentRecord } from '@/api'
-import type { Vars } from '@/lib/cad/model'
-import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@/lib/cad/source'
+import type { Vars } from '@caemble/execution/cad/model'
+import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@caemble/execution/cad/source'
 
 export type SavedExperiment = SavedExperimentRecord & { id: number }
 export type SavedMeasurement = MeasurementRecord & { id: number }

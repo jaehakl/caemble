@@ -1,10 +1,10 @@
-import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
 import modeling from '@jscad/modeling'
-import { createDataTensor } from '@/lib/cad/model/dataTensor'
-import type { DataSchema } from '@/lib/cad/model'
-import type { MeasurementVisualizations } from '@/contracts/results'
+import { createDataTensor } from '@caemble/execution/cad/model/dataTensor'
+import type { DataSchema } from '@caemble/execution/cad/model'
+import type { MeasurementVisualizations } from '@caemble/execution/contracts/results'
 import { calculationExampleInput } from '@/authoring/examples'
-import { materialVarsHash } from '@/lib/material/resolution'
+import { materialVarsHash } from '@caemble/execution/material/resolution'
 import type { WorkbenchViewerProps } from './WorkbenchViewer'
 
 /** Small recorded fixtures: no Solver, API or database execution. */

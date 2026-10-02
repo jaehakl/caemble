@@ -5,7 +5,7 @@ import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import type { ExperimentPresentationUpdate, ViewerDefaults } from '@/contracts/viewerDefaults'
+import type { ExperimentPresentationUpdate, ViewerDefaults } from '@caemble/execution/contracts/viewerDefaults'
 import {
   captureViewer,
   centeredThumbnailCrop,

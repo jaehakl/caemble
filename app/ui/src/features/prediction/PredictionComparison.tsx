@@ -16,8 +16,8 @@ import { SharedViewerDisplayControls, ViewerResultMenuHost } from '@/features/vi
 import { ViewerLayout } from '@/features/viewer/viewer/ViewerTools'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
 import { initialViewerDisplay } from '@/features/viewer/viewer/viewerDisplay'
-import { varsFingerprint } from '@/lib/cad/model/vars'
-import { createCadSourceDocument } from '@/lib/cad/source'
+import { varsFingerprint } from '@caemble/execution/cad/model/vars'
+import { createCadSourceDocument } from '@caemble/execution/cad/source'
 import { ResizableSplit } from '@/shared/layout/ResizableSplit'
 import type { PredictionViewerState } from './PredictionWorkspace'
 

@@ -1,6 +1,6 @@
 import { geometries, measurements } from '@jscad/modeling'
-import type { CadScenePart, CadSceneTreeNode } from '@/lib/cad/evaluation/types'
-import { cross, dot, subtract } from '@/lib/cad/geometry/vec3'
+import type { CadScenePart, CadSceneTreeNode } from '@caemble/execution/cad/evaluation/types'
+import { cross, dot, subtract } from '@caemble/execution/cad/geometry/vec3'
 import type {
   CadViewerLayerScope,
   CadViewerPickingCamera,

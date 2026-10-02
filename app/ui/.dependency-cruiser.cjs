@@ -2,6 +2,24 @@
 module.exports = {
   forbidden: [
     {
+      name: 'shared-execution-does-not-import-ui',
+      severity: 'error',
+      from: { path: '^../../shared/execution/' },
+      to: { path: '^src/' },
+    },
+    {
+      name: 'shared-core-has-no-node-io',
+      severity: 'error',
+      from: { path: '^../../shared/execution/src/', pathNot: '/node/|\\.(test|spec)\\.' },
+      to: { dependencyTypes: ['core'], path: '^(node:)?(fs|path|child_process|process|http|https|os|net)(/|$)' },
+    },
+    {
+      name: 'shared-core-does-not-import-node-adapters',
+      severity: 'error',
+      from: { path: '^../../shared/execution/src/', pathNot: '/node/|\\.(test|spec)\\.' },
+      to: { path: '^../../shared/execution/src/node/' },
+    },
+    {
       name: 'web-docs-do-not-import-repository-docs',
       severity: 'error',
       from: { path: '^src/(features|routes|workbench|documentation/public)' },
@@ -17,19 +35,21 @@ module.exports = {
       name: 'browser-has-no-node-runtime',
       severity: 'error',
       from: { path: '^src/(features|routes|workbench|platform/browser|platform/isolated-runner)/' },
-      to: { path: '^src/(cli|platform/node)/' },
+      to: { path: '^(src/(cli|platform/node)/|../../shared/execution/src/node/)' },
     },
     {
       name: 'local-execution-does-not-submit',
       severity: 'error',
-      from: { path: '^src/platform/node/localExecution\\.ts$' },
+      from: { path: '^../../shared/execution/src/node/localExecution\\.ts$' },
       to: { path: '^src/(api|cli)/' },
     },
     {
       name: 'remote-submit-does-not-build-or-run-python',
       severity: 'error',
       from: { path: '^src/(api/submitArtifact|cli/batch)\\.ts$' },
-      to: { path: '^src/(platform/node/(build|localExecution|cadCompiler)|lib/cae/build|cli/experiment)\\.ts$' },
+      to: {
+        path: '^(src/cli/experiment|../../shared/execution/src/(node/(build|localExecution|cadCompiler)|cae/build))\\.ts$',
+      },
     },
     {
       name: 'no-circular',
@@ -42,8 +62,10 @@ module.exports = {
       name: 'contracts-are-leaf-modules',
       comment: 'Contracts may only depend on other contracts or shared external packages.',
       severity: 'error',
-      from: { path: '^src/contracts/' },
-      to: { path: '^src/(api|app|components|features|lib|platform|routes|workbench)/' },
+      from: { path: '^(src/contracts/|../../shared/execution/src/contracts/)' },
+      to: {
+        path: '^(src/(api|app|components|features|lib|platform|routes|workbench)/|../../shared/execution/src/(cad|cae|calculation|catalog|material|node|prediction|quantitykind)/)',
+      },
     },
     {
       name: 'domain-does-not-fetch',

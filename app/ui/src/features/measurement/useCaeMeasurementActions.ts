@@ -1,5 +1,5 @@
 import { buildBatchArtifact, type BrowserBatchIntent, type BrowserBatchCandidates } from './buildBatchArtifact'
-import { generateRandomVars } from '@/lib/cad/model/vars'
+import { generateRandomVars } from '@caemble/execution/cad/model/vars'
 import { submitArtifact } from '@/api/submitArtifact'
 import { browserClient } from '@/api/http'
 import { useCallback, useEffect, useRef, useState } from 'react'

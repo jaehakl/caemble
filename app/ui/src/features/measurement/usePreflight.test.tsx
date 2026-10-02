@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { usePreflight } from './usePreflight'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
-import type { ExperimentSourceDocument } from '@/lib/cad/source'
+import type { ExperimentSourceDocument } from '@caemble/execution/cad/source'
 
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
@@ -19,8 +19,10 @@ vi.mock('@/api/objectStorage', () => ({ resolveObjects: mocks.resolve }))
 vi.mock('@/features/viewer/workspace/catalogRuntime', () => ({
   fetchCatalogRuntimeSlice: async () => ({ catalogRevision: 'revision' }),
 }))
-vi.mock('@/lib/cad/source', () => ({ cadSourceHash: async () => 'source' }))
-vi.mock('@/lib/material/resolution', () => ({ materialVarsHash: (value: unknown) => JSON.stringify(value) }))
+vi.mock('@caemble/execution/cad/source', () => ({ cadSourceHash: async () => 'source' }))
+vi.mock('@caemble/execution/material/resolution', () => ({
+  materialVarsHash: (value: unknown) => JSON.stringify(value),
+}))
 
 const experiment: ExperimentSourceDocument = {
   kind: 'experiment',

@@ -21,7 +21,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-caemble-runtime-sdk = { path = "../sdk", develop = true }
+caemble-runtime-sdk = { path = "../../shared/sdk", develop = true }
 
 [build-system]
 requires = ["poetry-core"]

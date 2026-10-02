@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CaeBatch } from '@/contracts/api/cae'
-import type { BuildArtifact } from '@/contracts/build'
+import type { BuildArtifact } from '@caemble/execution/contracts/build'
 import { resumeBrowserUpload } from './resumeUpload'
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), manifest: vi.fn(), item: vi.fn(), close: vi.fn(), submit: vi.fn() }))

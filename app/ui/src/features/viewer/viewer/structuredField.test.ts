@@ -6,9 +6,9 @@ import {
   persistDataTensor,
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
-} from '@/lib/cad/model/dataTensor'
-import type { DataSchema } from '@/lib/cad/model/descriptor'
-import { assertCalculationInput } from '@/lib/calculation/validation'
+} from '@caemble/execution/cad/model/dataTensor'
+import type { DataSchema } from '@caemble/execution/cad/model/descriptor'
+import { assertCalculationInput } from '@caemble/execution/calculation/validation'
 import { fieldRange, fieldScalar, fieldSlice, structuredField } from './structuredField'
 
 const schema: DataSchema = {

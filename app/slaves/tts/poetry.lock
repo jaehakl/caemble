@@ -235,7 +235,7 @@ slave = ["aiortc (>=1.9,<2.0)"]
 
 [package.source]
 type = "directory"
-url = "../../sdk"
+url = "../../../shared/sdk"
 
 [[package]]
 name = "catalogue"
@@ -3474,4 +3474,4 @@ dev = ["pytest", "setuptools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "b2e43873d23cfce6f13576ceab435095550940d6adc308812b08579611e1f7fa"
+content-hash = "8851ae612e7fc11abf22b6915260598b5fa3dcdc565f06bb5d7153020ee5f3b9"

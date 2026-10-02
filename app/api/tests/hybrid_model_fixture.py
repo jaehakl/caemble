@@ -75,8 +75,8 @@ artifact=bundle.save(ArtifactStore(Path(value["storage"]),value["owner"],value["
 Path(sys.argv[3]).write_text(json.dumps(artifact,allow_nan=False),encoding="utf-8")
 ''', encoding="utf-8")
     suffix = Path("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    python = repo / "app/slaves/predictor/.venv" / suffix
-    process = await asyncio.create_subprocess_exec(str(python), str(script), str(repo / "app/slaves/predictor"),
+    python = repo / "app/slaves/cae_prediction/.venv" / suffix
+    process = await asyncio.create_subprocess_exec(str(python), str(script), str(repo / "app/slaves/cae_prediction"),
         str(input_path), str(output_path), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
         _, stderr = await asyncio.wait_for(process.communicate(), 30)

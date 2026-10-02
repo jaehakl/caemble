@@ -1,7 +1,7 @@
 # CAE Solver 개발 가이드
 
 CAE Solver를 추가하거나 바꾸기 전에 이 문서와
-`app/slaves/cae/AGENTS.md`를 모두 읽습니다. 사용자용 문법과 현재 예제는
+`app/slaves/cae_simulation/AGENTS.md`를 모두 읽습니다. 사용자용 문법과 현재 예제는
 Documentation에서 관리합니다.
 
 ## Experiment와 실행 계약
@@ -50,7 +50,7 @@ cleanup lifecycle은 resident Runtime이 소유하며 Solver가 우회하지 않
 CAE worker 코드는 다음 세 계층으로 나뉩니다.
 
 ```text
-app/slaves/cae/app/
+app/slaves/cae_simulation/app/
 ├─ __init__.py        package marker
 ├─ __main__.py        실행 진입점
 ├─ kernel/
@@ -112,7 +112,7 @@ state/artifact 등록과 mmap transaction 확정의 실패 복구를 한 경로�
 ## 기본 원칙
 
 - QuantityKind, Material Model 정의, Solver, Experiment Catalog 데이터의 단일 원본은
-  `app/catalog/caemble_catalog/catalog.sqlite3`입니다.
+  `shared/catalog/caemble_catalog/catalog.sqlite3`입니다.
 - Experiment와 Solver의 SemVer는 공개된 동작을 식별합니다. 이미 publish된
   `(name, version)`의 계약과 locator를 고치지 않고 새 SemVer로 clone합니다.
   Catalog에는 Solver 이름마다 현재 버전 하나만 남깁니다. 이전 코드와
@@ -124,7 +124,7 @@ state/artifact 등록과 mmap transaction 확정의 실패 복구를 한 경로�
   규칙, geometry/resource 검증이나 입력 크기 제한은 추가하지 않습니다.
 - Catalog 편집에는 raw SQL이나 별도 JSON/TS/Markdown 원본을 사용하지
   않습니다. 중앙 registry 분기나 Solver용 `manifest.json`도 만들지
-  않습니다. `app/slaves/cae/manifest.json`은 launcher executable
+  않습니다. `app/slaves/cae_simulation/manifest.json`은 launcher executable
   manifest이므로 유지합니다.
 - 재현 가능한 상태와 artifact만 Runtime resource로 반환합니다. PCG 임시
   벡터, factorization, BVH traversal stack, CUDA context 같은 재생성 가능한
@@ -132,12 +132,12 @@ state/artifact 등록과 mmap transaction 확정의 실패 복구를 한 경로�
 
 ## Draft SQLite와 publish
 
-Catalog 작업은 `app/catalog`에서 canonical 파일의 별도 Draft를 만든 뒤,
+Catalog 작업은 `shared/catalog`에서 canonical 파일의 별도 Draft를 만든 뒤,
 모든 명령에 같은 Draft 경로를 명시합니다. canonical SQLite를 raw SQL로
 직접 수정하지 않습니다.
 
 ```powershell
-Push-Location app/catalog
+Push-Location shared/catalog
 $catalog = "caemble_catalog/catalog.sqlite3"
 $draft = ".catalog-work/solver-name-1.1.0.sqlite3"
 
@@ -734,7 +734,7 @@ Output이나 `recordedData` 선언은 필요하지 않습니다. Path bundle의
 
 Solver 개발에서는 모노레포의 Node CLI와 기존 CAE Python 환경을 함께 사용합니다.
 UI의 npm 의존성과 CLI를 먼저 빌드하고, CAE의 Poetry 환경을 설치합니다.
-`app/slaves/cae`에서 `poetry install --with dev`로 pytest, Ruff, Pyright 등 개발 검사 도구를
+`app/slaves/cae_simulation`에서 `poetry install --with dev`로 pytest, Ruff, Pyright 등 개발 검사 도구를
 포함한 개발 환경을 구성합니다. `doctor`는 Python 실행 환경, pytest와 필수 수치·전송
 패키지의 버전 및 모듈 위치를 출력하고 누락된 의존성을 표시합니다.
 CLI는 `--repo`로 지정한 checkout의 CAE 작업 디렉토리에서 Python을 실행합니다.

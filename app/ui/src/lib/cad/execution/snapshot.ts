@@ -1,20 +1,15 @@
-import type { CadScene } from '../evaluation/types'
-import type { EvaluatedExperimentSnapshot } from './snapshotTypes'
-import { canonicalGeometryScene } from '../evaluation/canonical'
+import type { EvaluatedExperimentSnapshot } from '@caemble/execution/cad/execution/snapshotTypes'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
 import { renderCanonicalGeometryScene } from './manifoldRender'
 
 export type {
   EvaluatedDocumentSnapshot,
   EvaluatedExperimentSnapshot,
   MeasurementExperimentSnapshot,
-} from './snapshotTypes'
+} from '@caemble/execution/cad/execution/snapshotTypes'
 
-export type EvaluatedRuntimeDocumentSnapshot = Readonly<
-  Omit<EvaluatedExperimentSnapshot, 'scene' | 'taskScenes' | 'renderScene' | 'taskRenderScenes'> & {
-    scene: CadScene
-    taskScenes: Readonly<Record<string, CadScene>>
-  }
->
+export type { EvaluatedRuntimeDocumentSnapshot } from '@caemble/execution/cad/execution/snapshotTypes'
+import type { EvaluatedRuntimeDocumentSnapshot } from '@caemble/execution/cad/execution/snapshotTypes'
 
 export async function serializeEvaluatedDocumentSnapshot(
   snapshot: EvaluatedRuntimeDocumentSnapshot,

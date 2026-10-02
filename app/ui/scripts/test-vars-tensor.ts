@@ -12,7 +12,7 @@ import {
   varsWheelStep,
 } from '../src/components/tensor-editor/model'
 import { validateVarsChanges, validateVarsTensor } from '../src/features/calculation/varsTensor'
-import { flattenVarsTensor, tensorElementCount, varsTensorFromFlat } from '../src/lib/cad/model/tensor'
+import { flattenVarsTensor, tensorElementCount, varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
 
 assert.equal(tensorElementCount([]), 1)
 assert.equal(tensorElementCount([2, 3, 4]), 24)

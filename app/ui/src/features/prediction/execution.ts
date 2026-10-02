@@ -1,4 +1,4 @@
-import type { RecordedDataRule, Vars } from '@/lib/cad/model'
+import type { RecordedDataRule, Vars } from '@caemble/execution/cad/model'
 import type {
   PredictionCohortDiagnosticGroup,
   PredictionCohortExclusionReason,

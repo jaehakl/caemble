@@ -1,0 +1,123 @@
+import type { CompiledCadDocument } from '../compiler/types'
+import type { EvaluatedExperimentSnapshot } from '../execution/snapshotTypes'
+import type { Tensor } from '../model/types'
+import type { UcumUnit } from '../model/units'
+import type { VarsSchemaEntry } from '../model/vars'
+import type { SerializableCadScene } from '../execution/meshSerialization'
+import type { CatalogRuntimeSlice } from '../../contracts/catalog'
+
+export type CadDocumentType = 'experiment'
+export type CadWorkerErrorType = 'compile' | 'type' | 'policy' | 'runtime' | 'model'
+export type CadDiagnosticPhase = 'syntax' | 'semantic' | 'policy' | 'runtime' | 'model'
+
+export type CadDiagnostic = Readonly<{
+  file: string
+  range: Readonly<{
+    startLineNumber: number
+    startColumn: number
+    endLineNumber: number
+    endColumn: number
+  }>
+  code: string | number
+  severity: 'error' | 'warning' | 'info'
+  phase: CadDiagnosticPhase
+  message: string
+}>
+
+type CadRequestIdentity = Readonly<{
+  requestId: string
+  revision: number
+  compiledDocument: CompiledCadDocument
+}>
+
+export type CadInspectionRequest = CadRequestIdentity & Readonly<{ type: 'inspect'; catalog: CatalogRuntimeSlice }>
+
+export type CadEvaluationRequest = CadRequestIdentity &
+  Readonly<{
+    type: 'evaluate'
+    catalog: CatalogRuntimeSlice
+    pythonSource: string
+    vars: Readonly<Record<string, Tensor>>
+  }>
+
+export type CadPredictionRequest = CadRequestIdentity &
+  Readonly<{
+    type: 'prepare-prediction'
+    catalog: CatalogRuntimeSlice
+    pythonSource: string
+    vars: Readonly<Record<string, Tensor>>
+    records: readonly string[]
+  }>
+export type CadPredictionResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'prediction-preparation-success'
+        snapshot: import('../execution/snapshotTypes').PredictionCandidateSnapshot
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'prediction-preparation-error'>)
+
+export type CadGeometryPreviewRequest = CadRequestIdentity &
+  Readonly<{
+    type: 'preview-geometry'
+    catalog: CatalogRuntimeSlice
+    path: string
+    exportName: string
+    lengthUnit: UcumUnit
+  }>
+
+type CadResponseIdentity = Readonly<{
+  requestId: string
+  revision: number
+  documentType: 'experiment' | 'geometry'
+}>
+
+export type CadInspectionResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'inspection-success'
+        sourceHash: string
+        varsSchema: Readonly<Record<string, VarsSchemaEntry>>
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'inspection-error'>)
+
+export type CadEvaluationResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'evaluation-success'
+        snapshot: EvaluatedExperimentSnapshot
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'evaluation-error'>)
+
+export type CadGeometryPreviewResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'geometry-preview-success'
+        sourceHash: string
+        scene: SerializableCadScene
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'geometry-preview-error'>)
+
+type CadErrorResponse<Type extends string> = Readonly<{
+  type: Type
+  errorType: CadWorkerErrorType
+  message: string
+  diagnostics?: readonly CadDiagnostic[]
+  stack?: string
+}>
+
+export type CadWorkerRequest =
+  CadPredictionRequest | CadPreparationRequest | CadInspectionRequest | CadEvaluationRequest | CadGeometryPreviewRequest
+export type CadWorkerResponse =
+  | CadPredictionResponse
+  | CadPreparationResponse
+  | CadInspectionResponse
+  | CadEvaluationResponse
+  | CadGeometryPreviewResponse
+
+export type CadPreparationRequest = CadRequestIdentity &
+  import('../../cae/build').CaePreparationRequest &
+  Readonly<{ type: 'prepare' }>
+export type CadPreparationResponse =
+  | (CadResponseIdentity &
+      Readonly<{ type: 'preparation-success'; input: import('../../cae/artifact').BuiltArtifactInput }>)
+  | (CadResponseIdentity & CadErrorResponse<'preparation-error'>)

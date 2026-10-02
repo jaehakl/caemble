@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import { durableViewerSettings } from '@/contracts/viewerDefaults'
+import { durableViewerSettings } from '@caemble/execution/contracts/viewerDefaults'
 import { createViewerSelection, useViewerSelectionStore } from './viewerSelection'
 import { createComparisonSettings, useViewerSelection, ViewerPersistenceContext } from './comparisonSettings'
 import { createComparisonCamera } from './comparisonCamera'

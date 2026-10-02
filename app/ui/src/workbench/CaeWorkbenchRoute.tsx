@@ -1,7 +1,7 @@
 import { PredictionComparison } from '@/features/prediction/PredictionComparison'
 import { PredictionLayout } from '@/features/prediction/PredictionLayout'
 import { useViewerSelectionStore } from '@/features/viewer/viewer/viewerSelection'
-import { varsFingerprint } from '@/lib/cad/model/vars'
+import { varsFingerprint } from '@caemble/execution/cad/model/vars'
 import { BatchGenerationDialog } from '@/features/measurement/BatchGenerationDialog'
 import { useExperimentWarnings } from '@/features/cae-workbench/useExperimentWarnings'
 import { usePreflight } from '@/features/measurement/usePreflight'

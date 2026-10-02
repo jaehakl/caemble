@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CatalogRuntimeSlice } from '@/contracts/catalog'
-import type { CompiledCadDocument } from '../compiler/types'
-import type { CadGeometryPreviewResponse } from '../worker/protocol'
+import type { CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
+import type { CompiledCadDocument } from '@caemble/execution/cad/compiler/types'
+import type { CadGeometryPreviewResponse } from '@caemble/execution/cad/worker/protocol'
 import {
   evaluateDocument,
   evaluateGeometryModule,
@@ -16,9 +16,9 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   deserialize: vi.fn(),
 }))
-vi.mock('./mesh', () => ({ deserializeCadScene: mocks.deserialize }))
+vi.mock('@caemble/execution/cad/execution/mesh', () => ({ deserializeCadScene: mocks.deserialize }))
 vi.mock('../compiler/monacoCompiler', () => ({ compileCadDocument: mocks.compile }))
-vi.mock('@/lib/catalog/runtime', () => ({
+vi.mock('@caemble/execution/catalog/runtime', () => ({
   installCatalogRuntimeSlice: mocks.install,
   registerSourceCatalogRuntimeSlice: mocks.register,
 }))

@@ -5,9 +5,9 @@ import { isDeepStrictEqual } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createOptimizationApi } from '@/api/optimization'
 import type { Optimization, OptimizationCreateRequest } from '@/contracts/api/optimization'
-import { openArtifact } from '@/platform/node/artifact'
-import { CliError } from '@/platform/node/environment'
-import type { BuiltArtifactInput } from '@/lib/cae/artifact'
+import { openArtifact } from '@caemble/execution/node/artifact'
+import { CliError } from '@caemble/execution/node/environment'
+import type { BuiltArtifactInput } from '@caemble/execution/cae/artifact'
 import type { CommandContext } from './types'
 
 type Receipt = { api: string; requestId: string; body: unknown; acknowledged: boolean; optimizationId?: string }

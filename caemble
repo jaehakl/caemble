@@ -1,2 +1,2 @@
 #!/bin/sh
-exec node "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/app/ui/scripts/cli-bootstrap.cjs" "$@"
+exec node "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/shared/execution/scripts/cli-bootstrap.cjs" "$@"

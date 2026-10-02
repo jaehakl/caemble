@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useState } from 'react'
 import { VarsEditor } from '@/components/vars-editor'
-import { flattenVarsTensor } from '@/lib/cad/model'
+import { flattenVarsTensor } from '@caemble/execution/cad/model'
 import type { CaeWorkbenchState } from './state/useCaeWorkbenchState'
 
 export function ExperimentVarsPanel({

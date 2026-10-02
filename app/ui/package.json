@@ -7,7 +7,7 @@
     "dev": "concurrently --kill-others-on-fail --names app,runner \"npm:dev:app\" \"npm:dev:runner\"",
     "dev:app": "vite",
     "dev:runner": "vite --config vite.runner.config.ts",
-    "build:sdk": "npm --prefix ../sdk/master/js run build",
+    "build:sdk": "npm run build --workspace @gpstation/v1-master-js-sdk",
     "build": "npm run build-ui && npm run build:node && node scripts/package-release.mjs",
     "generate:cad-api": "node scripts/generate-cad-api.mjs",
     "check:calculation-build": "node scripts/check-calculation-build.mjs",
@@ -24,14 +24,14 @@
     "test:http": "esbuild scripts/test-http-csrf.ts --loader:.md=text --bundle --platform=node --format=esm --define:import.meta.env={} --alias:@=./src --outfile=node_modules/.tmp/test-http-csrf.mjs && node node_modules/.tmp/test-http-csrf.mjs",
     "test:api-contract": "esbuild scripts/test-api-contract-boundary.ts --loader:.md=text --bundle --platform=node --format=esm --define:import.meta.env={} --alias:@=./src --outfile=node_modules/.tmp/test-api-contract-boundary.mjs && node node_modules/.tmp/test-api-contract-boundary.mjs",
     "test:vars": "esbuild scripts/test-vars-tensor.ts --loader:.md=text --bundle --platform=node --format=cjs --alias:@=./src --outfile=node_modules/.tmp/test-vars-tensor.cjs && node node_modules/.tmp/test-vars-tensor.cjs",
-    "check:static": "npm run format:check && npm run lint && npm run check:dependencies && tsc -b --pretty false",
+    "check:static": "npm run build:sdk && npm run format:check && npm run format:check --workspace @caemble/execution && npm run lint && npm run lint --workspace @caemble/execution && npm run check:dependencies && tsc -b --pretty false && npm run check --workspace @caemble/execution",
     "check": "npm run check:static && npm run test:unit",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check:dependencies": "depcruise --config .dependency-cruiser.cjs src",
+    "check:dependencies": "depcruise --config .dependency-cruiser.cjs src ../../shared/execution/src",
     "preview": "vite preview",
-    "build-ui": "npm run check:dependencies && npm run build:sdk && npm run check:authoring && npm run check:docs && tsc -b && vite build && npm run check:calculation-build",
+    "build-ui": "npm run build:sdk && npm run check:dependencies && npm run check:authoring && npm run check:docs && tsc -b && vite build && npm run check:calculation-build",
     "build:node": "node scripts/build-node.mjs",
     "build:cli": "npm run build:node",
     "build:evaluation": "npm run build:node",
@@ -57,7 +57,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@fhir-toolkit/ucum": "0.2.0",
-    "@gpstation/v1-master-js-sdk": "file:../sdk/master/js",
+    "@gpstation/v1-master-js-sdk": "0.1.0",
     "@jridgewell/trace-mapping": "0.3.31",
     "@jscad/modeling": "^2.13.0",
     "@jscad/regl-renderer": "^2.6.15",
@@ -94,7 +94,8 @@
     "tailwind-merge": "^3.6.0",
     "tw-animate-css": "^1.4.0",
     "zod": "^4.5.4",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "@caemble/execution": "0.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -122,13 +123,6 @@
     "typescript-eslint": "^8.69.0",
     "vite": "^7.3.6",
     "vitest": "^3.2.7"
-  },
-  "overrides": {
-    "dompurify": "3.4.14"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true,
-    "msw": false
   },
   "engines": {
     "node": ">=24.14.0"

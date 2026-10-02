@@ -4,7 +4,7 @@ Solver는 Experiment에서 지정한 물리 문제를 수치적으로 풀고 기
 
 ## 시작 전에 읽을 문서와 준비할 환경
 
-Solver를 변경하기 전에 `docs/development/solver-development.md`와 `app/slaves/cae/AGENTS.md`를 **끝까지 읽습니다.** 두 파일이 현재 개발 계약의 기준입니다. 이 안내는 작업 순서와 확인할 항목을 정리하며 별도의 ABI 정의나 Catalog를 만들지 않습니다.
+Solver를 변경하기 전에 `docs/development/solver-development.md`와 `app/slaves/cae_simulation/AGENTS.md`를 **끝까지 읽습니다.** 두 파일이 현재 개발 계약의 기준입니다. 이 안내는 작업 순서와 확인할 항목을 정리하며 별도의 ABI 정의나 Catalog를 만들지 않습니다.
 
 명령 예시는 Caemble 저장소 루트의 **PowerShell 7**을 기준으로 합니다. UI의 Node.js 의존성과 CAE의 Poetry 개발 환경을 준비합니다. 먼저 `.\caemble.cmd doctor`로 Python·모듈 경로와 Catalog revision이 현재 저장소를 가리키는지 확인합니다. 배포 CLI는 시작 시 번들을 자동 준비합니다. 소스를 수정한 개발 환경에서는 `npm --prefix app/ui run build:node` 후 `node app/ui/dist-cli/caemble.cjs doctor`로 확인하고 같은 진입점으로 명령을 실행합니다. POSIX에서는 `sh ./caemble`을 사용합니다.
 
@@ -15,7 +15,7 @@ Solver를 변경하기 전에 `docs/development/solver-development.md`와 `app/s
 1. **Catalog를 확인합니다.** 현재 데이터는 기존 Catalog Python 라이브러리 또는 `catalogctl`로 조회합니다.
 2. **별도 Draft SQLite에서 계약을 작성합니다.** 모든 `catalogctl` 변경 명령에 Draft 경로를 명시합니다. Solver SemVer는 `catalogctl`로 생성하거나 복제하며 공개된 이름·버전의 계약은 바꾸지 않습니다. raw SQL, Node SQLite 어댑터, Solver용 `manifest.json`, 중앙 registry 분기나 Catalog 데이터 복사본을 만들지 않습니다. CAE·AI의 launcher manifest는 실행 파일 계약이므로 유지합니다.
 3. **재료 모델의 지원 범위를 선언합니다.** Solver descriptor에 Material 역할별 지원 모델 그룹을 적습니다. 그룹 사이는 AND이며 각 그룹에서 호환 모델 인스턴스 하나를 선택합니다. 모델 정의가 파라미터 구조·단위·관례를, Solver 코드가 수치 구현을 담당합니다. Material 이름으로 계수를 조회하거나 모델 schema를 descriptor에 복제하지 않습니다.
-4. **ABI 3 경계에 구현합니다.** `app/slaves/cae/app/solvers/<package>/entry.py`에 구현하고 Solver 고유의 영역·정식화·출력 코드를 주변에 둡니다. 기존 method에는 필요한 값을 명시적으로 전달합니다. 의존 방향은 `kernel.api <- methods <- solvers`를 유지합니다. 상주 coordinator는 Solver 코드를 미리 import하지 않으며 Catalog locator는 새로 생성한 자식 프로세스에서 읽습니다.
+4. **ABI 3 경계에 구현합니다.** `app/slaves/cae_simulation/app/solvers/<package>/entry.py`에 구현하고 Solver 고유의 영역·정식화·출력 코드를 주변에 둡니다. 기존 method에는 필요한 값을 명시적으로 전달합니다. 의존 방향은 `kernel.api <- methods <- solvers`를 유지합니다. 상주 coordinator는 Solver 코드를 미리 import하지 않으며 Catalog locator는 새로 생성한 자식 프로세스에서 읽습니다.
 5. **결과 채널을 구분합니다.** `SolverResult`에 `state_patch`, 요청한 typed artifact, 자동 표시 자료와 선언한 관측값을 반환합니다. 아래 출력 계약 점검표를 확인합니다.
 6. **실행 관리는 기존 경로에 맡깁니다.** `simulate.py`가 `sim.run`, `sim.record`, `sim.release`로 실행 순서를 구성합니다. Coordinator가 자동 표시 자료의 수명을 관리하며 Task별 마지막 성공 호출을 유지합니다. Task 소유권, 취소, 진행 상태, 자식 프로세스 수명과 수치 기록·표시 자료 양쪽의 ACK·자원 해제를 보존합니다. 기존 CAE Python 검증기와 테스트를 사용하며 두 번째 Python 문법이나 API에서만 동작하는 구문 검사 경로를 추가하지 않습니다.
 7. **전체 예제를 함께 작성합니다.** Draft에 실행 가능한 Example Experiment를 추가하거나 갱신합니다. 현재 Solver 이름·버전과 method ID를 문자열 literal로 명시하고 형상·재료 연결, 출력, 기록 형식, 단위와 축을 포함합니다. CAE 빌드 어댑터를 통해 CLI·UI와 같은 Node 빌드 경로를 사용하고 필요할 때 Draft를 명시합니다. 예전 독립 prepare 구현을 별도 컴파일러로 유지하지 않습니다.
@@ -49,11 +49,11 @@ Particle의 각 물리 속성에는 `QuantityArrayValue`를 사용합니다. `Fi
 
 ```powershell
 Get-Content -LiteralPath docs/development/solver-development.md -Encoding UTF8
-Get-Content -LiteralPath app/slaves/cae/AGENTS.md -Encoding UTF8
+Get-Content -LiteralPath app/slaves/cae_simulation/AGENTS.md -Encoding UTF8
 .\caemble.cmd doctor
 .\caemble.cmd agent guide solver
 .\caemble.cmd agent context solver
-Push-Location app/catalog
+Push-Location shared/catalog
 $catalog = 'caemble_catalog/catalog.sqlite3'
 $draft = '.catalog-work/solver-development.sqlite3'
 poetry run catalogctl --database $draft draft create --source $catalog
@@ -66,7 +66,7 @@ Pop-Location
 ## 2. Solver 실행 없이 예제 빌드하기
 
 ```powershell
-$draftCatalog = (Resolve-Path app/catalog/.catalog-work/solver-development.sqlite3).Path
+$draftCatalog = (Resolve-Path shared/catalog/.catalog-work/solver-development.sqlite3).Path
 .\caemble.cmd catalog show examples --catalog $draftCatalog
 $exampleKey = 'REPLACE_WITH_DRAFT_EXAMPLE_KEY'
 .\caemble.cmd experiment build --example $exampleKey --catalog $draftCatalog --vars-mode nominal --out .work/draft-build
@@ -79,7 +79,7 @@ $exampleKey = 'REPLACE_WITH_DRAFT_EXAMPLE_KEY'
 다음 publish는 실제 canonical Catalog를 변경합니다. 반영하려는 Draft의 검증을 마친 뒤 실행합니다. Publish 후에는 canonical 기준으로 다시 빌드해 활성 식별 정보를 확정합니다.
 
 ```powershell
-Push-Location app/catalog
+Push-Location shared/catalog
 poetry run catalogctl --database $draft publish --destination $catalog
 Pop-Location
 .\caemble.cmd doctor
@@ -95,7 +95,7 @@ Pop-Location
 부분 변경은 먼저 선택 이유를 확인하고 기본 검사를 실행합니다.
 
 ```powershell
-Push-Location app/slaves/cae
+Push-Location app/slaves/cae_simulation
 poetry run python -m tests.run affected --list
 poetry run python -m tests.run affected
 Pop-Location

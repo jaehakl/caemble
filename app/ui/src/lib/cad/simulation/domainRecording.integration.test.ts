@@ -1,13 +1,16 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { CatalogRuntimeSlice } from '@/contracts/catalog'
-import { resolveEnvironment } from '@/platform/node/environment'
-import { installCatalogRuntimeSlice } from '../../catalog/runtime'
-import { canonicalRecordedDataTree } from './authoring'
-import { assertExperimentAuthoringSemantics } from './authoringSemantics'
-import type { RecordedDataSpecNode } from './types'
-import { resolveRecordedOutputReferences, resolveRecordedResult } from './outputRecording'
+import type { CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
+import { resolveEnvironment } from '@caemble/execution/node/environment'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { canonicalRecordedDataTree } from '@caemble/execution/cad/simulation/authoring'
+import { assertExperimentAuthoringSemantics } from '@caemble/execution/cad/simulation/authoringSemantics'
+import type { RecordedDataSpecNode } from '@caemble/execution/cad/simulation/types'
+import {
+  resolveRecordedOutputReferences,
+  resolveRecordedResult,
+} from '@caemble/execution/cad/simulation/outputRecording'
 
 describe('Box Grid RecordedData', () => {
   it('keeps numerical tensor schemas separate from generic mesh visualization schemas', async () => {
@@ -27,7 +30,7 @@ from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
     data=catalog.runtime_slice(solvers=[('structural-mechanics','8.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
-          path.resolve('../slaves/cae'),
+          path.resolve('../slaves/cae_simulation'),
           path.resolve('../catalog'),
         ],
         { encoding: 'utf8', timeout: 20_000, windowsHide: true },

@@ -5,10 +5,10 @@ Commands and component-relative paths in this document are relative to `app/slav
 `app/slaves` contains the independent applications discovered by the launcher:
 
 - `ai`: LLM/chat, embedding, image, tagging, and VOICEVOX handlers.
-- `cae`: trusted-payload CAE simulation and Solver implementations.
-- `evaluation`: Node Measurement builds and Calculation for saved Optimizations.
+- `cae_simulation` (ID `cae`): trusted-payload CAE simulation and Solver implementations.
+- `cae_evaluation` (ID `evaluation`): Node Measurement builds and Calculation for saved Optimizations.
 - `tts`: CPU English Kokoro v1.0 synthesis, isolated from the AI application's dependencies.
-- `predictor`: Forward Prediction, local Dataset copies and persistent model artifacts.
+- `cae_prediction` (ID `predictor`): Forward Prediction, local Dataset copies and persistent model artifacts.
   One environment provides WebRTC inference/management and the `predictor-training`
   WebSocket executable for independent training Jobs. The current algorithm is CPU kNN.
 
@@ -20,8 +20,39 @@ Each entrypoint has independent readiness and startup settings; IDs must be uniq
 
 ## Install and run
 
-Install only the applications that a launcher machine should advertise. Poetry
-creates a project-local `.venv` for each worker.
+On Linux or WSL, install or update the Launcher and all five worker environments
+with the repository-root script. The script resolves its checkout independently
+of the current working directory; an absolute path containing spaces also works.
+
+```bash
+bash /path/to/caemble/li_launcher_install.sh
+```
+
+Have Poetry, Python 3.12 for new environments, Node 24.14 or later, the current
+checkout's Poetry lockfiles and `deployment/caemble.tar.gz` available first.
+Stop the Launcher before installation. The installer holds the Launcher state
+lock until completion and refuses an already-running Launcher; it never stops or
+restarts one. Relative `CAEMBLE_LAUNCHER_STATE_DIR` paths resolve from
+`app/launcher`, matching Launcher startup.
+
+Each project uses `poetry install --only main --no-interaction`. Shared Python
+packages are installed through path dependencies. Compatible project-local
+environments are reused. `predictor-training` shares the Prediction environment
+and is installed once. Evaluation's `prepare` and `doctor` run against the shipped
+Node archive; no npm install or UI build runs on the worker machine.
+
+The script does not update Git, recalculate lockfiles, install OS packages or
+download AI/TTS models. It preserves separately installed TTS language packages
+by using `install`, not `sync`. On failure it identifies the project and stage;
+completed installations remain available for a retry.
+
+When upgrading the old folder layout, leave the old `.venv` directories in place;
+the renamed projects receive new environments. Old `.env` and `runtime.toml`
+settings are copied only when absent at the destination. Conflicting settings
+stop installation without overwriting either file. Model stores, saved data and
+caches remain intact. Configure AI models and prepare TTS separately below.
+
+For individual development environments, run Poetry in the relevant project:
 
 ```powershell
 Push-Location ai
@@ -30,7 +61,7 @@ Copy-Item models.example.toml models.toml
 poetry install
 Pop-Location
 
-Push-Location cae
+Push-Location cae_simulation
 poetry install
 Pop-Location
 ```
@@ -39,7 +70,7 @@ For optimization, install Node 24.14 or later and the evaluation application on
 at least one launcher:
 
 ```powershell
-Push-Location evaluation
+Push-Location cae_evaluation
 poetry install
 Pop-Location
 ```
@@ -57,8 +88,8 @@ Developers run `npm run build` in `app/ui` to build the web and shared Node runt
 and package the release. Ship that archive with the checkout. `build:node`,
 `build:cli`, and `build:evaluation` only build the development runtime in `dist-cli`.
 Each running process keeps its selected version; an update leaves earlier versions intact.
-The optional `evaluation/runtime.toml` sets an absolute `node` executable path.
-`poetry run python -m app doctor` from `evaluation` remains a read-only check of
+The optional `cae_evaluation/runtime.toml` sets an absolute `node` executable path.
+`poetry run python -m app doctor` from `cae_evaluation` remains a read-only check of
 Node, required runtime assets and build metadata. Restart the launcher after
 updating it; only prepared, ready applications are advertised to the server.
 
@@ -87,7 +118,7 @@ are unavailable and start automatically after earlier instances finish cleanup.
 
 ## Predictor datasets and saved models
 
-Install `predictor` with `poetry install` in its own directory, then restart the
+Install `cae_prediction` with `poetry install` in its own directory, then restart the
 launcher. It uses CPU NumPy and the existing WebRTC/WebSocket SDK; it does not require a GPU,
 the AI application, or a separate signaling service. In Prediction, select a saved
 Forward model revision and then its replica and launcher. Calculation is optional.
@@ -198,7 +229,7 @@ ID remains bound to that source. Replace the staged bundle and explicitly update
 publish a new local revision when its content changes. Models keep their existing
 revision until explicitly updated. The source staging directory remains available
 for the operator to manage; browser requests never contain an absolute local path.
-See the [Predictor protocol](../../app/slaves/predictor/README.md) for manifest and
+See the [Predictor protocol](../../app/slaves/cae_prediction/README.md) for manifest and
 operation contracts.
 
 An open Prediction session retains CPU/RAM reservations. The UI finishes it after
@@ -228,7 +259,7 @@ does not imply that its files are missing. Inspect the pending operation before
 retrying; an API tombstone prevents late registration from resurrecting a deleted asset.
 
 Developer acceptance uses an isolated loopback fixture with real Chromium, SDK
-DataChannels and launcher-managed subprocesses. Build `app/sdk/master/js`, install
+DataChannels and launcher-managed subprocesses. Build `shared/sdk/master/js`, install
 the UI's Playwright dependency, SDK `[slave]` and Predictor environments, then run from
 `app/launcher`:
 
@@ -443,7 +474,7 @@ unversioned worker payloads; see the
 [CAE README](../development/cae.md) and [Solver development guide](../development/solver-development.md).
 
 The GPStation v1 API, attachment framing, and handler lifecycle are owned
-by `app/sdk`. Execution protocol 2 requires the API, launcher, slave and master
+by `shared/sdk`. Execution protocol 2 requires the API, launcher, slave and master
 SDKs to be upgraded together; it does not version CAE payload formats. The CAE
 AST allowlist is an API guardrail rather than an OS sandbox, so production
 workers run under a dedicated account or container. Deployment and launcher/API

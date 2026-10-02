@@ -1,5 +1,5 @@
-import type { CalculationInputLeaf } from '@/lib/calculation/types'
-import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
+import type { CalculationInputLeaf } from '@caemble/execution/calculation/types'
+import { convertUcumValue, type UcumUnit } from '@caemble/execution/cad/model'
 import type { ScalarPlotData } from './boxGridViewData'
 import type { HeatmapRaster, HeatmapRenderData } from './structuredField'
 import type { MeshRenderGeometry } from './meshFields'

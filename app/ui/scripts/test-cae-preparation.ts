@@ -5,16 +5,18 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { compileCatalogExample, readCatalogExamples } from './catalog-example-support'
-import { prepareCaeMeasurement, type CaePreparationRequest } from '../src/platform/node/build'
-import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
-import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
-import { buildMeasurement, measurementMaterialSnapshot } from '../src/lib/cad/execution/measurement'
-import { resolveSceneMaterials } from '../src/lib/material/document'
-import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
-import { cadSourceHash } from '../src/lib/cad/source/document'
-import type { Tensor } from '../src/lib/cad/model/types'
+import { prepareCaeMeasurement, type CaePreparationRequest } from '@caemble/execution/node/build'
+import { executeCompiledDocument, inspectCompiledDocument } from '@caemble/execution/cad/execution/userModule'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
+import { buildMeasurement, measurementMaterialSnapshot } from '@caemble/execution/cad/execution/measurement'
+import { resolveSceneMaterials } from '@caemble/execution/material/document'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { cadSourceHash } from '@caemble/execution/cad/source/document'
+import type { Tensor } from '@caemble/execution/cad/model/types'
 
-const { examples, catalog, meta } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+const { examples, catalog, meta } = readCatalogExamples(
+  path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'),
+)
 assert.ok(meta.experimentCount > 0, 'The Catalog must contain executable Examples.')
 assert.equal(examples.length, meta.experimentCount, 'The client build must cover every Catalog Example.')
 assert.equal(new Set(examples.map((example) => example.coordinate)).size, meta.experimentCount)
@@ -22,7 +24,7 @@ assert.equal(catalog.catalogRevision, meta.catalogRevision)
 const keyIndex = process.argv.indexOf('--key')
 const selected = keyIndex < 0 ? examples : examples.filter((example) => example.key === process.argv[keyIndex + 1])
 assert.ok(selected.length, 'The requested parity fixture must exist.')
-const declarations = path.resolve('src/lib/cad/api')
+const declarations = path.resolve('../../shared/execution/src/cad/api')
 const temporary = mkdtempSync(path.join(os.tmpdir(), 'caemble-client-build-'))
 cpSync('dist-cli', temporary, { recursive: true })
 const executable = path.join(temporary, 'worker.cjs')

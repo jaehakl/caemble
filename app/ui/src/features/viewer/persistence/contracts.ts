@@ -1,5 +1,5 @@
-import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
-export type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
+import type { MeasurementMaterialSnapshot } from '@caemble/execution/contracts/api/measurement'
+export type { MeasurementMaterialSnapshot } from '@caemble/execution/contracts/api/measurement'
 
 export function readMeasurementMaterialSnapshot(
   value: unknown,

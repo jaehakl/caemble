@@ -1,4 +1,4 @@
-import type { CadWorkerRequest, CadWorkerResponse } from '@/lib/cad/worker/protocol'
+import type { CadWorkerRequest, CadWorkerResponse } from '@caemble/execution/cad/worker/protocol'
 
 export type RunnerOperationEnvelope = Readonly<{
   type: 'inspect' | 'evaluate' | 'preview-geometry' | 'prepare' | 'prepare-prediction'

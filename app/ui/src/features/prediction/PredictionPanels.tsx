@@ -1,6 +1,6 @@
 import { TensorEditor } from '@/components/tensor-editor'
 import { VarsEditor } from '@/components/vars-editor'
-import { varsTensorFromFlat, type Vars } from '@/lib/cad/model'
+import { varsTensorFromFlat, type Vars } from '@caemble/execution/cad/model'
 import type { PredictionVarsSchema, PredictionCalculations } from './usePredictionModels'
 import type { SavedPredictionCalculation } from './predictionContextData'
 import type { ValidationRow } from './results'

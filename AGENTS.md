@@ -2,10 +2,10 @@
 
 - Open frontend source files explicitly as UTF-8 so Korean text is not corrupted.
 - Use helper functions sparingly. Do not introduce a helper for three lines or fewer unless it is used more than twice.
-- Before adding or changing a CAE Solver, read `docs/development/solver-development.md` and `app/slaves/cae/AGENTS.md` completely.
-- For partial CAE changes, use `python -m tests.run affected` from `app/slaves/cae`; use `--list` to review selection reasons. Default `affected` and `quick` run static and low-cost checks without product Solver calls. Add `--smoke` or `--validation` independently when needed; `--tests` does not bypass cost limits. Use `examples --key <key>` for a fresh nominal example and its 180-second budget. Run `full` only for explicitly requested full validation or release checks after implementation is settled. See `docs/development/solver-development.md` for ownership and reports.
-- QuantityKind, Material, and Solver catalog data belongs only in `app/catalog/caemble_catalog/catalog.sqlite3`. Do not add catalog data as TS, JSON, generated JS, or Markdown.
-- `app/slaves/cae/manifest.json` and `app/slaves/ai/manifest.json` are launcher executable manifests, not Solver contracts; keep them.
+- Before adding or changing a CAE Solver, read `docs/development/solver-development.md` and `app/slaves/cae_simulation/AGENTS.md` completely.
+- For partial CAE changes, use `python -m tests.run affected` from `app/slaves/cae_simulation`; use `--list` to review selection reasons. Default `affected` and `quick` run static and low-cost checks without product Solver calls. Add `--smoke` or `--validation` independently when needed; `--tests` does not bypass cost limits. Use `examples --key <key>` for a fresh nominal example and its 180-second budget. Run `full` only for explicitly requested full validation or release checks after implementation is settled. See `docs/development/solver-development.md` for ownership and reports.
+- QuantityKind, Material, and Solver catalog data belongs only in `shared/catalog/caemble_catalog/catalog.sqlite3`. Do not add catalog data as TS, JSON, generated JS, or Markdown.
+- `app/slaves/cae_simulation/manifest.json` and `app/slaves/ai/manifest.json` are launcher executable manifests, not Solver contracts; keep them.
 - User-manual Markdown under `docs/` is the shared source for web `/docs` and CLI documentation. Edit one source; keep implementation-derived syntax and executable examples connected to their declarations and fixtures.
 
 ## External authoring agents

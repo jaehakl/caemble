@@ -10,9 +10,9 @@ from webrtc_harness import APP_ROOT, WebRtcHarness
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.getenv("RUN_WEBRTC_BROWSER_TESTS") != "1", reason="Set RUN_WEBRTC_BROWSER_TESTS=1 for real browser tests")
 async def test_browser_calls_restart_and_cancel_real_launcher_processes(tmp_path, monkeypatch):
-    executable = APP_ROOT / "sdk/.venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    executable = APP_ROOT.parent / "shared/sdk/.venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not executable.is_file():
-        pytest.fail("Install SDK [slave] dependencies in app/sdk/.venv before this acceptance test.")
+        pytest.fail("Install SDK [slave] dependencies in shared/sdk/.venv before this acceptance test.")
     monkeypatch.setattr(SlaveApp, "python_executable", property(lambda _: executable))
     (tmp_path / "fixture_worker.py").write_text(
         "import asyncio,os\nfrom sdk.slave import SlaveApp,run_app\n"

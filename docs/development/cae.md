@@ -1,6 +1,6 @@
 # Caemble CAE worker
 
-Commands and component-relative paths in this document are relative to `app/slaves/cae`, unless stated otherwise.
+Commands and component-relative paths in this document are relative to `app/slaves/cae_simulation`, unless stated otherwise.
 
 The CAE worker receives a trusted built Measurement from the GPStation server
 over its job WebSocket, executes its Solvers, and uploads RecordedData directly
@@ -18,7 +18,7 @@ project's `AGENTS.md` completely before adding or changing a Solver.
 poetry install
 ```
 
-Poetry is configured to use `app/slaves/cae/.venv`. If another environment is
+Poetry is configured to use `app/slaves/cae_simulation/.venv`. If another environment is
 selected, remove that Poetry environment and reinstall from this directory.
 
 ## Ownership
@@ -46,7 +46,7 @@ or Solver manifests.
 ## Contracts
 
 QuantityKind, Material Model definitions, and Solver descriptors come only from
-`app/catalog/caemble_catalog/catalog.sqlite3`. The worker loads active Solver
+`shared/catalog/caemble_catalog/catalog.sqlite3`. The worker loads active Solver
 descriptors and model definitions at startup, then closes the database. Solver
 modules are imported only inside the spawned invocation child. ABI 3 receives
 Material model instances, normalized parameters and model-group selections from
@@ -122,7 +122,7 @@ without a managed context retains its existing local CPU-budget policy. See
 
 ## Tests
 
-Run from `app/slaves/cae` after installing the project and development dependencies:
+Run from `app/slaves/cae_simulation` after installing the project and development dependencies:
 
 ```powershell
 poetry run python -m tests.run affected

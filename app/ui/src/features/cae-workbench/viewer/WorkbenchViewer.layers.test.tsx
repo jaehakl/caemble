@@ -6,7 +6,7 @@ import { calculateBoxGridView, type BoxGridViewRequest } from '@/features/viewer
 import { viewerDisplayFixture, stressViewerFixture } from './viewerDisplay.fixture'
 import { WorkbenchViewer } from './WorkbenchViewer'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
-import { isDataTensor } from '@/lib/cad/model/dataTensor'
+import { isDataTensor } from '@caemble/execution/cad/model/dataTensor'
 import { createViewerSettings } from '@/features/viewer/viewer/comparisonSettings'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
 

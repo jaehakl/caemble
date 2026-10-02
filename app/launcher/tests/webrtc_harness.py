@@ -22,8 +22,8 @@ from app.slave_registry import SlaveApp, SlaveAppRegistry
 from app.subprocess_manager import WorkerManager
 
 APP_ROOT = Path(__file__).resolve().parents[2]
-SDK_DIST = APP_ROOT / "sdk/master/js/dist"
-BROWSER_RUNNER = APP_ROOT / "sdk/master/js/tests/webrtc-browser.mjs"
+SDK_DIST = APP_ROOT.parent / "shared/sdk/master/js/dist"
+BROWSER_RUNNER = APP_ROOT.parent / "shared/sdk/master/js/tests/webrtc-browser.mjs"
 
 
 class WebRtcHarness:

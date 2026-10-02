@@ -70,7 +70,7 @@ class HybridEndToEndTests(unittest.TestCase):
     async def verify(self, database):
         repo = Path(__file__).resolve().parents[3]
         suffix = Path("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        cae_python = repo / "app/slaves/cae/.venv" / suffix
+        cae_python = repo / "app/slaves/cae_simulation/.venv" / suffix
         launcher_python = repo / "app/launcher/.venv" / suffix
         owner, _, experiment_id, _ = await _seed_owners(database)
         engine = create_async_engine(make_async_db_url(_database_url(database)))

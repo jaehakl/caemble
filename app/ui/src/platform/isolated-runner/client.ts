@@ -7,7 +7,7 @@ import type {
   CadGeometryPreviewResponse,
   CadWorkerRequest,
   CadWorkerResponse,
-} from '@/lib/cad/worker/protocol'
+} from '@caemble/execution/cad/worker/protocol'
 import {
   assertRunnerOperationResultEnvelope,
   assertRunnerOperationStartedEnvelope,
@@ -231,15 +231,15 @@ export function previewGeometryInIsolatedRunner(
 }
 
 export function prepareInIsolatedRunner(
-  request: import('@/lib/cad/worker/protocol').CadPreparationRequest,
-  callbacks: RunnerCallbacks<import('@/lib/cad/worker/protocol').CadPreparationResponse>,
+  request: import('@caemble/execution/cad/worker/protocol').CadPreparationRequest,
+  callbacks: RunnerCallbacks<import('@caemble/execution/cad/worker/protocol').CadPreparationResponse>,
 ) {
   return runInIsolatedRunner(request, callbacks)
 }
 
 export function preparePredictionInIsolatedRunner(
-  request: import('@/lib/cad/worker/protocol').CadPredictionRequest,
-  callbacks: RunnerCallbacks<import('@/lib/cad/worker/protocol').CadPredictionResponse>,
+  request: import('@caemble/execution/cad/worker/protocol').CadPredictionRequest,
+  callbacks: RunnerCallbacks<import('@caemble/execution/cad/worker/protocol').CadPredictionResponse>,
 ) {
   return runInIsolatedRunner(request, callbacks)
 }

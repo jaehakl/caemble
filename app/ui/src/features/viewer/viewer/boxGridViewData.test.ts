@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { calculateBoxGridView, opticalPlotData, type ScalarPlotData } from './boxGridViewData'
 import { calculationExampleInput } from '@/authoring/examples'
-import type { CalculationInputLeaf } from '@/lib/calculation/types'
+import type { CalculationInputLeaf } from '@caemble/execution/calculation/types'
 
 describe('optical power display', () => {
   it('permutes a frequency axis together with every spatial row', () => {

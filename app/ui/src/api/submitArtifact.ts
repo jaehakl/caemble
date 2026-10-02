@@ -1,8 +1,8 @@
 import { createCaeBatches } from './cae'
 import type { CaembleClient } from './http'
-import { type BuildArtifact, type BuildArtifactItem } from '@/contracts/build'
-import { parseArtifactInput, parseBuildArtifact } from '@/lib/cae/artifact'
-import { cadSourceHash } from '@/lib/cad/source/document'
+import { type BuildArtifact, type BuildArtifactItem } from '@caemble/execution/contracts/build'
+import { parseArtifactInput, parseBuildArtifact } from '@caemble/execution/cae/artifact'
+import { cadSourceHash } from '@caemble/execution/cad/source/document'
 import { externalizeObjects, OBJECT_INLINE_BYTES, uploadObject } from './objectStorage'
 import type { ResourceRequest } from '@/contracts/api/execution'
 

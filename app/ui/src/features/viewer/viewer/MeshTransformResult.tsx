@@ -7,7 +7,7 @@ import { MeshPlayback } from './MeshPlayback'
 import { meshFrameAtTime } from './meshDeformation'
 import { createMeshTransformRenderData, prepareMeshTransform, type RecordedMeshTransform } from './meshTransforms'
 import type { MeshRenderData } from './meshFields'
-import type { UcumUnit } from '@/lib/cad/model'
+import type { UcumUnit } from '@caemble/execution/cad/model'
 
 export function MeshTransformResult({
   motion,

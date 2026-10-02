@@ -5,8 +5,8 @@ import type {
   PredictionDatasetSelection,
   PredictionModelRecord,
 } from '@/contracts/api/prediction'
-import type { RecordedDataRule, VarsSchemaEntry } from '@/lib/cad/model'
-import type { RecordedResultContracts } from '@/contracts/results'
+import type { RecordedDataRule, VarsSchemaEntry } from '@caemble/execution/cad/model'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
 import type { PredictionContext } from './predictionContextData'
 import type { PredictionSetup } from './usePredictionModels'
 import type { PredictionDirection } from './types'

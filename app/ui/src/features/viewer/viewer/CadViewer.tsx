@@ -6,8 +6,8 @@ import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerCont
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
 import type { CadViewerSourceLookupStatus } from './selection'
-import type { UcumUnit } from '@/lib/cad/model'
-import type { PolylineBundle } from '@/lib/cad/model'
+import type { UcumUnit } from '@caemble/execution/cad/model'
+import type { PolylineBundle } from '@caemble/execution/cad/model'
 
 export type { CadViewerDocument } from './cadViewerContent'
 

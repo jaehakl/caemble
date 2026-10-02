@@ -2,15 +2,21 @@
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { compileCatalogExample, readCatalogExamples } from '../../../../scripts/catalog-example-support'
-import { installCatalogRuntimeSlice } from '../../catalog/runtime'
-import { cadElementDefinitions } from '../evaluation/registry'
-import { varsTensorFromFlat } from '../model/tensor'
-import { executeCompiledDocument, inspectCompiledDocument, prepareCompiledPrediction } from './userModule'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { cadElementDefinitions } from '@caemble/execution/cad/evaluation/registry'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
+import {
+  executeCompiledDocument,
+  inspectCompiledDocument,
+  prepareCompiledPrediction,
+} from '@caemble/execution/cad/execution/userModule'
 
 afterEach(() => vi.restoreAllMocks())
 
 it('prepares real Catalog BoxGrids with full-evaluation parity and no solid builds', () => {
-  const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+  const { examples, catalog } = readCatalogExamples(
+    path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'),
+  )
   installCatalogRuntimeSlice(catalog)
   for (const suffix of ['matched-impedance-duct', 'continuous-ray-optics']) {
     const example = examples.find((value) => value.coordinate.includes(`/${suffix}@`))!

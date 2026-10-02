@@ -1,8 +1,8 @@
 import type * as Monaco from 'monaco-editor'
-import coreTypes from '../api/caemble-core.d.ts?raw'
-import jsxTypes from '../api/cad-jsx.d.ts?raw'
-import { cadCompilerOptions } from './options'
-import { calculationCompilerOptions } from '../../calculation/compilerOptions'
+import coreTypes from '@caemble/execution/cad/api/caemble-core.d.ts?raw'
+import jsxTypes from '@caemble/execution/cad/api/cad-jsx.d.ts?raw'
+import { cadCompilerOptions } from '@caemble/execution/cad/compiler/options'
+import { calculationCompilerOptions } from '@caemble/execution/calculation/compilerOptions'
 
 let didSetup = false
 

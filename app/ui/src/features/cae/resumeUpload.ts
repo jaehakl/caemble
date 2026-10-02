@@ -1,7 +1,7 @@
 import { browserClient } from '@/api/http'
 import { submitArtifact } from '@/api/submitArtifact'
 import type { CaeBatch } from '@/contracts/api/cae'
-import { parseBuildArtifact } from '@/lib/cae/artifact'
+import { parseBuildArtifact } from '@caemble/execution/cae/artifact'
 import { BrowserArtifactStore } from '@/platform/browser/artifactStore'
 
 export async function resumeBrowserUpload(

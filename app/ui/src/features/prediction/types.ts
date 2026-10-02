@@ -1,1 +1,1 @@
-export * from '@/lib/prediction/types'
+export * from '@caemble/execution/prediction/types'

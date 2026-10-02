@@ -1,41 +1,41 @@
 import assert from 'node:assert/strict'
 import { calculationExampleInput } from '../src/authoring/examples'
-import { createDataTensor } from '../src/lib/cad/model/dataTensor'
-import { varsTensorFromFlat } from '../src/lib/cad/model/tensor'
-import { CALCULATION_SOURCE_SKELETON } from '../src/lib/calculation/declarations'
+import { createDataTensor } from '@caemble/execution/cad/model/dataTensor'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
+import { CALCULATION_SOURCE_SKELETON } from '@caemble/execution/calculation/declarations'
 import {
   analyzeCalculationDependencies,
   calculationExperimentRecordReference,
   calculationInputBindingName,
-} from '../src/lib/calculation/dependencies'
-import { CALCULATION_MATHJS_NAMES } from '../src/lib/calculation/mathjsManifest'
-import { CALCULATION_MATHJS_RUNTIME } from '../src/lib/calculation/mathRuntime'
-import { CALCULATION_SHADOWED_GLOBAL_NAMES } from '../src/lib/calculation/runtimeGlobals'
+} from '@caemble/execution/calculation/dependencies'
+import { CALCULATION_MATHJS_NAMES } from '@caemble/execution/calculation/mathjsManifest'
+import { CALCULATION_MATHJS_RUNTIME } from '@caemble/execution/calculation/mathRuntime'
+import { CALCULATION_SHADOWED_GLOBAL_NAMES } from '@caemble/execution/calculation/runtimeGlobals'
 import {
   buildExperimentRecordCatalogItems,
   requiredCalculationRecordedDataRules,
 } from '../src/features/calculation/experimentRecordCatalogModel'
 import { insertCalculationSourceAtSelection } from '../src/features/calculation/calculationSourceInsertion'
-import { createCalculationInput } from '../src/lib/calculation/input'
-import { calculationIndex } from '../src/lib/calculation/indexGuard'
-import { createCalculationConsole } from '../src/lib/calculation/log'
+import { createCalculationInput } from '@caemble/execution/calculation/input'
+import { calculationIndex } from '@caemble/execution/calculation/indexGuard'
+import { createCalculationConsole } from '@caemble/execution/calculation/log'
 import {
   assertCalculationRunnerLogEnvelope,
   assertCalculationRunnerResultEnvelope,
-} from '../src/lib/calculation/protocol'
-import { analyzeCalculationSource } from '../src/lib/calculation/sourcePolicy'
+} from '@caemble/execution/calculation/protocol'
+import { analyzeCalculationSource } from '@caemble/execution/calculation/sourcePolicy'
 import {
   CALCULATION_INPUT_MAX_BYTES,
   CALCULATION_OUTPUT_MAX_ELEMENTS,
   CalculationExecutionError,
   calculationInputDtypes,
-} from '../src/lib/calculation/types'
+} from '@caemble/execution/calculation/types'
 import {
   assertCalculationInput,
   normalizeCalculationOutput,
   normalizeCalculationRunnerOutput,
-} from '../src/lib/calculation/validation'
-import type { RecordedDataRule } from '../src/lib/cad/model/descriptor'
+} from '@caemble/execution/calculation/validation'
+import type { RecordedDataRule } from '@caemble/execution/cad/model/descriptor'
 
 assert.deepEqual(Object.keys(CALCULATION_MATHJS_RUNTIME).sort(), [...CALCULATION_MATHJS_NAMES].sort())
 assert.equal((CALCULATION_MATHJS_RUNTIME.add as (left: number, right: number) => number)(2, 3), 5)

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
-import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
-import { assertExperimentAuthoringSemantics } from '../src/lib/cad/simulation/authoringSemantics'
-import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
-import { resolveSceneMaterials } from '../src/lib/material/document'
+import { executeCompiledDocument, inspectCompiledDocument } from '@caemble/execution/cad/execution/userModule'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
+import { assertExperimentAuthoringSemantics } from '@caemble/execution/cad/simulation/authoringSemantics'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { resolveSceneMaterials } from '@caemble/execution/material/document'
 import { compileCatalogExample, readCatalogExamples } from './catalog-example-support'
 
-const database = path.resolve(process.argv[2] ?? '../catalog/caemble_catalog/catalog.sqlite3')
+const database = path.resolve(process.argv[2] ?? '../../shared/catalog/caemble_catalog/catalog.sqlite3')
 const outputDirectory = path.resolve(process.argv[3] ?? 'node_modules/.tmp/spectrometer')
 const { examples, catalog } = readCatalogExamples(database)
 installCatalogRuntimeSlice(catalog)

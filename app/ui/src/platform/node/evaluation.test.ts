@@ -4,16 +4,19 @@ import path from 'node:path'
 import { expect, it } from 'vitest'
 import { readCatalogExamples } from '../../../scripts/catalog-example-support'
 import { calculationExampleInput, calculationExamples } from '@/authoring/examples'
-import { createDataTensor } from '@/lib/cad/model/dataTensor'
-import type { DataSchemaAxis } from '@/lib/cad/model/descriptor'
-import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
-import { prepareRecordedCalculationInput } from '@/lib/calculation/recordedInput'
-import { preparePredictedCalculationInput, type PredictedCalculationArtifact } from '@/lib/calculation/predictedInput'
-import type { RecordedDataRule } from '@/lib/cad/model/descriptor'
-import { analyzeCalculationSource } from '@/lib/calculation/sourcePolicy'
-import { transformCalculationSource } from '@/lib/calculation/transform'
-import { executeCalculation } from '@/lib/calculation/execute'
-import { evaluateRequest } from './evaluation'
+import { createDataTensor } from '@caemble/execution/cad/model/dataTensor'
+import type { DataSchemaAxis } from '@caemble/execution/cad/model/descriptor'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
+import { prepareRecordedCalculationInput } from '@caemble/execution/calculation/recordedInput'
+import {
+  preparePredictedCalculationInput,
+  type PredictedCalculationArtifact,
+} from '@caemble/execution/calculation/predictedInput'
+import type { RecordedDataRule } from '@caemble/execution/cad/model/descriptor'
+import { analyzeCalculationSource } from '@caemble/execution/calculation/sourcePolicy'
+import { transformCalculationSource } from '@caemble/execution/calculation/transform'
+import { executeCalculation } from '@caemble/execution/calculation/execute'
+import { evaluateRequest } from '@caemble/execution/node/evaluation'
 
 const signal = calculationExampleInput.signal
 const schema = {
@@ -162,7 +165,9 @@ it.each(['calculate', 'calculate_prediction'] as const)(
 )
 
 it('prepares Candidate records without a Solver build or a Measurement', async () => {
-  const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+  const { examples, catalog } = readCatalogExamples(
+    path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'),
+  )
   const example = examples.find((item) => item.key === 'hybrid-box-conductor')!
   expect(example).toBeDefined()
   const request = {
@@ -176,7 +181,7 @@ it('prepares Candidate records without a Solver build or a Measurement', async (
     },
     record_names: ['totalCurrent'],
   }
-  const candidate = await evaluateRequest(request, path.resolve('src/lib/cad/api'))
+  const candidate = await evaluateRequest(request, path.resolve('../../shared/execution/src/cad/api'))
   expect(candidate).toMatchObject({
     vars: request.build.vars,
     rules: [{ label: 'totalCurrent' }],

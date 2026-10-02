@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { webcrypto } from 'node:crypto'
 import { createCaembleClient } from '@/api/http'
 import { objectHash } from '@/api/objectStorage'
-import { BOX_GRID_AXES } from '@/contracts/boxGrid'
+import { BOX_GRID_AXES } from '@caemble/execution/contracts/boxGrid'
 import { dataCommand } from './data'
 import type { CommandContext } from './types'
 

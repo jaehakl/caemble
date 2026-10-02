@@ -29,11 +29,11 @@ const server = await createServer({
       import { createPointCloudData } from '/src/features/viewer/viewer/pointCloudData.ts';
       import { BoxGridResult } from '/src/features/viewer/viewer/BoxGridResult.tsx';
       import { WorkbenchViewer } from '/src/features/cae-workbench/viewer/WorkbenchViewer.tsx';
-      import { materialVarsHash } from '/src/lib/material/resolution.ts';
+      import { materialVarsHash } from '@caemble/execution/material/resolution';
       import JscadViewer from '/src/features/viewer/viewer/JscadViewer.tsx';
       import { CalculationOutputChart } from '/src/features/calculation/CalculationOutputChart.tsx';
-      import { boxGrid } from '/src/lib/calculation/boxGridProject.ts';
-      import { normalizeCalculationOutput } from '/src/lib/calculation/validation.ts';
+      import { boxGrid } from '@caemble/execution/calculation/boxGridProject';
+      import { normalizeCalculationOutput } from '@caemble/execution/calculation/validation';
       import { MeshFieldResult } from '/src/features/viewer/viewer/MeshFieldResult.tsx';
       import '/src/index.css';
       const shape = [4,3,2,2,2,2,3];
@@ -86,7 +86,7 @@ const server = await createServer({
       window.renderRecordedRays=async({input,packet})=>{
         const {parseResultPolylines}=await import('/src/features/viewer/viewer/resultPolylines.ts');
         const {renderCanonicalGeometryScene}=await import('/src/lib/cad/execution/manifoldRender.ts');
-        const {deserializeCadScene}=await import('/src/lib/cad/execution/mesh.ts');
+        const {deserializeCadScene}=await import('@caemble/execution/cad/execution/mesh');
         const {CadViewer}=await import('/src/features/viewer/viewer/CadViewer.tsx');
         const contracts={}, rules=[], data={};
         for(const [name,item] of Object.entries(packet.visualizations)){
@@ -137,7 +137,7 @@ const server = await createServer({
       window.renderRecordedHeatmap=async()=>{
         const {input,record}=await (await fetch('/recorded-heatmap-fixture')).json();
         const {renderCanonicalGeometryScene}=await import('/src/lib/cad/execution/manifoldRender.ts');
-        const {deserializeCadScene}=await import('/src/lib/cad/execution/mesh.ts');
+        const {deserializeCadScene}=await import('@caemble/execution/cad/execution/mesh');
         const {CadViewer}=await import('/src/features/viewer/viewer/CadViewer.tsx');
         const presentation=input.presentation.experiment;
         const serialized=await renderCanonicalGeometryScene(input.measurement.experiment.scene,{tree:presentation.tree,parts:presentation.materials});

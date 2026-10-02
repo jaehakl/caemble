@@ -2,15 +2,15 @@
 import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { compileCatalogExample, readCatalogExamples } from '../../../scripts/catalog-example-support'
-import { executeCompiledDocument } from '../cad/execution/userModule'
-import { Material } from '../cad/model/material'
-import { MaterialInteraction } from '../cad/model/materialInteraction'
-import { installCatalogRuntimeSlice } from '../catalog/runtime'
-import { resolveSceneMaterials } from './document'
-import { selectTaskInteractionModels } from './interactions'
-import { materialVarsHash } from './resolution'
+import { executeCompiledDocument } from '@caemble/execution/cad/execution/userModule'
+import { Material } from '@caemble/execution/cad/model/material'
+import { MaterialInteraction } from '@caemble/execution/cad/model/materialInteraction'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { resolveSceneMaterials } from '@caemble/execution/material/document'
+import { selectTaskInteractionModels } from '@caemble/execution/material/interactions'
+import { materialVarsHash } from '@caemble/execution/material/resolution'
 
-const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+const { examples, catalog } = readCatalogExamples(path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'))
 const example = examples.find((item) => item.key === 'sliding-contact')!
 const compiled = compileCatalogExample(example, catalog)
 beforeEach(() => installCatalogRuntimeSlice(catalog))

@@ -19,7 +19,7 @@ dependencies = [
 packages = [{ include = "app" }]
 
 [tool.poetry.dependencies]
-caemble-runtime-sdk = { path = "../../sdk", develop = true, extras = ["slave"] }
+caemble-runtime-sdk = { path = "../../../shared/sdk", develop = true, extras = ["slave"] }
 torch = { version = "2.7.0+cpu", source = "pytorch-cpu" }
 
 [[tool.poetry.source]]

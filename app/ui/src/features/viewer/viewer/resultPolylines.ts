@@ -1,7 +1,12 @@
-import { convertUcumValue, type DataSchema, type RecordedData, type RecordedDataRule } from '@/lib/cad/model'
-import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
-import type { RecordedResultContracts } from '@/contracts/results'
-import type { PolylineBundle } from '@/lib/cad/model/rayPaths'
+import {
+  convertUcumValue,
+  type DataSchema,
+  type RecordedData,
+  type RecordedDataRule,
+} from '@caemble/execution/cad/model'
+import { createDataTensorAccessor, isDataTensor } from '@caemble/execution/cad/model/dataTensor'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import type { PolylineBundle } from '@caemble/execution/cad/model/rayPaths'
 
 export function parseResultPolylines(
   contracts: RecordedResultContracts,

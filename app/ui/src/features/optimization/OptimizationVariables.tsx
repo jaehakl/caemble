@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { OptimizationAxis } from '@/contracts/api/optimization'
-import { flattenVarsTensor, type Vars } from '@/lib/cad/model'
-import type { VarsSchema } from '@/lib/cad/model/vars'
+import { flattenVarsTensor, type Vars } from '@caemble/execution/cad/model'
+import type { VarsSchema } from '@caemble/execution/cad/model/vars'
 
 export function OptimizationVariables({
   schema,

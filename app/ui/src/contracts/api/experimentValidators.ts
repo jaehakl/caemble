@@ -1,6 +1,6 @@
 import { recordedResultContractsSchema } from '../resultValidators'
 import { z } from 'zod'
-import { viewerDefaultsSchema } from '../viewerDefaults'
+import { viewerDefaultsSchema } from '@caemble/execution/contracts/viewerDefaults'
 import type {
   AvailableExperimentRecord,
   AvailableExperimentsResponse,
@@ -8,7 +8,7 @@ import type {
   ExperimentRecordedDataRecord,
   SaveExperimentResponse,
   SavedExperimentRecord,
-} from './experiment'
+} from '@caemble/execution/contracts/api/experiment'
 import { databaseIdSchema, parseGetListResponse } from './validators'
 
 export const experimentSourceBundleSchema = z

@@ -1,4 +1,4 @@
-import { analyzeCalculationSource } from '@/lib/calculation/sourcePolicy'
+import { analyzeCalculationSource } from '@caemble/execution/calculation/sourcePolicy'
 import { describe, expect, it } from 'vitest'
 import { calculationExampleInput } from '@/authoring/examples'
 import {
@@ -6,12 +6,12 @@ import {
   projectBoxGrid,
   projectionCode,
   type BoxGridProjectionOptions,
-} from '@/lib/calculation/boxGridProject'
-import type { CalculationInputLeaf } from '@/lib/calculation/types'
-import { normalizeCalculationOutput, normalizeCalculationRunnerOutput } from '@/lib/calculation/validation'
-import { executeCalculation } from '@/lib/calculation/execute'
-import { transformCalculationSource } from '@/lib/calculation/transform'
-import { analyzeCalculationDependencies } from '@/lib/calculation/dependencies'
+} from '@caemble/execution/calculation/boxGridProject'
+import type { CalculationInputLeaf } from '@caemble/execution/calculation/types'
+import { normalizeCalculationOutput, normalizeCalculationRunnerOutput } from '@caemble/execution/calculation/validation'
+import { executeCalculation } from '@caemble/execution/calculation/execute'
+import { transformCalculationSource } from '@caemble/execution/calculation/transform'
+import { analyzeCalculationDependencies } from '@caemble/execution/calculation/dependencies'
 import { scalarPlotData, calculateBoxGridView, boxGridArrowComponents } from '@/features/viewer/viewer/boxGridViewData'
 import { createPointCloudData } from '@/features/viewer/viewer/pointCloudData'
 

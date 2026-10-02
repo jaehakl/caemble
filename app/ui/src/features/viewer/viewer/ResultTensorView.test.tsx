@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import type { RecordedResultContract } from '@/contracts/results'
-import type { RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedResultContract } from '@caemble/execution/contracts/results'
+import type { RecordedDataRule } from '@caemble/execution/cad/model'
 import { ResultTensorView } from './ResultTensorView'
 
 vi.mock('./RecordedDataResults', () => ({

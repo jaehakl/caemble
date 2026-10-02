@@ -8,11 +8,11 @@ import { format } from 'prettier'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const changed = []
 
-const elementManifestPath = path.join(root, 'src/lib/cad/elements/manifest.json')
+const elementManifestPath = path.join(root, '../../shared/execution/src/cad/elements/manifest.json')
 const elementManifest = JSON.parse(await readFile(elementManifestPath, 'utf8'))
 
 function catalogQuery(resource, key, ...identityArguments) {
-  const catalogRoot = path.resolve(root, '../catalog')
+  const catalogRoot = path.resolve(root, '../../shared/catalog')
   const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
   const output = execFileSync(
     executable,
@@ -203,9 +203,9 @@ export const QuantityKind = new Proxy(Object.create(null) as Record<string, Quan
 `
 }
 
-const coreDeclarationPath = path.join(root, 'src/lib/cad/api/caemble-core.d.ts')
+const coreDeclarationPath = path.join(root, '../../shared/execution/src/cad/api/caemble-core.d.ts')
 const coreDeclaration = await formatGenerated(
-  'src/lib/cad/api/caemble-core.d.ts',
+  '../../shared/execution/src/cad/api/caemble-core.d.ts',
   await readFile(coreDeclarationPath, 'utf8').then((source) =>
     source
       .replace(/^\/\/ @caemble\/core declaration version: .*$/m, '// Generated @caemble/core declaration.')
@@ -223,17 +223,17 @@ const coreDeclaration = await formatGenerated(
       ),
   ),
 )
-const jsxDeclaration = await formatGenerated('src/lib/cad/api/cad-jsx.d.ts', generatedJsxDeclaration())
+const jsxDeclaration = await formatGenerated('../../shared/execution/src/cad/api/cad-jsx.d.ts', generatedJsxDeclaration())
 await Promise.all([
-  emit('src/lib/cad/elements/generated.ts', generatedElementRegistry()),
-  emit('src/lib/cad/api/cad-jsx.d.ts', jsxDeclaration),
-  emit('src/lib/cad/api/caemble-core.d.ts', coreDeclaration),
-  emit('src/lib/quantitykind/index.ts', await formatGenerated('src/lib/quantitykind/index.ts', quantityKindFacade())),
+  emit('../../shared/execution/src/cad/elements/generated.ts', generatedElementRegistry()),
+  emit('../../shared/execution/src/cad/api/cad-jsx.d.ts', jsxDeclaration),
+  emit('../../shared/execution/src/cad/api/caemble-core.d.ts', coreDeclaration),
+  emit('../../shared/execution/src/quantitykind/index.ts', await formatGenerated('../../shared/execution/src/quantitykind/index.ts', quantityKindFacade())),
 ])
 
 const [authoringReferenceModule, generatedElementsModule, localExperimentCodeModule] = await Promise.all([
-  loadBundledModule(path.join(root, 'src/lib/cad/authoringReference.ts')),
-  loadBundledModule(path.join(root, 'src/lib/cad/elements/generated.ts')),
+  loadBundledModule(path.join(root, '../../shared/execution/src/cad/authoringReference.ts')),
+  loadBundledModule(path.join(root, '../../shared/execution/src/cad/elements/generated.ts')),
   loadBundledModule(path.join(root, 'src/lib/localExperimentCode.ts')),
 ])
 const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({

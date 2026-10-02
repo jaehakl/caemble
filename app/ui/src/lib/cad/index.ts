@@ -1,14 +1,14 @@
-export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
-export { cadAuthoringContract, cadElementCatalog } from './catalog'
+export { evaluateCad, evaluateCadScene } from '@caemble/execution/cad/evaluation/evaluator'
+export { cadAuthoringContract, cadElementCatalog } from '@caemble/execution/cad/catalog'
 export {
   insertPrimitiveAfterCursorLine,
   operationAuthoringElements,
   primitiveAuthoringElements,
   wrapSelectionWithOperation,
   type CadAuthoringEditResult,
-} from './source/authoringEdits'
-export { applyCadSceneGroups } from './evaluation/groups'
-export { Fragment, h } from './evaluation/jsx'
+} from '@caemble/execution/cad/source/authoringEdits'
+export { applyCadSceneGroups } from '@caemble/execution/cad/evaluation/groups'
+export { Fragment, h } from '@caemble/execution/cad/evaluation/jsx'
 export type {
   CadScene,
   CadSceneGroup,
@@ -21,7 +21,7 @@ export type {
   CadElementManifest,
   CadElementPropertyManifest,
   CadElementSurfaceManifest,
-} from './evaluation/types'
+} from '@caemble/execution/cad/evaluation/types'
 export type {
   CanonicalAffineMatrixV2,
   CanonicalBooleanNodeV2,
@@ -38,9 +38,16 @@ export type {
   CanonicalSurfaceSelectorV2,
   CanonicalTransformNodeV2,
   CanonicalVec3V2,
-} from './evaluation/canonicalTypes'
-export { CadModelError, isFloatDType, Mat, Material, MaterialInteraction, radians } from './model/core'
-export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/definition'
+} from '@caemble/execution/cad/evaluation/canonicalTypes'
+export {
+  CadModelError,
+  isFloatDType,
+  Mat,
+  Material,
+  MaterialInteraction,
+  radians,
+} from '@caemble/execution/cad/model/core'
+export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from '@caemble/execution/cad/model/definition'
 export type {
   CadDefinition,
   ExperimentDefinitionOptions,
@@ -50,16 +57,16 @@ export type {
   TaskDefinitionOptions,
   TaskModelContext,
   VarsSchemaDefinition,
-} from './model/definition'
+} from '@caemble/execution/cad/model/definition'
 export {
   generateRandomVars,
   normalizeVars,
   normalizeVarsSchema,
   varsFingerprint,
   varsSchemaFingerprint,
-} from './model/vars'
-export { convertUcumValue, normalizeUcumUnit } from './model/units'
-export { normalizeDataValueDescriptor } from './model/core'
+} from '@caemble/execution/cad/model/vars'
+export { convertUcumValue, normalizeUcumUnit } from '@caemble/execution/cad/model/units'
+export { normalizeDataValueDescriptor } from '@caemble/execution/cad/model/core'
 export type {
   CartesianBasis,
   DataAxis,
@@ -104,17 +111,17 @@ export type {
   SurfaceGroupMap,
   TensorQuantityKindName,
   VarsSchemaEntry,
-} from './model/core'
-export type { UcumUnit } from './model/units'
-export type { Rotation, Tensor, Vars, Vec3 } from './model/types'
-export { createSolidPointTester } from './geometry/solid'
-export type { SolidPointTester } from './geometry/solid'
+} from '@caemble/execution/cad/model/core'
+export type { UcumUnit } from '@caemble/execution/cad/model/units'
+export type { Rotation, Tensor, Vars, Vec3 } from '@caemble/execution/cad/model/types'
+export { createSolidPointTester } from '@caemble/execution/cad/geometry/solid'
+export type { SolidPointTester } from '@caemble/execution/cad/geometry/solid'
 export type {
   MaterialDefinition,
   MaterialModelInstance,
   MaterialSnapshot,
   TaskMaterialSelections,
-} from '@/contracts/material'
+} from '@caemble/execution/contracts/material'
 export {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
@@ -133,28 +140,28 @@ export {
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
-} from './source/document'
+} from '@caemble/execution/cad/source/document'
 export type {
   CadDocumentType,
   CadEvaluationInput,
   CadSourceDocument,
   ExperimentSourceBundle,
   ExperimentSourceDocument,
-} from './source/document'
+} from '@caemble/execution/cad/source/document'
 export {
   analyzeGeometrySource,
   analyzeMaterialSource,
   assertExperimentModuleGraph,
   geometryExportAtOffset,
   projectGeometryExportSource,
-} from './source/sourceAnalysis'
+} from '@caemble/execution/cad/source/sourceAnalysis'
 export {
   assertExperimentSourcePath,
   assertExperimentSourcePaths,
   experimentTypeScriptPaths,
   isExperimentTypeScriptPath,
   resolveExperimentModuleSpecifier,
-} from './source/moduleResolution'
+} from '@caemble/execution/cad/source/moduleResolution'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,
@@ -175,12 +182,20 @@ export type {
   EvaluatedRuntimeDocumentSnapshot,
   MeasurementExperimentSnapshot,
 } from './execution/snapshot'
-export { applyMaterialSnapshot, buildMeasurement } from './execution/measurement'
-export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './execution/measurement'
-export { deserializeCadScene, serializeCadScene } from './execution/mesh'
-export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
-export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
-export { type PolylineBundle } from './model/rayPaths'
+export { applyMaterialSnapshot, buildMeasurement } from '@caemble/execution/cad/execution/measurement'
+export type {
+  BuiltMeasurement,
+  MeasurementMaterialResolution,
+  TaskMaterialResolution,
+} from '@caemble/execution/cad/execution/measurement'
+export { deserializeCadScene, serializeCadScene } from '@caemble/execution/cad/execution/mesh'
+export type {
+  SerializableCadMesh,
+  SerializableCadScene,
+  SerializableCadScenePart,
+} from '@caemble/execution/cad/execution/mesh'
+export { normalizeRecordedData, normalizeRecordedDataTensor } from '@caemble/execution/cad/model/recordedData'
+export { type PolylineBundle } from '@caemble/execution/cad/model/rayPaths'
 export type {
   RecordedDataSchemaTree,
   RecordedDataSpecGroup,
@@ -189,8 +204,8 @@ export type {
   ResolvedDataSchemaGroup,
   ResolvedDataSchemaNode,
   SimulationProgramManifest,
-} from './simulation/types'
-export type { ResolvedRecordedTensor } from './model/recordedData'
+} from '@caemble/execution/cad/simulation/types'
+export type { ResolvedRecordedTensor } from '@caemble/execution/cad/model/recordedData'
 export {
   DATA_TENSOR_ATTACHMENT_SHARD_BYTES,
   DATA_TENSOR_INLINE_BYTES,
@@ -203,11 +218,15 @@ export {
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
   shardDataTensorBytes,
-} from './model/dataTensor'
-export type { DataTensorAccessor } from './model/dataTensor'
+} from '@caemble/execution/cad/model/dataTensor'
+export type { DataTensorAccessor } from '@caemble/execution/cad/model/dataTensor'
 export { CadCompilationError, compileCadDocument } from './compiler/monacoCompiler'
 export type { CompileCadDocumentOptions } from './compiler/monacoCompiler'
-export type { CadDiagnostic as CompilerDiagnostic, CompiledCadDocument, CompiledCadSource } from './compiler/types'
+export type {
+  CadDiagnostic as CompilerDiagnostic,
+  CompiledCadDocument,
+  CompiledCadSource,
+} from '@caemble/execution/cad/compiler/types'
 export {
   cadSemanticHash,
   compiledCadDocumentSemanticHash,
@@ -219,17 +238,22 @@ export {
   inspectInIsolatedRunner,
   previewGeometryInIsolatedRunner,
 } from '@/platform/isolated-runner/client'
-export type { ArrayAttributes } from './elements/operations/array/definition'
-export type { BooleanAttributes } from './elements/operations/booleans/definition'
-export type { BoxAttributes } from './elements/primitives/box/definition'
-export type { CylinderAttributes } from './elements/primitives/cylinder/definition'
+export type { ArrayAttributes } from '@caemble/execution/cad/elements/operations/array/definition'
+export type { BooleanAttributes } from '@caemble/execution/cad/elements/operations/booleans/definition'
+export type { BoxAttributes } from '@caemble/execution/cad/elements/primitives/box/definition'
+export type { CylinderAttributes } from '@caemble/execution/cad/elements/primitives/cylinder/definition'
 export type {
   CurvedEdgeCylinderAttributes,
   CurvedEdgeCylinderFourierMode,
   CurvedEdgeCylinderTaylorCurve,
-} from './elements/primitives/curvedEdgeCylinder/definition'
-export type { FiberAttributes, FiberPath, FiberSegment, RadiusKnot } from './elements/primitives/fiber/definition'
-export type { SphereAttributes } from './elements/primitives/sphere/definition'
+} from '@caemble/execution/cad/elements/primitives/curvedEdgeCylinder/definition'
+export type {
+  FiberAttributes,
+  FiberPath,
+  FiberSegment,
+  RadiusKnot,
+} from '@caemble/execution/cad/elements/primitives/fiber/definition'
+export type { SphereAttributes } from '@caemble/execution/cad/elements/primitives/sphere/definition'
 export type {
   CadDiagnostic,
   CadDiagnosticPhase,
@@ -240,10 +264,10 @@ export type {
   CadGeometryPreviewRequest,
   CadGeometryPreviewResponse,
   CadWorkerErrorType,
-} from './worker/protocol'
+} from '@caemble/execution/cad/worker/protocol'
 
-export type { AsphericCylinderAttributes } from './elements/primitives/asphericCylinder/definition'
-export type { EllipsoidAttributes } from './elements/primitives/ellipsoid/definition'
-export type { HyperboloidAttributes } from './elements/primitives/hyperboloid/definition'
-export type { ParaboloidAttributes } from './elements/primitives/paraboloid/definition'
-export type { Tessellation, Asphere } from './geometry/continuous'
+export type { AsphericCylinderAttributes } from '@caemble/execution/cad/elements/primitives/asphericCylinder/definition'
+export type { EllipsoidAttributes } from '@caemble/execution/cad/elements/primitives/ellipsoid/definition'
+export type { HyperboloidAttributes } from '@caemble/execution/cad/elements/primitives/hyperboloid/definition'
+export type { ParaboloidAttributes } from '@caemble/execution/cad/elements/primitives/paraboloid/definition'
+export type { Tessellation, Asphere } from '@caemble/execution/cad/geometry/continuous'

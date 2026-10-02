@@ -7,18 +7,24 @@ remote CAE workers.
 
 ```text
 app/
-  ui/        React Workbench, shared builder, and monorepo Node CLI
+  ui/        React Workbench and monorepo Node CLI commands
   api/       FastAPI, authentication, persistence, and job orchestration
-  catalog/   shared QuantityKind, Material, and Solver SQLite catalog
   launcher/  per-user worker launcher
-  slaves/    AI and CAE worker applications
-  sdk/       worker protocol and JavaScript/Python master SDKs
+  slaves/
+    ai/
+    tts/
+    cae_simulation/
+    cae_evaluation/
+    cae_prediction/
 shared/
+  catalog/              QuantityKind, Material, and Solver SQLite catalog
+  sdk/                  worker protocol and JavaScript/Python master SDKs
   prediction_contracts/  Forward algorithm versions, capabilities, and resource requirements
+  execution/            shared CAD, Measurement, Calculation, and Node execution
 ```
 
 QuantityKind, Material, and Solver catalog data belongs only in
-`app/catalog/caemble_catalog/catalog.sqlite3`. The files
+`shared/catalog/caemble_catalog/catalog.sqlite3`. The files
 `app/slaves/*/manifest.json` describe launcher executables; they are not Solver
 contracts.
 
@@ -28,9 +34,9 @@ For local authoring, install Node 24.14 or later and Poetry, then run from the
 repository root:
 
 ```powershell
-npm --prefix app/ui ci
+npm ci
 npm --prefix app/ui run build:cli
-Push-Location app/slaves/cae
+Push-Location app/slaves/cae_simulation
 poetry install --with dev
 Pop-Location
 .\caemble.cmd doctor
@@ -57,15 +63,9 @@ Pop-Location
 Build the repository-local browser SDK and start the UI:
 
 ```powershell
-Push-Location app/sdk/master/js
 npm ci
-npm run build
-Pop-Location
-
-Push-Location app/ui
-npm ci
-npm run dev
-Pop-Location
+npm --prefix app/ui run build:sdk
+npm --prefix app/ui run dev
 ```
 
 The Workbench opens at `http://localhost:5173/`; its user manual and live
@@ -73,9 +73,12 @@ catalog reference are at `http://localhost:5173/?help=home`. An unauthenticated 
 can edit and preview a local Starter. Sign-in is required for persistence,
 provider-backed AI, and remote execution.
 
-To run workers, create a `launcher` token in Account, install only the worker
-projects needed by that machine, configure the launcher's `.env`, and start
-`app/launcher`. See the component READMEs for local details.
+To install or update the Launcher and all five worker environments on Linux/WSL,
+run `bash ./li_launcher_install.sh` from the repository root. It installs the
+current lockfiles and prepares Evaluation from the shipped release archive.
+Create a `launcher` token in Account, configure `app/launcher/.env`, and start
+the Launcher separately. AI/TTS model preparation remains explicit. See
+[worker installation](docs/operations/workers.md) for prerequisites and local setup.
 
 ## Documentation
 
@@ -96,7 +99,7 @@ and [Solver](docs/authoring/solver.md) authoring.
 Detailed setup and ownership notes are maintained centrally:
 [UI](docs/development/ui.md), [API](docs/development/api.md),
 [workers](docs/operations/workers.md), [CAE worker](docs/development/cae.md), and
-[SDKs](app/sdk/README.md).
+[SDKs](shared/sdk/README.md).
 
 ## Runtime boundaries
 

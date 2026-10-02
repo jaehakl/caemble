@@ -1,6 +1,6 @@
 import type { OptimizationAxis, OptimizationTensor } from '@/contracts/api/optimization'
-import { flattenVarsTensor, type Vars } from '@/lib/cad/model'
-import type { VarsSchema } from '@/lib/cad/model/vars'
+import { flattenVarsTensor, type Vars } from '@caemble/execution/cad/model'
+import type { VarsSchema } from '@caemble/execution/cad/model/vars'
 
 function validateOptimizationSchema(schema: VarsSchema) {
   for (const [name, entry] of Object.entries(schema)) {

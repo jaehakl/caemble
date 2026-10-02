@@ -1,5 +1,5 @@
-import { CALCULATION_SOURCE_SKELETON } from '@/lib/calculation/declarations'
-import { CALCULATION_MATHJS_REFERENCE } from '@/lib/calculation/mathjsManifest'
+import { CALCULATION_SOURCE_SKELETON } from '@caemble/execution/calculation/declarations'
+import { CALCULATION_MATHJS_REFERENCE } from '@caemble/execution/calculation/mathjsManifest'
 
 /** The page heading is displayed by each consumer using the shared page metadata. */
 export function documentBody(markdown: string) {

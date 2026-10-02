@@ -5,7 +5,7 @@ import type {
   CalculationExecutionErrorCode,
   CalculationSourceDiagnostic,
   NormalizedCalculationOutput,
-} from '@/lib/calculation/types'
+} from '@caemble/execution/calculation/types'
 import { Heatmap } from '@/features/viewer/viewer/Heatmap'
 import { LineChart } from '@/features/viewer/viewer/RecordedDataResults'
 import { buildScalarHistogram } from './calculationHistogram'

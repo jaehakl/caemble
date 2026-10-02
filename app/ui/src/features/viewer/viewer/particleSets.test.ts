@@ -1,13 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import type { RecordedResultContracts } from '@/contracts/results'
-import type { DataSchema, RecordedData, RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import type { DataSchema, RecordedData, RecordedDataRule } from '@caemble/execution/cad/model'
 import {
   createAttachmentDataTensor,
   createDataTensor,
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
-} from '@/lib/cad/model/dataTensor'
+} from '@caemble/execution/cad/model/dataTensor'
 import { resultVisualizationSchema } from '@/contracts/resultValidators'
 import { createParticleRenderData, parseRecordedParticleSets, particleFrameValues } from './particleSets'
 

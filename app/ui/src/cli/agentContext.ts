@@ -4,13 +4,13 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { getAuthoringGuide, getAuthoringReference, type AuthoringScenario } from '@/authoring'
 import { createDbTables, getListRequest } from '@/api/api'
-import type { ExperimentSourceBundle } from '@/contracts/cad-persistence'
-import { cadSourceHash } from '@/lib/cad/source/document'
-import { extractCatalogSourceReferences, type CatalogSourceReferences } from '@/lib/catalog/references'
-import { analyzeCalculationDependencies } from '@/lib/calculation/dependencies'
-import { containedPath, openArtifact, readSourceBundle } from '@/platform/node/artifact'
-import { catalogCommand, CliError } from '@/platform/node/environment'
-import { inspectLocalResult } from '@/platform/node/localResult'
+import type { ExperimentSourceBundle } from '@caemble/execution/contracts/cad-persistence'
+import { cadSourceHash } from '@caemble/execution/cad/source/document'
+import { extractCatalogSourceReferences, type CatalogSourceReferences } from '@caemble/execution/catalog/references'
+import { analyzeCalculationDependencies } from '@caemble/execution/calculation/dependencies'
+import { containedPath, openArtifact, readSourceBundle } from '@caemble/execution/node/artifact'
+import { catalogCommand, CliError } from '@caemble/execution/node/environment'
+import { inspectLocalResult } from '@caemble/execution/node/localResult'
 import type { CommandContext } from './types'
 
 const SOURCE_BUDGET = 64 * 1024
@@ -373,13 +373,16 @@ export async function buildAgentContext(context: CommandContext, scenario: Autho
     scenario === 'solver'
       ? [
           'docs/development/solver-development.md',
-          'app/slaves/cae/AGENTS.md',
-          'app/slaves/cae/app/kernel/coordinator/program.py',
-          'app/slaves/cae/app/kernel/coordinator/simulation.py',
+          'app/slaves/cae_simulation/AGENTS.md',
+          'app/slaves/cae_simulation/app/kernel/coordinator/program.py',
+          'app/slaves/cae_simulation/app/kernel/coordinator/simulation.py',
         ]
       : scenario === 'experiment'
-        ? ['app/slaves/cae/app/kernel/coordinator/program.py', 'app/slaves/cae/app/kernel/coordinator/simulation.py']
-        : ['app/ui/src/lib/calculation/sourcePolicy.ts', 'app/ui/src/lib/calculation/dependencies.ts']
+        ? [
+            'app/slaves/cae_simulation/app/kernel/coordinator/program.py',
+            'app/slaves/cae_simulation/app/kernel/coordinator/simulation.py',
+          ]
+        : ['shared/execution/src/calculation/sourcePolicy.ts', 'shared/execution/src/calculation/dependencies.ts']
   const checkoutSources = []
   for (const file of checkoutPaths) {
     const source = await readFile(await containedPath(environment.repo, file), 'utf8')

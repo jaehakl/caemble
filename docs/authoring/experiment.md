@@ -34,7 +34,7 @@ Caemble 저장소에서 작업하며 루트의 `AGENTS.md`를 먼저 읽습니�
 
 실패하면 단계, 메시지, 제공된 파일·위치 정보, 소스 해시와 job·Measurement ID를 보관하고 `diagnostic.experiment`를 확인합니다. 메시지만 반환한 소스 정책 오류에 임의의 줄 번호를 붙이지 않습니다. 소스나 Catalog를 바꾸면 다시 빌드하며, 재시도가 같은 입력에 대한 것인지 조건을 바꾼 새 실행인지 구분합니다.
 
-Catalog 데이터의 단일 원본은 `app/catalog/caemble_catalog/catalog.sqlite3`입니다. 기존 Catalog Python 라이브러리로 읽으며 JSON·TS·Markdown 복사본이나 별도 Node SQLite 어댑터를 만들지 않습니다. 사용자 안내는 웹 문서와 CLI가 공유하는 Markdown에, 구현·운영 지침은 개발·운영 문서에 작성합니다.
+Catalog 데이터의 단일 원본은 `shared/catalog/caemble_catalog/catalog.sqlite3`입니다. 기존 Catalog Python 라이브러리로 읽으며 JSON·TS·Markdown 복사본이나 별도 Node SQLite 어댑터를 만들지 않습니다. 사용자 안내는 웹 문서와 CLI가 공유하는 Markdown에, 구현·운영 지침은 개발·운영 문서에 작성합니다.
 
 ## 예제를 검사하고 로컬에서 실행하기
 

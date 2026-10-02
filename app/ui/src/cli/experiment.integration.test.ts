@@ -5,18 +5,18 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { createCaembleClient } from '@/api/http'
-import type { SaveExperimentRequest } from '@/contracts/api/experiment'
-import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+import type { SaveExperimentRequest } from '@caemble/execution/contracts/api/experiment'
+import type { CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
 import { experimentRecordContracts as webRecordContracts } from '@/features/measurement/recordedData'
-import { cadSourceHash } from '@/lib/cad/source/document'
-import { prepareCaeMeasurement } from '@/platform/node/build'
-import { writeSourceBundle } from '@/platform/node/artifact'
+import { cadSourceHash } from '@caemble/execution/cad/source/document'
+import { prepareCaeMeasurement } from '@caemble/execution/node/build'
+import { writeSourceBundle } from '@caemble/execution/node/artifact'
 import { experimentCommand } from './experiment'
 
 const definitions = [{ name: 'Mean', description: 'Example', source_code: 'export default () => 1' }]
 const catalog = vi.hoisted(() => vi.fn())
-vi.mock('@/platform/node/environment', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/platform/node/environment')>()),
+vi.mock('@caemble/execution/node/environment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@caemble/execution/node/environment')>()),
   catalogCommand: catalog,
   verifyPython: vi.fn(),
 }))
@@ -119,7 +119,7 @@ export default defineTask({ kernel: { name: 'fixture', version: '1.0.0' }, confi
           mode: 'generate',
           vars_mode: 'nominal',
         },
-        path.resolve('src/lib/cad/api'),
+        path.resolve('../../shared/execution/src/cad/api'),
       )
       const webRecords = webRecordContracts(built.measurement.experiment.simulationProgram.recordedData)
       expect(webRecords).toEqual([

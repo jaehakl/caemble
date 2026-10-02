@@ -1,6 +1,6 @@
 import type { CalculationDefinition } from '@/api'
-import type { Vars } from '@/lib/cad/model'
-import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@/lib/cad/source'
+import type { Vars } from '@caemble/execution/cad/model'
+import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@caemble/execution/cad/source'
 import type { SavedExperiment, SavedMeasurement, WorkbenchDraft } from '../types'
 
 export type ExperimentEditingState = Readonly<{
@@ -35,7 +35,10 @@ export type ExperimentEditingAction =
       name: string
       vars: Readonly<Vars>
     }>
-  | Readonly<{ type: 'presentationUpdated'; presentation: import('@/contracts/viewerDefaults').ExperimentPresentation }>
+  | Readonly<{
+      type: 'presentationUpdated'
+      presentation: import('@caemble/execution/contracts/viewerDefaults').ExperimentPresentation
+    }>
   | Readonly<{ type: 'recordLoaded'; document: ExperimentSourceDocument; record: SavedExperiment }>
   | Readonly<{
       type: 'draftRestored'

@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, FileCode2, FlaskConical, Link2, LockKeyhole } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import { experimentTaskPaths } from '@/lib/cad/source'
+import { experimentTaskPaths } from '@caemble/execution/cad/source'
 
 export function ExperimentDetail({
   workbench,

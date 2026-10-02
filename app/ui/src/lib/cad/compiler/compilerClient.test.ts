@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CadCompilationRequest, CadCompilationResponse } from './compilerProtocol'
+import type { CadCompilationRequest, CadCompilationResponse } from '@caemble/execution/cad/compiler/compilerProtocol'
 
 const mocks = vi.hoisted(() => {
   class Worker {

@@ -1,6 +1,6 @@
 import { createDbTables } from './api'
 import type { CaembleClient } from './http'
-import { prepareRecordedCalculationInput } from '@/lib/calculation/recordedInput'
+import { prepareRecordedCalculationInput } from '@caemble/execution/calculation/recordedInput'
 
 export async function fetchCalculationInput(
   client: CaembleClient,

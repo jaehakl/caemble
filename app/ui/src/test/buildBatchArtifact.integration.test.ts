@@ -3,13 +3,13 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { compileCatalogExample, readCatalogExamples } from '../../scripts/catalog-example-support'
-import { prepareCaeMeasurement } from '@/platform/node/build'
-import type { CadPreparationRequest, CadPreparationResponse } from '@/lib/cad/worker/protocol'
+import { prepareCaeMeasurement } from '@caemble/execution/node/build'
+import type { CadPreparationRequest, CadPreparationResponse } from '@caemble/execution/cad/worker/protocol'
 import type { RunnerOperationResultEnvelope } from '@/platform/isolated-runner/protocol'
-import type { BuiltArtifactInput } from '@/lib/cae/artifact'
-import type { BuildArtifact } from '@/contracts/build'
-import type { CaePreparationRequest } from '@/lib/cae/build'
-import { measurementMaterialSnapshot } from '@/lib/cad/execution/measurement'
+import type { BuiltArtifactInput } from '@caemble/execution/cae/artifact'
+import type { BuildArtifact } from '@caemble/execution/contracts/build'
+import type { CaePreparationRequest } from '@caemble/execution/cae/build'
+import { measurementMaterialSnapshot } from '@caemble/execution/cad/execution/measurement'
 import { sha256Bytes } from '@/api/submitArtifact'
 import { buildBatchArtifact } from '@/features/measurement/buildBatchArtifact'
 
@@ -47,7 +47,9 @@ describe('browser build artifact contract', () => {
   beforeAll(async () => {
     vi.stubGlobal('self', worker)
     await import('@/lib/cad/runner/evaluation.worker')
-    const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+    const { examples, catalog } = readCatalogExamples(
+      path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'),
+    )
     const example = examples.find((item) => item.key === 'electro-thermal-notched-bar')!
     sourceHash = example.bundleHash
     request = { source_bundle: example.sourceBundle, source_hash: sourceHash, catalog, mode: 'generate' }
@@ -91,7 +93,7 @@ describe('browser build artifact contract', () => {
         vars: input.measurement.experiment.variables,
         material_snapshot: measurementMaterialSnapshot(input.measurement),
       },
-      path.resolve('src/lib/cad/api'),
+      path.resolve('../../shared/execution/src/cad/api'),
     )
     expect(input).toEqual(
       JSON.parse(JSON.stringify({ measurement: fixed.measurement, presentation: fixed.presentation })),

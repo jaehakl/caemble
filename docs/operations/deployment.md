@@ -253,14 +253,23 @@ CAEMBLE_API_URL=https://www.caemble.com/api
 CAEMBLE_ACCESS_TOKEN=<LAUNCHER_TOKEN>
 ```
 
-그 뒤 동일 commit의 SDK, launcher, CAE/AI slave dependency를 설치하고 launcher를 다시
-시작한다.
+Launcher를 종료한 뒤 동일 checkout의 Launcher와 AI·TTS·CAE Simulation·Evaluation·Prediction
+의존성을 한 번에 설치한다. Python 3.12, Poetry, Node 24.14 이상과
+`deployment/caemble.tar.gz`가 필요하다. 스크립트는 현재 lockfile만 사용하고
+Evaluation 번들도 준비·검사한다. 작업 디렉토리와 무관하게 실행할 수 있다.
 
 ```bash
+bash /opt/caemble/li_launcher_install.sh
 cd /opt/caemble/app/launcher
-poetry install
 poetry run launcher
 ```
+
+설치 중에는 Launcher 상태 잠금을 유지하며 실행 중인 Launcher가 있으면 실패한다.
+Git 갱신·DB migration·Launcher 자동 종료/재시작·AI/TTS 모델 다운로드는 수행하지 않는다.
+API migration과 웹 배포는 기존 `deployment/update.sh`가 담당하며, worker 장비는
+같은 release의 checkout과 아카이브를 준비한 뒤 위 설치 명령을 사용한다.
+기존 설정·모델·데이터와 이전 위치의 가상환경은 보존한다. 자세한 재실행 및
+설정 충돌 처리 규칙은 [worker 설치 안내](workers.md#install-and-run)를 따른다.
 
 한 launcher는 CPU·RAM·GPU 예산 안에서 여러 slave 인스턴스를 실행한다. 인스턴스당 활성 Job은
 하나이며 attempt마다 새 프로세스를 만든다. `app/launcher/resources.example.toml`을

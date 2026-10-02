@@ -135,7 +135,7 @@ const server = await createServer({
       import { WorkbenchViewer } from '/src/features/cae-workbench/viewer/WorkbenchViewer.tsx';
       import { visualizationData } from '/src/features/viewer/viewer/visualizationData.ts';
       import { parseRecordedMeshFields } from '/src/features/viewer/viewer/meshFields.ts';
-      import { registerDataTensorAttachment } from '/src/lib/cad/model/dataTensor.ts';
+      import { registerDataTensorAttachment } from '@caemble/execution/cad/model/dataTensor';
       import '/src/index.css';
       const fixtures = ${JSON.stringify(fixtures)};
       const normalize = (field) => {
@@ -276,8 +276,8 @@ try {
     const directory = path.resolve(resultLocation)
     // Reuse the production provenance checks, then serve the unchanged attachment
     // bytes to the production browser decoder instead of inventing a fixture codec.
-    const { inspectLocalResult } = await server.ssrLoadModule('/src/platform/node/localResult.ts')
-    const { containedPath } = await server.ssrLoadModule('/src/platform/node/artifact.ts')
+    const { inspectLocalResult } = await server.ssrLoadModule('@caemble/execution/node/localResult')
+    const { containedPath } = await server.ssrLoadModule('@caemble/execution/node/artifact')
     const { manifest, resultContracts } = await inspectLocalResult(directory)
     assert.equal(manifest.state, 'succeeded')
     savedResult = {

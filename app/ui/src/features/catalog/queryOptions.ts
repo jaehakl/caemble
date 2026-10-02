@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import { catalogApi, catalogQueryKeys, type CatalogExperimentIdentity } from '@/api/catalog'
-import type { ListQuery } from '@/contracts/catalog'
+import type { ListQuery } from '@caemble/execution/contracts/catalog'
 
 export function catalogMetaQueryOptions() {
   return queryOptions({

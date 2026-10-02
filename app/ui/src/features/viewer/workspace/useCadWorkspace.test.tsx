@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EvaluatedExperimentSnapshot } from '@/lib/cad/execution'
-import type { ExperimentSourceDocument } from '@/lib/cad/source'
+import type { ExperimentSourceDocument } from '@caemble/execution/cad/source'
 import { useCadWorkspace } from './useCadWorkspace'
 import { emitRuntimeActivity } from '@/features/runtime-console/types'
 import { CadCompilationError } from '@/lib/cad/compiler/monacoCompiler'
@@ -38,14 +38,14 @@ vi.mock('@/lib/cad/execution', () => {
   }
 })
 
-vi.mock('@/lib/cad/model', () => ({
+vi.mock('@caemble/execution/cad/model', () => ({
   generateRandomVars: vi.fn(() => Object.freeze({})),
   normalizeVars: vi.fn((_schema, vars) => vars),
   normalizeVarsSchema: vi.fn((schema) => schema),
   varsSchemaFingerprint: vi.fn(() => 'schema-v1'),
 }))
 
-vi.mock('@/lib/cad/source', () => {
+vi.mock('@caemble/execution/cad/source', () => {
   const keepDocument = (document: unknown) => document
   return {
     EXPERIMENT_SIMULATION_PATH: 'simulate.py',
@@ -57,8 +57,8 @@ vi.mock('@/lib/cad/source', () => {
   }
 })
 
-vi.mock('@/lib/catalog/runtime', () => ({ sourceCatalogRuntimeSlice: vi.fn(() => Object.freeze({})) }))
-vi.mock('@/lib/catalog/solverTasks', () => ({ catalogDraftTaskNames: vi.fn(() => []) }))
+vi.mock('@caemble/execution/catalog/runtime', () => ({ sourceCatalogRuntimeSlice: vi.fn(() => Object.freeze({})) }))
+vi.mock('@caemble/execution/catalog/solverTasks', () => ({ catalogDraftTaskNames: vi.fn(() => []) }))
 vi.mock('../persistence/resolveMaterials', () => ({ resolveDocumentMaterials: mocks.resolveDocumentMaterials }))
 vi.mock('./catalogRuntime', () => ({ fetchCatalogRuntimeSlice: mocks.fetchCatalogRuntimeSlice }))
 

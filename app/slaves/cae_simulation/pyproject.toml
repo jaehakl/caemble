@@ -1,0 +1,88 @@
+[project]
+name = "caemble-cae-slave"
+version = "0.1.0"
+description = "Caemble GPStation v1-compatible CAE slave executable"
+authors = [{ name = "Caemble" }]
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "caemble-catalog",
+    "caemble-runtime-sdk[server-slave]",
+    "manifold3d==3.5.1",
+    "python-fcl==0.7.0.11",
+    "numpy>=2.1,<3.0",
+    "mpmath>=1.3,<1.4",
+    "torch==2.13.0+cu126",
+    "ucumvert==0.3.1",
+    "scipy (>=1.14,<2.0)",
+    "pyamg==5.3.0",
+    "psutil>=7,<8",
+    "threadpoolctl>=3.6,<4",
+    "netgen-mesher (==6.2.2606)",
+]
+
+[tool.poetry]
+packages = [
+    { include = "app" },
+]
+
+[tool.poetry.dependencies]
+caemble-catalog = { path = "../../../shared/catalog", develop = true }
+caemble-runtime-sdk = { path = "../../../shared/sdk", develop = true, extras = ["server-slave"] }
+torch = { source = "pytorch-cu126" }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.1.1"
+pytest-asyncio = "^1.4.0"
+pytest-xdist = "^3.8.0"
+filelock = "^3.32.7"
+ruff = "^0.16.8"
+pyright = "^1.1.414"
+
+[[tool.poetry.source]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "cuda: numerical checks on a real CUDA device (select explicitly with -m cuda)",
+    "lowcost: static, small function and contract checks without product Solver entry calls",
+    "smoke: selected product Solver connections or process lifecycle integration",
+    "validation: long numerical convergence or full-duration validation (included in full CPU)",
+    "example: complete nominal Catalog example and its execution budget",
+]
+addopts = "--strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+include = [
+    "app/kernel/api/models.py",
+    "app/kernel/api/services.py",
+    "app/kernel/api/state.py",
+    "app/kernel/api/values.py",
+    "app/solvers/dc_current_density/entry.py",
+    "app/solvers/heat_transfer/entry.py",
+    "app/solvers/fdtd/entry.py",
+    "app/solvers/ray_tracing/entry.py",
+    "app/solvers/structural_mechanics/entry.py",
+    "app/solvers/pressure_acoustics/entry.py",
+    "app/solvers/rigid_body/entry.py",
+    "app/solvers/dem/entry.py",
+    "app/solvers/sph/entry.py",
+    "app/solvers/mpm/entry.py",
+    "app/solvers/incompressible_flow/entry.py",
+]

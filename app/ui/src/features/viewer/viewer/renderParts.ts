@@ -1,5 +1,5 @@
 import { geometries } from '@jscad/modeling'
-import type { CadScenePart } from '@/lib/cad/evaluation/types'
+import type { CadScenePart } from '@caemble/execution/cad/evaluation/types'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 
 type RenderColor = [number, number, number, number]

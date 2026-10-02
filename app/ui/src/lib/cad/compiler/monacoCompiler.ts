@@ -1,11 +1,11 @@
-import type { CatalogRuntimeSlice } from '@/contracts/catalog'
-import { cadSourceHash, type CadSourceDocument } from '../source/document'
-import { experimentTypeScriptPaths } from '../source/moduleResolution'
-import { catalogRuntimeTypes } from './catalogTypeEnvironment'
+import type { CatalogRuntimeSlice } from '@caemble/execution/contracts/catalog'
+import { cadSourceHash, type CadSourceDocument } from '@caemble/execution/cad/source/document'
+import { experimentTypeScriptPaths } from '@caemble/execution/cad/source/moduleResolution'
+import { catalogRuntimeTypes } from '@caemble/execution/cad/compiler/catalogTypeEnvironment'
 import { compileInWorker } from './compilerClient'
 import { cadCompilerEnvironment } from './compilerDeclarations'
 
-export { CadCompilationError } from './compilationError'
+export { CadCompilationError } from '@caemble/execution/cad/compiler/compilationError'
 
 export type CompileCadDocumentOptions = Readonly<{
   catalogRevision?: string

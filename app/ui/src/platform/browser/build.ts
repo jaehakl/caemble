@@ -1,7 +1,7 @@
 import { compileCadDocument } from '@/lib/cad/compiler/monacoCompiler'
 import { prepareInIsolatedRunner } from '@/platform/isolated-runner/client'
-import type { CaePreparationRequest } from '@/lib/cae/build'
-import type { BuiltArtifactInput } from '@/lib/cae/artifact'
+import type { CaePreparationRequest } from '@caemble/execution/cae/build'
+import type { BuiltArtifactInput } from '@caemble/execution/cae/artifact'
 
 export async function prepareBrowserMeasurement(
   request: CaePreparationRequest,

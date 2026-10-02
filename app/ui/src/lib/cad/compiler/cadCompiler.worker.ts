@@ -1,6 +1,6 @@
 import 'monaco-editor/languages/features/typescript/ts.worker.js'
-import { CadCompilationError } from './compilationError'
-import type { CadCompilationRequest, CadCompilationResponse } from './compilerProtocol'
+import { CadCompilationError } from '@caemble/execution/cad/compiler/compilationError'
+import type { CadCompilationRequest, CadCompilationResponse } from '@caemble/execution/cad/compiler/compilerProtocol'
 import { compileVirtualCadDocument } from './virtualCompiler'
 
 // The client sends only one request at a time. Also serialize here so cleanup is

@@ -1,5 +1,5 @@
 import { catalogApi } from '@/api/catalog'
-import type { KernelDescriptor } from '@/lib/cad/simulation'
+import type { KernelDescriptor } from '@caemble/execution/cad/simulation'
 
 export const caeSolverManifestsQueryKey = ['catalog', 'solver-manifests'] as const
 

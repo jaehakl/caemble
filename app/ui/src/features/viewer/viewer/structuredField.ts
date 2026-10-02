@@ -1,8 +1,8 @@
-import type { ResultVisualization } from '@/contracts/solver'
-import { convertUcumValue, type DataSchema, type RecordedDataTensor, type UcumUnit } from '@/lib/cad/model'
-import { createDataTensorAccessor } from '@/lib/cad/model/dataTensor'
+import type { ResultVisualization } from '@caemble/execution/contracts/solver'
+import { convertUcumValue, type DataSchema, type RecordedDataTensor, type UcumUnit } from '@caemble/execution/cad/model'
+import { createDataTensorAccessor } from '@caemble/execution/cad/model/dataTensor'
 import type { MeshRenderGeometry } from './meshFields'
-import { assertBoxGridData } from '@/contracts/boxGrid'
+import { assertBoxGridData } from '@caemble/execution/contracts/boxGrid'
 
 export type HeatmapRenderData = Readonly<{
   identity: string

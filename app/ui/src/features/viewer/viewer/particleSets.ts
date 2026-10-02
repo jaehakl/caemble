@@ -1,6 +1,6 @@
-import type { RecordedResultContracts } from '@/contracts/results'
-import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
-import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
+import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
+import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@caemble/execution/cad/model'
+import { createDataTensorAccessor, isDataTensor } from '@caemble/execution/cad/model/dataTensor'
 import { meshMaterialColors, type MeshRenderData, type MeshRenderGeometry } from './meshFields'
 import { plotColor } from './pointCloudData'
 

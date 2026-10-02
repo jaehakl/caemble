@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import type { MeasurementVisualization, RecordedResultContracts, ResultProvenance } from './results'
+import type {
+  MeasurementVisualization,
+  RecordedResultContracts,
+  ResultProvenance,
+} from '@caemble/execution/contracts/results'
 
 export const resultVisualizationSchema = z
   .object({

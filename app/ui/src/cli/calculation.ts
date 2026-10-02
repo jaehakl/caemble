@@ -4,12 +4,12 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { createDbTables, getListRequest } from '@/api/api'
 import { fetchCalculationInput } from '@/api/calculationInput'
-import type { CalculationInput, NormalizedCalculationOutput } from '@/lib/calculation/types'
-import { assertCalculationInput } from '@/lib/calculation/validation'
-import { analyzeCalculationDependencies } from '@/lib/calculation/dependencies'
-import { CliError } from '@/platform/node/environment'
-import { workerRequest } from '@/platform/node/workerRequest'
-import { createLocalCalculationInput, inspectLocalResult } from '@/platform/node/localResult'
+import type { CalculationInput, NormalizedCalculationOutput } from '@caemble/execution/calculation/types'
+import { assertCalculationInput } from '@caemble/execution/calculation/validation'
+import { analyzeCalculationDependencies } from '@caemble/execution/calculation/dependencies'
+import { CliError } from '@caemble/execution/node/environment'
+import { workerRequest } from '@caemble/execution/node/workerRequest'
+import { createLocalCalculationInput, inspectLocalResult } from '@caemble/execution/node/localResult'
 import type { CommandContext } from './types'
 
 async function execute(context: CommandContext, source: string, input: CalculationInput) {
@@ -44,7 +44,7 @@ export async function calculationCommand(group: string, command: string, context
           (!options.measurement || item.measurement_id === Number(options.measurement)),
       )
       const ids = selected.slice(offset, offset + limit).map((item) => item.calculation_data_id)
-      const items = [] as import('@/contracts/api/calculation').CalculationDataRecord[]
+      const items = [] as import('@caemble/execution/contracts/api/calculation').CalculationDataRecord[]
       for (let index = 0; index < ids.length; index += 50) {
         const page = await tables.CalculationData.listRows(
           {

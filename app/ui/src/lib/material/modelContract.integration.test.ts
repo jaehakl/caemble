@@ -1,23 +1,23 @@
 // @vitest-environment node
 import type { EvaluatedExperimentSnapshot } from '@/lib/cad/execution'
-import { buildMeasurement } from '@/lib/cad/execution/measurement'
+import { buildMeasurement } from '@caemble/execution/cad/execution/measurement'
 import path from 'node:path'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { compileCatalogExample, readCatalogExamples } from '../../../scripts/catalog-example-support'
-import type { ModelParameterSchema } from '@/contracts/catalog'
-import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
-import type { KernelDescriptor } from '@/contracts/solver'
-import type { CadScene, CadSceneMaterial } from '@/lib/cad/evaluation/types'
-import { Material } from '@/lib/cad/model/material'
-import { normalizeMaterialModels, normalizeModelParameters } from '@/lib/cad/model/materialNormalization'
-import { executeCompiledDocument, inspectCompiledDocument } from '@/lib/cad/execution/userModule'
+import type { ModelParameterSchema } from '@caemble/execution/contracts/catalog'
+import type { MeasurementMaterialSnapshot } from '@caemble/execution/contracts/api/measurement'
+import type { KernelDescriptor } from '@caemble/execution/contracts/solver'
+import type { CadScene, CadSceneMaterial } from '@caemble/execution/cad/evaluation/types'
+import { Material } from '@caemble/execution/cad/model/material'
+import { normalizeMaterialModels, normalizeModelParameters } from '@caemble/execution/cad/model/materialNormalization'
+import { executeCompiledDocument, inspectCompiledDocument } from '@caemble/execution/cad/execution/userModule'
 import type { EvaluatedRuntimeDocumentSnapshot } from '@/lib/cad/execution/snapshot'
-import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
-import { materialVarsHash, resolveMaterialSnapshot } from './resolution'
-import { selectTaskMaterialModels } from './selection'
-import { resolveSceneMaterials } from './document'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { materialVarsHash, resolveMaterialSnapshot } from '@caemble/execution/material/resolution'
+import { selectTaskMaterialModels } from '@caemble/execution/material/selection'
+import { resolveSceneMaterials } from '@caemble/execution/material/document'
 
-const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+const { examples, catalog } = readCatalogExamples(path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'))
 beforeEach(() => installCatalogRuntimeSlice(catalog))
 
 function optical(name: string, n: number) {

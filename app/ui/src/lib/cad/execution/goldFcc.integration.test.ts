@@ -2,12 +2,14 @@
 import path from 'node:path'
 import { expect, it } from 'vitest'
 import { compileCatalogExample, readCatalogExamples } from '../../../../scripts/catalog-example-support'
-import { installCatalogRuntimeSlice } from '../../catalog/runtime'
-import { canonicalGeometryScene } from '../evaluation/canonical'
-import { executeCompiledDocument, inspectCompiledDocument } from './userModule'
+import { installCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { canonicalGeometryScene } from '@caemble/execution/cad/evaluation/canonical'
+import { executeCompiledDocument, inspectCompiledDocument } from '@caemble/execution/cad/execution/userModule'
 
 it('maps all 13 normalized particle rows to the original FCC bilayer', async () => {
-  const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
+  const { examples, catalog } = readCatalogExamples(
+    path.resolve('../../shared/catalog/caemble_catalog/catalog.sqlite3'),
+  )
   installCatalogRuntimeSlice(catalog)
   const example = examples.find((entry) => entry.key === 'gold-fcc-fresnel')!
   const compiled = compileCatalogExample(example, catalog)

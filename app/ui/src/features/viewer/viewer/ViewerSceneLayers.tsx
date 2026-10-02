@@ -2,7 +2,7 @@ import { ViewerDiagnosticResult } from './ViewerDiagnostics'
 import { createContext, useCallback, useContext, useLayoutEffect, useSyncExternalStore, type ReactNode } from 'react'
 import type { MeshRenderData } from './meshFields'
 import type { HeatmapRenderData } from './structuredField'
-import type { PolylineBundle } from '@/lib/cad/model'
+import type { PolylineBundle } from '@caemble/execution/cad/model'
 import { ViewerComparisonContext, ViewerPersistenceContext } from './comparisonSettings'
 
 export type SceneLayer = {

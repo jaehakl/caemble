@@ -4,8 +4,8 @@ import {
   type CalculationExecutionErrorCode,
   type CalculationInput,
 } from '@/lib/calculation'
-import { isDataTensor, type RecordedData, type RecordedDataRule } from '@/lib/cad/model'
-import { getQuantityKindTensorOrder } from '@/lib/quantitykind/runtime'
+import { isDataTensor, type RecordedData, type RecordedDataRule } from '@caemble/execution/cad/model'
+import { getQuantityKindTensorOrder } from '@caemble/execution/quantitykind/runtime'
 
 export type CalculationRecordedDataSummary = Readonly<{
   path: string

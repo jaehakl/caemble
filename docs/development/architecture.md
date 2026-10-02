@@ -23,7 +23,7 @@ and declared ranges; the Solver owns numerical preparation and computation.
 Geometry transformations affect only the Solver view.
 
 QuantityKind, Material Model, Solver, and Experiment catalog records live only in
-`app/catalog/caemble_catalog/catalog.sqlite3`. Launcher `manifest.json` files
+`shared/catalog/caemble_catalog/catalog.sqlite3`. Launcher `manifest.json` files
 describe executables and are not Solver descriptors.
 
 ## Experiment data flow
@@ -166,7 +166,7 @@ this descriptor in the RunPlan; only the invocation child imports the selected
 implementation. There is no central per-Solver dispatch branch.
 
 Solver-specific physics belongs under
-`app/slaves/cae/app/solvers/<solver_package>/`, with one current `entry.py` per
+`app/slaves/cae_simulation/app/solvers/<solver_package>/`, with one current `entry.py` per
 Solver and no implementation version directories. The resident `app/kernel`
 owns execution, resources, Catalog snapshots and transport. `kernel/api` owns
 ABI 3 value and unit contracts, while `app/methods` owns shared geometry and
@@ -281,7 +281,10 @@ latest revision. Checkpoint resume belongs to a future algorithm implementation.
 
 ## Implementation map
 
-- `app/ui/src/lib/cad`: CAD execution, canonical Geometry, and render products.
+- `shared/execution/src`: platform-neutral CAD, canonical Geometry, Measurement
+  building, Calculation execution and shared contracts; `node/` owns Node adapters.
+- `shared/execution/scripts`: archive-only CLI bootstrap and versioned Node runtime installer.
+- `app/ui/src/lib/cad`: browser compiler, Worker/iframe adapters and render products.
 - `app/ui/src/features/cae-workbench`: Measurement building and run UI.
 - `app/api/app/simulation`: Experiment and Measurement persistence, artifact
   uploads, Simulation batches, and result publication.
@@ -298,8 +301,13 @@ latest revision. Checkpoint resume belongs to a future algorithm implementation.
   files own ORM and HTTP types; `model_registry.py` collects the shared metadata.
 - `app/api/app/catalog`, `storage`, and `user_auth`: Catalog reads, object storage,
   and authentication. See the [API guide](api.md) for dependency and lifecycle rules.
-- `app/catalog`: canonical Catalog and `catalogctl` Draft workflow.
+- `shared/catalog`: canonical Catalog and `catalogctl` Draft workflow.
 - `app/ui/src/cli`: monorepo Node commands and local/remote execution adapters.
 - `app/launcher`: per-user executable lifecycle and transport capability registration.
-- `app/slaves/cae/app`: thin entry point, runtime `kernel`, shared `methods`, and current `solvers`.
-- `app/sdk`: client and worker transport libraries.
+- `app/slaves/cae_simulation/app`: thin entry point, runtime `kernel`, shared `methods`, and current `solvers`.
+- `shared/sdk`: client and worker transport libraries.
+
+The UI, shared execution package and JavaScript SDK use root npm workspaces and
+one lockfile. Shared execution never imports the UI. The CLI keeps command
+composition in the UI project while Evaluation consumes the same built Node
+worker from the release archive.

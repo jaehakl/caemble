@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { containedPath } from '@/platform/node/artifact'
-import { CliError } from '@/platform/node/environment'
+import { containedPath } from '@caemble/execution/node/artifact'
+import { CliError } from '@caemble/execution/node/environment'
 import type { CommandContext } from './types'
 
 type ObjectReference = {

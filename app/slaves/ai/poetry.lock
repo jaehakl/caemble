@@ -200,7 +200,7 @@ slave = ["aiortc (>=1.9,<2.0)"]
 
 [package.source]
 type = "directory"
-url = "../../sdk"
+url = "../../../shared/sdk"
 
 [[package]]
 name = "certifi"
@@ -3133,4 +3133,4 @@ type = ["pytest-mypy (>=1.0.1) ; platform_python_implementation != \"PyPy\""]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "e9b7d0321a49b8b555b1b6ddc32119ef5e6455105c8ac3ecfcd49a68e80fb823"
+content-hash = "d66c2d904e9f07b1b4aaf265135d5b0fc4302294ecc34752dda518f9a326be6c"

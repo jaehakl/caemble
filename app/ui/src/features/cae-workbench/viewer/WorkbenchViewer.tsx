@@ -22,7 +22,11 @@ import {
   type SceneLayer,
 } from '@/features/viewer/viewer/ViewerSceneLayers'
 import { createComparisonCamera } from '@/features/viewer/viewer/comparisonCamera'
-import { cameraPoseSchema, durableViewerSettings, type ViewerDefaults } from '@/contracts/viewerDefaults'
+import {
+  cameraPoseSchema,
+  durableViewerSettings,
+  type ViewerDefaults,
+} from '@caemble/execution/contracts/viewerDefaults'
 import { ViewerPresentationMenu, type ViewerPresentationActions } from '@/features/experiment/ViewerPresentationMenu'
 import {
   createViewerSettings,
@@ -35,18 +39,18 @@ import {
   type ViewerComparison,
 } from '@/features/viewer/viewer/comparisonSettings'
 import { BoxGridResult } from '@/features/viewer/viewer/BoxGridResult'
-import { calculationExperimentRecordReference } from '@/lib/calculation/dependencies'
-import { materialVarsHash } from '@/lib/material/resolution'
+import { calculationExperimentRecordReference } from '@caemble/execution/calculation/dependencies'
+import { materialVarsHash } from '@caemble/execution/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
-import type { MeasurementVisualizations, RecordedResultContracts } from '@/contracts/results'
+import type { MeasurementVisualizations, RecordedResultContracts } from '@caemble/execution/contracts/results'
 import { visualizationData } from '@/features/viewer/viewer/visualizationData'
 import { parseResultPolylines } from '@/features/viewer/viewer/resultPolylines'
 import { ResultTensorView } from '@/features/viewer/viewer/ResultTensorView'
-import { experimentTaskName, type ExperimentSourceDocument } from '@/lib/cad/source'
+import { experimentTaskName, type ExperimentSourceDocument } from '@caemble/execution/cad/source'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
-import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
-import { isDataTensor } from '@/lib/cad/model/dataTensor'
+import type { RecordedData, RecordedDataRule, UcumUnit } from '@caemble/execution/cad/model'
+import { isDataTensor } from '@caemble/execution/cad/model/dataTensor'
 import { parseRecordedMeshFields } from '@/features/viewer/viewer/meshFields'
 import { MeshFieldResult } from '@/features/viewer/viewer/MeshFieldResult'
 import { parseRecordedMeshTransforms } from '@/features/viewer/viewer/meshTransforms'

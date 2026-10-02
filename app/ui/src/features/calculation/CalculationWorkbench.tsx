@@ -23,7 +23,7 @@ import {
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { SavedMeasurement, WorkbenchCalculationSelection } from '@/features/cae-workbench/types'
 import { analyzeCalculationDependencies, calculationSourceSkeleton, calculationSourceHash } from '@/lib/calculation'
-import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedData, RecordedDataRule } from '@caemble/execution/cad/model'
 import { cn } from '@/lib/utils'
 import { buildCalculationRecordedData } from './calculationRecordedData'
 import {

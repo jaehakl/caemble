@@ -13,7 +13,7 @@ import { documentBody, manualBody } from './body'
 import { authoringGuides } from '@/authoring/guides'
 import { getAuthoringReference } from '@/authoring'
 import { manualDocsKnowledge } from '@/documentation/knowledge'
-import { CALCULATION_SOURCE_SKELETON } from '@/lib/calculation/declarations'
+import { CALCULATION_SOURCE_SKELETON } from '@caemble/execution/calculation/declarations'
 
 const repo = path.resolve('../..')
 const maintainedMarkdown = readdirSync(path.join(repo, 'docs'), { recursive: true })
@@ -98,15 +98,15 @@ describe('shared documentation sources', () => {
     const files = [
       'README.md',
       'AGENTS.md',
-      'app/slaves/cae/AGENTS.md',
+      'app/slaves/cae_simulation/AGENTS.md',
       'app/ui/README.md',
       'app/api/README.md',
       'app/slaves/README.md',
-      'app/slaves/cae/README.md',
-      'app/ui/src/lib/cad/elements/README.md',
-      'app/sdk/README.md',
-      'app/sdk/master/js/README.md',
-      'app/sdk/master/python/README.md',
+      'app/slaves/cae_simulation/README.md',
+      'shared/execution/src/cad/elements/README.md',
+      'shared/sdk/README.md',
+      'shared/sdk/master/js/README.md',
+      'shared/sdk/master/python/README.md',
       ...maintainedMarkdown,
     ]
     const failures: string[] = []
@@ -155,10 +155,10 @@ describe('shared documentation sources', () => {
     expect(failures).toEqual([])
     const rootInstructions = readFileSync(path.join(repo, 'AGENTS.md'), 'utf8')
     expect(rootInstructions).toContain('docs/development/solver-development.md')
-    expect(rootInstructions).toContain('app/slaves/cae/AGENTS.md')
-    const caeInstructions = readFileSync(path.join(repo, 'app/slaves/cae/AGENTS.md'), 'utf8')
+    expect(rootInstructions).toContain('app/slaves/cae_simulation/AGENTS.md')
+    const caeInstructions = readFileSync(path.join(repo, 'app/slaves/cae_simulation/AGENTS.md'), 'utf8')
     for (const [, file] of caeInstructions.matchAll(/`([^`]+\.md)`/g))
-      expect(existsSync(path.resolve(repo, 'app/slaves/cae', file)), file).toBe(true)
+      expect(existsSync(path.resolve(repo, 'app/slaves/cae_simulation', file)), file).toBe(true)
     expect(Buffer.byteLength(rootInstructions) + Buffer.byteLength(caeInstructions)).toBeLessThan(32 * 1024)
   })
 })

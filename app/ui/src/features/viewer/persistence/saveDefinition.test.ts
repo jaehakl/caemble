@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { createCadSourceDocument } from '@/lib/cad/source'
+import { createCadSourceDocument } from '@caemble/execution/cad/source'
 import { saveCadDefinition } from './saveDefinition'
 
 const save = vi.hoisted(() => vi.fn())

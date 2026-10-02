@@ -1,5 +1,5 @@
-import type { Vars } from '@/lib/cad/model'
-import type { BoxGridData } from '@/contracts/boxGrid'
+import type { Vars } from '@caemble/execution/cad/model'
+import type { BoxGridData } from '@caemble/execution/contracts/boxGrid'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { predictedRecordedData } from './data'
 import { emitPredictionQueryDiagnostics } from './diagnostics'

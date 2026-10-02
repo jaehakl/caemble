@@ -1,4 +1,4 @@
-import { convertUcumValue, type PolylineBundle, type UcumUnit } from '@/lib/cad/model'
+import { convertUcumValue, type PolylineBundle, type UcumUnit } from '@caemble/execution/cad/model'
 
 export type RayPathRenderGeometry = Readonly<{
   positions: Float32Array

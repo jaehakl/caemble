@@ -128,7 +128,7 @@ vi.mock('@/features/cae-workbench/viewer/useSelectionSourceNavigation', () => ({
 }))
 vi.mock('@/features/cae/CaeBatchProvider', () => ({ useCaeBatches: () => ({ inspectedBatchId: null }) }))
 vi.mock('@/features/cae/useCaeBatchConsole', () => ({ useCaeBatchConsole: () => undefined }))
-vi.mock('@/lib/cad/model', () => ({ parsePolylineBundles: () => [] }))
+vi.mock('@caemble/execution/cad/model', () => ({ parsePolylineBundles: () => [] }))
 vi.mock('@/features/cae-workbench/chrome', () => ({
   WorkbenchRibbonButton: ({
     label,

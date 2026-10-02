@@ -1,7 +1,7 @@
 import type { CalculationDataOutput } from '@/api'
-import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
-import type { Tensor } from '@/lib/cad/model/types'
-export { predictedRecordedData } from '@/lib/prediction/recordedData'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
+import type { Tensor } from '@caemble/execution/cad/model/types'
+export { predictedRecordedData } from '@caemble/execution/prediction/recordedData'
 
 export function calculationOutputTensor(output: CalculationDataOutput): Tensor {
   const values = typeof output.data === 'number' ? [output.data] : output.data

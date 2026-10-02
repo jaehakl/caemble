@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
-import { BOX_GRID_AXES, type BoxGridData } from '@/contracts/boxGrid'
-import type { RecordedDataRule } from '@/lib/cad/model'
+import { BOX_GRID_AXES, type BoxGridData } from '@caemble/execution/contracts/boxGrid'
+import type { RecordedDataRule } from '@caemble/execution/cad/model'
 import type { PredictionExecution, PreparedPredictionModel, SavedPredictionModel } from './execution'
 import type { PredictionContext, SavedPredictionCalculation } from './predictionContextData'
 import { predictionFingerprint } from './data'

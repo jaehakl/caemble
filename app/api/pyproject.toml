@@ -30,8 +30,8 @@ dependencies = [
 package-mode = false
 
 [tool.poetry.dependencies]
-caemble-runtime-sdk = { path = "../sdk", develop = true }
-caemble-catalog = { path = "../catalog", develop = true }
+caemble-runtime-sdk = { path = "../../shared/sdk", develop = true }
+caemble-catalog = { path = "../../shared/catalog", develop = true }
 prediction-contracts = { path = "../../shared/prediction_contracts", develop = true }
 
 [build-system]

@@ -44,7 +44,7 @@ slave = ["aiortc (>=1.9,<2.0)"]
 
 [package.source]
 type = "directory"
-url = "../sdk"
+url = "../../shared/sdk"
 
 [[package]]
 name = "colorama"
@@ -497,4 +497,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "27e6ef32d956ea26f73c5487859f49c8b71c37e7c64b221763c70dedef71c7b7"
+content-hash = "11222f3db5a3720628ff2a1efefbfbe858047c5f9641ac13dac33135b8c39c16"

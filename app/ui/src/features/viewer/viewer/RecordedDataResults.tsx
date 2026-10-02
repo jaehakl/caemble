@@ -3,8 +3,8 @@ import { useContext } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { recordedDataRuntimeQueryOptions } from '@/features/catalog/queryOptions'
-import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
-import { identityCartesianBasis } from '@/lib/quantitykind'
+import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@caemble/execution/cad/model'
+import { identityCartesianBasis } from '@caemble/execution/quantitykind'
 import {
   convertRecordedNumericTicks,
   isNumericRecordedDType,

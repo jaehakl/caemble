@@ -2,7 +2,7 @@ import { Braces, ChevronDown, Shapes } from 'lucide-react'
 import { WorkbenchRibbonButton } from './chrome/WorkbenchRibbon'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
-import { operationAuthoringElements, primitiveAuthoringElements } from '@/lib/cad/source'
+import { operationAuthoringElements, primitiveAuthoringElements } from '@caemble/execution/cad/source'
 
 export function GeometryAuthoringRibbon({ state }: { state: CadEditorAuthoringState | null }) {
   const unavailableReason = state ? undefined : '현재 Editor에서는 Geometry source를 편집할 수 없습니다.'

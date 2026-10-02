@@ -50,7 +50,7 @@ Solver 내부 결정이다. 경계 삼각형을 체적 요소로 간주하지 �
 캐시는 형상 hash, root 선택, 단위, 표현, 메셔 버전과 메쉬 프로파일로
 구별한다. 열린 경계, 퇴화 요소, 재료 영역 오류와 정밀화 실패를 수기 메쉬
 입력으로 우회하는 공개 경로는 없다. Netgen의 버전과 배포 고지는
-[methods/mesh](../../app/slaves/cae/app/methods/mesh/)에서 관리한다.
+[methods/mesh](../../app/slaves/cae_simulation/app/methods/mesh/)에서 관리한다.
 경계 및 체적 요소 수의 사전 예산 검사, 정밀화 횟수 제한과 실제 생성량 검사를
 거치며 너무 작은 해상도는 자원 초과 오류로 거절한다.
 

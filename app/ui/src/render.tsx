@@ -2,9 +2,9 @@ import { createRoot } from 'react-dom/client'
 import { CadViewer } from '@/features/viewer/viewer/CadViewer'
 import { CalculationOutputChart } from '@/features/calculation/CalculationOutputChart'
 import { renderCanonicalGeometryScene } from '@/lib/cad/execution/manifoldRender'
-import { deserializeCadScene } from '@/lib/cad/execution/mesh'
-import type { BuiltArtifactInput } from '@/lib/cae/artifact'
-import type { NormalizedCalculationOutput } from '@/lib/calculation/types'
+import { deserializeCadScene } from '@caemble/execution/cad/execution/mesh'
+import type { BuiltArtifactInput } from '@caemble/execution/cae/artifact'
+import type { NormalizedCalculationOutput } from '@caemble/execution/calculation/types'
 import './index.css'
 
 declare global {

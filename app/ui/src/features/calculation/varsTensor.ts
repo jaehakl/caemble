@@ -5,7 +5,7 @@ import {
   type Tensor,
   type Vars,
   type VarsSchemaEntry,
-} from '@/lib/cad/model'
+} from '@caemble/execution/cad/model'
 
 export function validateVarsTensor(value: Tensor, entry: VarsSchemaEntry, label = 'Candidate variable') {
   const flat = flattenVarsTensor(value, entry.shape, label)

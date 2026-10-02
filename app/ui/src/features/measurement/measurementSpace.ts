@@ -1,6 +1,6 @@
-import { flattenVarsTensor, varsTensorFromFlat } from '@/lib/cad/model/tensor'
-import type { Vars } from '@/lib/cad/model/types'
-import type { VarsSchema } from '@/lib/cad/model/vars'
+import { flattenVarsTensor, varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
+import type { Vars } from '@caemble/execution/cad/model/types'
+import type { VarsSchema } from '@caemble/execution/cad/model/vars'
 
 type SpaceLayout = Readonly<{ key: string; shape: readonly number[]; min: number; max: number; size: number }>
 const cellLimit = 8_000_000

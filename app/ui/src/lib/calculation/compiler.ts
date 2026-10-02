@@ -1,10 +1,10 @@
 import type { File } from '@babel/types'
 import type * as Monaco from 'monaco-editor'
 import { loadMonaco } from '@/lib/cad/compiler/monacoRuntime'
-import { CALCULATION_MONACO_DECLARATION } from './declarations'
-import { transformCalculationSource } from './transform'
-import { analyzeCalculationSource } from './sourcePolicy'
-import { CalculationExecutionError, type CompiledCalculationSource } from './types'
+import { CALCULATION_MONACO_DECLARATION } from '@caemble/execution/calculation/declarations'
+import { transformCalculationSource } from '@caemble/execution/calculation/transform'
+import { analyzeCalculationSource } from '@caemble/execution/calculation/sourcePolicy'
+import { CalculationExecutionError, type CompiledCalculationSource } from '@caemble/execution/calculation/types'
 
 const compilationCache = new Map<string, Promise<CompiledCalculationSource>>()
 

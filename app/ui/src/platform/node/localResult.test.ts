@@ -4,13 +4,18 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDataTensorAccessor } from '@/lib/cad/model/dataTensor'
-import { cadSourceHash } from '@/lib/cad/source/document'
-import type { DataSchema, RecordedDataTensor } from '@/lib/cad/model/descriptor'
+import { createDataTensorAccessor } from '@caemble/execution/cad/model/dataTensor'
+import { cadSourceHash } from '@caemble/execution/cad/source/document'
+import type { DataSchema, RecordedDataTensor } from '@caemble/execution/cad/model/descriptor'
 import { dataCommand } from '@/cli/data'
 import { calculationExampleInput } from '@/authoring/examples'
-import { varsTensorFromFlat } from '@/lib/cad/model/tensor'
-import { createLocalCalculationInput, exportLocalResult, inspectLocalResult, sliceLocalResult } from './localResult'
+import { varsTensorFromFlat } from '@caemble/execution/cad/model/tensor'
+import {
+  createLocalCalculationInput,
+  exportLocalResult,
+  inspectLocalResult,
+  sliceLocalResult,
+} from '@caemble/execution/node/localResult'
 
 const directories: string[] = []
 afterEach(async () => {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Monaco from 'monaco-editor'
-import type { CadElementManifest } from '@/lib/cad/evaluation/types'
-import { insertPrimitiveAfterCursorLine, wrapSelectionWithOperation } from '@/lib/cad/source'
-import type { CadDiagnostic } from '@/lib/cad/worker/protocol'
+import type { CadElementManifest } from '@caemble/execution/cad/evaluation/types'
+import { insertPrimitiveAfterCursorLine, wrapSelectionWithOperation } from '@caemble/execution/cad/source'
+import type { CadDiagnostic } from '@caemble/execution/cad/worker/protocol'
 
 export type CadEditorAuthoringHandle = Readonly<{
   insertPrimitive: (element: CadElementManifest) => boolean

@@ -8,7 +8,7 @@ import {
   type RecordedDataTensor,
   type ResolvedRecordedTensor,
   type UcumUnit,
-} from '@/lib/cad/model'
+} from '@caemble/execution/cad/model'
 import type { CatalogQuantityKind } from '@/api/catalog'
 
 export type CadViewerRecordedAxis = RecordedDataAxis

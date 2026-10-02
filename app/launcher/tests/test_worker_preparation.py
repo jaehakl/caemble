@@ -16,15 +16,15 @@ from test_worker_modes import make_manager, offer
 @pytest.mark.asyncio
 async def test_startup_prepares_after_recovery_once_before_advertisement_and_build_assignment(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[3]
-    project = tmp_path / "checkout" / "app" / "slaves" / "evaluation"
+    project = tmp_path / "checkout" / "app" / "slaves" / "cae_evaluation"
     project.mkdir(parents=True)
-    shutil.copytree(repo / "app/slaves/evaluation/app", project / "app", ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copyfile(repo / "app/slaves/evaluation/manifest.json", project / "manifest.json")
+    shutil.copytree(repo / "app/slaves/cae_evaluation/app", project / "app", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copyfile(repo / "app/slaves/cae_evaluation/manifest.json", project / "manifest.json")
     deployment = project.parents[2] / "deployment"
     deployment.mkdir()
-    scripts = project.parents[2] / "app/ui/scripts"
+    scripts = project.parents[2] / "shared/execution/scripts"
     scripts.mkdir(parents=True)
-    shutil.copyfile(repo / "app/ui/scripts/node_runtime.py", scripts / "node_runtime.py")
+    shutil.copyfile(repo / "shared/execution/scripts/node_runtime.py", scripts / "node_runtime.py")
     shutil.copyfile(repo / "deployment/caemble.tar.gz", deployment / "caemble.tar.gz")
     monkeypatch.setattr(SlaveApp, "python_executable", property(lambda _: Path(sys.executable)))
     manager = make_manager(tmp_path)

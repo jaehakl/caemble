@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { webcrypto } from 'node:crypto'
 import { createCaembleClient } from './http'
 import { sha256Bytes, submitArtifact } from './submitArtifact'
-import { cadSourceHash } from '@/lib/cad/source/document'
-import type { BuildArtifact } from '@/contracts/build'
-import { UPLOAD_CHUNK_BYTES } from '@/contracts/build'
+import { cadSourceHash } from '@caemble/execution/cad/source/document'
+import type { BuildArtifact } from '@caemble/execution/contracts/build'
+import { UPLOAD_CHUNK_BYTES } from '@caemble/execution/contracts/build'
 
 describe('prebuilt remote submission', () => {
   it('uploads multiple distinct Candidate inputs with one registration and one commit', async () => {

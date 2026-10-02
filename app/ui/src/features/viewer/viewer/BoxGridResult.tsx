@@ -15,9 +15,9 @@ import { ViewerPlaybackRegistration } from './ViewerPlayback'
 import type { ViewerPlaybackSource } from './viewerPlaybackState'
 import { Copy, Layers } from 'lucide-react'
 import { ViewerLayout, ViewerToolHosts, ViewerToolButton, ViewerOutputMenuHost, ViewerToolMenu } from './ViewerTools'
-import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
-import { createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
-import type { CalculationInputLeaf } from '@/lib/calculation/types'
+import type { RecordedData, RecordedDataRule, UcumUnit } from '@caemble/execution/cad/model'
+import { createDataTensorAccessor, isDataTensor } from '@caemble/execution/cad/model/dataTensor'
+import type { CalculationInputLeaf } from '@caemble/execution/calculation/types'
 import {
   boxGridFrequenciesHz,
   boxGridTensorComponents,
@@ -26,7 +26,7 @@ import {
   type BoxGridProjectionOptions,
   type ProjectionAxis,
   type ProjectionReduction,
-} from '@/lib/calculation/boxGridProject'
+} from '@caemble/execution/calculation/boxGridProject'
 import {
   boxGridArrowComponents,
   boxGridVectorComponents,

@@ -1,7 +1,7 @@
 import { ViewerPlaybackRegistration } from './ViewerPlayback'
 import { useViewerComparison, useViewerSetting } from './comparisonSettings'
 import { useEffect, useRef } from 'react'
-import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
+import { convertUcumValue, type UcumUnit } from '@caemble/execution/cad/model'
 import { meshFrameAtTime } from './meshDeformation'
 
 export function MeshPlayback({

@@ -11,7 +11,7 @@ class LauncherJournal:
     def __init__(self, directory: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / "runtime.json"
-        self.lock_file = (directory / "runtime.lock").open("a+b")
+        self.lock_file = (directory / "runtime.lock").open("a+b", buffering=0)
         self.lock_file.seek(0)
         if os.name == "nt":
             import msvcrt

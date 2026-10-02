@@ -12,7 +12,7 @@ build/
 **/build/
 dist/
 **/dist/
-app/slaves/evaluation/runtime.toml
+app/slaves/*/runtime.toml
 *.egg-info/
 **/*.egg-info/
 **/.cache/

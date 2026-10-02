@@ -45,7 +45,7 @@ backup and the baseline does not provide downgrade recovery.
 - `app/optimization`: Optimizations, Trials, stage submissions, the optimization
   algorithm, and build/solve/calculate coordination using GPStation Jobs.
 - `app/calculation`: Calculation source, validated contracts, and CalculationData.
-- `app/catalog`: read-only Catalog queries and response schemas.
+- `shared/catalog`: read-only Catalog queries and response schemas.
 - `app/storage`: object upload, ownership, binding, and cleanup.
 - `app/user_auth`: Google OAuth, cookies/JWT, CSRF, users, and Caemble access-key
   issuance and scope policy.
@@ -179,7 +179,7 @@ remain enforced. CAD evaluation, tensor interpretation, unit conversion, and
 physics execution remain in the UI/CAE worker boundary.
 
 QuantityKind, Material, and Solver catalog data is read from
-`app/catalog/caemble_catalog/catalog.sqlite3`. Never introduce parallel catalog
+`shared/catalog/caemble_catalog/catalog.sqlite3`. Never introduce parallel catalog
 data in API source, JSON, generated JavaScript, or Markdown.
 
 

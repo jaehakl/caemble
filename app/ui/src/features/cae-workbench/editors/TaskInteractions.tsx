@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
+import type { MeasurementMaterialSnapshot } from '@caemble/execution/contracts/api/measurement'
 
 export function TaskInteractions({
   task,

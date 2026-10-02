@@ -1,4 +1,4 @@
-import type { BuildArtifact, BuildArtifactItem } from '@/contracts/build'
+import type { BuildArtifact, BuildArtifactItem } from '@caemble/execution/contracts/build'
 
 /** Items live on disk in IndexedDB; only the index and one item are retained in memory. */
 export class BrowserArtifactStore {

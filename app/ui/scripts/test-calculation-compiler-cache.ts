@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict'
 import { calculationExampleInput } from '../src/authoring/examples'
-import { BOX_GRID_AXES } from '../src/contracts/boxGrid'
+import { BOX_GRID_AXES } from '@caemble/execution/contracts/boxGrid'
 import { calculationMonacoStubState } from './calculation-monaco-stub'
 import { compileCalculationSource } from '../src/lib/calculation/compiler'
-import { CALCULATION_SOURCE_SKELETON } from '../src/lib/calculation/declarations'
-import { calculationIndex } from '../src/lib/calculation/indexGuard'
-import { CALCULATION_MATHJS_RUNTIME } from '../src/lib/calculation/mathRuntime'
-import { CALCULATION_INDEX_GUARD_GLOBAL } from '../src/lib/calculation/runtimeGlobals'
+import { CALCULATION_SOURCE_SKELETON } from '@caemble/execution/calculation/declarations'
+import { calculationIndex } from '@caemble/execution/calculation/indexGuard'
+import { CALCULATION_MATHJS_RUNTIME } from '@caemble/execution/calculation/mathRuntime'
+import { CALCULATION_INDEX_GUARD_GLOBAL } from '@caemble/execution/calculation/runtimeGlobals'
 import {
   CalculationExecutionError,
   type CalculationInput,
   type CompiledCalculationSource,
-} from '../src/lib/calculation/types'
-import { assertCalculationInput, normalizeCalculationOutput } from '../src/lib/calculation/validation'
+} from '@caemble/execution/calculation/types'
+import { assertCalculationInput, normalizeCalculationOutput } from '@caemble/execution/calculation/validation'
 
 function sourceWithValue(value: number) {
   return `import { number as module } from 'mathjs'

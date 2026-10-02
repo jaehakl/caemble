@@ -1,4 +1,4 @@
 import { catalogApi } from '@/api/catalog'
-import { createCachedCatalogRuntimeSliceResolver } from '@/lib/catalog/references'
+import { createCachedCatalogRuntimeSliceResolver } from '@caemble/execution/catalog/references'
 
 export const fetchCatalogRuntimeSlice = createCachedCatalogRuntimeSliceResolver(catalogApi.runtimeSlice)

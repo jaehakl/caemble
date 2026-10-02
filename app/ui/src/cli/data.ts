@@ -1,12 +1,12 @@
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { CliError } from '@/platform/node/environment'
-import { exportLocalResult, inspectLocalResult, sliceLocalResult } from '@/platform/node/localResult'
+import { CliError } from '@caemble/execution/node/environment'
+import { exportLocalResult, inspectLocalResult, sliceLocalResult } from '@caemble/execution/node/localResult'
 import type { CommandContext } from './types'
 import { createDbTables, getListRequest } from '@/api/api'
 import { resolveObjects } from '@/api/objectStorage'
-import { createDataTensorAccessor } from '@/lib/cad/model/dataTensor'
-import type { DataSchema, DataTensor } from '@/lib/cad/model/core'
+import { createDataTensorAccessor } from '@caemble/execution/cad/model/dataTensor'
+import type { DataSchema, DataTensor } from '@caemble/execution/cad/model/core'
 
 export async function dataCommand(group: string, command: string, context: CommandContext) {
   const { args, options, signal } = context

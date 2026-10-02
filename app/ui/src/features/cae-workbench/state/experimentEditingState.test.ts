@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCadSourceDocument, type ExperimentSourceBundle } from '@/lib/cad/source'
+import { createCadSourceDocument, type ExperimentSourceBundle } from '@caemble/execution/cad/source'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
 import { experimentEditingReducer, initialExperimentEditingState } from './experimentEditingState'
 

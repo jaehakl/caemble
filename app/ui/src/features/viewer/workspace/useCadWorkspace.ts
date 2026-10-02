@@ -1,6 +1,6 @@
 import { preparePredictionDocument } from '@/lib/cad/execution/evaluateDocument'
-import type { PredictionCandidateSnapshot } from '@/lib/cad/execution/snapshotTypes'
-import { measurementMaterialSnapshot } from '@/lib/cad/execution/measurement'
+import type { PredictionCandidateSnapshot } from '@caemble/execution/cad/execution/snapshotTypes'
+import { measurementMaterialSnapshot } from '@caemble/execution/cad/execution/measurement'
 import { readMeasurementMaterialSnapshot } from '../persistence/contracts'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
@@ -16,9 +16,9 @@ import {
   updateCadSource,
   updateExperimentSourceFile,
   type ExperimentSourceDocument,
-} from '@/lib/cad/source'
+} from '@caemble/execution/cad/source'
 import { CadCompilationError } from '@/lib/cad/compiler/monacoCompiler'
-import type { CadScene } from '@/lib/cad/evaluation/types'
+import type { CadScene } from '@caemble/execution/cad/evaluation/types'
 import {
   applyMaterialSnapshot,
   buildMeasurement,
@@ -35,11 +35,11 @@ import {
   normalizeVarsSchema,
   varsSchemaFingerprint,
   type Vars,
-} from '@/lib/cad/model'
-import type { SimulationProgramManifest } from '@/lib/cad/simulation'
-import type { CadDiagnostic } from '@/lib/cad/worker/protocol'
-import { sourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
-import { catalogDraftTaskNames } from '@/lib/catalog/solverTasks'
+} from '@caemble/execution/cad/model'
+import type { SimulationProgramManifest } from '@caemble/execution/cad/simulation'
+import type { CadDiagnostic } from '@caemble/execution/cad/worker/protocol'
+import { sourceCatalogRuntimeSlice } from '@caemble/execution/catalog/runtime'
+import { catalogDraftTaskNames } from '@caemble/execution/catalog/solverTasks'
 import type { MeasurementMaterialSnapshot } from '../persistence/contracts'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import {

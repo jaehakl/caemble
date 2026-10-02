@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { compileNodeCalculation, runNodeCalculation } from './calculation'
+import { compileNodeCalculation, runNodeCalculation } from '@caemble/execution/node/calculation'
 
 describe('Node Calculation adapter', () => {
   it.each([

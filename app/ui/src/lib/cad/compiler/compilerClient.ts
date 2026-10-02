@@ -1,7 +1,7 @@
 import CadCompilerWorker from './cadCompiler.worker?worker'
-import { CadCompilationError } from './compilationError'
-import type { CadCompilationInput, CadCompilationResponse } from './compilerProtocol'
-import type { CompiledCadDocument } from './types'
+import { CadCompilationError } from '@caemble/execution/cad/compiler/compilationError'
+import type { CadCompilationInput, CadCompilationResponse } from '@caemble/execution/cad/compiler/compilerProtocol'
+import type { CompiledCadDocument } from '@caemble/execution/cad/compiler/types'
 
 type Consumer = {
   resolve: (document: CompiledCadDocument) => void

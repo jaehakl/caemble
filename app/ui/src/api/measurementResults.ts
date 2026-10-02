@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import type { MeasurementResults, MeasurementRecordedDataNode } from '@/contracts/api/measurement'
+import type { MeasurementResults, MeasurementRecordedDataNode } from '@caemble/execution/contracts/api/measurement'
 import { measurementRecordedDataSchema } from '@/contracts/api/measurementValidators'
 import { measurementVisualizationSchema, recordedResultContractsSchema } from '@/contracts/resultValidators'
-import type { MeasurementVisualizations } from '@/contracts/results'
+import type { MeasurementVisualizations } from '@caemble/execution/contracts/results'
 import type { CaembleClient, RequestContext } from './http'
 import { resolveObjects } from './objectStorage'
 

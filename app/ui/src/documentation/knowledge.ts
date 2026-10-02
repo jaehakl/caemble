@@ -1,5 +1,5 @@
 import type { CatalogSearchItem } from '@/api/catalog'
-import { cadElementCatalog } from '@/lib/cad/catalog'
+import { cadElementCatalog } from '@caemble/execution/cad/catalog'
 import { publicDocuments } from '@/documentation/public'
 import { helpHref, type HelpKindId } from './helpNavigation'
 import type { ManualSection } from './types'
