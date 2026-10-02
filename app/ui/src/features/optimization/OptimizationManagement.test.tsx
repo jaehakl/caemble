@@ -8,6 +8,7 @@ import { optimizationDetailSchema, optimizationTrialSchema } from '@/contracts/a
 import { OptimizationManagement } from './OptimizationManagement'
 import { hybridOptimizationFixture, optimizationFixture, trialFixture } from './fixtures.test-support'
 import { optimizationQueryKeys } from './queryKeys'
+import { qualityReportFixture } from '@/features/prediction/qualityReport.fixture'
 
 const auth = vi.hoisted(() => ({ isAuthenticated: true, queryScope: 'user:first' }))
 vi.mock('@/features/auth/use-auth', () => ({ useAuth: () => auth }))
@@ -116,6 +117,64 @@ it.each(['pausing', 'completed'])('does not offer a model update while %s', asyn
   renderManagement()
   await screen.findByLabelText('Hybrid 모델 갱신')
   expect(screen.queryByRole('button', { name: '모델 갱신' })).not.toBeInTheDocument()
+})
+
+it('restores frozen and active quality assessments without deriving a verdict from the model list', async () => {
+  const initial = {
+    ...hybridOptimizationFixture.model_update!.initial_model,
+    quality_report: qualityReportFixture,
+    quality_requirements: [{ recordId: 10, component: 'value', rmseMaximum: 1 }],
+    quality_assessment: {
+      status: 'passed' as const,
+      reasonCode: 'requirements-passed',
+      items: [
+        {
+          recordId: 10,
+          component: 'value',
+          rmseMaximum: 1,
+          rmse: 0.6,
+          unit: 'K',
+          status: 'passed' as const,
+          reasonCode: 'within-limit',
+        },
+      ],
+    },
+  }
+  const active = {
+    ...initial,
+    model_revision: 2,
+    quality_assessment: {
+      status: 'unassessed' as const,
+      reasonCode: 'requirements-unassessed',
+      items: [
+        {
+          ...initial.quality_assessment.items[0],
+          rmse: null,
+          status: 'unassessed' as const,
+          reasonCode: 'record-unavailable',
+        },
+      ],
+    },
+  }
+  const optimization = {
+    ...hybridOptimizationFixture,
+    definition: {
+      ...hybridOptimizationFixture.definition,
+      hybrid: { ...hybridOptimizationFixture.definition.hybrid!, ...initial },
+    },
+    model_update: { ...hybridOptimizationFixture.model_update!, initial_model: initial, active_model: active },
+  }
+  const parsed = optimizationDetailSchema.parse(optimization)
+  expect(parsed.definition.hybrid?.quality_report).toEqual(qualityReportFixture)
+  expect(parsed.model_update?.active_model.quality_assessment).toEqual(active.quality_assessment)
+  vi.mocked(optimizationApi.read).mockResolvedValue(parsed)
+  renderManagement()
+  const initialQuality = within(await screen.findByLabelText('초기 모델 품질'))
+  expect(initialQuality.getByText('품질 판정: 통과')).toBeInTheDocument()
+  expect(initialQuality.getByText(/Record 10 · value: 통과 · RMSE 0.6 \/ 상한 1 K/)).toBeInTheDocument()
+  const activeQuality = within(screen.getByLabelText('현재 채택 모델 품질'))
+  expect(activeQuality.getByText('품질 판정: 미평가')).toBeInTheDocument()
+  expect(activeQuality.getByText(/평가된 Record가 없습니다./)).toBeInTheDocument()
 })
 
 it('restores separate predictions and verifications, applies only verified Vars, and retries Calculation after budget exhaustion', async () => {

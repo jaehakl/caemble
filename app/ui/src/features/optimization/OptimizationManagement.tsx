@@ -375,7 +375,9 @@ export function OptimizationManagementView({
                     <p className="font-mono text-xl font-semibold">
                       {Number(bestPredicted.result.objective.toPrecision(8))}
                     </p>
-                    <p className="text-xs text-muted-foreground">kNN 예측 · 제약 충족 · 실제 해석 검증과 별도 결과</p>
+                    <p className="text-xs text-muted-foreground">
+                      Forward 예측 · 제약 충족 · 실제 해석 검증과 별도 결과
+                    </p>
                     {bestPredicted.source ? (
                       <p className="text-xs text-muted-foreground">
                         예측 모델 revision {String(bestPredicted.source.model_revision ?? '')}

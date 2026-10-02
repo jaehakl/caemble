@@ -35,6 +35,8 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
     payload = request.model_dump(mode="json")
     if payload.get("hybrid") is None:
         payload.pop("hybrid", None)  # Preserve existing Solver-only create receipts.
+    elif payload["hybrid"].get("quality_requirements") is None:
+        payload["hybrid"].pop("quality_requirements", None)  # Preserve Hybrid receipts made before quality limits.
     try:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                                           allow_nan=False).encode("utf-8")).hexdigest()
@@ -100,7 +102,7 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
                 "max_trials": request.max_trials, "max_parallel": request.max_parallel,
                 "initial_step": 0.25, "min_step": 0.001}
     if request.hybrid is not None:
-        settings["hybrid"] = request.hybrid.model_dump(mode="json")
+        settings["hybrid"] = payload["hybrid"]
     optimization = Optimization(user_id=user.id, experiment_id=experiment.id,
                   name=request.name.strip() if request.name and request.name.strip() else f"{experiment.name} optimization",
                   request_id=str(request.request_id), request_hash=digest, state="running", definition=definition,

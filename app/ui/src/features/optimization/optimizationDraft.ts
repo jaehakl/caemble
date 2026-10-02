@@ -16,6 +16,7 @@ export type OptimizationDraft = {
   replicaId: string
   launcherId: string
   maxSolverRuns: number
+  qualityRequirements: { recordId: number; component: string; rmseMaximum: string }[]
 }
 
 export function createOptimizationDraft(workbench: CaeWorkbenchState): OptimizationDraft {
@@ -33,5 +34,6 @@ export function createOptimizationDraft(workbench: CaeWorkbenchState): Optimizat
     replicaId: '',
     launcherId: '',
     maxSolverRuns: 8,
+    qualityRequirements: [],
   }
 }

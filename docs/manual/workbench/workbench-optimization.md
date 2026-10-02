@@ -1,6 +1,6 @@
 # 실제 해석으로 변수 최적화하기
 
-**최적화**는 현재 Candidate에서 시작해 Vars를 바꾸고 실제 Solver를 반복 실행하며 목적값을 개선합니다. 한 번의 탐색을 **Optimization**, 한 후보를 **Trial**, 후보의 예측 또는 실제 검증을 **Evaluation**이라고 합니다. 기본 Solver-only 방식은 각 후보를 빌드, 해석, 후처리 순서로 평가하며 성공한 해석 결과는 Measurement로 남습니다. **kNN Hybrid Optimization**은 저장 모델로 후보를 먼저 예측하고 선별한 후보를 실제 Solver로 검증합니다.
+**최적화**는 현재 Candidate에서 시작해 Vars를 바꾸고 실제 Solver를 반복 실행하며 목적값을 개선합니다. 한 번의 탐색을 **Optimization**, 한 후보를 **Trial**, 후보의 예측 또는 실제 검증을 **Evaluation**이라고 합니다. 기본 Solver-only 방식은 각 후보를 빌드, 해석, 후처리 순서로 평가하며 성공한 해석 결과는 Measurement로 남습니다. **Forward Hybrid Optimization**은 저장된 kNN 또는 MLP 모델로 후보를 먼저 예측하고 선별한 후보를 실제 Solver로 검증합니다.
 
 ## 진행 중인 최적화 확인하기
 
@@ -14,7 +14,7 @@
 2. 현재 Candidate의 Vars를 시작 조건으로 확인합니다. 모든 스칼라와 Tensor의 모든 원소가 기본 탐색 대상이며, 범위는 Experiment의 Vars 규격에서 가져옵니다.
 3. 바꾸지 않을 변수는 **탐색**을 해제합니다. Tensor는 **원소별 범위·고정**을 펼쳐 각 원소의 탐색 여부와 범위를 따로 정할 수 있습니다. 고정한 값은 시작 Candidate의 값을 유지합니다. 범위를 줄일 때도 시작값을 포함해야 합니다.
 4. 저장된 Calculation을 목적값으로 고르고 **최소화** 또는 **최대화**를 선택합니다. 필요하면 다른 Calculation의 하한·상한을 제약조건으로 추가합니다.
-5. 모든 후보를 실제 해석하려면 기본 평가 방식을 유지합니다. Hybrid를 사용하려면 **kNN Hybrid Optimization**을 켜고 저장된 Forward kNN 모델, revision, 모델 복제본과 실행 Launcher를 선택합니다.
+5. 모든 후보를 실제 해석하려면 기본 평가 방식을 유지합니다. Hybrid를 사용하려면 **Forward Hybrid Optimization**을 켜고 저장된 Forward 모델, revision, 모델 복제본과 실행 Launcher를 선택합니다. 필요한 출력의 **RMSE 상한**을 선택적으로 입력합니다.
 6. 최대 후보 수와 동시 후보 수를 정하고 **최적화 시작**을 누릅니다. 기본값은 후보 20개, 동시 후보 2개입니다. Hybrid의 별도 **Solver 실행 시도 예산** 기본값은 8회입니다.
 
 설정은 오른쪽 패널에서 열리며 작은 화면에서는 전체 화면으로 표시됩니다. 같은 Experiment와 소스의 작업 중에는 패널을 닫았다 다시 열어도 입력한 설정이 유지됩니다. 생성이 끝나면 패널이 닫히고 새 Optimization의 진행 화면으로 이동합니다.
@@ -25,7 +25,27 @@
 
 Optimization은 시작할 때의 Experiment 소스, Calculation과 변수 범위를 고정합니다. 기존 Optimization을 새 설정으로 바꾸려면 새 Optimization을 시작하세요. Optimization이 참조하는 Experiment 소스를 바꾸려면 **Save As**로 새 Experiment를 만들거나 해당 Optimization 이력을 먼저 삭제해야 합니다.
 
-## kNN Hybrid 탐색과 Solver 예산
+## Hybrid 품질 조건
+
+모델 revision을 선택하면 출력 Record·성분별로 저장된 평가 RMSE와 선택적인 상한 입력란이 표시됩니다. RMSE 상한은 출력의 원래 단위를 사용하며 0 이상의 유한한 값이어야 합니다. 빈 항목은 조건에 포함하지 않습니다. 모델이나 revision을 바꾸면 입력한 상한을 지우므로 새 출력 계약에 맞춰 다시 지정하세요.
+
+**최적화 시작**을 누르면 서버가 선택한 revision의 저장 품질 보고서와 조건을 비교합니다. 지정한 출력이 모두 상한 이하이면 **통과**, 상한을 넘으면 **실패**, 보고서나 필요한 출력의 평가값이 없으면 **미평가**입니다. 조건이 있는데 실패하거나 미평가이면 시작하지 않고 이유를 표시합니다. 조건을 지정하지 않으면 기존처럼 시작할 수 있으며 품질 미확인으로 표시합니다.
+
+조건·품질 보고서·판정은 시작 정의에 함께 고정됩니다. **초기 모델**과 **현재 채택 모델**의 품질 판정을 각각 확인할 수 있습니다. 같은 모델도 Optimization마다 다른 오차 기준을 사용할 수 있으며, 기준은 모델 파일 자체를 바꾸지 않습니다. 수동 갱신한 revision도 같은 조건을 새로 검사하고 통과하지 못하면 현재 채택 모델을 유지합니다.
+
+CLI의 `optimization create --config` 설정 파일에서도 `hybrid.quality_requirements`로 같은 조건을 전달합니다. 다음은 Record 10의 `value` 성분에 대한 예시이며, 실제 선택 모델의 Record ID·성분·단위에 맞춰 입력하세요.
+
+```json
+{
+  "quality_requirements": [
+    { "recordId": 10, "component": "value", "rmseMaximum": 0.001 }
+  ]
+}
+```
+
+이 객체의 필드는 기존 `hybrid` 설정 안에 넣습니다. 조건을 사용하지 않으려면 `quality_requirements`를 생략합니다.
+
+## Forward Hybrid 탐색과 Solver 예산
 
 Hybrid는 시작할 때 선택한 저장 모델 revision, checksum과 Dataset 출처를 초기 모델로 기록합니다. 모델 갱신을 요청하지 않으면 이 모델을 계속 사용합니다. 한 탐색 회차에서 사용하는 revision은 고정되며, 이미 제출한 예측의 출처와 결과는 모델을 갱신해도 그대로 보존됩니다.
 
@@ -38,6 +58,8 @@ Hybrid는 시작할 때 선택한 저장 모델 revision, checksum과 Dataset �
 Hybrid는 선택한 Launcher에서 Evaluation과 Predictor가 함께 사용할 CPU·RAM·GPU를 합쳐 검사합니다. 현재 kNN은 학습·추론 모두 GPU를 요구하지 않으며, Hybrid 추론은 기본적으로 Evaluation과 Predictor가 CPU 1개씩을 요청합니다. 따라서 이 구성에는 CPU 최소 2개와 두 작업에 필요한 RAM이 있어야 합니다. Launcher당 예측 부모 작업 하나만 활성화되며, 자원 경합으로 Predictor 연결이 30초 넘게 대기하면 두 작업을 정리한 뒤 다시 대기합니다.
 
 작은 전체 흐름을 확인하려면 Catalog의 `hybrid-box-conductor`와 동반 Calculation을 사용하세요. 기준 검사는 실제 학습 해석 3회로 Dataset을 만들고 서버 소유 kNN 학습을 완료한 뒤, 새 추론 세션에서 후보 5개를 예측하고 그중 3개를 Solver로 검증합니다. 같은 Candidate의 예측·실제 BoxGrid에 고정된 Calculation을 적용하고 두 목적값을 따로 남깁니다. 첫 학습 데이터용 Solver 작업 제출부터 모든 관련 Job의 자원 정리까지 하나의 180초를 사용하며 환경 준비·빌드와 DB 생성·삭제 시간은 별도로 기록합니다. 로컬 개발 환경에서 재현하는 명령과 결과 확인은 [작은 Box 도체 예제 안내](../../authoring/experiment.md#작은-box-도체-예제로-hybrid-실행하기)를 참고하세요.
+
+온도장 MLP의 품질 조건까지 포함한 전체 경로는 [기존 전기–열 예제로 MLP Hybrid 검증하기](../../authoring/experiment.md#기존-전기열-예제로-mlp-hybrid-검증하기)를 참고하세요. 실제 해석으로 Dataset을 만들고 검증용 설계점을 분리한 뒤 저장·재로드한 revision 하나로 탐색을 마칩니다. 결과 보고서에는 품질 판정, 학습·추론·해석 비용과 실제 Solver로 검증한 최선 후보를 구분해 남깁니다.
 
 ## Hybrid 모델 갱신하기
 

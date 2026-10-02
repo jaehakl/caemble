@@ -1,4 +1,4 @@
-"""Opt-in real small kNN Hybrid Optimization through API, launcher and child processes."""
+"""Opt-in fixed-revision kNN and MLP Hybrid flows with real local worker processes."""
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +10,7 @@ import importlib
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import socket
 import sys
@@ -53,6 +54,21 @@ from test_calculation_database import _create_database, _database_url, _drop_dat
 from user_auth.db import Role, UserRole
 from db import get_db
 from user_auth.utils.auth_utils import hash_token
+from hybrid_metrics_fixture import recorded_solver_invocations
+
+
+THERMAL_POINTS = ((100, 12), (90, 11), (90, 13), (110, 11), (110, 13))
+THERMAL_BOUNDS = {"conductorLength": (90, 110), "conductorWidth": (11, 13)}
+THERMAL_TARGET_K = 293.168
+THERMAL_RMSE_K = 0.001
+THERMAL_CALCULATION = """import { abs, max } from 'mathjs'
+
+/** @param {CalculationInput} record */
+export default function calculate(record) {
+  const temperature = record['temperature']
+  return { dtype: 'float64', data: Number(abs(Number(max(temperature.data)) - 293.168)) }
+}
+"""
 
 
 def prediction_artifact(reference, objects):
@@ -64,15 +80,18 @@ def prediction_artifact(reference, objects):
     return json.loads(raw)
 
 
-def recorded_current(tensor):
-    # The example's totalCurrent is a single float64 BoxGrid value.
-    assert tensor["shape"] == [1] * 7 and tensor["storage"]["kind"] == "inline"
-    value = tensor["storage"]["value"]
-    for _ in range(7):
-        assert isinstance(value, list) and len(value) == 1
-        value = value[0]
-    assert type(value) in (float, int) and math.isfinite(value)
-    return float(value)
+def recorded_values(tensor):
+    assert tensor["storage"]["kind"] == "inline"
+    pending, values = [tensor["storage"]["value"]], []
+    while pending:
+        value = pending.pop()
+        if isinstance(value, list):
+            pending.extend(reversed(value))
+        else:
+            assert type(value) in (float, int) and math.isfinite(value)
+            values.append(float(value))
+    assert len(values) == math.prod(tensor["shape"])
+    return values
 
 
 async def stop_process_tree(process):
@@ -91,15 +110,27 @@ async def stop_process_tree(process):
     assert not alive, f"Fixture retained child processes: {[child.pid for child in alive]}"
 
 
-@unittest.skipUnless(os.getenv("RUN_HYBRID_E2E") == "1", "Set RUN_HYBRID_E2E=1 for the small real Solver Optimization demo.")
 class HybridEndToEndTests(unittest.TestCase):
+    @unittest.skipUnless(os.getenv("RUN_HYBRID_E2E") == "1", "Set RUN_HYBRID_E2E=1 for the real kNN Hybrid demo.")
     def test_fixed_knn_revision_selects_real_verified_candidates_without_browser(self):
+        self.run_case(thermal=False)
+
+    @unittest.skipUnless(os.getenv("RUN_MLP_HYBRID_E2E") == "1", "Set RUN_MLP_HYBRID_E2E=1 for the real thermal MLP Hybrid demo.")
+    def test_fixed_mlp_revision_uses_heldout_temperature_and_real_verification(self):
+        self.run_case(thermal=True)
+
+    def run_case(self, *, thermal):
+        self.thermal = thermal
+        self.report_prefix = "mlp-hybrid-demo" if thermal else "hybrid-demo"
         self.test_started = time.monotonic()
         report_dir = Path(__file__).resolve().parents[3] / ".work"
         report_dir.mkdir(exist_ok=True)
         self.report = {"status": "running", "phase": "database_setup", "budget_seconds": 180,
             "phase_seconds": {}, "cleanup_verified": False, "environment_cleanup_verified": False,
-            "run_id": str(uuid.uuid4()), "started_at": datetime.now(timezone.utc).isoformat()}
+            "run_id": str(uuid.uuid4()), "started_at": datetime.now(timezone.utc).isoformat(),
+            "environment": {"platform": platform.platform(), "processor": platform.processor(),
+                "logical_cpu_count": os.cpu_count(), "physical_memory_bytes": psutil.virtual_memory().total,
+                "python": platform.python_version(), "launcher_cpu_cores": 4, "worker_cpu_cores": 1, "gpu_count": 0}}
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         created = False
         cleanup_error = None
@@ -125,7 +156,7 @@ class HybridEndToEndTests(unittest.TestCase):
                         database_cleanup_error={"type": type(error).__name__, "message": str(error)})
             self.report["phase_seconds"]["database_teardown"] = time.monotonic() - cleanup_started
             self.report["total_test_seconds"] = time.monotonic() - self.test_started
-            name = "hybrid-demo-acceptance.json" if self.report["status"] == "passed" else "hybrid-demo-last-failure.json"
+            name = f"{self.report_prefix}-{'acceptance' if self.report['status'] == 'passed' else 'last-failure'}.json"
             self.report_path = report_dir / name
             self.report_path.write_text(json.dumps(self.report, indent=2, allow_nan=False), encoding="utf-8")
             print(json.dumps({"status": self.report["status"], "report": str(self.report_path),
@@ -206,7 +237,7 @@ class HybridEndToEndTests(unittest.TestCase):
         logs = []
         report_dir = repo / ".work"
         report_dir.mkdir(exist_ok=True)
-        log_file = (report_dir / "hybrid-demo-launcher.log").open("w", encoding="utf-8")
+        log_file = (report_dir / f"{self.report_prefix}-launcher.log").open("w", encoding="utf-8")
 
         async def execution_report(status):
             async with sessions() as db:
@@ -233,7 +264,7 @@ class HybridEndToEndTests(unittest.TestCase):
                         "cleaned": job.cleaned_at is not None, "allocation": job.allocation,
                         "error": job.last_error} for job in all_jobs],
                     "training_solver_runs": sum(job.slave_app_id == "cae" and job.started_at is not None
-                        and (job.artifact_metadata or {}).get("optimization_id") == self.report.get("training_optimization_id") for job in all_jobs),
+                        and (job.artifact_metadata or {}).get("optimization_id") in self.report.get("training_optimization_ids", []) for job in all_jobs),
                     "solver_runs": sum(job.slave_app_id == "cae" and job.started_at is not None
                         and (job.artifact_metadata or {}).get("optimization_id") == optimization_id for job in all_jobs),
                     "total_solver_runs": sum(job.slave_app_id == "cae" and job.started_at is not None for job in all_jobs),
@@ -249,7 +280,8 @@ class HybridEndToEndTests(unittest.TestCase):
 
         try:
             temporary = Path(temporary_directory.name)
-            example = catalog.experiment("caemble:experiment/caemble/verified/hybrid-box-conductor@1.0.0")
+            example = catalog.experiment("caemble:experiment/caemble/verified/electro-thermal-notched-bar@6.0.2" if self.thermal
+                else "caemble:experiment/caemble/verified/hybrid-box-conductor@1.0.0")
             artifact_path = temporary / "artifact"
             build = await asyncio.create_subprocess_exec(
                 "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo), "--python", str(cae_python),
@@ -265,7 +297,9 @@ class HybridEndToEndTests(unittest.TestCase):
             artifact = json.loads((artifact_path / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
             built = artifact["measurement"]["experiment"]
             program = built["simulationProgram"]
-            source = example["calculations"][0]["source_code"]
+            source = THERMAL_CALCULATION if self.thermal else example["calculations"][0]["source_code"]
+            record_name = "temperature" if self.thermal else "totalCurrent"
+            target = THERMAL_TARGET_K if self.thermal else 0.11
             token = f"hybrid-demo-{uuid.uuid4().hex}"
             async with sessions() as db:
                 role = await db.scalar(select(Role).where(Role.name == "user"))
@@ -278,7 +312,7 @@ class HybridEndToEndTests(unittest.TestCase):
                         tensor_order=schema.get("tensorOrder", 0), quantity_kind=schema.get("quantityKind"),
                         data_schema=schema, contract_hash=f"hybrid-demo-{name}"))
                 calculation_source = CalculationSource(source_code=source, source_hash=hashlib.sha256(source.encode()).hexdigest(),
-                                                       name="Current target error", owner_id=owner, revision=1)
+                                                       name="Temperature target error" if self.thermal else "Current target error", owner_id=owner, revision=1)
                 db.add(calculation_source)
                 await db.flush()
                 calculation = Calculation(experiment_id=experiment_id, source_id=calculation_source.id, contract_status="needs_preflight")
@@ -337,6 +371,13 @@ class HybridEndToEndTests(unittest.TestCase):
             self.report["launcher_bootstrap_processes"] = [list(identity) for identity in sorted(launcher_processes)]
             initial_vars = built["variables"]
             axes = []
+            if self.thermal:
+                axes = [{"name": name, "indices": [], "min": THERMAL_BOUNDS[name][0], "max": THERMAL_BOUNDS[name][1]}
+                    if name in THERMAL_BOUNDS else {"name": name, "indices": [], "fixed": True}
+                    for name in sorted(built["varsSchema"])]
+            training_points = [{**initial_vars, "conductorLength": length, "conductorWidth": width}
+                for length, width in THERMAL_POINTS] if self.thermal else [initial_vars]
+            training_count = len(THERMAL_POINTS) if self.thermal else 3
             training_started = time.monotonic()
             self.report["phase_seconds"]["fixture_setup"] = training_started - setup_started
             flow_started = training_started
@@ -344,20 +385,24 @@ class HybridEndToEndTests(unittest.TestCase):
             self.report["phase"] = "training_solver"
             flow_timeout = asyncio.timeout_at(asyncio.get_running_loop().time() + 180)
             await flow_timeout.__aenter__()
+            training_ids = []
             async with httpx.AsyncClient(base_url=base_url, timeout=30) as browser:
-                response = await browser.post("/cae/optimizations", json={"request_id": str(uuid.uuid4()),
-                    "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
-                    "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "minimize"},
-                    "max_trials": 3, "max_parallel": 2, "name": "Hybrid training data"})
-                self.assertEqual(response.status_code, 200, response.text)
-                training_id = response.json()["id"]
-            self.report["training_optimization_id"] = training_id
+                for variables in training_points:
+                    response = await browser.post("/cae/optimizations", json={"request_id": str(uuid.uuid4()),
+                        "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
+                        "initial_vars": variables, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "minimize"},
+                        "max_trials": 1 if self.thermal else 3, "max_parallel": 2, "name": "Hybrid training data"})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    training_ids.append(response.json()["id"])
+                    self.report["training_optimization_ids"] = list(training_ids)
+            self.report["training_optimization_id"] = training_ids[0]
             while True:
                 self.assertIsNone(process.returncode, "Launcher exited.\n" + "".join(logs)[-6000:])
                 async with sessions() as db:
-                    seed_optimization = await db.get(Optimization, training_id)
-                    self.assertNotIn(seed_optimization.state, {"paused", "pausing"}, f"{seed_optimization.pause_reason}\n{''.join(logs)[-6000:]}")
-                    if seed_optimization.state == "completed":
+                    seed_optimizations = list((await db.scalars(select(Optimization).where(Optimization.id.in_(training_ids)))).all())
+                    for seed_optimization in seed_optimizations:
+                        self.assertNotIn(seed_optimization.state, {"paused", "pausing"}, f"{seed_optimization.pause_reason}\n{''.join(logs)[-6000:]}")
+                    if all(item.state == "completed" for item in seed_optimizations):
                         launcher = await db.scalar(select(Launcher).where(Launcher.user_id == owner))
                         launcher_ids.add(launcher.id)
                         break
@@ -370,8 +415,26 @@ class HybridEndToEndTests(unittest.TestCase):
             hybrid = await prepare_hybrid_model(sessions, owner=owner, experiment_id=experiment_id,
                 vars_schema=built["varsSchema"], launcher_id=launcher.id,
                 storage_root=temporary / "predictor-storage", report=self.report,
+                algorithm="mlp" if self.thermal else "knn", measurement_count=training_count,
                 rules=[{"label": name, "target": [], "methodId": "prediction", "parameters": {}, "result": schema}
-                       for name, schema in program["recordedData"].items()])
+                       for name, schema in program["recordedData"].items() if not self.thermal or name == record_name])
+            if self.thermal:
+                trained = self.report["model_training"]
+                quality = trained["quality_report"]
+                self.assertEqual(quality["status"], "complete")
+                self.assertEqual(quality["split"]["trainingGroupCount"], 4)
+                self.assertEqual(quality["split"]["validationGroupCount"], 1)
+                self.assertTrue(set(quality["split"]["trainingMeasurementIds"]).isdisjoint(quality["split"]["validationMeasurementIds"]))
+                heldout = next(point for point in trained["design_points"]
+                    if point["id"] in quality["split"]["validationMeasurementIds"])
+                self.assertEqual((heldout["vars"]["conductorLength"], heldout["vars"]["conductorWidth"]), (110, 13))
+                self.assertEqual(len(quality["records"]), 1)
+                output_quality = quality["records"][0]
+                self.assertEqual((output_quality["key"], output_quality["unit"]), ("temperature", "K"))
+                self.assertEqual(output_quality["components"][0]["component"], "value")
+                self.assertLessEqual(output_quality["components"][0]["rmse"], THERMAL_RMSE_K)
+                hybrid["quality_requirements"] = [{"recordId": output_quality["recordId"],
+                    "component": "value", "rmseMaximum": THERMAL_RMSE_K}]
             self.report["phase_seconds"]["model_training"] = time.monotonic() - model_started
             training_seconds = time.monotonic() - training_started
             started = asyncio.get_running_loop().time()
@@ -381,7 +444,8 @@ class HybridEndToEndTests(unittest.TestCase):
                 response = await browser.post("/cae/optimizations", json={"request_id": str(uuid.uuid4()),
                     "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
                     "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "minimize"},
-                    "max_trials": 5, "max_parallel": 2, "name": "Small Box kNN Hybrid acceptance", "hybrid": {**hybrid, "max_solver_runs": 3}})
+                    "max_trials": 5, "max_parallel": 2, "name": "Temperature MLP Hybrid acceptance" if self.thermal else "Small Box kNN Hybrid acceptance",
+                    "hybrid": {**hybrid, "max_solver_runs": 3}})
                 self.assertEqual(response.status_code, 200, response.text)
                 optimization_id = response.json()["id"]
             # No browser connection is retained while the controller predicts,
@@ -437,10 +501,15 @@ class HybridEndToEndTests(unittest.TestCase):
                     .join(StageSubmission, StageSubmission.id == EvaluationSubmission.submission_id)
                     .join(Job, Job.id == StageSubmission.job_id)
                     .where(Evaluation.optimization_id == optimization_id, StageSubmission.stage == "calculate"))).all()
+                prediction_submissions = list((await db.scalars(select(StageSubmission)
+                    .join(Trial, Trial.id == StageSubmission.trial_id)
+                    .where(Trial.optimization_id == optimization_id, StageSubmission.stage == "predict"))).all())
                 recorded = (await db.execute(select(Measurement, RecordedData)
                     .join(RecordedData, RecordedData.measurement_id == Measurement.id)
                     .join(ExperimentRecord, ExperimentRecord.id == RecordedData.experiment_record_id)
-                    .where(Measurement.experiment_id == experiment_id, ExperimentRecord.name == "totalCurrent"))).all()
+                    .where(Measurement.experiment_id == experiment_id, ExperimentRecord.name == record_name))).all()
+                invocation_records = list((await db.scalars(select(RecordedData)
+                    .where(RecordedData.measurement_id.in_([measurement.id for measurement, _ in recorded])))).all())
             predicted = [item for item in evaluations if item.kind == "prediction"]
             verified = [item for item in evaluations if item.kind == "solver"]
             self.assertEqual(len(trials), 5)
@@ -456,9 +525,12 @@ class HybridEndToEndTests(unittest.TestCase):
             self.assertEqual(len(solver_jobs), 3)
             self.assertTrue(all(job.started_at for job in solver_jobs))
             training_solver_jobs = [job for job in all_jobs if job.slave_app_id == "cae"
-                and (job.artifact_metadata or {}).get("optimization_id") == training_id]
-            self.assertEqual(len(training_solver_jobs), 3)
+                and (job.artifact_metadata or {}).get("optimization_id") in training_ids]
+            self.assertEqual(len(training_solver_jobs), training_count)
             self.assertTrue(all(job.started_at for job in training_solver_jobs))
+            if self.thermal:
+                self.assertCountEqual([point["vars"] for point in self.report["model_training"]["design_points"]], training_points)
+                self.assertTrue(all(not job.allocation.get("gpu_devices") for job in all_jobs if job.allocation))
             self.assertEqual(len(calculations), len(evaluations))
             source_hash = hashlib.sha256(source.encode()).hexdigest()
             self.assertEqual(optimization.definition["calculations"][0]["source_hash"], source_hash)
@@ -473,16 +545,24 @@ class HybridEndToEndTests(unittest.TestCase):
                     self.assertEqual(job.input["prediction"], item.artifact)
                 else:
                     self.assertEqual(job.input["measurement_id"], item.measurement_id)
-            self.assertEqual(len(recorded), 6)
-            currents, tensors = {}, {}
+            self.assertEqual(len(recorded), training_count + 3)
+            record_maxima, tensors = {}, {}
             self.report["measurements"] = []
             for measurement, row in recorded:
-                actual = recorded_current(row.data)
-                expected = 0.5 * measurement.vars["width"] / measurement.vars["length"]
-                self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-9), (measurement.vars, actual, expected))
-                currents[measurement.id], tensors[measurement.id] = actual, row.data
+                values = recorded_values(row.data)
+                actual = max(values)
+                if self.thermal:
+                    self.assertEqual(row.data["shape"], [12, 6, 6, 1, 1, 1, 1])
+                    self.assertEqual(sum(value == 0 for value in values), 24)
+                    self.assertGreater(actual, 293.15)
+                    self.assertLess(actual, 293.18)
+                else:
+                    expected = 0.5 * measurement.vars["width"] / measurement.vars["length"]
+                    self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-9), (measurement.vars, actual, expected))
+                record_maxima[measurement.id], tensors[measurement.id] = actual, row.data
                 self.report["measurements"].append({"id": measurement.id, "vars": measurement.vars,
-                    "current": actual, "analytic_current": expected, "current_error": actual - expected})
+                    "record": record_name, "unit": "K" if self.thermal else "A", "maximum": actual,
+                    **({"current": actual, "analytic_current": expected, "current_error": actual - expected} if not self.thermal else {})})
             predicted_by_trial = {item.trial_id: item for item in predicted}
             verified_by_trial = {item.trial_id: item for item in verified}
             self.report["candidates"] = []
@@ -490,17 +570,18 @@ class HybridEndToEndTests(unittest.TestCase):
                 prediction = predicted_by_trial[trial.id]
                 solver = verified_by_trial.get(trial.id)
                 saved = prediction_artifact(prediction.artifact, objects)
-                output = next(item for item in saved["output"] if item["layout"]["key"] == "totalCurrent")
-                self.assertEqual(output["layout"]["shape"], [1] * 7)
-                self.assertEqual(len(output["values"]), 1)
-                predicted_current = output["values"][0]
+                output = next(item for item in saved["output"] if item["layout"]["key"] == record_name)
+                self.assertEqual(output["layout"]["shape"], [12, 6, 6, 1, 1, 1, 1] if self.thermal else [1] * 7)
+                self.assertEqual(len(output["values"]), 432 if self.thermal else 1)
+                self.assertTrue(all(math.isfinite(value) for value in output["values"]))
+                predicted_value = max(output["values"])
                 predicted_objective = prediction.result["objective"]
                 self.assertEqual(saved["provenance"]["modelId"], hybrid["model_id"])
                 self.assertEqual(saved["provenance"]["modelRevision"], hybrid["model_revision"])
                 self.assertEqual(saved["provenance"]["manifestChecksum"], self.report["model_training"]["checksum"])
                 self.assertEqual(prediction.source, optimization.definition["hybrid"])
-                self.assertAlmostEqual(predicted_objective, abs(predicted_current - 0.11), delta=1e-12)
-                verified_current = verified_objective = None
+                self.assertAlmostEqual(predicted_objective, abs(predicted_value - target), delta=1e-12)
+                verified_value = verified_objective = None
                 if solver is not None:
                     self.assertNotEqual(prediction.id, solver.id)
                     self.assertEqual(prediction.fingerprint, solver.fingerprint)
@@ -508,27 +589,30 @@ class HybridEndToEndTests(unittest.TestCase):
                     self.assertIsNone(solver.artifact)
                     self.assertEqual(trial.measurement_id, solver.measurement_id)
                     self.assertEqual(trial.result, solver.result)
-                    verified_current = currents[solver.measurement_id]
+                    verified_value = record_maxima[solver.measurement_id]
                     verified_objective = solver.result["objective"]
-                    self.assertAlmostEqual(verified_objective, abs(verified_current - 0.11), delta=1e-12)
-                    self.assertEqual(saved["candidate_box_grids"]["totalCurrent"], tensors[solver.measurement_id]["boxGrid"])
+                    self.assertAlmostEqual(verified_objective, abs(verified_value - target), delta=1e-12)
+                    self.assertEqual(saved["candidate_box_grids"][record_name], tensors[solver.measurement_id]["boxGrid"])
+                output_label = "maximum_temperature" if self.thermal else "current"
                 self.report["candidates"].append({"trial_id": trial.id, "ordinal": trial.ordinal, "vars": trial.variables,
                     "prediction_evaluation_id": prediction.id, "solver_evaluation_id": solver.id if solver else None,
                     "measurement_id": solver.measurement_id if solver else None,
                     "definition_hash": prediction.definition_hash, "calculation_source_hash": source_hash,
-                    "predicted_current": predicted_current, "verified_current": verified_current,
-                    "analytic_current": 0.5 * trial.variables["width"] / trial.variables["length"],
+                    f"predicted_{output_label}": predicted_value, f"verified_{output_label}": verified_value,
+                    **({"analytic_current": 0.5 * trial.variables["width"] / trial.variables["length"]} if not self.thermal else {}),
                     "predicted_objective": predicted_objective, "verified_objective": verified_objective,
-                    "current_delta": predicted_current - verified_current if solver else None,
+                    f"{output_label}_delta": predicted_value - verified_value if solver else None,
                     "objective_delta": predicted_objective - verified_objective if solver else None,
-                    "current_absolute_error": abs(predicted_current - verified_current) if solver else None,
+                    f"{output_label}_absolute_error": abs(predicted_value - verified_value) if solver else None,
                     "objective_absolute_error": abs(predicted_objective - verified_objective) if solver else None})
             self.assertEqual(trials[0].variables, initial_vars)
             initial_result = self.report["candidates"][0]
-            self.assertAlmostEqual(initial_result["predicted_current"], initial_result["verified_current"], delta=1e-12)
-            self.assertTrue(math.isclose(initial_result["predicted_objective"], initial_result["verified_objective"],
-                rel_tol=1e-6, abs_tol=1e-12), initial_result)
-            self.assertAlmostEqual(initial_result["predicted_current"], 0.1, delta=1e-7)
+            self.assertIsNotNone(initial_result["solver_evaluation_id"])
+            if not self.thermal:
+                self.assertAlmostEqual(initial_result["predicted_current"], initial_result["verified_current"], delta=1e-12)
+                self.assertTrue(math.isclose(initial_result["predicted_objective"], initial_result["verified_objective"],
+                    rel_tol=1e-6, abs_tol=1e-12), initial_result)
+                self.assertAlmostEqual(initial_result["predicted_current"], 0.1, delta=1e-7)
             best = next(trial for trial in trials if trial.id == optimization.best_trial_id)
             self.assertLess(self.report["flow_seconds"], 180)
             async with httpx.AsyncClient(base_url=base_url) as browser:
@@ -540,14 +624,55 @@ class HybridEndToEndTests(unittest.TestCase):
                 self.assertIsNone(restored["best_predicted_trial"]["measurement_id"])
                 self.assertEqual(restored["definition"]["hybrid"]["model_revision"], hybrid["model_revision"])
                 self.assertEqual(restored["definition"]["hybrid"]["checksum"], self.report["model_training"]["checksum"])
+                if self.thermal:
+                    self.assertEqual(restored["definition"]["hybrid"]["quality_requirements"], hybrid["quality_requirements"])
+                    self.assertEqual(restored["definition"]["hybrid"]["quality_report"], self.report["model_training"]["quality_report"])
+                    self.assertEqual(restored["definition"]["hybrid"]["quality_assessment"]["status"], "passed")
                 self.assertEqual(restored["solver_budget"], {"limit": 3, "used": 3, "reserved": 0, "remaining": 0})
                 self.assertEqual(history["total"], 5)
                 self.assertEqual(sum(len(item["evaluations"]) for item in history["items"]), 8)
+            prediction_metrics = [{"job_id": submission.job_id, **submission.result["execution_metrics"]}
+                for submission in prediction_submissions if submission.result.get("execution_metrics") is not None]
+            if self.thermal:
+                self.assertEqual(len(prediction_metrics), len(prediction_submissions))
+                self.assertEqual(sum(len(submission.result["candidates"]) for submission in prediction_submissions), 5)
+                for metrics in prediction_metrics:
+                    self.assertIsNotNone(metrics["load"])
+                    self.assertTrue(metrics["batches"])
+                    self.assertTrue(all(item is not None for item in metrics["batches"]))
+                self.assertIsNotNone(self.report["model_training"]["training_metrics"])
+            # A batch is counted once at its parent submission, never once per
+            # candidate. Job durations include orchestration and may overlap.
+            prediction_seconds = sum(metrics["elapsedSeconds"] for entry in prediction_metrics
+                for metrics in entry["batches"] if metrics is not None)
+            model_load_seconds = sum(entry["load"]["elapsedSeconds"] for entry in prediction_metrics if entry["load"] is not None)
+            solver_job_seconds = sum((job.finished_at - job.started_at).total_seconds()
+                for job in [*training_solver_jobs, *solver_jobs])
+            # Invocation ordinals are local to each Task. Multiple Records from
+            # the same call are evidence for one invocation, not extra calls.
+            invocations = recorded_solver_invocations(
+                [(row.measurement_id, row.data["provenance"]) for row in invocation_records],
+                measurement_ids=set(tensors), task_names=set(program["tasks"]))
+            product_solver_calls = len(invocations)
+            self.assertEqual(product_solver_calls, (training_count + 3) * len(program["tasks"]))
+            dataset_measurement_ids = set(self.report["model_training"]["dataset_measurement_ids"])
+            verified_measurement_ids = {item.measurement_id for item in verified}
+            solver_calls_by_phase = {phase: {task: sum(identity in identities and recorded_task == task
+                for identity, recorded_task, _ in invocations) for task in program["tasks"]}
+                for phase, identities in (("training", dataset_measurement_ids), ("hybrid", verified_measurement_ids))}
+            self.assertEqual(solver_calls_by_phase["training"], {task: training_count for task in program["tasks"]})
+            self.assertEqual(solver_calls_by_phase["hybrid"], {task: 3 for task in program["tasks"]})
             report = {**self.report, "example": example["coordinate"], "source_hash": example["bundleHash"],
                 "catalog_revision": manifest["catalog_revision"], "optimization_id": optimization_id, "trials": len(trials),
                 "training_seconds": training_seconds, "training_solver_runs": len(training_solver_jobs), "solver_runs": len(solver_jobs),
                 "total_solver_runs": len(training_solver_jobs) + len(solver_jobs),
+                "product_solver_calls": product_solver_calls,
+                "solver_calls_by_phase": solver_calls_by_phase,
                 "prediction_evaluations": len(predicted), "verified_evaluations": len(verified), "child_jobs": len(child_jobs),
+                "prediction_execution_metrics": prediction_metrics, "prediction_seconds": prediction_seconds,
+                "model_load_seconds": model_load_seconds, "solver_job_seconds": solver_job_seconds,
+                "target": {"record": record_name, "reduction": "max", "value": target, "unit": "K" if self.thermal else "A"},
+                "quality_assessment": restored["definition"]["hybrid"].get("quality_assessment"),
                 "elapsed_seconds": elapsed, "best_objective": best.result["objective"], "best_vars": best.variables,
                 "model": hybrid, "browser_disconnected_during_execution": True, "reconnected_history_verified": True,
                 "model_checksum": restored["definition"]["hybrid"]["checksum"],

@@ -1,8 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
+import { z } from 'zod'
 import { predictionApi } from '@/api/prediction'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/features/auth/use-auth'
 import type { OptimizationDraft } from './optimizationDraft'
+
+const qualityOutputSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  data_schema: z.object({ unit: z.string(), boxGrid: z.object({ components: z.array(z.string()) }) }),
+})
 
 export function OptimizationHybridSettings({
   experimentId,
@@ -43,6 +50,12 @@ export function OptimizationHybridSettings({
   const model = models.find((item) => item.id === draft.modelId)
   const revisions = model?.revisions ?? []
   const revision = revisions.find((item) => String(item.revision) === draft.modelRevision)
+  const quality = revision?.artifact?.quality_report
+  const records = revision?.source_contracts.records
+  const outputs = (Array.isArray(records) ? records : []).flatMap((record: unknown) => {
+    const parsed = qualityOutputSchema.safeParse(record)
+    return parsed.success ? [parsed.data] : []
+  })
   const routes = (revision?.replicas ?? []).flatMap((replica) => {
     const storage = assets.data?.storages.find((item) => item.storage_id === replica.storage_id)
     if (replica.state !== 'present' || storage?.kind !== 'predictor_local') return []
@@ -62,7 +75,13 @@ export function OptimizationHybridSettings({
           required
           disabled={assets.isPending || assets.isError}
           onChange={(event) =>
-            onChange({ modelId: event.target.value, modelRevision: '', replicaId: '', launcherId: '' })
+            onChange({
+              modelId: event.target.value,
+              modelRevision: '',
+              replicaId: '',
+              launcherId: '',
+              qualityRequirements: [],
+            })
           }
         >
           <option value="">{assets.isPending ? '모델 불러오는 중…' : '모델 선택'}</option>
@@ -80,7 +99,9 @@ export function OptimizationHybridSettings({
           value={draft.modelRevision}
           required
           disabled={!model}
-          onChange={(event) => onChange({ modelRevision: event.target.value, replicaId: '', launcherId: '' })}
+          onChange={(event) =>
+            onChange({ modelRevision: event.target.value, replicaId: '', launcherId: '', qualityRequirements: [] })
+          }
         >
           <option value="">revision 선택</option>
           {revisions.map((item) => (
@@ -122,6 +143,64 @@ export function OptimizationHybridSettings({
           onChange={(event) => onChange({ maxSolverRuns: event.target.valueAsNumber })}
         />
       </label>
+      {revision ? (
+        <fieldset className="space-y-3 rounded border p-3">
+          <legend className="px-1 font-medium">출력별 품질 조건 · 선택 사항</legend>
+          <p className="text-xs text-muted-foreground">
+            사용 revision {revision.revision}. 필요한 출력의 RMSE 상한을 원래 단위로 입력하세요. 빈 항목은 조건에
+            포함하지 않습니다. 시작할 때 서버가 저장 보고서로 판정하며, 조건을 충족하지 못하거나 미평가이면 시작을
+            거부합니다.
+          </p>
+          {outputs.flatMap((record) =>
+            record.data_schema.boxGrid.components.map((component) => {
+              const requirement = draft.qualityRequirements.find(
+                (item) => item.recordId === record.id && item.component === component,
+              )
+              const reported = quality?.records.find((item) => item.recordId === record.id)
+              const metric =
+                reported?.status === 'evaluated'
+                  ? reported.components.find((item) => item.component === component)
+                  : undefined
+              return (
+                <label key={`${record.id}:${component}`} className="block space-y-1">
+                  <span>
+                    {record.name} · {component} RMSE 상한 ({record.data_schema.unit})
+                  </span>
+                  <Input
+                    aria-label={`${record.name} · ${component} RMSE 상한 (${record.data_schema.unit})`}
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={requirement?.rmseMaximum ?? ''}
+                    onChange={(event) =>
+                      onChange({
+                        qualityRequirements: [
+                          ...draft.qualityRequirements.filter(
+                            (item) => item.recordId !== record.id || item.component !== component,
+                          ),
+                          ...(event.target.value === ''
+                            ? []
+                            : [{ recordId: record.id, component, rmseMaximum: event.target.value }]),
+                        ],
+                      })
+                    }
+                  />
+                  <span className="block text-xs text-muted-foreground">
+                    저장 보고서 RMSE:{' '}
+                    {metric ? `${metric.rmse} ${reported?.unit ?? record.data_schema.unit}` : '미평가'}
+                  </span>
+                </label>
+              )
+            }),
+          )}
+          {!outputs.length ? (
+            <p className="text-xs text-muted-foreground">품질 조건을 지정할 수 있는 출력 계약이 없습니다.</p>
+          ) : null}
+          {!draft.qualityRequirements.length ? (
+            <p className="text-xs text-muted-foreground">품질 미확인 · 조건 없이 시작할 수 있습니다.</p>
+          ) : null}
+        </fieldset>
+      ) : null}
       <p className="text-xs leading-relaxed text-muted-foreground">
         선택한 revision으로 시작하고 예측한 후보를 실제 Solver로 검증합니다. 모델 갱신은 시작 후 직접 요청합니다. 실패
         후 Solver 재실행도 예산을 사용합니다. 예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher에는

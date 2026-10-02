@@ -9,6 +9,63 @@ QUALITY_VALIDATION_V1 = {"version": 1, "split": "design-point", "holdoutFraction
                          "seed": 0, "minimumGroups": 5}
 
 
+def validate_quality_requirements(requirements: list[dict] | None) -> None:
+    """Validate consumer-owned RMSE limits without interpreting a model report."""
+    if requirements is None:
+        return
+    if not isinstance(requirements, list) or not requirements:
+        raise ValueError("Quality requirements need at least one Record component RMSE limit.")
+    identities = set()
+    for requirement in requirements:
+        if (not isinstance(requirement, dict) or set(requirement) != {"recordId", "component", "rmseMaximum"}
+                or type(requirement["recordId"]) is not int or requirement["recordId"] < 1
+                or not isinstance(requirement["component"], str) or not requirement["component"].strip()
+                or type(requirement["rmseMaximum"]) not in (int, float)
+                or not math.isfinite(requirement["rmseMaximum"]) or requirement["rmseMaximum"] < 0):
+            raise ValueError("Quality requirements need a positive Record ID, component and finite nonnegative RMSE limit.")
+        identity = (requirement["recordId"], requirement["component"])
+        if identity in identities:
+            raise ValueError("Quality requirements must identify each Record component only once.")
+        identities.add(identity)
+
+
+def assess_quality(report: dict | None, requirements: list[dict] | None) -> dict:
+    """Compare held-out RMSE with consumer limits; report integrity is validated separately.
+
+    Missing evidence takes precedence over exceeded limits. A partial report can
+    pass when every requested component has a usable held-out metric.
+    """
+    validate_quality_requirements(requirements)
+    if requirements is None:
+        return {"status": "unassessed", "reasonCode": "requirements-not-configured", "items": []}
+    records = report.get("records", []) if isinstance(report, dict) else []
+    items = []
+    for requirement in requirements:
+        matches = [record for record in records if isinstance(record, dict)
+                   and record.get("recordId") == requirement["recordId"]] if isinstance(records, list) else []
+        record = matches[0] if len(matches) == 1 else None
+        item = {**requirement, "status": "unassessed", "reasonCode": "report-unavailable", "rmse": None,
+                "unit": record.get("unit") if record and isinstance(record.get("unit"), str) else None}
+        if isinstance(report, dict):
+            item["reasonCode"] = "record-unavailable"
+            if record is not None and record.get("status") == "evaluated":
+                components = record.get("components", [])
+                metrics = [component for component in components if isinstance(component, dict)
+                           and component.get("component") == requirement["component"]] if isinstance(components, list) else []
+                item["reasonCode"] = "component-unavailable"
+                if len(metrics) == 1:
+                    rmse = metrics[0].get("rmse")
+                    item["reasonCode"] = "invalid-rmse"
+                    if type(rmse) in (int, float) and math.isfinite(rmse) and rmse >= 0:
+                        passed = rmse <= requirement["rmseMaximum"]
+                        item.update(status="passed" if passed else "failed", rmse=rmse,
+                                    reasonCode="within-limit" if passed else "rmse-exceeded")
+        items.append(item)
+    status = ("unassessed" if any(item["status"] == "unassessed" for item in items)
+              else "failed" if any(item["status"] == "failed" for item in items) else "passed")
+    return {"status": status, "reasonCode": "requirements-" + status, "items": items}
+
+
 def validate_quality_settings(settings: dict | None) -> None:
     if settings is None:
         return

@@ -1,7 +1,8 @@
 import { Link } from 'react-router'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { Optimization } from '@/contracts/api/optimization'
+import type { Optimization, OptimizationQualityAssessment } from '@/contracts/api/optimization'
+import { OptimizationQuality } from './OptimizationQuality'
 
 const updateStates: Record<string, string> = {
   pending: '학습 준비 중',
@@ -18,13 +19,25 @@ const updateStates: Record<string, string> = {
   superseded: '이후 갱신으로 교체됨',
 }
 
-function ModelVersion({ source }: { source: { model_id: string; model_revision: number; version_name?: unknown } }) {
+function ModelVersion({
+  source,
+  label,
+}: {
+  source: {
+    model_id: string
+    model_revision: number
+    version_name?: unknown
+    quality_assessment?: OptimizationQualityAssessment
+  }
+  label: string
+}) {
   return (
     <>
       <span>
         {typeof source.version_name === 'string' ? `${source.version_name} · ` : ''}revision {source.model_revision}
       </span>
       <span className="block font-mono break-all text-muted-foreground">{source.model_id}</span>
+      <OptimizationQuality assessment={source.quality_assessment} label={label} />
     </>
   )
 }
@@ -65,20 +78,20 @@ export function OptimizationModelUpdates({
         <div>
           <dt className="text-muted-foreground">초기 모델</dt>
           <dd className="mt-1">
-            <ModelVersion source={initial} />
+            <ModelVersion source={initial} label="초기 모델 품질" />
           </dd>
         </div>
         <div>
           <dt className="text-muted-foreground">현재 채택 모델</dt>
           <dd className="mt-1">
-            <ModelVersion source={active} />
+            <ModelVersion source={active} label="현재 채택 모델 품질" />
           </dd>
         </div>
         {!compact && update?.round_model ? (
           <div>
             <dt className="text-muted-foreground">현재 회차 모델</dt>
             <dd className="mt-1">
-              <ModelVersion source={update.round_model} />
+              <ModelVersion source={update.round_model} label="현재 회차 모델 품질" />
             </dd>
           </div>
         ) : null}
@@ -86,7 +99,7 @@ export function OptimizationModelUpdates({
           <div>
             <dt className="text-muted-foreground">다음 회차 채택 대기</dt>
             <dd className="mt-1">
-              <ModelVersion source={update.pending_model} />
+              <ModelVersion source={update.pending_model} label="채택 대기 모델 품질" />
             </dd>
           </div>
         ) : null}
@@ -100,6 +113,9 @@ export function OptimizationModelUpdates({
         <p role="alert" className="text-destructive">
           {error}
         </p>
+      ) : null}
+      {latest?.quality_assessment ? (
+        <OptimizationQuality assessment={latest.quality_assessment} label="최근 갱신 모델 품질" />
       ) : null}
       {latest && ['failed', 'interrupted', 'cancelled'].includes(latest.state) ? (
         <p>

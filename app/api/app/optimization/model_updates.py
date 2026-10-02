@@ -136,6 +136,7 @@ async def request_update(db, optimization, body):
 async def reconcile_updates(db, optimization):
     """Observe existing TrainingRuns, submit once and retain validated successors."""
     from prediction import training
+    from optimization.evaluations import freeze_quality, require_quality
     state = model_state(optimization)
     if state is None:
         return False
@@ -183,7 +184,14 @@ async def reconcile_updates(db, optimization):
             if revision.source_contracts != initial["source_contracts"]:
                 item.update(state="failed", error="The updated model source contracts changed.")
                 continue
-            state["pending_model"] = {**initial, "model_revision": revision.revision,
+            try:
+                quality = freeze_quality(revision, initial.get("quality_requirements"))
+                item["quality_assessment"] = quality["quality_assessment"]
+                require_quality(quality["quality_assessment"])
+            except HTTPException as error:
+                item.update(state="failed", error={"message": str(error.detail)})
+                continue
+            state["pending_model"] = {**initial, **quality, "model_revision": revision.revision,
                 "replica_id": replica.id, "checksum": artifact["manifest_sha256"],
                 "dataset_id": revision.dataset_id, "dataset_revision": revision.dataset_revision,
                 "dataset_fingerprint": revision.dataset_fingerprint, "model_definition": revision.definition,

@@ -18,8 +18,9 @@ def test_batches_bound_input_count_and_wire_size():
 
 
 class Client:
-    def __init__(self, *, failure=None):
+    def __init__(self, *, failure=None, metrics=True):
         self.failure = failure
+        self.metrics = metrics
         self.requests = []
         self.job_requests = []
         self.session = SimpleNamespace(call=self.call, finish=AsyncMock(), close=AsyncMock())
@@ -54,6 +55,9 @@ class Client:
                 "provenance": {"modelId": "model", "modelRevision": 9 if self.failure == "revision" else 2,
                     "manifestChecksum": "checksum", "datasetId": "dataset", "datasetRevision": 1}}
                 for item in payload["inputs"]]
+        if self.metrics and action in {"model.load", "model.predict_batch"}:
+            response["executionMetrics"] = {"elapsedSeconds": .5 if action == "model.load" else .25,
+                "peakRssBytes": None, "rssStatus": "unavailable"}
         return SimpleNamespace(payload=response)
 
 
@@ -78,6 +82,10 @@ async def test_prediction_keeps_model_session_and_persists_retry_inputs(monkeypa
     message, context, node, upload = setup(monkeypatch, client, count=33)
     result = await prediction.predict(message, context, {"runtime_id": "runtime"})
     assert len(result["candidates"]) == 33
+    assert result["execution_metrics"] == {"load": {"elapsedSeconds": .5,
+        "peakRssBytes": None, "rssStatus": "unavailable"}, "batches": [
+        {"elapsedSeconds": .25, "peakRssBytes": None, "rssStatus": "unavailable"}] * 2}
+    assert all("execution_metrics" not in item for item in result["candidates"])
     assert result["provenance"] == {"model_id": "model", "revision": 2, "checksum": "checksum"}
     assert [action for action, _ in client.requests] == ["model.load", "model.predict_batch", "model.predict_batch", "model.release"]
     assert client.requests[0][1]["manifestChecksum"] == "checksum"
@@ -88,6 +96,13 @@ async def test_prediction_keeps_model_session_and_persists_retry_inputs(monkeypa
     assert all("token" not in str(call.args) for call in node.await_args_list)
     client.kill_job.assert_awaited_once_with("child-job")
     client.session.finish.assert_awaited_once()
+
+
+async def test_missing_prediction_metrics_stay_unavailable(monkeypatch):
+    client = Client(metrics=False)
+    message, context, _, _ = setup(monkeypatch, client)
+    result = await prediction.predict(message, context, {"runtime_id": "runtime"})
+    assert result["execution_metrics"] == {"load": None, "batches": [None]}
 
 
 @pytest.mark.parametrize("failure", ["missing", "revision", "cancel", "connect"])

@@ -5,7 +5,8 @@ from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING
 import re
 
-from .quality import QUALITY_VALIDATION_V1, validate_quality_report, validate_quality_settings
+from .quality import (QUALITY_VALIDATION_V1, assess_quality, validate_quality_report,
+                      validate_quality_requirements, validate_quality_settings)
 from .mlp import MLP_DEFAULT_ALGORITHM, validate_mlp_algorithm
 
 PREDICTION_PROTOCOL_VERSION = 3

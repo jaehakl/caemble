@@ -1,7 +1,9 @@
 """Evaluation identity, compatibility projections and strict physical Solver budgets."""
+from copy import deepcopy
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
-from prediction_contracts import validate_definition
+from prediction_contracts import assess_quality, validate_definition, validate_quality_report
 
 from gpstation.db import Job
 from gpstation.service.batches import SERVER_ACTIVE_STATES
@@ -75,6 +77,43 @@ async def require_solver_budget(db, optimization):
         raise HTTPException(409, "The strict Solver execution budget is exhausted.")
 
 
+def freeze_quality(revision, requirements):
+    """Bind report evidence to the exact saved revision and consumer output contract."""
+    records = {item["id"]: item for item in revision.source_contracts.get("records", [])}
+    for requirement in requirements or []:
+        record = records.get(requirement["recordId"])
+        components = ((record or {}).get("data_schema") or {}).get("boxGrid", {}).get("components", [])
+        if record is None or requirement["component"] not in components:
+            raise HTTPException(422, "Quality requirements must identify an output Record component of the selected model.")
+    report = (revision.artifact or {}).get("quality_report")
+    if report is not None:
+        try:
+            validate_quality_report(report, revision.definition, {
+                "datasetId": revision.dataset_id, "revision": revision.dataset_revision,
+                "fingerprint": revision.dataset_fingerprint})
+            for output in report["records"]:
+                record = records.get(output["recordId"])
+                layout = (record or {}).get("data_schema") or {}
+                components = layout.get("boxGrid", {}).get("components", [])
+                if (record is None or output["key"] != record["name"] or output["unit"] != layout.get("unit", "")
+                        or any(item["component"] not in components for item in output["components"])):
+                    raise ValueError("Quality report output contracts differ from the saved model.")
+        except (ValueError, KeyError, TypeError) as error:
+            raise HTTPException(409, f"The saved model quality report is invalid: {error}") from error
+    return {"quality_report": deepcopy(report), "quality_assessment": assess_quality(report, requirements)}
+
+
+def require_quality(assessment):
+    if assessment["status"] == "passed" or assessment["reasonCode"] == "requirements-not-configured":
+        return
+    failures = []
+    for item in assessment["items"]:
+        if item["status"] != "passed":
+            failures.append(f"Record {item['recordId']} / {item['component']}: {item['reasonCode']} "
+                            f"(RMSE {item['rmse']}, maximum {item['rmseMaximum']} {item['unit'] or ''})")
+    raise HTTPException(409, f"Hybrid model quality is {assessment['status']}: " + "; ".join(failures))
+
+
 async def freeze_hybrid(db, request, user_id, experiment, calculations):
     from prediction.common import connected_storage
     from prediction.db import ModelRevision, PredictionModel, Replica
@@ -105,8 +144,11 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
             predicted = records.get(record["name"])
             if predicted is None or predicted.get("data_schema") != record["data_schema"]:
                 raise HTTPException(422, "The model must predict compatible Records for every objective and constraint.")
+    settings = request.model_dump(mode="json", exclude_none=True)
+    quality = freeze_quality(revision, settings.get("quality_requirements"))
+    require_quality(quality["quality_assessment"])
     resources = await validate_hybrid_capacity(db, str(request.launcher_id), user_id, revision.definition)
-    return {**request.model_dump(mode="json"), "storage_id": replica.storage_id, "checksum": checksum,
+    return {**settings, **quality, "storage_id": replica.storage_id, "checksum": checksum,
         "dataset_id": revision.dataset_id, "dataset_revision": revision.dataset_revision,
         "dataset_fingerprint": revision.dataset_fingerprint, "model_definition": revision.definition,
         "source_contracts": contracts, "resources": resources}

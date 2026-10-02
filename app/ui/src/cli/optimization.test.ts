@@ -119,13 +119,14 @@ it('requires an explicit artifact item when multiple candidates exist', async ()
   expect(fetch).toHaveBeenCalledOnce()
 })
 
-it('sends a fixed Hybrid model revision and Solver budget from configuration', async () => {
+it('sends a fixed Hybrid model revision, Solver budget and output quality conditions from configuration', async () => {
   const hybrid = {
     model_id: 'model',
     model_revision: 3,
     replica_id: 'replica',
     launcher_id: 'launcher',
     max_solver_runs: 8,
+    quality_requirements: [{ recordId: 10, component: 'value', rmseMaximum: 0.001 }],
   }
   await writeFile(String(context.options.config), JSON.stringify({ ...config, hybrid }))
   await optimizationCommand('create', context)

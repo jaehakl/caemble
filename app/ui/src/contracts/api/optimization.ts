@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { caeJobSchema } from './cae'
+import { predictionQualityReportSchema } from './prediction'
 
 export type OptimizationTensor = number | readonly OptimizationTensor[]
 const tensorSchema: z.ZodType<OptimizationTensor> = z.lazy(() => z.union([z.number().finite(), z.array(tensorSchema)]))
@@ -39,12 +40,36 @@ export const optimizationResultSchema = z
 const optimizationErrorSchema = z
   .object({ message: z.string(), stage: z.string().optional(), code: z.string().optional() })
   .passthrough()
+export const optimizationQualityRequirementSchema = z.object({
+  recordId: z.number().int().positive(),
+  component: z.string().min(1),
+  rmseMaximum: z.number().finite().nonnegative(),
+})
+export const optimizationQualityAssessmentSchema = z.object({
+  status: z.enum(['passed', 'failed', 'unassessed']),
+  reasonCode: z.string(),
+  items: z.array(
+    optimizationQualityRequirementSchema.extend({
+      status: z.enum(['passed', 'failed', 'unassessed']),
+      reasonCode: z.string(),
+      rmse: z.number().finite().nonnegative().nullable(),
+      unit: z.string().nullable(),
+    }),
+  ),
+})
+export type OptimizationQualityAssessment = z.infer<typeof optimizationQualityAssessmentSchema>
+const qualityFields = {
+  quality_requirements: z.array(optimizationQualityRequirementSchema).min(1).nullable().optional(),
+  quality_report: predictionQualityReportSchema.nullable().optional(),
+  quality_assessment: optimizationQualityAssessmentSchema.optional(),
+}
 export const optimizationModelSourceSchema = z
   .object({
     model_id: z.string(),
     model_revision: z.number().int().positive(),
     checksum: z.string().optional(),
     version_name: z.string().nullable().optional(),
+    ...qualityFields,
   })
   .passthrough()
 const bestTrialSchema = z.object({
@@ -73,6 +98,7 @@ export const optimizationModelUpdateSchema = z.object({
       error: z.union([z.string(), optimizationErrorSchema]).nullable().optional(),
       created_at: z.string().optional(),
       adopted_round: z.number().int().nonnegative().nullable().optional(),
+      quality_assessment: optimizationQualityAssessmentSchema.optional(),
     }),
   ),
   waiting: z.boolean(),
@@ -84,6 +110,7 @@ export const optimizationHybridSchema = z
     replica_id: z.string(),
     launcher_id: z.string(),
     max_solver_runs: z.number().int().positive(),
+    ...qualityFields,
   })
   .passthrough()
 export type OptimizationHybrid = z.infer<typeof optimizationHybridSchema>
@@ -224,5 +251,8 @@ export type OptimizationCreateRequest = Readonly<{
   constraints?: { calculation_id: number; minimum?: number; maximum?: number }[]
   max_trials?: number
   max_parallel?: number
-  hybrid?: OptimizationHybrid
+  hybrid?: Pick<
+    OptimizationHybrid,
+    'model_id' | 'model_revision' | 'replica_id' | 'launcher_id' | 'max_solver_runs' | 'quality_requirements'
+  >
 }>

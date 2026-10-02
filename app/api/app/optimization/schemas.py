@@ -2,6 +2,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from prediction_contracts import validate_quality_requirements
 
 
 class OptimizationAxis(BaseModel):
@@ -41,6 +42,13 @@ class OptimizationConstraint(BaseModel):
         return self
 
 
+class HybridQualityRequirement(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    recordId: int = Field(strict=True, gt=0)
+    component: str = Field(min_length=1)
+    rmseMaximum: float = Field(strict=True, ge=0)
+
+
 class HybridSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model_id: UUID
@@ -48,6 +56,13 @@ class HybridSettings(BaseModel):
     replica_id: UUID
     launcher_id: UUID
     max_solver_runs: int = Field(default=8, strict=True, ge=1)
+    quality_requirements: list[HybridQualityRequirement] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_quality_limits(self):
+        if self.quality_requirements is not None:
+            validate_quality_requirements([item.model_dump() for item in self.quality_requirements])
+        return self
 
 
 class OptimizationCreateRequest(BaseModel):

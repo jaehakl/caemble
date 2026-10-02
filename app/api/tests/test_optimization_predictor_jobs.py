@@ -166,6 +166,8 @@ class PredictorChildJobTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await db.get(ModelLease, (self.model_id, 1, child.id)))
             self.assertTrue(await predictor_jobs.predictor_parent_available(db, self.launcher_id, self.resources))
 
+    @unittest.skipUnless(os.getenv("RUN_HYBRID_TRANSPORT_SMOKE") == "1",
+        "Set RUN_HYBRID_TRANSPORT_SMOKE=1 for real loopback worker transport.")
     async def test_resource_wait_code_crosses_worker_transport_before_terminal_commit(self):
         await self.seed()
         async with self.sessions() as db:

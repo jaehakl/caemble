@@ -352,3 +352,71 @@ Calculation과 Hybrid 검증이 모두 이 시간에 포함됩니다. 환경 준
 결과는 저장소의 `.work/hybrid-demo-acceptance.json`에 남습니다. 전체 테스트 시간과
 준비·실행·정리 시간, 학습·검증 Solver 횟수, 같은 Candidate의 예측·실제 목적값과 오차,
 모델·Dataset revision 및 checksum, 자원 정리 완료 여부를 함께 확인합니다.
+
+## 기존 전기–열 예제로 MLP Hybrid 검증하기
+
+작은 온도장 통합 검사는 Catalog의 `electro-thermal-notched-bar@6.0.2`를 그대로
+사용합니다. 예제 소스·mesh·물성은 바꾸지 않고 `conductorLength`는 90–110 mm,
+`conductorWidth`는 11–13 mm에서 탐색하며 나머지 Vars는 nominal 값에 고정합니다.
+예측 출력은 `temperature` 하나이고, 목적함수는 이 온도장의 최댓값과
+**293.168 K** 사이의 절대 오차입니다. 낮을수록 좋습니다.
+
+학습 데이터용 실제 해석은 `(length, width)` 순서로 `(100,12)`, `(90,11)`,
+`(90,13)`, `(110,11)`, `(110,13)`의 다섯 설계점을 사용합니다. 기존 설계점 단위
+seed 0 분리 정책에 따라 `(110,13)` 한 점을 검증용으로 남기고 나머지 네 점만
+MLP에 학습합니다. CPU 기본 설정은 은닉층 `[32,32]`, 500 epochs, batch size 32,
+learning rate 0.001, seed 0입니다. GPU는 사용하지 않습니다.
+
+Hybrid에는 `temperature`의 `value` 성분에 대한 **RMSE 상한 0.001 K**를
+지정합니다. 고정한 Dataset의 검증 오차가 이 조건을 통과한 저장 모델 revision을
+새 추론 세션에서 로드하고, 후보 다섯 개를 예측해 그중 세 개를 실제 Solver로
+검증합니다. 시작 Candidate도 실제로 검증하며, 최선 Vars는 검증된 후보에서만
+고릅니다. 실행 중 모델 revision을 바꾸거나 재학습하지 않습니다.
+
+목표와 허용오차는 모델의 측정 결과에 맞추어 완화하지 않습니다. Catalog의 전압차
+1 mV, 전기전도도 `5.96e7 S/m`, 열전도도 `401 W/(m·K)`, 양 끝 온도 293.15 K에서
+상수 물성의 연속체 온도 상승 척도는 `σV²/(8k) ≈ 0.01858 K`입니다. 0.001 K는
+그 약 5.4%입니다. 이 조건의 최대 온도는 형상에 크게 의존하지 않으므로 이 예제는
+MLP의 설계 개선율을 평가하지 않습니다. 학습·예측·실측의 출처와 비용, 저장·재로드,
+실측 최선값과 정리 완료를 확인하는 작은 통합 예제입니다.
+
+### CPU 통합 검사 재현하기
+
+위 kNN 기준선과 같은 API·Launcher·CAE·Predictor 환경과 로컬 PostgreSQL `vector`
+확장을 준비합니다. `.\caemble.cmd doctor`를 통과한 뒤 **`app/api`에서** 실행합니다.
+모델 학습과 모든 Solver 실행은 새 임시 DB·저장소에서 수행하고 이전 결과를 재사용하지
+않습니다. 고유한 임시 DB를 만들고 삭제할 수 있는 로컬 계정이 필요합니다.
+
+```powershell
+$env:DB_URL = 'postgresql+asyncpg://<local-user>@127.0.0.1:5432/postgres'
+$env:RUN_MLP_HYBRID_E2E = '1'
+try {
+    .\.venv\Scripts\python.exe -m pytest tests/test_hybrid_end_to_end.py -q -s -k fixed_mlp
+} finally {
+    Remove-Item Env:RUN_MLP_HYBRID_E2E -ErrorAction SilentlyContinue
+}
+```
+
+기본 테스트에서는 이 실제 실행을 건너뜁니다. 기존 kNN 검사는 `RUN_HYBRID_E2E=1`과
+`-k fixed_knn`으로 따로 실행합니다. 실행 가능한 preset과 수치 assertion은
+[`test_hybrid_end_to_end.py`](../../app/api/tests/test_hybrid_end_to_end.py)에 있습니다.
+
+기준 자원은 Launcher CPU 4개, 각 worker CPU 1개, GPU 0개입니다. 보고서에 실제
+CPU·OS·Python·메모리 환경을 남깁니다. **첫 학습 데이터 제출부터 모든 관련 Job의
+child·lease·grant·CPU 예약 정리 완료까지 `flow_seconds` 180초 이내**를 개발 목표로
+사용합니다. 초기 Catalog 입력 빌드·API/Launcher 준비·DB 생성과 최종 환경·DB 삭제는
+별도이며 `total_test_seconds`에 포함됩니다. 정리는 예산 초과 후에도 수행하고,
+초과 또는 정리 실패를 통과로 처리하지 않습니다.
+
+결과는 `.work/mlp-hybrid-demo-acceptance.json`, 실패 결과는
+`.work/mlp-hybrid-demo-last-failure.json`에 남습니다. Dataset·모델 revision과 checksum,
+4/1 분리, 검증 RMSE와 시작 시 품질 판정, 예측·실측 목적값, 학습·load·추론·해석 시간을
+확인할 수 있습니다. 학습 데이터 해석 5회와 Hybrid 검증 3회는 CAE Job 8개이며,
+각 Job의 DC→Heat 호출은 총 16회입니다. 예측 평가 수는 5개입니다.
+
+학습은 기존 모델 `training_metrics`·`execution_metrics`, load와 추론은 Predictor의
+기존 `executionMetrics`, 해석은 저장된 Job 시작·종료 시각을 재사용합니다.
+추론 batch 시간은 부모 예측 Job마다 한 번만 합산합니다. Job 시간 합계는 병렬 실행과
+대기·통신을 포함할 수 있어 경과 시간과 같지 않습니다. `fixture_setup`에는 초기 입력
+빌드가, `training_seconds`에는 데이터 생성과 모델 준비가 포함되므로 중첩 시간을
+다시 더하지 않습니다.

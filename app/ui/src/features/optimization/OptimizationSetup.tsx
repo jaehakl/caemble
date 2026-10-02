@@ -98,12 +98,18 @@ export function OptimizationSetup({
         }
       })
       if (draft.hybrid && (!draft.modelId || !draft.modelRevision || !draft.replicaId || !draft.launcherId))
-        throw new Error('저장된 kNN 모델, revision과 실행 위치를 선택하세요.')
+        throw new Error('저장된 Forward 모델, revision과 실행 위치를 선택하세요.')
       if (
         draft.hybrid &&
         (!Number.isSafeInteger(draft.maxSolverRuns) || draft.maxSolverRuns < 1 || draft.maxSolverRuns > 10000)
       )
         throw new Error('Solver 실행 시도 예산은 1–10,000 사이의 정수여야 합니다.')
+      const qualityRequirements = (draft.hybrid ? draft.qualityRequirements : []).map((requirement) => {
+        const maximum = Number(requirement.rmseMaximum)
+        if (!requirement.rmseMaximum.trim() || !Number.isFinite(maximum) || maximum < 0)
+          throw new Error('RMSE 상한은 0 이상의 유한한 값이어야 합니다.')
+        return { ...requirement, rmseMaximum: maximum }
+      })
       const payload = {
         name: name.trim(),
         experiment_id: workbench.experimentId,
@@ -123,6 +129,7 @@ export function OptimizationSetup({
                 replica_id: draft.replicaId,
                 launcher_id: draft.launcherId,
                 max_solver_runs: draft.maxSolverRuns,
+                ...(qualityRequirements.length ? { quality_requirements: qualityRequirements } : {}),
               },
             }
           : {}),
@@ -282,7 +289,7 @@ export function OptimizationSetup({
               checked={draft.hybrid}
               onChange={(event) => updateDraft({ hybrid: event.target.checked })}
             />
-            kNN Hybrid Optimization
+            Forward Hybrid Optimization
           </label>
           {draft.hybrid && workbench.experimentId !== null ? (
             <OptimizationHybridSettings experimentId={workbench.experimentId} draft={draft} onChange={updateDraft} />

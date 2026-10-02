@@ -91,8 +91,10 @@ async def predict(message: dict, context, runtime: dict) -> dict:
 
             loaded = await call("model.load", modelId=hybrid["model_id"], revision=hybrid["revision"], manifestChecksum=hybrid["checksum"])
             instance = loaded["instance"]
+            execution_metrics = {"load": loaded.get("executionMetrics"), "batches": []}
             for batch in batches:
                 response = await call("model.predict_batch", instance=instance, inputs=batch)
+                execution_metrics["batches"].append(response.get("executionMetrics"))
                 values = response.get("predictions", [])
                 if [value.get("candidateId") for value in values] != [item["candidateId"] for item in batch]:
                     raise ValueError("Predictor returned different candidate IDs.")
@@ -120,5 +122,6 @@ async def predict(message: dict, context, runtime: dict) -> dict:
         reference = await upload_object(context, json.dumps(artifact, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"), "json")
         results.append({"candidate_id": item["candidate_id"], "evaluation_id": item["evaluation_id"], "artifact": reference,
                         "provenance": prediction["provenance"]})
-    return {"candidates": results, "provenance": {"model_id": hybrid["model_id"],
+    # Metrics belong to each RPC, not each candidate; keep batch costs once.
+    return {"candidates": results, "execution_metrics": execution_metrics, "provenance": {"model_id": hybrid["model_id"],
             "revision": hybrid["revision"], "checksum": hybrid["checksum"]}}

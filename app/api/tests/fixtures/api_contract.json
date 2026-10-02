@@ -11630,6 +11630,16 @@
                 }
               ],
               "title": "Name"
+            },
+            "hybrid": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/HybridSettings"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false,
@@ -12686,6 +12696,87 @@
             "launcher_id"
           ],
           "title": "ReplicaRegistration"
+        },
+        "HybridQualityRequirement": {
+          "properties": {
+            "recordId": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Recordid"
+            },
+            "component": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Component"
+            },
+            "rmseMaximum": {
+              "type": "number",
+              "minimum": 0.0,
+              "title": "Rmsemaximum"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "recordId",
+            "component",
+            "rmseMaximum"
+          ],
+          "title": "HybridQualityRequirement"
+        },
+        "HybridSettings": {
+          "properties": {
+            "model_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Model Id"
+            },
+            "model_revision": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Model Revision"
+            },
+            "replica_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Replica Id"
+            },
+            "launcher_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Launcher Id"
+            },
+            "max_solver_runs": {
+              "type": "integer",
+              "minimum": 1.0,
+              "title": "Max Solver Runs",
+              "default": 8
+            },
+            "quality_requirements": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/HybridQualityRequirement"
+                  },
+                  "type": "array",
+                  "minItems": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Quality Requirements"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "model_id",
+            "model_revision",
+            "replica_id",
+            "launcher_id"
+          ],
+          "title": "HybridSettings"
         }
       }
     }
