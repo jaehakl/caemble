@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class VoicevoxAudioQueryRequest(BaseModel):
     text: str
     speaker: int
+    preload_speakers: list[Annotated[int, Field(strict=True, ge=0, le=0xffffffff)]] | None = Field(
+        default=None, min_length=1,
+    )
 
 
 class VoicevoxSynthesisRequest(BaseModel):

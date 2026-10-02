@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import copy
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -76,29 +78,33 @@ class VoicevoxRuntime:
         self._open_jtalk = ctypes.c_void_p()
         self._synthesizer = ctypes.c_void_p()
         self._dll_directory_handles: list[Any] = []
+        self._metadata: list[dict[str, Any]] | None = None
+        self._style_models: dict[int, Path] = {}
+        self._loaded_models: set[Path] = set()
 
-    def initialize(self) -> None:
+    def initialize(self, speakers: list[int] | None = None) -> None:
         with self._lock:
             try:
-                self._ensure_initialized_locked()
+                if speakers is None:
+                    self._ensure_initialized_locked()
+                else:
+                    self._prepare_speakers_locked(speakers)
             except Exception:
                 self.close()
                 raise
 
     def speakers(self) -> list[dict[str, Any]]:
         with self._lock:
-            self._ensure_initialized_locked()
-            pointer = self._lib.voicevox_synthesizer_create_metas_json(self._synthesizer)
-            if not pointer:
-                raise RuntimeError("VOICEVOX Core returned an empty speaker metadata pointer")
-            metadata = self._read_json_pointer(pointer)
-            if not isinstance(metadata, list):
-                raise RuntimeError("VOICEVOX Core returned invalid speaker metadata")
-            return metadata
+            self._ensure_metadata_locked()
+            return copy.deepcopy(self._metadata)
 
-    def create_audio_query(self, text: str, speaker: int) -> dict[str, Any]:
+    def create_audio_query(
+        self, text: str, speaker: int, preload_speakers: list[int] | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
-            self._ensure_initialized_locked()
+            if preload_speakers is not None and speaker not in preload_speakers:
+                raise ValueError("speaker must be included in preload_speakers")
+            self._prepare_speakers_locked(preload_speakers if preload_speakers is not None else [speaker])
             output = ctypes.c_void_p()
             result = self._lib.voicevox_synthesizer_create_audio_query(
                 self._synthesizer,
@@ -124,7 +130,7 @@ class VoicevoxRuntime:
             separators=(",", ":"),
         ).encode("utf-8")
         with self._lock:
-            self._ensure_initialized_locked()
+            self._prepare_speakers_locked([speaker])
             options = self._lib.voicevox_make_default_synthesis_options()
             if enable_interrogative_upspeak is not None:
                 options.enable_interrogative_upspeak = enable_interrogative_upspeak
@@ -158,16 +164,16 @@ class VoicevoxRuntime:
                 handle.close()
             self._dll_directory_handles.clear()
             self.is_gpu_mode = False
+            self._loaded_models.clear()
+            self._metadata = None
+            self._style_models.clear()
+            self._lib = None
 
-    def _ensure_initialized_locked(self) -> None:
-        if self._synthesizer.value:
+    def _ensure_core_locked(self) -> None:
+        if self._lib is not None:
             return
-        doctor(self.runtime_dir)
-
         core_library = self._find_one("voicevox_core.dll" if os.name == "nt" else "libvoicevox_core.so")
         if os.name == "nt":
-            if self.device == "cuda" and not list(self.runtime_dir.rglob("zlibwapi.dll")):
-                raise RuntimeError("CUDA requires zlibwapi.dll; rerun scripts/install_voicevox.py --device cuda")
             # ONNX Runtime uses LoadLibrary internally; it must honor AddDllDirectory too.
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.SetDefaultDllDirectories.argtypes = [ctypes.c_uint32]
@@ -181,6 +187,95 @@ class VoicevoxRuntime:
         os.environ.setdefault("RUST_LOG", settings.voicevox_rust_log)
         library = ctypes.CDLL(str(core_library))
         self._configure_library(library)
+
+        self._lib = library
+
+    def _ensure_metadata_locked(self) -> None:
+        if self._metadata is not None:
+            return
+        started = time.perf_counter()
+        try:
+            self._ensure_core_locked()
+            model_files = sorted(self.runtime_dir.rglob("*.vvm"))
+            if not model_files:
+                raise RuntimeError("VOICEVOX voice models missing")
+            speakers: dict[str, dict[str, Any]] = {}
+            style_models: dict[int, Path] = {}
+            for path in model_files:
+                model = ctypes.c_void_p()
+                self._raise_for_result(
+                    self._lib.voicevox_voice_model_file_open(str(path).encode("utf-8"), ctypes.byref(model)),
+                    f"open voice model {path.name}",
+                )
+                try:
+                    metadata = self._read_json_pointer(self._lib.voicevox_voice_model_file_create_metas_json(model))
+                    if not isinstance(metadata, list):
+                        raise RuntimeError(f"Invalid voice metadata in {path.name}")
+                    for speaker in metadata:
+                        identity = speaker["speaker_uuid"]
+                        if identity not in speakers:
+                            speakers[identity] = {**speaker, "styles": []}
+                        for style in speaker["styles"]:
+                            style_id = style["id"]
+                            if style_id in style_models:
+                                raise RuntimeError(f"Duplicate VOICEVOX style ID: {style_id}")
+                            style_models[style_id] = path
+                            speakers[identity]["styles"].append(style)
+                finally:
+                    self._lib.voicevox_voice_model_file_delete(model)
+            # Match Core's stable ordering: explicit order first, absent order last.
+            merged = sorted(speakers.values(), key=lambda item: (item.get("order") is None, item.get("order") or 0))
+            for speaker in merged:
+                speaker["styles"].sort(key=lambda item: (item.get("order") is None, item.get("order") or 0))
+            self._metadata = merged
+            self._style_models = style_models
+            log(f"VOICEVOX metadata models={len(model_files)} speakers={len(merged)} "
+                f"duration_ms={(time.perf_counter() - started) * 1000:.1f}")
+        except Exception:
+            self.close()
+            raise
+
+    def _prepare_speakers_locked(self, speakers: list[int]) -> None:
+        if not speakers or any(type(speaker) is not int or not 0 <= speaker <= 0xffffffff for speaker in speakers):
+            raise ValueError("speakers must be a nonempty list of unsigned style IDs")
+        self._ensure_metadata_locked()
+        unknown = set(speakers) - self._style_models.keys()
+        if unknown:
+            raise ValueError(f"Unknown VOICEVOX style IDs: {sorted(unknown)}")
+        paths = sorted({self._style_models[speaker] for speaker in speakers} - self._loaded_models)
+        try:
+            self._ensure_initialized_locked()
+            started = time.perf_counter()
+            for path in paths:
+                model = ctypes.c_void_p()
+                self._raise_for_result(
+                    self._lib.voicevox_voice_model_file_open(str(path).encode("utf-8"), ctypes.byref(model)),
+                    f"open voice model {path.name}",
+                )
+                try:
+                    self._raise_for_result(
+                        self._lib.voicevox_synthesizer_load_voice_model(self._synthesizer, model),
+                        f"load voice model {path.name}",
+                    )
+                    self._loaded_models.add(path)
+                finally:
+                    self._lib.voicevox_voice_model_file_delete(model)
+            if paths:
+                log(f"VOICEVOX selected models={len(paths)} total_loaded={len(self._loaded_models)} "
+                    f"device={self.device} duration_ms={(time.perf_counter() - started) * 1000:.1f}")
+        except Exception:
+            self.close()
+            raise
+
+    def _ensure_initialized_locked(self) -> None:
+        if self._synthesizer.value:
+            return
+        started = time.perf_counter()
+        doctor(self.runtime_dir)
+        if os.name == "nt" and self.device == "cuda" and not list(self.runtime_dir.rglob("zlibwapi.dll")):
+            raise RuntimeError("CUDA requires zlibwapi.dll; rerun scripts/install_voicevox.py --device cuda")
+        self._ensure_core_locked()
+        library = self._lib
 
         onnx_filename = library.voicevox_get_onnxruntime_lib_versioned_filename().decode("utf-8")
         onnx_library = self._find_one(onnx_filename)
@@ -238,22 +333,6 @@ class VoicevoxRuntime:
             if gpu_mode != (self.device == "cuda"):
                 raise RuntimeError("VOICEVOX initialized with an unexpected acceleration mode")
 
-            model_files = sorted(self.runtime_dir.rglob("*.vvm"))
-            for model_path in model_files:
-                model = ctypes.c_void_p()
-                self._raise_for_result_with_library(
-                    library,
-                    library.voicevox_voice_model_file_open(str(model_path).encode("utf-8"), ctypes.byref(model)),
-                    f"open voice model {model_path.name}",
-                )
-                try:
-                    self._raise_for_result_with_library(
-                        library,
-                        library.voicevox_synthesizer_load_voice_model(synthesizer, model),
-                        f"load voice model {model_path.name}",
-                    )
-                finally:
-                    library.voicevox_voice_model_file_delete(model)
         except Exception:
             if synthesizer.value:
                 library.voicevox_synthesizer_delete(synthesizer)
@@ -265,7 +344,7 @@ class VoicevoxRuntime:
         self._synthesizer = synthesizer
         self.is_gpu_mode = gpu_mode
         log(f"VOICEVOX initialized device={self.device} gpu_mode={gpu_mode} "
-            f"cpu_threads={self.cpu_num_threads} models={len(model_files)}")
+            f"cpu_threads={self.cpu_num_threads} duration_ms={(time.perf_counter() - started) * 1000:.1f}")
 
     def _find_one(self, filename: str) -> Path:
         matches = [path for path in self.runtime_dir.rglob(filename) if path.is_file()]
@@ -326,6 +405,8 @@ class VoicevoxRuntime:
         library.voicevox_synthesizer_delete.restype = None
         library.voicevox_voice_model_file_open.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
         library.voicevox_voice_model_file_open.restype = ctypes.c_int32
+        library.voicevox_voice_model_file_create_metas_json.argtypes = [ctypes.c_void_p]
+        library.voicevox_voice_model_file_create_metas_json.restype = ctypes.c_void_p
         library.voicevox_voice_model_file_delete.argtypes = [ctypes.c_void_p]
         library.voicevox_voice_model_file_delete.restype = None
         library.voicevox_synthesizer_load_voice_model.argtypes = [
@@ -370,13 +451,11 @@ def get_voicevox_runtime(device: str | None = None) -> VoicevoxRuntime:
     selected = execution_device(device)
     with _runtime_lock:
         if _runtime is None:
-            candidate = VoicevoxRuntime(
+            _runtime = VoicevoxRuntime(
                 settings.resolve_app_path(settings.voicevox_runtime_dir),
                 cpu_threads(settings.voicevox_cpu_num_threads),
                 selected,
             )
-            candidate.initialize()
-            _runtime = candidate
         elif _runtime.device != selected:
             raise RuntimeError("Run CPU and CUDA synthesis in separate worker processes")
         return _runtime

@@ -49,11 +49,14 @@ def main() -> None:
         else:
             started = time.perf_counter()
             runtime = get_voicevox_runtime(args.device)
+            runtime.initialize([args.speaker])
             initialization = time.perf_counter() - started
             query_started = time.perf_counter()
             query = runtime.create_audio_query(args.text, args.speaker)
             query_seconds = time.perf_counter() - query_started
+            first_started = time.perf_counter()
             runtime.synthesis(query, args.speaker)  # Warmup is excluded from measurements.
+            first_synthesis = time.perf_counter() - first_started
             timings = []
             for _ in range(3):
                 started = time.perf_counter()
@@ -72,6 +75,7 @@ def main() -> None:
             output.write_bytes(wav)
             result = {"ready": True, "device": runtime.device, "is_gpu_mode": runtime.is_gpu_mode,
                       "initialization_seconds": initialization, "audio_query_seconds": query_seconds,
+                      "first_synthesis_seconds": first_synthesis, "loaded_model_count": len(runtime._loaded_models),
                       "synthesis_seconds": timings, "median_seconds": statistics.median(timings),
                       "duration_seconds": duration, "peak": peak, "speaker": args.speaker,
                       "text": args.text, "output": str(output.resolve()), "size": len(wav)}

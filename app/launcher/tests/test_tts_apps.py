@@ -20,3 +20,14 @@ def test_tts_manifests_discover_independent_ids_and_readiness(monkeypatch):
     monkeypatch.setattr(SlaveApp, "check_ready", check)
     selected = SlaveAppRegistry([voicevox, kokoro])
     assert selected.ready_ids() == ["tts_kokoro"]
+
+
+def test_example_requests_cpu_for_voicevox_metadata_only():
+    from app.resources import ResourceLedger, ResourcePolicy
+
+    policy = ResourcePolicy.load(Path(__file__).resolve().parents[1] / "resources.example.toml")
+    ledger = ResourceLedger(policy, cpu_ids=[0, 1, 2, 3], total_ram=16 * 1024**3)
+    assert ledger.defaults("tts_voicevox", "ai.voicevox.speakers")["gpu_count"] == 0
+    assert ledger.defaults("tts_voicevox", "ai.voicevox.audio_query")["gpu_count"] == 1
+    assert ledger.defaults("tts_voicevox", "ai.voicevox.synthesis")["gpu_count"] == 1
+    assert ledger.defaults("tts_kokoro", "ai.kokoro.synthesis")["gpu_count"] == 0

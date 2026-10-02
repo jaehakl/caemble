@@ -57,6 +57,7 @@ async def ai_voicevox_audio_query(
             get_voicevox_runtime().create_audio_query,
             request.text,
             request.speaker,
+            request.preload_speakers,
         )
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         log(f"ai.voicevox.audio_query complete session={context.session_id} duration_ms={duration_ms}")

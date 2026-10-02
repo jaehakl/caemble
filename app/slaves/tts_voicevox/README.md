@@ -27,9 +27,40 @@ an error, never a CPU/DirectML fallback. CUDA uses logical device 0 within the
 Launcher's `CUDA_VISIBLE_DEVICES` allocation.
 
 `doctor` is an offline file check, not a GPU execution test; it is used by Launcher
-readiness. Initialization loads models and tests the selected device. No startup
+readiness. Worker startup only creates the allocation-bound runtime. The first
+generation initializes the selected device and loads its selected models. No startup
 or synthesis request downloads files. Each process owns one serialized runtime;
 closing/canceling a job lets the SDK/Launcher reap it and release the allocation.
+
+`ai.voicevox.speakers` reads VVM metadata through Core without initializing ONNX
+Runtime, Open JTalk or a synthesizer. It merges speakers by UUID and stably sorts
+speakers/styles by their metadata order, matching the original response. Request
+it with `resources: { gpu_count: 0 }`; the Launcher resource example also contains
+an exact CPU profile for this handler. List refresh finishes its own short job.
+
+The first `ai.voicevox.audio_query` may include the selected **style IDs**:
+
+```json
+{"text":"こんにちは。","speaker":3,"preload_speakers":[3,4]}
+```
+
+`preload_speakers` is optional, must be nonempty when present, and must include
+`speaker`. Unknown IDs are errors. Only the VVM files containing those styles
+are loaded, once per process; styles sharing a VVM share a single model load.
+A VVM may contain additional styles because native loading operates per file.
+Without this field, query/synthesis lazily loads the requested speaker's model.
+The three handler response types, request IDs, payloads and WAV attachments stay
+unchanged. No new handler or SDK protocol is required.
+
+Onigiri's Japanese Example Creator starts the first query with `autoFinish: false`,
+then uses the returned session for synthesis and subsequent queries. It retains
+the job across text/speed edits and saves, and replaces it at the next generation
+when the selected style set changes. Leaving the page, changing language/account,
+or logging out closes/cancels it, including jobs still being created. Background
+tabs and cancelled navigation warnings retain it. CPU/RAM/GPU allocations remain
+reserved while the session lives. Existing server idle/lifetime limits still
+apply; the next generation reconnects an expired session. Failed transmitted
+requests are not automatically replayed. Deploy this worker before the Onigiri UI.
 
 Copy `env.example` to `.env` to configure `VOICEVOX_RUNTIME_DIR` (relative to this
 project, or absolute) and `VOICEVOX_CPU_NUM_THREADS` (0 means automatic, capped by
@@ -71,8 +102,8 @@ Synthesis returns one `audio-1` attachment named `voicevox.wav`. The upspeak opt
 is optional. These contracts are unchanged from the former AI handlers.
 
 Smoke uses speaker 3 (VOICEVOX:ずんだもん), creates `.data/voicevox-{device}-smoke.wav`,
-checks PCM16/non-silent output and prints initialization, AudioQuery, and three
-post-warmup synthesis times. Use `--speaker`, `--text`, or `--output` to customize.
+loads only that speaker's VVM, checks PCM16/non-silent output and prints initialization,
+AudioQuery, first synthesis, and three post-warmup synthesis times. Use `--speaker`, `--text`, or `--output` to customize.
 Run CPU and CUDA in separate processes with identical inputs for comparison.
 Set `CAEMBLE_VOICEVOX_REAL_TEST=1` to include actual worker initialization and all
 three handler calls in unittest. It follows the SDK execution allocation (CPU

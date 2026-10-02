@@ -37,7 +37,23 @@ class ContractTests(unittest.TestCase):
                     self.assertEqual(result.attachments[0].data, b"RIFF-test")
                     self.assertEqual(result.attachments[0].id, "audio-1")
 
-    def test_worker_initializes_runtime_before_requests(self):
+    def test_preload_list_reaches_runtime_and_invalid_lists_are_rejected(self):
+        fake = Mock()
+        fake.create_audio_query.return_value = {"accent_phrases": []}
+        context = SlaveContext(session_id="session", ttl_seconds=60)
+        with patch("app.handlers.get_voicevox_runtime", return_value=fake):
+            request = DataChannelMessage(id="preload", type="ai.voicevox.audio_query",
+                                         payload={"text": "こんにちは", "speaker": 3, "preload_speakers": [3, 4]})
+            result = asyncio.run(create_app().dispatch(request, context))
+            fake.create_audio_query.assert_called_once_with("こんにちは", 3, [3, 4])
+            self.assertEqual(result.id, "preload")
+            for ids in ([], [True], [-1], ["3"], [2**32]):
+                request.payload["preload_speakers"] = ids
+                with self.subTest(ids=ids), self.assertRaises(ValueError):
+                    asyncio.run(create_app().dispatch(request, context))
+            self.assertEqual(fake.create_audio_query.call_count, 1)
+
+    def test_worker_creates_lightweight_runtime_before_requests(self):
         with patch("app.worker.get_voicevox_runtime") as get:
             asyncio.run(create_app().run_initialize(SlaveContext(session_id="session", ttl_seconds=60)))
             get.assert_called_once_with()
@@ -68,18 +84,15 @@ class AllocationTests(unittest.TestCase):
                  patch("app.runtime.VoicevoxRuntime") as factory:
                 runtime.get_voicevox_runtime()
                 self.assertEqual(factory.call_args.args[1:], (expected, "cpu"))
-                factory.return_value.initialize.assert_called_once()
+                factory.return_value.initialize.assert_not_called()
 
-    def test_failed_initialization_is_not_cached(self):
-        failed, good = Mock(), Mock(device="cpu")
-        failed.initialize.side_effect = RuntimeError("initialization failed")
+    def test_getter_is_lazy_and_reuses_runtime(self):
         with patch("app.runtime._runtime", None), patch("app.runtime.execution_context", return_value=None), \
-             patch("app.runtime.VoicevoxRuntime", side_effect=[failed, good]) as factory:
-            with self.assertRaises(RuntimeError):
-                runtime.get_voicevox_runtime()
-            self.assertIs(runtime.get_voicevox_runtime(), good)
-            self.assertIs(runtime.get_voicevox_runtime(), good)
-            self.assertEqual(factory.call_count, 2)
+             patch("app.runtime.VoicevoxRuntime") as factory:
+            factory.return_value.device = "cpu"
+            self.assertIs(runtime.get_voicevox_runtime(), runtime.get_voicevox_runtime())
+            factory.assert_called_once()
+            factory.return_value.initialize.assert_not_called()
 
 
 class NativeLifecycleTests(unittest.TestCase):
@@ -98,6 +111,13 @@ class NativeLifecycleTests(unittest.TestCase):
         self.library.voicevox_onnxruntime_load_once.side_effect = self.pointer_result
         self.library.voicevox_open_jtalk_rc_new.side_effect = self.pointer_result
         self.library.voicevox_synthesizer_new.side_effect = self.pointer_result
+        self.metadata = ctypes.create_string_buffer(json.dumps([
+            {"name": "A", "speaker_uuid": "a", "version": "1", "styles": [
+                {"id": 3, "name": "normal", "type": "talk", "order": 2},
+                {"id": 4, "name": "happy", "type": "talk", "order": 1},
+            ]},
+        ]).encode())
+        self.library.voicevox_voice_model_file_create_metas_json.side_effect = lambda model: ctypes.addressof(self.metadata)
         self.library.voicevox_voice_model_file_open.side_effect = self.pointer_result
         self.library.voicevox_synthesizer_load_voice_model.return_value = 0
         self.library.voicevox_synthesizer_is_gpu_mode.return_value = True
@@ -234,12 +254,71 @@ class NativeLifecycleTests(unittest.TestCase):
         self.library.voicevox_synthesizer_load_voice_model.side_effect = [8, 0]
         instance = runtime.VoicevoxRuntime(self.directory, device="cuda")
         with self.assertRaisesRegex(RuntimeError, "load voice model"):
-            instance.initialize()
-        self.library.voicevox_voice_model_file_delete.assert_called_once()
+            instance.initialize([3])
+        self.assertEqual(self.library.voicevox_voice_model_file_delete.call_count, 2)
         self.library.voicevox_synthesizer_delete.assert_called_once()
         self.library.voicevox_open_jtalk_rc_delete.assert_called_once()
-        instance.initialize()
+        self.assertFalse(instance._loaded_models)
+        instance.initialize([3])
         self.assertTrue(instance.is_gpu_mode)
+        instance.close()
+
+    def test_metadata_merges_styles_and_never_initializes_inference(self):
+        (self.directory / "1.vvm").write_bytes(b"fixture")
+        extra = ctypes.create_string_buffer(json.dumps([
+            {"name": "B", "speaker_uuid": "b", "order": 0, "styles": [{"id": 7, "name": "normal"}]},
+            {"name": "ignored", "speaker_uuid": "a", "version": "2", "styles": [{"id": 5, "name": "other"}]},
+        ]).encode())
+        self.library.voicevox_voice_model_file_create_metas_json.side_effect = [
+            ctypes.addressof(self.metadata), ctypes.addressof(extra),
+        ]
+        instance = runtime.VoicevoxRuntime(self.directory, device="cuda")
+        result = instance.speakers()
+        self.assertEqual([speaker["name"] for speaker in result], ["B", "A"])
+        self.assertEqual(result[1]["version"], "1")
+        self.assertEqual([style["id"] for style in result[1]["styles"]], [4, 3, 5])
+        self.library.voicevox_onnxruntime_load_once.assert_not_called()
+        self.library.voicevox_open_jtalk_rc_new.assert_not_called()
+        self.library.voicevox_synthesizer_new.assert_not_called()
+        self.library.voicevox_synthesizer_load_voice_model.assert_not_called()
+        result.clear()
+        self.assertEqual(len(instance.speakers()), 2)
+        self.assertEqual(self.library.voicevox_voice_model_file_delete.call_count, 2)
+        instance.close()
+
+    def test_selected_styles_share_model_and_are_loaded_once(self):
+        instance = runtime.VoicevoxRuntime(self.directory, device="cuda")
+        instance.initialize([3, 4, 3])
+        instance.initialize([4])
+        self.library.voicevox_synthesizer_load_voice_model.assert_called_once()
+        self.assertEqual(instance._loaded_models, {self.directory / "0.vvm"})
+        instance.close()
+
+    def test_unknown_empty_and_invalid_ids_fail_before_inference(self):
+        instance = runtime.VoicevoxRuntime(self.directory)
+        for ids in ([], [999], [-1], [True], [2**32]):
+            with self.subTest(ids=ids), self.assertRaises(ValueError):
+                instance.initialize(ids)
+        with self.assertRaisesRegex(ValueError, "included"):
+            instance.create_audio_query("text", 3, [4])
+        self.library.voicevox_synthesizer_new.assert_not_called()
+        instance.close()
+
+    def test_partial_multi_model_failure_clears_loaded_state(self):
+        (self.directory / "1.vvm").write_bytes(b"fixture")
+        extra = ctypes.create_string_buffer(b'[{"name":"B","speaker_uuid":"b","styles":[{"id":5,"name":"normal"}]}]')
+        self.library.voicevox_voice_model_file_create_metas_json.side_effect = [
+            ctypes.addressof(self.metadata), ctypes.addressof(extra),
+            ctypes.addressof(self.metadata), ctypes.addressof(extra),
+        ]
+        self.library.voicevox_synthesizer_load_voice_model.side_effect = [0, 8, 0, 0]
+        instance = runtime.VoicevoxRuntime(self.directory, device="cuda")
+        with self.assertRaisesRegex(RuntimeError, "load voice model"):
+            instance.initialize([3, 5])
+        self.assertFalse(instance._loaded_models)
+        self.library.voicevox_synthesizer_delete.assert_called_once()
+        instance.initialize([3, 5])
+        self.assertEqual(len(instance._loaded_models), 2)
         instance.close()
 
     def test_doctor_is_offline_and_rejects_missing_models(self):
@@ -259,8 +338,10 @@ class RealVoicevoxTests(unittest.TestCase):
             await app.run_initialize(context)
             speakers = await app.dispatch(DataChannelMessage(id="speakers", type="ai.voicevox.speakers", payload={}), context)
             self.assertTrue(speakers.payload["speakers"])
+            self.assertFalse(runtime.get_voicevox_runtime()._synthesizer.value)
             query = await app.dispatch(DataChannelMessage(id="query", type="ai.voicevox.audio_query",
-                payload={"text": "こんにちは。", "speaker": 3}), context)
+                payload={"text": "こんにちは。", "speaker": 3, "preload_speakers": [3, 4]}), context)
+            self.assertEqual(len(runtime.get_voicevox_runtime()._loaded_models), 1)
             return await app.dispatch(DataChannelMessage(id="synthesis", type="ai.voicevox.synthesis",
                 payload={"audio_query": query.payload["audio_query"], "speaker": 3}), context)
 

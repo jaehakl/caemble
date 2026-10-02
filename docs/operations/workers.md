@@ -479,14 +479,23 @@ Pop-Location
 The installer displays the official model/runtime terms. CUDA includes the
 additional libraries; use `--device cpu` on CPU-only machines. Worker requests
 never download models. Offline `doctor` checks files without loading models or
-claiming GPU readiness. Worker initialization validates the actual allocation:
+claiming GPU readiness. Worker startup validates the actual allocation:
 zero GPUs means CPU, one GPU requires CUDA, and multiple GPUs are rejected.
 CUDA failures are reported; there is no CPU or DirectML fallback. The default
-resource example assigns one GPU to `tts_voicevox` and zero to `tts_kokoro`.
+resource example assigns one GPU to `tts_voicevox`, zero to `tts_kokoro`, and
+zero to the exact `ai.voicevox.speakers` handler. The first generation initializes
+the device and loads selected models; worker startup does not load all VVMs.
 
 Use `slaveAppId: "tts_voicevox"` for the existing `ai.voicevox.speakers`,
-`ai.voicevox.audio_query`, and `ai.voicevox.synthesis` handlers. Their payloads,
-result types and WAV attachments are unchanged. See the
+`ai.voicevox.audio_query`, and `ai.voicevox.synthesis` handlers. Speaker lists read
+metadata only; callers should explicitly request `gpu_count: 0` for list refresh.
+AudioQuery accepts optional `preload_speakers: number[]` (selected style IDs,
+including `speaker`), loading only their VVM files. Existing requests without
+this field lazily load the requested style; result types and WAV attachments
+are unchanged. Clients can retain one job for repeated query/synthesis calls.
+Onigiri does so while its Japanese Example Creator page remains open; allocated
+resources remain reserved until the job ends and its worker is reaped. Deploy
+the worker before the updated Onigiri UI. See the
 [VOICEVOX worker contract](../../app/slaves/tts_voicevox/README.md) for local
 CPU/CUDA comparison and configuration.
 
