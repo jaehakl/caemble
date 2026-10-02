@@ -85,7 +85,8 @@ export function OptimizationHybridSettings({
           <option value="">revision 선택</option>
           {revisions.map((item) => (
             <option key={item.revision} value={item.revision}>
-              revision {item.revision} · Dataset revision {item.dataset_revision}
+              {item.version_name ? `${item.version_name} · ` : ''}revision {item.revision} · Dataset revision{' '}
+              {item.dataset_revision}
             </option>
           ))}
         </select>
@@ -122,9 +123,9 @@ export function OptimizationHybridSettings({
         />
       </label>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        선택한 revision을 고정하고 예측한 후보를 실제 Solver로 검증합니다. 실패 후 Solver 재실행도 예산을 사용합니다.
-        예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher에는 Evaluation과 선택한 알고리즘의 추론에
-        필요한 CPU·RAM·GPU 자원이 함께 필요합니다.
+        선택한 revision으로 시작하고 예측한 후보를 실제 Solver로 검증합니다. 모델 갱신은 시작 후 직접 요청합니다. 실패
+        후 Solver 재실행도 예산을 사용합니다. 예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher에는
+        Evaluation과 선택한 알고리즘의 추론에 필요한 CPU·RAM·GPU 자원이 함께 필요합니다.
       </p>
       {!assets.isPending && !models.length ? (
         <p className="text-xs text-muted-foreground">

@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import threading
 from pathlib import Path
 from typing import Protocol
 
-from prediction_contracts import algorithm_descriptor, validate_definition
+from prediction_contracts import algorithm_descriptor, validate_definition, validate_training_update
 
 from .errors import PredictionError
 from .execution import ModelExecutionContext
@@ -47,6 +48,16 @@ class ForwardModelImplementation(Protocol):
         ...
 
 
+class ForwardModelUpdateImplementation(ForwardModelImplementation, Protocol):
+    """Optional training boundary for implementations advertising update modes."""
+
+    @classmethod
+    def update(cls, dataset: dict, definition: dict, model_ref: dict, base: ForwardModel,
+               update: dict, context: ModelExecutionContext) -> ForwardModel:
+        """Return a new model from completed weights without changing the base object."""
+        ...
+
+
 IMPLEMENTATIONS: dict[str, type[ForwardModelImplementation]] = {"knn": KnnForwardModel}
 
 
@@ -76,18 +87,36 @@ class ModelBundle:
 
     @classmethod
     def prepare(cls, dataset: dict, direction: str, definition: dict, model_ref: dict,
-                context: ModelExecutionContext) -> "ModelBundle":
+                context: ModelExecutionContext, *, update: dict | None = None,
+                base_model: "ModelBundle | None" = None) -> "ModelBundle":
         if direction != "forward" or definition.get("direction", "forward") != "forward":
             raise PredictionError("unsupported-model", "Inverse Prediction is retired. Use Optimization for inverse design.")
         try:
-            validate_definition(definition)
+            mode = validate_training_update(update, definition)
         except ValueError as error:
             raise PredictionError("unsupported-model", str(error)) from error
         if definition.get("snapshotFingerprint") != dataset["fingerprint"]:
             raise PredictionError("dataset-checksum", "Model definition references a different Dataset fingerprint.")
         implementation = implementation_for(definition)
-        model = implementation.prepare(dataset, definition, model_ref, context)
+        if mode == "rebuild":
+            model = implementation.prepare(dataset, definition, model_ref, context)
+        else:
+            if base_model is None or base_model.closing:
+                raise PredictionError("unsupported-update", "Training requires a usable completed base model.")
+            previous = base_model.metadata["definition"]
+            if (any(previous.get(key) != definition.get(key) for key in ("implementationVersion", "preprocessingVersion"))
+                    or previous.get("algorithm", {}).get("kind") != definition["algorithm"]["kind"]
+                    or base_model.metadata.get("varsSchema") != dataset["varsSchema"]):
+                raise PredictionError("unsupported-update", "Base model implementation or Vars schema is incompatible with this update.")
+            train_update = getattr(implementation, "update", None)
+            if train_update is None:
+                raise PredictionError("unsupported-update", "The model implementation does not provide this training update mode.")
+            model = train_update(dataset, definition, model_ref, base_model.implementation, update, context)
+            if model is base_model.implementation:
+                raise PredictionError("unsupported-update", "Training must return a new immutable model, not its base object.")
         try:
+            if update is not None:
+                model.metadata["update"] = deepcopy(update)
             return cls(model)
         except BaseException:
             model.close()
@@ -121,6 +150,8 @@ class ModelBundle:
         if self.closing:
             raise PredictionError("instance-invalidated", "Model is closing or already released.")
         summary = {key: self.metadata[key] for key in ("modelId", "revision", "operationId", "name", "formatVersion", "direction", "algorithm", "definition", "datasetId", "datasetRevision", "datasetFingerprint", "experimentId")}
+        if "update" in self.metadata:
+            summary["update"] = self.metadata["update"]
         profile = self.profile()
         summary.update({"profile": profile, "inputLayouts": self.implementation.input_layouts,
                         "outputLayouts": self.implementation.output_layouts})

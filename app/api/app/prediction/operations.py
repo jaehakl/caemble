@@ -151,7 +151,37 @@ async def dataset_source(db, revision, body, user_id):
         "payload_sha256": digest(item.payload) if storage.kind == "api_dataset" else None}
 
 
+async def assert_model_pins_idle(db, model_id, *, replica_id=None, operation_id=None):
+    from optimization.db import Evaluation, OptimizationModelPin
+    optimization = await db.scalar(select(OptimizationModelPin.optimization_id).where(
+        OptimizationModelPin.model_id == model_id,
+        *([OptimizationModelPin.replica_id == replica_id] if replica_id else [])).limit(1))
+    if optimization is not None:
+        raise HTTPException(409, {"message": "This model copy is retained by an Optimization.", "optimization_id": optimization})
+    parent = await db.scalar(select(Job.id).where(Job.handler_type == "cae.evaluation.predict",
+        Job.input["hybrid"]["model_id"].astext == model_id,
+        *([Job.input["hybrid"]["replica_id"].astext == replica_id] if replica_id else []),
+        (~Job.state.in_(JOB_TERMINAL_STATES)) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1))
+    if parent is not None:
+        raise HTTPException(409, {"message": "This model copy is retained by a Prediction evaluation.", "job_id": parent})
+    retry = await db.scalar(select(Evaluation.id).where(Evaluation.kind == "prediction",
+        Evaluation.manual_retry_requested.is_(True), Evaluation.next_stage == "predict",
+        Evaluation.state.in_(["pending", "running"]), Evaluation.source["model_id"].astext == model_id,
+        *([Evaluation.source["replica_id"].astext == replica_id] if replica_id else [])).limit(1))
+    if retry is not None:
+        raise HTTPException(409, {"message": "This model copy is retained by a requested Prediction retry.", "evaluation_id": retry})
+    from prediction.training import retained_runs
+    for _, operation in await retained_runs(db):
+        if operation.id == operation_id:
+            continue
+        base = (operation.details.get("update") or {}).get("baseModel")
+        if base and base["modelId"] == model_id and (replica_id is None or base["replicaId"] == replica_id):
+            raise HTTPException(409, {"message": "This base model copy is retained by model training.", "operation_id": operation.id})
+
+
 async def assert_copy_idle(db, replica, *, operation_id=None, execution_leases=True):
+    if replica.model_id:
+        await assert_model_pins_idle(db, replica.model_id, replica_id=replica.id, operation_id=operation_id)
     if execution_leases and replica.model_id:
         lease = await db.scalar(select(ModelLease.job_id).join(Job, Job.id == ModelLease.job_id).where(
             ModelLease.model_id == replica.model_id, ModelLease.revision == replica.revision,
@@ -176,6 +206,8 @@ async def deletion_replicas(db, operation):
 
 async def begin_deletion(db, operation, asset, body):
     field = Replica.model_id if body.asset_kind == "model" else Replica.dataset_id
+    if body.asset_kind == "model" and body.kind == "delete_asset":
+        await assert_model_pins_idle(db, asset.id, operation_id=operation.id)
     if body.kind == "delete_replica":
         copies = [await selected_replica(db, body.replica_id, body.asset_kind, asset.id, body.revision, readable=False)]
     else:
@@ -400,6 +432,15 @@ async def issue_grant(db, row, *, retry=False):
         model = await db.get(PredictionModel, row.asset_id)
         if model is None or model.direction != "forward":
             raise HTTPException(409, "Inverse Prediction preparation is retired. Existing files are retained.")
+    if retry and row.details.get("automatic_prune"):
+        from prediction.schemas import OperationCreate
+        from prediction.training import cleanup_pending
+        job = await db.get(Job, row.details["prune_job_id"]) if row.details.get("prune_job_id") else None
+        if cleanup_pending(job):
+            raise HTTPException(409, "Wait for the automatic model cleanup process to finish before retrying it.")
+        owner = await owned(db, PredictionModel, row.asset_id, row.user_id)
+        await begin_deletion(db, row, owner, OperationCreate(request_id=row.id, kind="delete_replica",
+            asset_kind="model", asset_id=row.asset_id, revision=row.revision, replica_id=row.details["replica_ids"][0]))
     if not settings.JWT_SECRET:
         raise HTTPException(503, "Prediction transfer signing is not configured.")
     if retry:
@@ -409,6 +450,9 @@ async def issue_grant(db, row, *, retry=False):
     if retry or renewal_deadline is None:
         renewal_deadline = now + RENEWAL_SECONDS
         row.details = {**row.details, "grant_deadline": renewal_deadline}
+    if retry and row.details.get("automatic_prune"):
+        row.details = {**row.details, "prune_manual_retry": True,
+            "grant_generation": row.details.get("grant_generation", 0) + 1}
     if renewal_deadline <= now:
         raise HTTPException(401, "Prediction transfer renewal window expired. Retry the operation with an authenticated request.")
     row.expires_at, row.updated_at = utcnow() + timedelta(seconds=min(GRANT_SECONDS, renewal_deadline - now)), utcnow()

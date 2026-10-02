@@ -39,12 +39,43 @@ export const optimizationResultSchema = z
 const optimizationErrorSchema = z
   .object({ message: z.string(), stage: z.string().optional(), code: z.string().optional() })
   .passthrough()
+export const optimizationModelSourceSchema = z
+  .object({
+    model_id: z.string(),
+    model_revision: z.number().int().positive(),
+    checksum: z.string().optional(),
+    version_name: z.string().nullable().optional(),
+  })
+  .passthrough()
 const bestTrialSchema = z.object({
   id: z.string(),
   ordinal: z.number().int(),
   variables: optimizationVarsSchema,
   result: optimizationResultSchema,
   measurement_id: z.number().int().nullable(),
+  evaluation_id: z.string().optional(),
+  source: z.record(z.string(), z.unknown()).optional(),
+})
+export const optimizationModelUpdateSchema = z.object({
+  initial_model: optimizationModelSourceSchema,
+  active_model: optimizationModelSourceSchema,
+  round_model: optimizationModelSourceSchema.nullable().optional(),
+  pending_model: optimizationModelSourceSchema.nullable(),
+  updates: z.array(
+    z.object({
+      request_id: z.string(),
+      request_ids: z.array(z.string()).optional(),
+      operation_id: z.string(),
+      model_id: z.string(),
+      revision: z.number().int().positive(),
+      version_name: z.string(),
+      state: z.string(),
+      error: z.union([z.string(), optimizationErrorSchema]).nullable().optional(),
+      created_at: z.string().optional(),
+      adopted_round: z.number().int().nonnegative().nullable().optional(),
+    }),
+  ),
+  waiting: z.boolean(),
 })
 export const optimizationHybridSchema = z
   .object({
@@ -89,6 +120,7 @@ export const optimizationSummarySchema = z.object({
     .nullable()
     .optional(),
   termination_reason: z.string().nullable().optional(),
+  model_update: optimizationModelUpdateSchema.optional(),
 })
 export const optimizationDetailSchema = optimizationSummarySchema.extend({
   definition: z

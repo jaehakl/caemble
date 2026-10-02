@@ -163,6 +163,33 @@ class HybridSearchTests(unittest.TestCase):
             self.settings["axes"], "minimize", 3), ["1", "2"])
         self.assertEqual(select_verifications([], {}, [], self.settings["axes"], "minimize", 3), [])
 
+    def test_round_selects_only_its_model_independent_of_result_arrival_order(self):
+        trials = [self.trial(1, 0.25), self.trial(2, 0.75), self.trial(3, 0.5)]
+        evaluations = []
+        for trial in trials:
+            for source, value in (("M1", trial.ordinal), ("M2", -trial.ordinal)):
+                item = self.evaluation(trial, "prediction", value)
+                item.source_hash = source
+                evaluations.append(item)
+        state = {"round_ordinals": [1, 2, 3], "round_source_hash": "M2"}
+        first = advance_search(trials, evaluations, self.settings, state, {"remaining": 1})
+        second = advance_search(trials, list(reversed(evaluations)), self.settings, state, {"remaining": 1})
+        self.assertEqual(first, second)
+        self.assertEqual(first[2], ["3"])
+
+    def test_saved_candidate_comparison_opens_a_round_before_reprediction(self):
+        trials = [self.trial(1, 0.25), self.trial(2, 0.75), self.trial(3, 0.5)]
+        self.settings["max_trials"] = 3
+        evaluations = [self.evaluation(trial, "prediction", trial.ordinal) for trial in trials]
+        for item in evaluations:
+            item.source_hash = "M1"
+        evaluations.append(self.evaluation(trials[0], "solver", 1))
+        state, candidates, selected, reason = advance_search(trials, evaluations, self.settings,
+            {"round_ordinals": [1], "selection": ["1"], "round_index": 0, "round_source_hash": "M1"}, {"remaining": 2})
+        self.assertEqual((state["round_index"], state["round_ordinals"], selected, candidates, reason), (1, [2, 3], [], [], None))
+        state["round_source_hash"] = "M2"
+        self.assertEqual(advance_search(trials, evaluations, self.settings, state, {"remaining": 2})[1:], ([], [], None))
+
 
 if __name__ == "__main__":
     unittest.main()

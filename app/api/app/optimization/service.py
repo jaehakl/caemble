@@ -106,6 +106,11 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
                   request_id=str(request.request_id), request_hash=digest, state="running", definition=definition,
                   settings=settings, optimizer_state={})
     db.add(optimization)
+    await db.flush()
+    if request.hybrid is not None:
+        from optimization.model_updates import model_state, save_state, sync_pins
+        save_state(optimization, model_state(optimization))
+        await sync_pins(db, optimization)
     await db.commit()
     return optimization
 
@@ -114,6 +119,8 @@ async def optimization_summaries(db, optimizations: list[Optimization]) -> list[
     from optimization.algorithm import trial_rank
     from optimization.evaluations import solver_budget
     from types import SimpleNamespace
+    from optimization.model_updates import model_state, round_source, update_jobs
+    from prediction.common import digest
     ids = [optimization.id for optimization in optimizations]
     if not ids:
         return []
@@ -155,14 +162,18 @@ async def optimization_summaries(db, optimizations: list[Optimization]) -> list[
         evaluated = (await db.execute(select(Evaluation, Trial).join(Trial, Trial.id == Evaluation.trial_id)
             .where(Evaluation.optimization_id == optimization.id))).all()
         best_by_kind = {}
+        model_update = model_state(optimization)
+        current_source = digest(model_update["active_model"]) if model_update else None
         for kind in ("solver", "prediction"):
             eligible = [(evaluation, trial) for evaluation, trial in evaluated if evaluation.kind == kind
-                        and evaluation.state == "succeeded" and evaluation.result and evaluation.result["feasible"]]
+                        and evaluation.state == "succeeded" and evaluation.result and evaluation.result["feasible"]
+                        and (kind != "prediction" or evaluation.source_hash == current_source)]
             if eligible:
                 evaluation, trial = min(eligible, key=lambda pair: trial_rank(
                     SimpleNamespace(result=pair[0].result, ordinal=pair[1].ordinal), optimization.settings["objective"]["direction"]))
                 best_by_kind[kind] = {"id": trial.id, "ordinal": trial.ordinal, "variables": trial.variables,
-                    "result": evaluation.result, "measurement_id": evaluation.measurement_id}
+                    "result": evaluation.result, "measurement_id": evaluation.measurement_id,
+                    "evaluation_id": evaluation.id, "source": evaluation.source}
         summary.update(best_verified_trial=best_by_kind.get("solver", summary["best_trial"]),
                        best_predicted_trial=best_by_kind.get("prediction"), solver_budget=await solver_budget(db, optimization),
                        termination_reason=optimization.optimizer_state.get("termination_reason"))
@@ -171,8 +182,12 @@ async def optimization_summaries(db, optimizations: list[Optimization]) -> list[
             summary["retry_count"] = sum(len(item.retry_requests or []) for item, _ in evaluated)
             summary["manual_retry_pending"] = any(item.manual_retry_requested for item, _ in evaluated)
         if optimization.settings.get("hybrid"):
+            summary["model_update"] = model_update
             states = {}
             for evaluation, trial in evaluated:
+                if (evaluation.kind == "prediction" and evaluation.source_hash != digest(round_source(optimization))
+                        and not evaluation.manual_retry_requested):
+                    continue
                 states.setdefault(trial.id, []).append(evaluation.state)
             summary.update(succeeded=sum(all(state == "succeeded" for state in values) for values in states.values()),
                 failed=sum("failed" in values for values in states.values()),
@@ -183,6 +198,9 @@ async def optimization_summaries(db, optimizations: list[Optimization]) -> list[
             Job.artifact_metadata.has_key("optimization_parent")))).all())
         summary["executions_active"] += sum(job.state in SERVER_ACTIVE_STATES for job in children)
         summary["cleanup_pending"] |= any(job.launcher_id is not None and job.cleaned_at is None for job in children)
+        training_jobs = await update_jobs(db, optimization)
+        summary["executions_active"] += sum(job.state in SERVER_ACTIVE_STATES for job in training_jobs)
+        summary["cleanup_pending"] |= any(job.launcher_id is not None and job.cleaned_at is None for job in training_jobs)
     return result
 
 
@@ -240,7 +258,11 @@ async def list_trials(db, optimization: Optimization, *, limit: int, offset: int
             "retry_count": len(evaluation.retry_requests or []), "stages": by_evaluation[evaluation.id]}
             for evaluation in evaluations if evaluation.trial_id == item["id"]]
         if optimization.settings.get("hybrid") and item["evaluations"]:
-            states = [evaluation["state"] for evaluation in item["evaluations"]]
+            from optimization.model_updates import round_source
+            from prediction.common import digest
+            source_hash = digest(round_source(optimization))
+            states = [evaluation["state"] for evaluation in item["evaluations"]
+                if evaluation["kind"] == "solver" or evaluation["source_hash"] == source_hash or evaluation["manual_retry_requested"]]
             item["state"] = next((state for state in ("failed", "running", "pending", "cancelled") if state in states),
                 "succeeded" if any(evaluation["kind"] == "solver" and evaluation["state"] == "succeeded"
                                    for evaluation in item["evaluations"]) else "predicted")
@@ -248,12 +270,17 @@ async def list_trials(db, optimization: Optimization, *, limit: int, offset: int
 
 
 async def resume_optimization(db, optimization: Optimization) -> None:
+    from optimization.model_updates import round_source, update_jobs
+    from prediction.common import digest
+    from prediction.training import cleanup_pending
     if optimization.state == "running":
         return
     if optimization.state != "paused":
         raise HTTPException(409, "Wait for the Optimization to pause before resuming.")
+    source = round_source(optimization)
     if await db.scalar(select(Evaluation.id).where(Evaluation.optimization_id == optimization.id,
-        (Evaluation.state == "failed") | Evaluation.manual_retry_requested).limit(1)) is not None:
+        ((Evaluation.state == "failed") & ((Evaluation.kind == "solver") | (Evaluation.source_hash == digest(source))))
+        | Evaluation.manual_retry_requested).limit(1)) is not None:
         raise HTTPException(409, "Retry failed Evaluations and wait for completion before resuming.")
     unresolved = await db.scalar(select(Trial.id).where(Trial.optimization_id == optimization.id,
                                                        (Trial.state == "failed") | Trial.manual_retry_requested).limit(1))
@@ -264,6 +291,8 @@ async def resume_optimization(db, optimization: Optimization) -> None:
                                 Job.state.in_(SERVER_ACTIVE_STATES) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1))
     if active is not None:
         raise HTTPException(409, "Wait for Optimization executions and worker cleanup before resuming.")
+    if any(cleanup_pending(job) for job in await update_jobs(db, optimization)):
+        raise HTTPException(409, "Wait for Optimization training and worker cleanup before resuming.")
     if await db.scalar(select(Job.id).where(Job.artifact_metadata["optimization_id"].astext == optimization.id,
         Job.artifact_metadata.has_key("optimization_parent"),
         Job.state.in_(SERVER_ACTIVE_STATES) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1)):
@@ -272,8 +301,12 @@ async def resume_optimization(db, optimization: Optimization) -> None:
 
 
 async def delete_optimization(db, optimization: Optimization) -> None:
+    from optimization.model_updates import cancel_updates, update_jobs
+    from prediction.training import cleanup_pending
     if optimization.state not in {"paused", "completed"}:
         raise HTTPException(409, "Stop the Optimization before deleting its history.")
+    if any(cleanup_pending(job) for job in await update_jobs(db, optimization)):
+        raise HTTPException(409, "Wait for Optimization training cleanup before deleting its history.")
     if await db.scalar(select(Evaluation.id).where(Evaluation.optimization_id == optimization.id,
                                                   Evaluation.manual_retry_requested).limit(1)):
         raise HTTPException(409, "Stop the manual Evaluation retry before deleting its Optimization.")
@@ -288,6 +321,7 @@ async def delete_optimization(db, optimization: Optimization) -> None:
                                 Job.state.in_(SERVER_ACTIVE_STATES) | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None))).limit(1))
     if active is not None:
         raise HTTPException(409, "Wait for all Optimization workers to finish cleanup before deleting its history.")
+    await cancel_updates(db, optimization)
     await db.execute(delete(Optimization).where(Optimization.id == optimization.id))
 
 

@@ -69,3 +69,9 @@ class OptimizationCreateRequest(BaseModel):
 class OptimizationRetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID
+
+
+class OptimizationModelUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    update_mode: Literal["rebuild", "warm_start", "incremental"] = "rebuild"

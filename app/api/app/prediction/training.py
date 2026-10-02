@@ -31,6 +31,37 @@ def cleanup_pending(job):
     return job is not None and (job.state not in JOB_TERMINAL_STATES or (job.launcher_id is not None and job.cleaned_at is None))
 
 
+async def retained_runs(db, dataset_id=None):
+    """Updates retain their frozen inputs across retryable failures and restarts."""
+    rows = (await db.execute(select(TrainingRun, Operation, ModelRevision, Job)
+        .join(Operation, Operation.id == TrainingRun.operation_id)
+        .join(ModelRevision, (ModelRevision.model_id == Operation.asset_id) & (ModelRevision.revision == Operation.revision))
+        .outerjoin(Job, Job.id == TrainingRun.job_id)
+        .where(*([TrainingRun.dataset_id == dataset_id] if dataset_id else [])))).all()
+    now = utcnow()
+    return [(run, operation) for run, operation, revision, job in rows if cleanup_pending(job)
+        or (revision.state == "reserved" and operation.state not in {"completed", "cancelled"}
+            and (operation.details.get("update") is not None
+                or (run.preflight_expires_at is not None and run.preflight_expires_at > now)))]
+
+
+async def retained_snapshots(db, dataset_id=None):
+    return {(run.dataset_id, run.dataset_revision) for run, _ in await retained_runs(db, dataset_id)
+        if run.source_kind == "api"}
+
+
+async def assert_model_update_available(db, model_id, user_id, *, operation_id=None, online_origin=None):
+    rows = (await db.execute(select(Operation, TrainingRun, Job).join(TrainingRun, TrainingRun.operation_id == Operation.id)
+        .outerjoin(Job, Job.id == TrainingRun.job_id).where(Operation.asset_id == str(model_id),
+            Operation.user_id == user_id, Operation.kind == "prepare",
+            *([Operation.id != str(operation_id)] if operation_id else [])))).all()
+    for operation, run, job in rows:
+        if cleanup_pending(job) or (operation.state in {"pending", "queued", "running"}
+                and (online_origin is not None or operation.details.get("online_origin") is not None)):
+            raise HTTPException(409, {"message": "This model already has a protected training operation. Finish or cancel it first.",
+                "operation_id": operation.id})
+
+
 async def require_unmanaged_job(db, job_id, user_id=None):
     query = select(Job).where(Job.id == job_id, Job.handler_type == HANDLER)
     if user_id is not None:
@@ -102,7 +133,7 @@ async def authority(db, identity, authorization):
     model = await db.get(PredictionModel, row.asset_id)
     result = {"operationId": row.id, "pinId": claims["pin"], "storageId": row.details["target_storage_id"],
         "launcherId": row.details["target_launcher_id"], "sourceKind": run.source_kind,
-        "model": {"modelId": row.asset_id, "revision": row.revision, "operationId": row.id, "name": model.name},
+        "model": {"modelId": row.asset_id, "revision": row.revision, "operationId": row.id, "name": row.details["name"]},
         "definition": revision.definition, "dataset": {"datasetId": run.dataset_id,
             "revision": run.dataset_revision, "fingerprint": revision.dataset_fingerprint},
         "state": row.state, "canPin": not old_pin and can_pin and model.state == "active",
@@ -110,6 +141,8 @@ async def authority(db, identity, authorization):
         # release that exact old disk pin even if a new preflight is abandoned.
         "canRelease": old_pin or (not active and (row.state in {"completed", "cancelled"} or not preflight)),
         "resources": run.resources}
+    if row.details.get("update") is not None:
+        result["update"] = row.details["update"]
     return row, run, result
 
 
@@ -139,15 +172,24 @@ async def preflight(db, identity, request_id, user_id):
     revision = await db.get(ModelRevision, (model.id, row.revision))
     if revision.state != "reserved":
         raise HTTPException(410, "This model preparation was superseded.")
+    await assert_model_update_available(db, model.id, user_id, operation_id=row.id,
+        online_origin=row.details.get("online_origin"))
+    origin = row.details.get("online_origin")
+    latest = await db.scalar(select(ModelRevision.revision).where(ModelRevision.model_id == model.id,
+        *([ModelRevision.preparation["online_origin"]["optimization_id"].astext == str(origin["optimization_id"])] if origin else []))
+        .order_by(ModelRevision.revision.desc()).limit(1))
+    if latest != revision.revision:
+        raise HTTPException(410, "A later model revision superseded this retry.")
     run.pin_id, run.preflight_request_id = str(uuid4()), request_id
     run.preflight_expires_at = utcnow() + timedelta(seconds=PREFLIGHT_SECONDS)
     row.state, row.stage, row.error, row.completed_at = "pending", "preparing", None, None
+    row.updated_at = utcnow()
     row.details = {key: value for key, value in row.details.items() if key not in {"confirmed_pin", "artifact_saved"}}
     await db.commit()
     return await operation_view(db, row)
 
 
-async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None):
+async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None, commit=True):
     from prediction.operations import owned_operation
     await serialize_events(db)
     row = await owned_operation(db, identity, user_id)
@@ -170,6 +212,8 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None):
     revision = await db.get(ModelRevision, (model.id, row.revision))
     if revision.state != "reserved":
         raise HTTPException(410, "This model preparation was superseded.")
+    await assert_model_update_available(db, model.id, user_id, operation_id=row.id,
+        online_origin=row.details.get("online_origin"))
     try:
         validate_definition(revision.definition)
     except ValueError as error:
@@ -184,7 +228,7 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None):
         source = await db.get(DatasetRevision, (run.dataset_id, run.dataset_revision))
         if source is None or source.fingerprint != revision.dataset_fingerprint:
             raise HTTPException(409, "The exact training Dataset revision is unavailable.")
-        if run.source_kind == "api" and (dataset.current_revision != run.dataset_revision or source.payload is None):
+        if run.source_kind == "api" and source.payload is None:
             raise HTTPException(409, "The exact server Dataset payload is no longer retained.")
         if run.source_kind == "local":
             copy = await db.get(Replica, run.source_replica_id)
@@ -194,13 +238,22 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None):
     job = Job(id=str(uuid4()), user_id=user_id, slave_app_id=APP_ID, handler_type=HANDLER,
         job_mode="websocket", target_launcher_id=launcher.id, state="queued", progress=[], resources=resources,
         attempt_count=1, attempt_id=str(uuid4()), execution_phase="queued",
-        artifact_metadata={"prediction_operation_id": row.id},
+        artifact_metadata={"prediction_operation_id": row.id,
+            **({"optimization_id": row.details["online_origin"]["optimization_id"]}
+                if row.details.get("online_origin") is not None else {})},
         input={"operationId": row.id, "pinId": run.pin_id, "storageId": row.details["target_storage_id"],
             "launcherId": launcher.id, "sourceKind": run.source_kind,
-            "model": {"modelId": model.id, "revision": row.revision, "operationId": row.id, "name": model.name},
+            "model": {"modelId": model.id, "revision": row.revision, "operationId": row.id, "name": row.details["name"]},
             "definition": revision.definition, "dataset": {"datasetId": run.dataset_id,
                 "revision": run.dataset_revision, "fingerprint": revision.dataset_fingerprint}, "resources": resources})
     job.input = {**job.input, "datasetAccessUrl": f"{settings.public_api_base_url}/prediction/training/jobs/{job.id}/attempts/{job.attempt_id}/dataset"}
+    update = row.details.get("update")
+    if update is not None:
+        from prediction.models import validate_update_references
+        await validate_update_references(db, update, revision.definition, model.id,
+            {"datasetId": run.dataset_id, "revision": run.dataset_revision, "fingerprint": revision.dataset_fingerprint},
+            user_id, row.details["target_storage_id"], row.details["target_launcher_id"])
+        job.input = {**job.input, "update": update}
     db.add(job)
     await db.flush()
     run.job_id, run.preflight_expires_at = job.id, None
@@ -210,10 +263,17 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None):
     row.error, row.expires_at, row.completed_at = None, None, None
     row.updated_at = utcnow()
     db.add(ModelLease(model_id=model.id, revision=row.revision, job_id=job.id, storage_id=row.details["target_storage_id"]))
+    if update is not None and update.get("baseModel") is not None:
+        base = update["baseModel"]
+        db.add(ModelLease(model_id=base["modelId"], revision=base["revision"], job_id=job.id,
+            storage_id=base["storageId"], replica_id=base["replicaId"]))
     await sync_attempt(db, job)
-    await db.commit()
-    from gpstation.service.job_orchestrator import job_orchestrator
-    job_orchestrator.wake_dispatcher()
+    if commit:
+        await db.commit()
+        from gpstation.service.job_orchestrator import job_orchestrator
+        job_orchestrator.wake_dispatcher()
+    else:
+        await db.flush()
     return await operation_view(db, row)
 
 
@@ -235,7 +295,10 @@ async def dataset_access(db, job_id, attempt_id, authorization):
     job.artifact_metadata = {**job.artifact_metadata,
         "dataset_grants": [*job.artifact_metadata.get("dataset_grants", []), grant["grant_id"]]}
     await db.commit()
-    return {"grant": grant}
+    result = {"grant": grant}
+    if job.input.get("update") is not None:
+        result["trainingGrant"] = pin_grant(await db.get(Operation, run.operation_id), run)
+    return result
 
 
 async def cancel(db, row):
@@ -299,11 +362,26 @@ async def complete_job(db, job, packet):
         "datasetFingerprint": revision.dataset_fingerprint, "definition": revision.definition,
         "storageId": row.details["target_storage_id"], "launcherId": job.launcher_id, "direction": "forward",
         "algorithm": revision.definition["algorithm"]["kind"]}
+    update = row.details.get("update")
+    if update is not None:
+        expected["update"] = update
+        expected["name"] = row.details["name"]
     if any(artifact.get(key) != value for key, value in expected.items()):
         raise ValueError("Training artifact differs from the frozen operation.")
+    validation = artifact.get("validation")
+    if update is not None:
+        source = await db.get(DatasetRevision, (run.dataset_id, run.dataset_revision))
+        measurement_id = validation.get("measurementId") if isinstance(validation, dict) else None
+        if (not isinstance(validation, dict) or validation.get("version") != 1
+                or validation.get("manifestChecksum") != artifact.get("manifestChecksum")
+                or validation.get("loadPassed") is not True or validation.get("predictPassed") is not True
+                or type(measurement_id) is not int or source is None
+                or str(measurement_id) not in source.summary.get("sample_fingerprints", {})):
+            raise ValueError("Updated models require validation against their frozen training snapshot.")
     body = ModelComplete(request_id=row.id, manifest_sha256=artifact.get("manifestChecksum"),
         files=artifact.get("files"), profile=artifact.get("profile"), input_layouts=artifact.get("inputLayouts"),
-        output_layouts=artifact.get("outputLayouts"), format_version=artifact.get("formatVersion"), verified=True)
+        output_layouts=artifact.get("outputLayouts"), format_version=artifact.get("formatVersion"), verified=True,
+        **({"update": update, "validation": validation} if update is not None else {}))
     await complete_model(db, row.asset_id, row.revision, body, row.user_id, commit=False)
     return {"operation_id": row.id, "model_id": row.asset_id, "revision": row.revision}
 
@@ -331,8 +409,11 @@ async def release_finished_grants(db, dataset_id=None):
 
 
 async def reconcile(db):
+    await serialize_events(db)
     await release_finished_grants(db)
     await db.execute(delete(ModelLease).where(ModelLease.job_id.in_(select(Job.id).where(
         Job.handler_type == HANDLER, Job.state.in_(JOB_TERMINAL_STATES),
         Job.cleaned_at.is_not(None) | Job.launcher_id.is_(None)))))
+    from prediction.datasets import retire_server_payloads
+    await retire_server_payloads(db)
     await db.commit()

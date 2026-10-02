@@ -17,6 +17,7 @@ from gpstation.service.server_handlers import register_server_handler
 from gpstation.service.state import runtime
 from model_registry import register_models
 from optimization import evaluation, integration
+from optimization import model_maintenance
 from prediction import training
 from optimization.controller import reconcile_once, start_controller, stop_controller
 from settings import settings
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI):
                 )
             async with SessionLocal() as db:
                 register_server_handler(training.HANDLER, training, on_finished=training.on_finished)
+                register_server_handler(model_maintenance.HANDLER, model_maintenance, on_finished=model_maintenance.on_finished)
                 await JobService.recover_after_server_restart(db)
                 await fail_server_jobs(db, detail="server restarted", restarting=True)
             await reconcile_once(catalog)
@@ -116,7 +118,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
     for router in (
-        auth_router, execution.router, optimization_router, evaluation_predictor_router, storage_router, prediction_router,
+        auth_router, execution.router, optimization_router, evaluation_predictor_router, model_maintenance.router, storage_router, prediction_router,
         data_router, capabilities_router, catalog_router, experiment.router,
         experiment_record.router, measurement.router, recorded_data.router,
         calculation.router, calculation_data.router, demo_experiment.router, users_router,

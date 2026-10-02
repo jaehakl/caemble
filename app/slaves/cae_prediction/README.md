@@ -62,6 +62,15 @@ type Artifact = {
   profile: PredictionModelProfile;
   inputLayouts: PredictionTensorLayout[];
   outputLayouts: PredictionTensorLayout[];
+  update?: TrainingUpdate;
+  validation?: { version: 1; manifestChecksum: string; loadPassed: true; predictPassed: true; measurementId: number | null };
+};
+type TrainingUpdate = {
+  mode: "rebuild" | "warm_start" | "incremental";
+  baseModel: { modelId: string; revision: number; checksum: string; storageId: string; replicaId: string } | null;
+  targetSnapshot: DatasetRef;
+  changeSet: { baseSnapshot: DatasetRef | null; targetSnapshot: DatasetRef; added: number[]; changed: number[]; removed: number[] };
+  recipe: Record<string, unknown>;
 };
 ```
 
@@ -128,6 +137,12 @@ loss. Sync/delete reconcile the scoped authority and remove pins only when clean
 an unavailable API never causes an automatic unpin. Grants in pin files are excluded from archives.
 
 A training job publishes a model artifact and durable receipt without loading an inference handle.
+Before completion it closes the training object, reloads the exact saved checksum, and predicts a
+frozen included Measurement's Vars. The validation receipt verifies loading, finite output values
+and the saved output layouts; it does not claim improved predictive accuracy. The smoke sample is
+retained in `model.json` for recovery without the Dataset, while the public receipt contains only
+its Measurement ID and the validated checksum. The temporary validation model is closed without
+installing a browser inference handle.
 Retry checks for this exact completed artifact before accessing the Dataset, so loss of the
 registration response never requires retraining. If no completed artifact exists, retry must
 revalidate the exact Dataset revision; it never selects the latest revision implicitly.
@@ -135,6 +150,32 @@ Cancellation waits for the training thread to stop before the SDK reports proces
 Progress reports loading, training, saving and saved stages; algorithms may emit structured
 progress with a stage, fraction and metrics through the same callback. Checkpoint resumption
 belongs to a later algorithm implementation; no incomplete artifact appears in the model list.
+
+An optional frozen `update` on the server training specification names the completed base model
+copy, target Dataset snapshot, added/changed/removed Measurement IDs and training recipe. An omitted
+update keeps ordinary rebuild behavior. Descriptors declare `supportedUpdateModes`; production kNN
+supports `rebuild` only. Warm-start and incremental requests require an explicitly supported
+implementation and a completed base. Incremental currently rejects corrections/removals. New
+models retain the complete update as immutable lineage; completed-operation recovery compares it
+exactly before returning a previously saved artifact. Training updates are separate from checkpoint
+resume and never mutate an inference model or its files.
+
+The exact base copy must be on the training storage. `training.pin` installs a durable per-attempt
+base-model pin for both local and server Dataset sources before acknowledging preflight. Queueing,
+browser/process loss and cancellation retain it until the API confirms cleanup. Long base reads
+also retain a revision read lease. Deletion reconciles only authorized released pins; an unavailable
+API retains them. Warm-start loads a separate base object, subtracts its retained host RAM from the
+update context, and closes it after the new model is saved. Local Dataset sync policy is unchanged.
+
+The same `predictor-training` executable accepts server-owned `action: "prune"` maintenance Jobs.
+It fetches an ephemeral deletion-operation grant from its exact assignment-scoped `accessUrl`,
+then uses existing `artifact.remove` to remove the authorized revision copy and acknowledge the
+API. It never creates a logical model tombstone or removes another revision. Grants are fetched
+at execution time and are absent from queued Job inputs.
+Physical copy deletion uses a revision-specific staging directory and removal lock. If a file is
+temporarily locked, the interrupted operation retains its staged bytes; retry finishes that exact
+directory before acknowledging deletion. Unidentified staging left by older implementations is
+not automatically removed.
 
 ## Portable copies and operations
 
@@ -211,6 +252,10 @@ Vars-to-BoxGrid boundary without changing Dataset or process lifecycle managemen
 files and returns their exact inventory without constructing an inference model. The typed
 implementation registry uses this contract for training, loading, completed-training recovery
 and archive validation. `artifact.verify` checks stored checksums without loading the model.
+An implementation advertising warm-start or incremental modes implements the optional
+`ForwardModelUpdateImplementation` and supplies `update(dataset,
+definition, model_ref, base, update, context)`, returning a distinct `ForwardModel`. The completed
+base is read-only; its cleanup and durable pin remain execution-layer responsibilities.
 `ForwardModel` declares the instance metadata, memory footprint, layouts, profile, preparation
 details, prediction, file-writing and resource-closing methods. Per-record profile construction belongs to the
 algorithm; management consumes its preparation details without assuming kNN groups or neighbors.

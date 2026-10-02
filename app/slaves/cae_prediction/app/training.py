@@ -21,10 +21,13 @@ async def run_training(message: dict, attachments, context) -> dict:
     runtime = PredictorRuntime.from_context(context)
     spec = message
     allocation = context.execution.allocation.model_dump()
-    try:
-        validate_allocation(spec["definition"], "training", allocation)
-    except ValueError as error:
-        raise PredictionError("resource-allocation", str(error)) from error
+    if spec.get("action", "train") not in ("train", "prune"):
+        raise PredictionError("invalid-request", "Unsupported server Predictor action.")
+    if spec.get("action") != "prune":
+        try:
+            validate_allocation(spec["definition"], "training", allocation)
+        except ValueError as error:
+            raise PredictionError("resource-allocation", str(error)) from error
     cancelled = threading.Event()
     loop = asyncio.get_running_loop()
 
@@ -52,7 +55,40 @@ async def run_training(message: dict, attachments, context) -> dict:
             future.cancel()
             raise
 
-    task = asyncio.create_task(asyncio.to_thread(runtime.training.train, spec, dataset_reference, cancelled, progress))
+    def prune():
+        if spec.get("storageId") != runtime.store.storage_id or spec.get("launcherId") != runtime.store.launcher_id:
+            raise PredictionError("storage-mismatch", "Pruning belongs to another Predictor storage or Launcher.")
+        trusted, actual = urlparse(runtime.training.api_url), urlparse(spec["accessUrl"])
+        assignment = context.assignment
+        expected = trusted.path.rstrip("/") + f"/cae/optimization-maintenance/jobs/{context.job_id}/attempts/{assignment['attempt_id']}/access"
+        if ((actual.scheme, actual.netloc, actual.path) != (trusted.scheme, trusted.netloc, expected)
+                or actual.username or actual.password or actual.query or actual.fragment):
+            raise PredictionError("data-access", "Pruning access belongs to another execution attempt.")
+        check_cancel(cancelled)
+        with runtime.training.opener.open(Request(spec["accessUrl"], headers={"Authorization": f"Bearer {assignment['token']}"}), timeout=60) as response:
+            raw = response.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise PredictionError("memory-limit", "Pruning access exceeds its metadata budget.")
+        grant = json.loads(raw)["grant"]
+        runtime.training.reconcile_model(spec["modelId"], cancelled)
+        result = runtime.operations.run("artifact.remove", {"operationId": spec["operationId"], "grant": grant,
+            "replicaId": spec["replicaId"], "kind": "model", "identity": spec["modelId"], "revision": spec["revision"]}, cancelled)
+        if result["receipt"]["state"] != "complete":
+            raise PredictionError("operation-conflict", "Pruning has not completed its API acknowledgement.")
+        return {"operationId": spec["operationId"], "replicaId": spec["replicaId"], "removed": True}
+
+    def train():
+        reference = None
+        if spec.get("update") is not None and runtime.training.saved_artifact(spec, cancelled) is None:
+            access = dataset_reference()
+            if not isinstance(access.get("trainingGrant"), dict) or not isinstance(access.get("grant"), dict):
+                raise PredictionError("data-access", "Server training update requires its attempt-scoped Dataset and pin grants.")
+            runtime.training.run("training.pin", {"grant": access["trainingGrant"]}, cancelled)
+            reference = {"grant": access["grant"]}
+        return runtime.training.train(spec, lambda: reference if reference is not None else dataset_reference(), cancelled, progress)
+
+    task = asyncio.create_task(asyncio.to_thread(prune) if spec.get("action") == "prune" else
+                               asyncio.to_thread(train))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:

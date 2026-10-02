@@ -9,8 +9,9 @@ from optimization.db import Evaluation, EvaluationSubmission, StageSubmission
 from prediction.common import digest
 
 
-async def ensure_evaluation(db, optimization, trial, kind="solver"):
-    source = (optimization.definition["hybrid"] if kind == "prediction" else {
+async def ensure_evaluation(db, optimization, trial, kind="solver", *, prediction_source=None):
+    from optimization.model_updates import round_source
+    source = ((prediction_source or round_source(optimization)) if kind == "prediction" else {
         "source_hash": optimization.definition["source_hash"],
         "catalog_revision": optimization.definition.get("catalog_revision"),
     })

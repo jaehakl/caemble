@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING
+import re
 
 PREDICTION_PROTOCOL_VERSION = 3
 EXECUTION_ID = "remote-predictor"
@@ -15,6 +16,7 @@ ALGORITHMS = {
         "directions": ["forward"],
         "representations": ["box-relative-v2"],
         "supportsCheckpoints": False,
+        "supportedUpdateModes": ["rebuild"],
         "resources": {
             "training": {"gpu_count": 0},
             "inference": {"gpu_count": 0},
@@ -54,6 +56,51 @@ def resource_requirements(definition: dict | str, purpose: str) -> dict:
     if purpose not in ("training", "inference"):
         raise ValueError("Prediction resource purpose must be training or inference.")
     return deepcopy(descriptor["resources"][purpose])
+
+
+def validate_training_update(update: dict | None, definition: dict) -> str:
+    """Validate a new immutable training request, independently of checkpoint resume."""
+    descriptor = validate_definition(definition)
+    if update is None:
+        return "rebuild"
+    if not isinstance(update, dict) or update.get("mode") not in descriptor["supportedUpdateModes"]:
+        raise ValueError("This algorithm does not support the requested training update mode.")
+    mode = update["mode"]
+    target = update.get("targetSnapshot")
+    if (not isinstance(target, dict) or not isinstance(target.get("datasetId"), str) or not target["datasetId"]
+            or type(target.get("revision")) is not int or target["revision"] < 1
+            or not isinstance(target.get("fingerprint"), str) or not target["fingerprint"]
+            or target.get("fingerprint") != definition.get("snapshotFingerprint")):
+        raise ValueError("Training update must identify its exact target snapshot.")
+    base = update.get("baseModel")
+    if base is not None:
+        if (not isinstance(base, dict) or any(not isinstance(base.get(key), str) or not base[key]
+                for key in ("modelId", "storageId", "replicaId"))
+                or type(base.get("revision")) is not int or base["revision"] < 1
+                or not isinstance(base.get("checksum"), str) or not re.fullmatch(r"[0-9a-f]{64}", base["checksum"])):
+            raise ValueError("Training update must identify an exact checksummed base model copy.")
+    elif mode != "rebuild":
+        raise ValueError("Warm-start and incremental training require a completed base model.")
+    changes = update.get("changeSet")
+    if not isinstance(changes, dict) or changes.get("targetSnapshot") != target:
+        raise ValueError("Training changes must belong to the target snapshot.")
+    before = changes.get("baseSnapshot")
+    if base is not None and (not isinstance(before, dict) or not isinstance(before.get("datasetId"), str)
+            or type(before.get("revision")) is not int or before["revision"] < 1
+            or not isinstance(before.get("fingerprint"), str)):
+        raise ValueError("Training changes must identify the base snapshot.")
+    seen = set()
+    for key in ("added", "changed", "removed"):
+        identities = changes.get(key)
+        if (not isinstance(identities, list) or any(type(identity) is not int or identity < 1 for identity in identities)
+                or len(set(identities)) != len(identities) or seen.intersection(identities)):
+            raise ValueError("Training changes require distinct added, changed and removed Measurement IDs.")
+        seen.update(identities)
+    if mode == "incremental" and (changes["changed"] or changes["removed"]):
+        raise ValueError("Incremental training supports added samples only; use rebuild for corrections or removals.")
+    if not isinstance(update.get("recipe"), dict):
+        raise ValueError("Training update recipe must be a frozen object.")
+    return mode
 
 
 def validate_allocation(definition: dict, purpose: str, allocation: dict) -> None:

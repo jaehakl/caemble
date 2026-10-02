@@ -69,7 +69,9 @@ async def complete_job(db, job, packet):
                 raise ValueError("Predicted BoxGrids must be retained as storage artifacts.")
             expected[(item["candidate_id"], item["evaluation_id"])].artifact = artifact
         provenance = value.get("provenance", {})
-        hybrid = optimization.definition["hybrid"]
+        hybrid = evaluations[0].source
+        if any(item.source != hybrid for item in evaluations):
+            raise ValueError("Prediction batch contains different frozen model sources.")
         if (provenance.get("model_id") != hybrid["model_id"] or provenance.get("revision") != hybrid["model_revision"]
                 or provenance.get("checksum") != hybrid["checksum"]):
             raise ValueError("Prediction used another model revision or checksum.")

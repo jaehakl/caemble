@@ -57,7 +57,7 @@ class RetiredPredictionGuardTests(unittest.IsolatedAsyncioTestCase):
         body = ModelComplete(request_id=request_id, manifest_sha256="a" * 64,
             files=[{"name": "model.json", "sha256": "b" * 64, "byteLength": 3}],
             profile={}, input_layouts=[], output_layouts=[])
-        artifact = body.model_dump(mode="json", exclude={"request_id", "verified"})
+        artifact = body.model_dump(mode="json", exclude={"request_id", "verified"}, exclude_none=True)
         model = SimpleNamespace(id=str(uuid4()), direction="inverse")
         revision = SimpleNamespace(request_id=str(request_id), state="ready", artifact=artifact)
         db = SimpleNamespace(get=AsyncMock(return_value=revision), commit=AsyncMock())
@@ -350,7 +350,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             dataset = await freeze_dataset(db, self.selection(), self.owner)
             grant = await create_grant(db, dataset["id"], 1, self.owner)
             lease = await db.get(DatasetGrant, grant["grant_id"])
-            lease.expires_at = utcnow() - timedelta(seconds=1)
+            lease.expires_at = utcnow() - timedelta(seconds=61)
             await db.execute(delete(Measurement).where(Measurement.id == self.measurement_id))
             await db.commit()
             await freeze_dataset(db, self.selection(expected_revision=1), self.owner, dataset["id"])
@@ -359,7 +359,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(retired.exception.status_code, 410)
             latest = await create_grant(db, dataset["id"], 2, self.owner)
             lease = await db.get(DatasetGrant, latest["grant_id"])
-            lease.expires_at = utcnow() - timedelta(seconds=1)
+            lease.expires_at = utcnow() - timedelta(seconds=61)
             await db.commit()
             await delete_asset(db, "dataset", dataset["id"], DeleteRequest(request_id=uuid4()), self.owner)
             with self.assertRaises(HTTPException) as deleted:

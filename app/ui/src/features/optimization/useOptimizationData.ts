@@ -45,6 +45,7 @@ export function useOptimizationData({
   const [actions, setActions] = useState<Record<string, { pending: boolean; error: string | null }>>({})
   const requests = useRef(new Set<string>())
   const retryRequests = useRef(new Map<string, string>())
+  const modelUpdateRequests = useRef(new Map<string, string>())
   const mounted = useRef(true)
   const previousExecution = useRef<{ id: string; active: boolean } | null>(null)
   const sameRequest = selection.requestedId === selectedId
@@ -104,6 +105,17 @@ export function useOptimizationData({
     (detail.error instanceof ApiError && [403, 404].includes(detail.error.status)) ||
     (!!detail.data && experimentId !== undefined && detail.data.experiment_id !== experimentId)
   const optimization = !unavailable && detail.data?.id === id ? detail.data : undefined
+  useEffect(() => {
+    if (!optimization) return
+    const requestId = modelUpdateRequests.current.get(optimization.id)
+    if (
+      requestId &&
+      optimization.model_update?.updates.some(
+        (item) => item.request_id === requestId || item.request_ids?.includes(requestId),
+      )
+    )
+      modelUpdateRequests.current.delete(optimization.id)
+  }, [optimization])
   const executionBusy =
     !!optimization &&
     (optimization.executions_active > 0 || optimization.cleanup_pending || optimization.manual_retry_pending)
@@ -175,6 +187,15 @@ export function useOptimizationData({
     refresh: () => client.invalidateQueries({ queryKey: optimizationQueryKeys.all(auth.queryScope) }),
     stop: (target: string) => action(target, () => optimizationApi.stop(target)),
     resume: (target: string) => action(target, () => optimizationApi.resume(target)),
+    modelUpdate: (target: string) => {
+      const requestId = modelUpdateRequests.current.get(target) ?? crypto.randomUUID()
+      modelUpdateRequests.current.set(target, requestId)
+      return action(target, async () => {
+        const result = await optimizationApi.modelUpdate(target, requestId)
+        modelUpdateRequests.current.delete(target)
+        if (mounted.current) client.setQueryData(optimizationQueryKeys.detail(auth.queryScope, target), result)
+      })
+    },
     remove: (target: string) =>
       action(
         target,

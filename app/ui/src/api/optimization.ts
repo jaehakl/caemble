@@ -61,6 +61,13 @@ export function createOptimizationApi(client: CaembleClient) {
         { request_id: requestId },
         { ...context, csrf: 'required', validate: (value) => optimizationDetailSchema.parse(value) },
       ),
+    modelUpdate: (id: string, requestId: string, updateMode = 'rebuild', context?: RequestContext) =>
+      client.request(
+        'post',
+        `${base}/${encodeURIComponent(id)}/model-updates`,
+        { request_id: requestId, update_mode: updateMode },
+        { ...context, csrf: 'required', validate: (value) => optimizationDetailSchema.parse(value) },
+      ),
     remove: (id: string, context?: RequestContext) =>
       client.request('delete', `${base}/${encodeURIComponent(id)}`, undefined, { ...context, csrf: 'required' }),
   }

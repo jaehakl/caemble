@@ -30,6 +30,17 @@ class Optimization(TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OptimizationModelPin(Base):
+    """Live model bindings; historical Evaluation sources do not retain files."""
+    __tablename__ = "cae_optimization_model_pins"
+    optimization_id: Mapped[str] = mapped_column(ForeignKey("cae_optimizations.id", ondelete="CASCADE"), primary_key=True)
+    slot: Mapped[str] = mapped_column(Text, primary_key=True)
+    model_id: Mapped[str] = mapped_column(UUID(as_uuid=False), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    replica_id: Mapped[str] = mapped_column(UUID(as_uuid=False), index=True)
+    storage_id: Mapped[str] = mapped_column(UUID(as_uuid=False))
+
+
 class Trial(TimestampMixin, Base):
     __tablename__ = "cae_trials"
     __table_args__ = (

@@ -40,6 +40,7 @@ const help = `Caemble CLI — run from the Caemble checkout (Node >=24.14)
   optimization list [--experiment <id>] | show <id> | trials <id> | watch <id> [--timeout seconds]
   optimization stop <id> | resume <id> | delete <id>
   optimization retry <id> --evaluation <evaluation-id> | --trial <trial-id> [--request-id UUID]
+  optimization model-update <id> [--update-mode rebuild|warm_start|incremental] [--request-id UUID]
   calculation init <dir> | list --experiment <id> | pull <id> --out <dir> | check <source.js>
   calculation run <source.js> --fixture <input.json> | --result <local-run> | --measurement <id>
   calculation push <dir> --experiment <id> --measurement <id>

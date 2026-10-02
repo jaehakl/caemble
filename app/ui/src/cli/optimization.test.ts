@@ -6,7 +6,11 @@ import path from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createCaembleClient } from '@/api/http'
 import { cadSourceHash } from '@caemble/execution/cad/source/document'
-import { optimizationFixture, trialFixture } from '@/features/optimization/fixtures.test-support'
+import {
+  hybridOptimizationFixture,
+  optimizationFixture,
+  trialFixture,
+} from '@/features/optimization/fixtures.test-support'
 import { optimizationCommand } from './optimization'
 import type { CommandContext } from './types'
 
@@ -145,6 +149,43 @@ it('replays ambiguous Evaluation retries separately from legacy Trial retries', 
   await expect(
     optimizationCommand('retry', { ...context, options: { trial: 'trial-1', evaluation: 'evaluation-2' } }),
   ).rejects.toThrow('Choose either')
+})
+
+it('replays a lost model update and creates the next update only after acknowledgement', async () => {
+  context = { ...context, args: ['optimization-1'], options: {} }
+  fetch.mockRejectedValueOnce(new TypeError('response lost'))
+  fetch.mockImplementation(async () => Response.json(hybridOptimizationFixture))
+  await expect(optimizationCommand('model-update', context)).rejects.toThrow('response lost')
+  const result = await optimizationCommand('model-update', context)
+  await optimizationCommand('model-update', context)
+  const bodies = fetch.mock.calls.map(([, request]) => JSON.parse(String(request?.body)))
+  expect(bodies[0].request_id).toBe(bodies[1].request_id)
+  expect(bodies[2].request_id).not.toBe(bodies[1].request_id)
+  expect(bodies.every((body) => body.update_mode === 'rebuild')).toBe(true)
+  expect(
+    fetch.mock.calls.every(([url]) => String(url).endsWith('/cae/optimizations/optimization-1/model-updates')),
+  ).toBe(true)
+  expect(result).toMatchObject({ model_update: hybridOptimizationFixture.model_update })
+})
+
+it('preserves an explicit model update request ID across acknowledged repeats', async () => {
+  const requestId = randomUUID()
+  context = { ...context, args: ['optimization-1'], options: { 'request-id': requestId } }
+  await optimizationCommand('model-update', context)
+  await optimizationCommand('model-update', context)
+  expect(fetch.mock.calls.map(([, request]) => JSON.parse(String(request?.body)).request_id)).toEqual([
+    requestId,
+    requestId,
+  ])
+})
+
+it('sends the requested model update mode and rejects unknown modes before submission', async () => {
+  context = { ...context, args: ['optimization-1'], options: { 'update-mode': 'incremental' } }
+  await optimizationCommand('model-update', context)
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).update_mode).toBe('incremental')
+  context = { ...context, options: { 'update-mode': 'unknown' } }
+  await expect(optimizationCommand('model-update', context)).rejects.toThrow('--update-mode')
+  expect(fetch).toHaveBeenCalledTimes(1)
 })
 
 it('reuses a lost retry request and makes the next acknowledged retry explicit', async () => {

@@ -32,7 +32,7 @@ def upgrade() -> None:
     # foreign keys to historical Batch schemas before that migration runs.
     tables = [table for table in Base.metadata.sorted_tables
               if table.name not in {"cae_studies", "cae_optimizations", "cae_trials", "cae_stage_submissions",
-                                    "cae_evaluations", "cae_evaluation_submissions"}
+                                    "cae_evaluations", "cae_evaluation_submissions", "cae_optimization_model_pins"}
               and not table.name.startswith("prediction_")]
     Base.metadata.create_all(bind=op.get_bind(), tables=tables, checkfirst=False)
     op.bulk_insert(Role.__table__, [{"name": "user"}, {"name": "admin"}])

@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 import test_optimization_controller as fixtures
 from gpstation.db import Job, Launcher
-from gpstation.service.batches import serialize_events
+from gpstation.service.batches import finish_job, serialize_events
 from gpstation.service.server_handlers import register_server_handler
 from gpstation.service.state import utcnow
 from optimization import evaluation, integration
@@ -21,6 +21,8 @@ from optimization.service import create_optimization, delete_optimization, list_
 from optimization.submissions import submit_predictions, submit_stage
 from prediction.db import Dataset, ModelRevision, PredictionModel, PredictionStorage, Replica, StorageAccess
 from simulation.db import Measurement
+from storage.db import StorageObject
+from storage.service import reference
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
@@ -120,8 +122,10 @@ class HybridOptimizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(summary["best_verified_trial"]["result"]["objective"], 9)
             self.assertEqual(summary["best_trial"], summary["best_verified_trial"])
             self.assertIsNone(predicted.measurement_id)
-            optimization.definition = {**optimization.definition, "hybrid": {**optimization.definition["hybrid"], "model_revision": 2}}
-            second_revision = await ensure_evaluation(db, optimization, trial, "prediction")
+            frozen_definition = optimization.definition
+            second_revision = await ensure_evaluation(db, optimization, trial, "prediction",
+                prediction_source={**optimization.definition["hybrid"], "model_revision": 2})
+            self.assertEqual(optimization.definition, frozen_definition)
             self.assertNotEqual(second_revision.id, predicted.id)
             self.assertNotEqual(second_revision.source_hash, predicted.source_hash)
             history = await list_trials(db, optimization, limit=20, offset=0)
@@ -150,6 +154,49 @@ class HybridOptimizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([item.state for _, item in pairs], ["cancelled", "cancelled"])
             self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 0)
         self.assertEqual(len(await self.jobs(optimization_id)), 1)
+
+    async def test_late_old_revision_response_keeps_its_source_and_cannot_replace_current_best(self):
+        from optimization.model_updates import bind_round, model_state, save_state
+
+        optimization_id = await self.hybrid()
+        trial_id, prediction_id, _ = (await self.candidates(optimization_id))[0]
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            trial, old = await db.get(Trial, trial_id), await db.get(Evaluation, prediction_id)
+            old.state, old.next_stage, old.result = "pending", "predict", None
+            submission = await submit_predictions(db, optimization, [(trial, old)])
+            job = await db.get(Job, submission.job_id)
+            state = model_state(optimization)
+            state["pending_model"] = {**old.source, "model_revision": 2, "checksum": "b" * 64}
+            save_state(optimization, state)
+            await bind_round(db, optimization, 1)
+            current = await ensure_evaluation(db, optimization, trial, "prediction")
+            current.state, current.next_stage = "succeeded", "complete"
+            current.result = {"objective": 20, "feasible": True, "violation": 0, "constraints": []}
+            stored = StorageObject(id=str(uuid.uuid4()), user_id=self.owner.id, experiment_id=self.experiment_id,
+                purpose="evaluation", job_id=job.id, attempt=job.attempt_count, ready=True,
+                manifest={"encoding": "json", "sha256": "c" * 64, "byteLength": 2, "chunks": []})
+            db.add(stored)
+            await db.flush()
+            await evaluation.stage_record(db, job, {"sequence": 1, "name": "predict", "value": {
+                "candidates": [{"candidate_id": trial.id, "evaluation_id": old.id, "artifact": reference(stored)}],
+                "provenance": {"model_id": old.source["model_id"], "revision": 1, "checksum": "a" * 64},
+            }}, [])
+            await db.flush()
+            result = await evaluation.complete_job(db, job, {"recordSequences": [1],
+                "definition_hash": optimization.definition["hash"], "runtime_id": "test-runtime"})
+            await finish_job(db, job, "succeeded", result=result)
+            self.assertEqual((old.source["model_revision"], old.next_stage), (1, "calculate"))
+            old.state, old.next_stage = "succeeded", "complete"
+            old.result = {"objective": -100, "feasible": True, "violation": 0, "constraints": []}
+            await db.flush()
+            summary = await optimization_detail(db, optimization)
+            self.assertEqual(summary["best_predicted_trial"]["evaluation_id"], current.id)
+            self.assertEqual(summary["best_predicted_trial"]["source"]["model_revision"], 2)
+            self.assertEqual(summary["best_predicted_trial"]["result"]["objective"], 20)
+            self.assertEqual(optimization.definition["hybrid"]["model_revision"], 1)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Evaluation)), 2)
+            await db.commit()
 
     async def test_last_solver_reservation_is_atomic_and_prestart_cancel_returns_it(self):
         optimization_id = await self.hybrid(limit=1)

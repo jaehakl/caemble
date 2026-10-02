@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from contextlib import ExitStack
+from copy import deepcopy
+from dataclasses import replace
 from urllib.error import HTTPError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, build_opener
 
-from prediction_contracts import validate_definition
+from prediction_contracts import validate_training_update
 
 from .dataset import NoRedirect
 from .errors import PredictionError
 from .models import ModelBundle, implementation_for
+from .representations import vars_samples
 from .storage import check_cancel, encode_json, safe_id
 
 
@@ -58,13 +63,48 @@ class TrainingOperations:
                     or metadata.get("definition") != spec["definition"]
                     or metadata.get("datasetId") != spec["dataset"]["datasetId"]
                     or metadata.get("datasetRevision") != spec["dataset"]["revision"]
-                    or metadata.get("datasetFingerprint") != spec["dataset"]["fingerprint"]):
+                    or metadata.get("datasetFingerprint") != spec["dataset"]["fingerprint"]
+                    or metadata.get("update") != spec.get("update")
+                    or manifest["metadata"].get("update") != spec.get("update")):
                 raise PredictionError("revision-conflict", "Saved model revision belongs to another training operation.")
             expected = implementation_for(metadata["definition"]).validate_artifact(path, manifest, content)
             if expected != {file["name"] for file in manifest["files"]}:
                 raise PredictionError("artifact-checksum", "Saved model inventory differs from its implementation.")
         return {**manifest["metadata"], "storageId": self.store.storage_id, "launcherId": self.store.launcher_id,
                 "files": manifest["files"], "manifestChecksum": checksum, "verified": True}
+
+    def base_artifact(self, spec: dict, cancel=None) -> dict | None:
+        base = (spec.get("update") or {}).get("baseModel")
+        if base is None:
+            return None
+        if base["storageId"] != self.store.storage_id:
+            raise PredictionError("storage-mismatch", "Training base model must be on the selected training storage.")
+        if self.store.deleted(base["modelId"], base["revision"]):
+            raise PredictionError("deleted", "Training base model revision has been deleted.")
+        manifest, path, checksum = self.store.read("models", base["modelId"], base["revision"], cancel=cancel)
+        content = json.loads((path / "model.json").read_bytes())
+        metadata = content["metadata"]
+        before = spec["update"]["changeSet"]["baseSnapshot"]
+        if (checksum != base["checksum"] or metadata.get("direction") != "forward"
+                or metadata.get("modelId") != base["modelId"] or metadata.get("revision") != base["revision"]
+                or any(metadata.get(key) != before[other] for key, other in
+                       (("datasetId", "datasetId"), ("datasetRevision", "revision"), ("datasetFingerprint", "fingerprint")))):
+            raise PredictionError("artifact-checksum", "Training base model differs from its frozen model or Dataset reference.")
+        expected_files = implementation_for(metadata["definition"]).validate_artifact(path, manifest, content)
+        if expected_files != {file["name"] for file in manifest["files"]}:
+            raise PredictionError("artifact-checksum", "Training base model inventory differs from its implementation.")
+        return metadata
+
+    def reconcile_model(self, identity: str, cancel=None) -> None:
+        for pin in (self.store.path("models", identity) / "training-pins").glob("*.json"):
+            content = json.loads(pin.read_bytes())
+            try:
+                spec = self.authority(content["grant"], cancel)
+            except (PredictionError, OSError):
+                continue
+            if spec.get("canRelease") and spec["pinId"] == content["pinId"]:
+                with self.store.transaction(cancel):
+                    pin.unlink(missing_ok=True)
 
     def reconcile_dataset(self, identity: str, cancel=None) -> None:
         directory = self.store.path("datasets", identity) / "training-pins"
@@ -92,9 +132,15 @@ class TrainingOperations:
 
     def run(self, action: str, payload: dict, cancel=None) -> dict:
         spec = self.authority(payload["grant"], cancel)
+        try:
+            validate_training_update(spec.get("update"), spec["definition"])
+        except ValueError as error:
+            raise PredictionError("unsupported-update", str(error)) from error
         operation_id, pin_id = safe_id(spec["operationId"]), safe_id(spec["pinId"])
         reference = spec["dataset"]
         pin = self.store.path("datasets", reference["datasetId"]) / "training-pins" / f"{pin_id}.json"
+        base = (spec.get("update") or {}).get("baseModel")
+        base_pin = self.store.path("models", base["modelId"]) / "training-pins" / f"{pin_id}.json" if base else None
         if action == "training.inspect":
             return {"receipt": self.store.receipt(operation_id), "artifact": self.saved_artifact(spec, cancel)}
         if action == "training.unpin" and not spec.get("canRelease"):
@@ -115,6 +161,11 @@ class TrainingOperations:
                         if content["operationId"] != operation_id or content["pinId"] != pin_id:
                             raise PredictionError("operation-conflict", "Dataset pin belongs to another training attempt.")
                         pin.unlink()
+                    if base_pin is not None and base_pin.exists():
+                        content = json.loads(base_pin.read_bytes())
+                        if content["operationId"] != operation_id or content["pinId"] != pin_id:
+                            raise PredictionError("operation-conflict", "Base model pin belongs to another training attempt.")
+                        base_pin.unlink()
                 return {"operationId": operation_id, "pinId": pin_id, "released": True}
             if action != "training.pin" or not spec.get("canPin"):
                 raise PredictionError("training-state", "This training operation cannot pin its Dataset.")
@@ -125,6 +176,24 @@ class TrainingOperations:
                         previous.unlink()  # A new authorized preflight follows previous process cleanup.
             if self.saved_artifact(spec, cancel) is not None:
                 return self._ack_pin(payload["grant"], pin_id, True, cancel)
+            if base is not None:
+                with self.store.read_lease("models", base["modelId"], base["revision"], cancel):
+                    self.base_artifact(spec, cancel)
+                    expected_base = {"operationId": operation_id, "pinId": pin_id, "baseModel": base}
+                    with self.store.transaction(cancel):
+                        for previous in base_pin.parent.glob("*.json"):
+                            content = json.loads(previous.read_bytes())
+                            if content["operationId"] == operation_id and content["pinId"] != pin_id:
+                                previous.unlink()
+                        if base_pin.exists() and any(json.loads(base_pin.read_bytes()).get(key) != value for key, value in expected_base.items()):
+                            raise PredictionError("operation-conflict", "Base model pin belongs to another training input.")
+                        base_pin.parent.mkdir(parents=True, exist_ok=True)
+                        temporary = base_pin.with_suffix(".pending")
+                        with temporary.open("wb") as stream:
+                            stream.write(encode_json({**expected_base, "grant": payload["grant"]}))
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        os.replace(temporary, base_pin)
             if spec["sourceKind"] == "api":
                 return self._ack_pin(payload["grant"], pin_id, False, cancel)
             if spec["sourceKind"] != "local":
@@ -154,12 +223,16 @@ class TrainingOperations:
                 or spec["model"].get("operationId") != operation_id):
             raise PredictionError("operation-conflict", "Training assignment belongs to another operation or storage.")
         try:
-            validate_definition(spec["definition"])
+            mode = validate_training_update(spec.get("update"), spec["definition"])
         except ValueError as error:
             raise PredictionError("unsupported-model", str(error)) from error
         model = spec["model"]
         receipt = {"operationId": operation_id, "pinId": spec["pinId"], "kind": "training", "state": "preparing",
                    "model": model, "dataset": spec["dataset"], "definition": spec["definition"]}
+        if spec.get("update") is not None:
+            receipt["update"] = deepcopy(spec["update"])
+            if spec["update"]["targetSnapshot"] != spec["dataset"]:
+                raise PredictionError("dataset-checksum", "Training update targets another Dataset revision.")
         def report(value):
             check_cancel(cancel)
             receipt["progress"] = {"stage": value} if isinstance(value, str) else value
@@ -184,12 +257,49 @@ class TrainingOperations:
                     if any(dataset[key] != spec["dataset"][key] for key in ("datasetId", "revision", "fingerprint")):
                         raise PredictionError("dataset-checksum", "Training input differs from its pinned Dataset revision.")
                     report("training")
-                    bundle = ModelBundle.prepare(dataset, "forward", spec["definition"], model, self.model_context(cancel, report))
-                    try:
-                        report("saving")
-                        artifact = bundle.save(self.store, cancel)
-                    finally:
-                        bundle.close()
+                    base = (spec.get("update") or {}).get("baseModel")
+                    with ExitStack() as base_access:
+                        base_model = None
+                        if base is not None:
+                            pin = self.store.path("models", base["modelId"]) / "training-pins" / f"{safe_id(spec['pinId'])}.json"
+                            expected = {"operationId": operation_id, "pinId": spec["pinId"], "baseModel": base}
+                            if not pin.exists() or any(json.loads(pin.read_bytes()).get(key) != value for key, value in expected.items()):
+                                raise PredictionError("model-in-use", "Training requires its durable preflight base-model pin.")
+                            base_access.enter_context(self.store.read_lease("models", base["modelId"], base["revision"], cancel))
+                            self.base_artifact(spec, cancel)
+                            if mode != "rebuild":
+                                base_model, _ = ModelBundle.load(self.store, base["modelId"], base["revision"], self.model_context(cancel, report))
+                        try:
+                            context = self.model_context(cancel, report)
+                            if base_model is not None:
+                                context = replace(context, available_ram_bytes=max(0, context.available_ram_bytes - base_model.persistent_bytes))
+                            bundle = ModelBundle.prepare(dataset, "forward", spec["definition"], model, context,
+                                                         update=spec.get("update"), base_model=base_model)
+                            try:
+                                included = set(bundle.profile()["includedMeasurementIds"])
+                                sample = next((row for row in sorted(dataset["measurements"], key=lambda row: row["id"])
+                                               if row["id"] in included), None)
+                                if sample is None:
+                                    raise PredictionError("model-validation", "Trained model has no frozen sample for prediction validation.")
+                                vars_samples(sample["vars"], dataset["varsSchema"])
+                                receipt["validationInput"] = {"measurementId": sample["id"], "vars": deepcopy(sample["vars"])}
+                                bundle.metadata["validationSample"] = deepcopy(receipt["validationInput"])
+                                report("saving")
+                                artifact = bundle.save(self.store, cancel)
+                            finally:
+                                bundle.close()
+                        finally:
+                            if base_model is not None:
+                                base_model.close()
+                else:
+                    previous = self.store.receipt(operation_id) or {}
+                    for key in ("validationInput", "validation"):
+                        if key in previous:
+                            receipt[key] = previous[key]
+                report("validating")
+                validation = self.validate_saved(spec, artifact, receipt, cancel)
+                artifact = {**artifact, "validation": validation}
+                receipt["validation"] = validation
                 receipt.update(state="saved", artifact=artifact)
                 self.store.save_receipt(operation_id, receipt)
                 report("saved")
@@ -199,3 +309,46 @@ class TrainingOperations:
                                error={"code": getattr(error, "code", "training-failed"), "message": str(error)})
                 self.store.save_receipt(operation_id, receipt)
                 raise
+
+    def validate_saved(self, spec: dict, artifact: dict, receipt: dict, cancel=None) -> dict:
+        validation = receipt.get("validation")
+        if (isinstance(validation, dict) and validation.get("version") == 1
+                and validation.get("manifestChecksum") == artifact["manifestChecksum"]
+                and validation.get("loadPassed") is True and validation.get("predictPassed") is True):
+            return validation
+        model = spec["model"]
+        loaded, actual = ModelBundle.load(self.store, model["modelId"], model["revision"], self.model_context(cancel))
+        try:
+            if actual["manifestChecksum"] != artifact["manifestChecksum"]:
+                raise PredictionError("artifact-checksum", "Reloaded model differs from the saved training artifact.")
+            sample = receipt.get("validationInput") or loaded.metadata.get("validationSample")
+            if sample is None:
+                # Legacy recovery has no frozen smoke sample. Schema minimums
+                # provide a valid inference query without restoring its Dataset.
+                variables = {}
+                for key, entry in loaded.metadata["varsSchema"].items():
+                    value = entry["min"]
+                    for length in reversed(entry["shape"]):
+                        value = [deepcopy(value) for _ in range(length)]
+                    variables[key] = value
+                sample = {"measurementId": None, "vars": variables}
+            context = self.model_context(cancel)
+            context = replace(context, available_ram_bytes=max(0, context.available_ram_bytes - loaded.persistent_bytes))
+            result = loaded.predict({"direction": "forward", "vars": sample["vars"]}, context)
+            outputs = result.get("output")
+            if (result.get("direction") != "forward" or result.get("fingerprint") != spec["definition"]["fingerprint"]
+                    or not isinstance(outputs, list) or not outputs
+                    or len(outputs) != len(loaded.implementation.output_layouts)):
+                raise PredictionError("model-validation", "Reloaded model did not produce its Forward output contract.")
+            for output, expected_layout in zip(outputs, loaded.implementation.output_layouts):
+                layout, values = output.get("layout", {}), output.get("values")
+                shape = layout.get("shape")
+                expected = math.prod(shape) + (shape[4] if layout.get("frequencyOutput") else 0) if isinstance(shape, list) else 0
+                if (layout != expected_layout or not isinstance(values, list) or not expected or len(values) != expected
+                        or any(type(value) not in (int, float) or not math.isfinite(value) for value in values)):
+                    raise PredictionError("model-validation", "Reloaded model prediction contains invalid output values.")
+            check_cancel(cancel)
+            return {"version": 1, "manifestChecksum": artifact["manifestChecksum"], "loadPassed": True,
+                    "predictPassed": True, "measurementId": sample["measurementId"]}
+        finally:
+            loaded.close()

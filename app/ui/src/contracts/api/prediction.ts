@@ -14,6 +14,7 @@ export const predictionAlgorithmSchema = z.object({
   directions: z.array(z.enum(['forward', 'inverse'])),
   representations: z.array(z.string().min(1)),
   supportsCheckpoints: z.boolean().optional(),
+  supportedUpdateModes: z.array(z.enum(['rebuild', 'warm_start', 'incremental'])).optional(),
   resources: z.object({ training: resourceRequestSchema, inference: resourceRequestSchema }),
 })
 export type PredictionAlgorithmDescriptor = z.infer<typeof predictionAlgorithmSchema>
@@ -85,6 +86,9 @@ export const predictionModelSchema = z.object({
       revision,
       operation_id: id,
       state: z.string(),
+      version_name: z.string().nullable().optional(),
+      origin_optimization_id: z.string().nullable().optional(),
+      training_update: z.record(z.string(), z.unknown()).nullable().optional(),
       support_status: z.enum(['supported', 'retired', 'unsupported']).optional(),
       dataset_id: id,
       dataset_revision: revision,

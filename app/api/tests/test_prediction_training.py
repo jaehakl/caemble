@@ -14,11 +14,13 @@ from gpstation.service.server_handlers import register_server_handler, server_ha
 from gpstation.service.state import utcnow
 from prediction import training
 from prediction.common import require_dataset_idle
-from prediction.datasets import freeze_dataset
-from prediction.db import Dataset, DatasetRevision, ModelRevision, Operation, TrainingRun
+from prediction.datasets import dataset_change_set, freeze_dataset, retire_server_payloads
+from prediction.db import Dataset, DatasetObject, DatasetRevision, ModelRevision, Operation, Replica, TrainingRun
+from prediction.grants import create_grant, read_granted_revision, release_grant, renew_grant
 from prediction.models import complete_model, model_view, reserve_model
 from prediction.operations import expire_operation, list_operations
 import test_prediction_assets as assets
+from simulation.db import Measurement, RecordedData
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
@@ -56,6 +58,29 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
         reserved = await reserve_model(db, self.model_request(dataset, definition=definition), self.owner)
         return dataset, reserved
 
+    async def reserve_update(self, db, *, online_origin=None):
+        dataset, initial = await self.reserve(db)
+        await complete_model(db, initial["id"], 1, self.completion(initial["operation_id"]), self.owner)
+        original = await db.get(ModelRevision, (initial["id"], 1))
+        replica = await db.scalar(select(Replica).where(Replica.model_id == initial["id"], Replica.revision == 1))
+        measurement = Measurement(user_id=self.owner, experiment_id=self.experiment_id,
+            vars={"width": 3}, material_snapshot={}, recorded_at=utcnow())
+        db.add(measurement)
+        await db.flush()
+        db.add(RecordedData(user_id=self.owner, measurement_id=measurement.id, experiment_record_id=self.record_id,
+            data={"shape": [2], "storage": {"kind": "inline", "value": self.ref}}))
+        await db.flush()
+        target = await freeze_dataset(db, self.selection(expected_revision=1), self.owner, dataset["id"], online=True)
+        base_ref = {"datasetId": dataset["id"], "revision": 1, "fingerprint": original.dataset_fingerprint}
+        target_ref = {"datasetId": dataset["id"], "revision": 2, "fingerprint": target["revisions"][0]["fingerprint"]}
+        update = {"mode": "rebuild", "baseModel": {"modelId": initial["id"], "revision": 1,
+            "checksum": original.artifact["manifest_sha256"], "storageId": self.storage_id, "replicaId": replica.id},
+            "targetSnapshot": target_ref, "changeSet": await dataset_change_set(db, base_ref, target_ref, self.owner), "recipe": {}}
+        definition = {**original.definition, "snapshotFingerprint": target_ref["fingerprint"]}
+        reserved = await reserve_model(db, self.model_request(target, model_id=initial["id"], expected_revision=1,
+            definition=definition, training_update=update), self.owner, online_origin=online_origin, force_api_source=True)
+        return target, reserved, update
+
     async def mark_failed(self, db, job, *, cleaning=False):
         await serialize_events(db)
         if cleaning:
@@ -66,6 +91,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
     def artifact(self, reserved, revision):
         body = self.completion(reserved["operation_id"])
         return {"modelId": reserved["id"], "revision": reserved["reserved_revision"],
+            "name": reserved["revisions"][0].get("version_name") or reserved["name"],
             "operationId": reserved["operation_id"], "datasetId": revision.dataset_id,
             "datasetRevision": revision.dataset_revision, "datasetFingerprint": revision.dataset_fingerprint,
             "definition": revision.definition, "storageId": self.storage_id, "launcherId": self.launcher_id,
@@ -341,3 +367,152 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response["support_status"], "unsupported")
             self.assertEqual({item["revision"]: item["support_status"] for item in response["revisions"]},
                 {1: "supported", 2: "unsupported"})
+
+    async def test_online_freeze_retains_old_training_and_scoped_readers(self):
+        async with self.sessions() as db:
+            dataset, reserved = await self.reserve(db)
+            submitted = await training.submit(db, reserved["operation_id"], self.owner)
+            grant = await create_grant(db, dataset["id"], 1, self.owner)
+            measurement = await db.get(Measurement, self.measurement_id)
+            measurement.vars = {"width": 4}
+            await db.commit()
+            changed = await freeze_dataset(db, self.selection(expected_revision=1), self.owner, dataset["id"], online=True)
+            self.assertEqual(changed["current_revision"], 2)
+            old = await read_granted_revision(db, dataset["id"], 1, "Bearer " + grant["token"])
+            self.assertEqual(old.payload["measurements"][0]["vars"], {"width": 2})
+            renewed = await renew_grant(db, dataset["id"], 1, "Bearer " + grant["token"])
+            self.assertEqual(renewed["manifest_sha256"], grant["manifest_sha256"])
+            self.assertIsNotNone(await db.get(DatasetObject, (dataset["id"], 1, self.object_id)))
+            with self.assertRaises(HTTPException):
+                await create_grant(db, dataset["id"], 1, self.owner)
+            await self.mark_failed(db, await db.get(Job, submitted["training"]["jobId"]))
+            await release_grant(db, dataset["id"], grant["grant_id"], self.owner)
+            self.assertIsNone((await db.get(DatasetRevision, (dataset["id"], 1))).payload)
+
+    async def test_update_retry_retains_exact_snapshot_across_newer_freezes_and_cleanup(self):
+        async with self.sessions() as db:
+            target, reserved, update = await self.reserve_update(db,
+                online_origin={"optimization_id": 12, "optimization_name": "Fixture"})
+            submitted = await training.submit(db, reserved["operation_id"], self.owner)
+            measurement = await db.get(Measurement, self.measurement_id)
+            measurement.vars = {"width": 5}
+            await db.commit()
+            newer = await freeze_dataset(db, self.selection(expected_revision=2), self.owner, target["id"], online=True)
+            self.assertEqual(newer["current_revision"], 3)
+            job = await db.get(Job, submitted["training"]["jobId"])
+            await self.mark_failed(db, job, cleaning=True)
+            with self.assertRaises(HTTPException):
+                await training.preflight(db, reserved["operation_id"], str(uuid4()), self.owner)
+            job.cleaned_at = utcnow()
+            await db.commit()
+            await training.reconcile(db)
+            self.assertIsNotNone((await db.get(DatasetRevision, (target["id"], 2))).payload)
+            nonce = str(uuid4())
+            await training.preflight(db, reserved["operation_id"], nonce, self.owner)
+            retried = await training.submit(db, reserved["operation_id"], self.owner, retry_request_id=nonce)
+            retried_job = await db.get(Job, retried["training"]["jobId"])
+            self.assertEqual(retried_job.input["update"], update)
+            self.assertEqual(retried_job.input["dataset"]["revision"], 2)
+            await training.cancel(db, await db.get(Operation, reserved["operation_id"]))
+            await db.commit()
+            await training.reconcile(db)
+            self.assertIsNone((await db.get(DatasetRevision, (target["id"], 2))).payload)
+
+    async def test_update_receipt_requires_frozen_lineage_and_verified_reload_prediction(self):
+        async with self.sessions() as db:
+            _, reserved, update = await self.reserve_update(db)
+            submitted = await training.submit(db, reserved["operation_id"], self.owner)
+            job = await db.get(Job, submitted["training"]["jobId"])
+            job.launcher_id = self.launcher_id
+            revision = await db.get(ModelRevision, (reserved["id"], 2))
+            artifact = {**self.artifact(reserved, revision), "update": update}
+            with self.assertRaises(ValueError):
+                await training.complete_job(db, job, {"artifact": artifact})
+            validation = {"version": 1, "manifestChecksum": artifact["manifestChecksum"],
+                "loadPassed": True, "predictPassed": True, "measurementId": self.measurement_id}
+            with self.assertRaises(ValueError):
+                await training.complete_job(db, job, {"artifact": {**artifact,
+                    "validation": {**validation, "measurementId": -1}}})
+            await training.complete_job(db, job, {"artifact": {**artifact, "validation": validation}})
+            await db.commit()
+            view = await model_view(db, await db.get(assets.PredictionModel, reserved["id"]))
+            self.assertEqual(view["current_revision"], 2)
+            self.assertEqual(view["revisions"][0]["artifact"]["validation"], validation)
+            self.assertEqual(view["revisions"][0]["training_update"], update)
+
+    async def test_snapshot_and_update_reservation_roll_back_together_without_dispatch(self):
+        async with self.sessions() as db:
+            with self.assertRaises(RuntimeError):
+                async with db.begin():
+                    dataset = await freeze_dataset(db, self.selection(), self.owner, commit=False, online=True)
+                    definition = {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1",
+                        "preprocessingVersion": "box-relative-v2", "snapshotFingerprint": dataset["revisions"][0]["fingerprint"]}
+                    reserved = await reserve_model(db, self.model_request(dataset, definition=definition),
+                        self.owner, commit=False, force_api_source=True)
+                    submitted = await training.submit(db, reserved["operation_id"], self.owner, commit=False)
+                    job_id = submitted["training"]["jobId"]
+                    raise RuntimeError("Rollback fixture")
+            self.assertIsNone(await db.get(Dataset, dataset["id"]))
+            self.assertIsNone(await db.get(Operation, reserved["operation_id"]))
+            self.assertIsNone(await db.get(Job, job_id))
+
+    async def test_manual_reservation_cannot_cancel_active_optimization_update(self):
+        async with self.sessions() as db:
+            target, reserved, _ = await self.reserve_update(db,
+                online_origin={"optimization_id": 12, "optimization_name": "Fixture"})
+            with self.assertRaises(HTTPException) as busy:
+                await reserve_model(db, self.model_request(target, model_id=reserved["id"], expected_revision=1), self.owner)
+            self.assertEqual(busy.exception.status_code, 409)
+            self.assertEqual((await db.get(Operation, reserved["operation_id"])).state, "pending")
+            self.assertEqual((await db.get(ModelRevision, (reserved["id"], 2))).state, "reserved")
+
+    async def test_frozen_name_and_monotonic_publication_do_not_follow_asset_rename(self):
+        async with self.sessions() as db:
+            _, reserved = await self.reserve(db)
+            model = await db.get(assets.PredictionModel, reserved["id"])
+            model.name = "Renamed after request"
+            model.current_revision = 8
+            await db.commit()
+            submitted = await training.submit(db, reserved["operation_id"], self.owner)
+            job = await db.get(Job, submitted["training"]["jobId"])
+            self.assertEqual(job.input["model"]["name"], "Forward model")
+            await complete_model(db, model.id, 1, self.completion(reserved["operation_id"]), self.owner)
+            self.assertEqual(model.current_revision, 8)
+
+    async def test_failed_optimization_update_retries_after_another_origin_publishes(self):
+        async with self.sessions() as db:
+            target, first, update = await self.reserve_update(db,
+                online_origin={"optimization_id": "origin-a", "optimization_name": "A"})
+            submitted = await training.submit(db, first["operation_id"], self.owner)
+            await self.mark_failed(db, await db.get(Job, submitted["training"]["jobId"]))
+            definition = (await db.get(ModelRevision, (first["id"], 2))).definition
+            second = await reserve_model(db, self.model_request(target, model_id=first["id"], expected_revision=1,
+                definition=definition, training_update=update), self.owner,
+                online_origin={"optimization_id": "origin-b", "optimization_name": "B"}, force_api_source=True)
+            second_job = await training.submit(db, second["operation_id"], self.owner)
+            job = await db.get(Job, second_job["training"]["jobId"])
+            job.launcher_id = self.launcher_id
+            revision = await db.get(ModelRevision, (first["id"], 3))
+            artifact = {**self.artifact(second, revision), "update": update,
+                "validation": {"version": 1, "manifestChecksum": "f" * 64,
+                    "loadPassed": True, "predictPassed": True, "measurementId": self.measurement_id}}
+            result = await training.complete_job(db, job, {"artifact": artifact})
+            await finish_job(db, job, "succeeded", result=result)
+            job.cleaned_at = utcnow()
+            await db.commit()
+            nonce = str(uuid4())
+            await training.preflight(db, first["operation_id"], nonce, self.owner)
+            retried = await training.submit(db, first["operation_id"], self.owner, retry_request_id=nonce)
+            retried_job = await db.get(Job, retried["training"]["jobId"])
+            self.assertEqual(retried_job.input["update"], update)
+            self.assertEqual((await db.get(assets.PredictionModel, first["id"])).current_revision, 3)
+            await training.cancel(db, await db.get(Operation, first["operation_id"]))
+            await db.commit()
+            third = await reserve_model(db, self.model_request(target, model_id=first["id"], expected_revision=3,
+                definition=definition, training_update=update), self.owner,
+                online_origin={"optimization_id": "origin-a", "optimization_name": "A"}, force_api_source=True)
+            await training.cancel(db, await db.get(Operation, third["operation_id"]))
+            await db.commit()
+            with self.assertRaises(HTTPException) as superseded:
+                await training.preflight(db, first["operation_id"], str(uuid4()), self.owner)
+            self.assertEqual(superseded.exception.status_code, 410)

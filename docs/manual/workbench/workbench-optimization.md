@@ -27,7 +27,7 @@ Optimization은 시작할 때의 Experiment 소스, Calculation과 변수 범위
 
 ## kNN Hybrid 탐색과 Solver 예산
 
-Hybrid는 시작할 때 선택한 저장 모델 revision, checksum과 Dataset 출처를 고정합니다. 실행 중 모델을 바꾸거나 자동으로 다시 학습하지 않습니다. 고정된 모델 파일이 없거나 변경되면 해당 오류를 확인하고 같은 revision의 파일을 복구하세요. 다른 revision을 사용하려면 새 Optimization을 시작합니다.
+Hybrid는 시작할 때 선택한 저장 모델 revision, checksum과 Dataset 출처를 초기 모델로 기록합니다. 모델 갱신을 요청하지 않으면 이 모델을 계속 사용합니다. 한 탐색 회차에서 사용하는 revision은 고정되며, 이미 제출한 예측의 출처와 결과는 모델을 갱신해도 그대로 보존됩니다.
 
 시작 Candidate를 먼저 예측하고 실제 Solver로 검증합니다. 이후 기존 좌표 탐색의 축 순서와 step을 사용하고 실제 검증 결과로 다음 탐색 중심을 정합니다. 한 라운드의 예측이 끝나면 제약조건과 목적값을 기준으로 상위 후보 하나, 이미 검증한 후보와 첫 선택 후보에서 변수 범위로 정규화한 거리가 가장 먼 탐색 후보 하나를 검증합니다. 동률은 Trial 순번으로 정하고 Solver 예산이 한 번만 남으면 상위 후보만 검증합니다. 후보 생성 한도에 도달해도 예측이 끝난 미검증 후보는 남은 Solver 예산으로 선별합니다.
 
@@ -38,6 +38,29 @@ Hybrid는 시작할 때 선택한 저장 모델 revision, checksum과 Dataset �
 Hybrid는 선택한 Launcher에서 Evaluation과 Predictor가 함께 사용할 CPU·RAM·GPU를 합쳐 검사합니다. 현재 kNN은 학습·추론 모두 GPU를 요구하지 않으며, Hybrid 추론은 기본적으로 Evaluation과 Predictor가 CPU 1개씩을 요청합니다. 따라서 이 구성에는 CPU 최소 2개와 두 작업에 필요한 RAM이 있어야 합니다. Launcher당 예측 부모 작업 하나만 활성화되며, 자원 경합으로 Predictor 연결이 30초 넘게 대기하면 두 작업을 정리한 뒤 다시 대기합니다.
 
 작은 전체 흐름을 확인하려면 Catalog의 `hybrid-box-conductor`와 동반 Calculation을 사용하세요. 기준 검사는 실제 학습 해석 3회로 Dataset을 만들고 서버 소유 kNN 학습을 완료한 뒤, 새 추론 세션에서 후보 5개를 예측하고 그중 3개를 Solver로 검증합니다. 같은 Candidate의 예측·실제 BoxGrid에 고정된 Calculation을 적용하고 두 목적값을 따로 남깁니다. 첫 학습 데이터용 Solver 작업 제출부터 모든 관련 Job의 자원 정리까지 하나의 180초를 사용하며 환경 준비·빌드와 DB 생성·삭제 시간은 별도로 기록합니다. 로컬 개발 환경에서 재현하는 명령과 결과 확인은 [작은 Box 도체 예제 안내](../../authoring/experiment.md#작은-box-도체-예제로-hybrid-실행하기)를 참고하세요.
+
+## Hybrid 모델 갱신하기
+
+진행 중이거나 중지된 Hybrid에서 **모델 갱신**을 누르면 기존 모델 ID에 새 revision과 구분 가능한 버전 이름을 만듭니다. 첫 구현은 kNN의 전체 재학습(`rebuild`)을 사용하며, 신규 데이터만 학습하는 추가학습은 알고리즘이 지원할 때 사용할 수 있습니다. 자동 갱신은 기본 동작에 포함되지 않습니다.
+
+학습 입력에는 초기 Dataset의 선택과 같은 Experiment에서 호환되는 확정 Solver RecordedData를 사용합니다. Predictor 예측이나 미완료 해석 결과는 학습 정답에 포함하지 않습니다. 요청한 순간의 입력 snapshot을 고정하므로 학습 중 추가된 해석 결과는 다음 수동 갱신에 반영됩니다. Calculation이 실패해도 Solver가 확정한 호환 출력은 학습에 사용할 수 있습니다.
+
+화면에서 **초기 모델**, **현재 채택 모델**, **현재 회차 모델**과 학습 상태를 확인할 수 있습니다. 학습과 파일 checksum·계약·로드·예측 검사가 끝나면 새 revision을 다음 탐색 회차부터 채택합니다. 현재 회차는 이전 모델로 마치며, 최선 후보는 계속 실제 Solver 검증 결과로 정합니다. 학습 중이거나 채택을 기다리는 동안에는 다음 갱신을 제출할 수 없습니다.
+
+학습이 실패하면 현재 모델을 유지합니다. **Prediction 관리**의 작업에서 표시된 Operation을 확인하고 재시도하세요. 같은 모델의 다른 학습 작업이 진행 중이면 그 작업을 취소하지 않고 요청을 거절합니다. 브라우저를 닫아도 서버 소유 학습은 이어집니다.
+
+각 Optimization이 생성한 모델 파일은 최신 버전을 보존합니다. 이전 생성 파일은 추론·학습·다른 Optimization의 사용과 자원 정리가 끝난 뒤 제거하며, 버전 메타데이터·checksum·평가 이력은 유지합니다. 시작할 때 선택한 원래 모델과 외부에서 만든 모델 파일은 이 정리 대상에 포함하지 않습니다.
+
+CLI에서는 다음 명령으로 같은 갱신을 요청할 수 있습니다.
+
+```powershell
+.\caemble.cmd optimization model-update <optimization-id>
+.\caemble.cmd optimization show <optimization-id>
+```
+
+CLI는 응답을 확인하지 못한 갱신의 요청 ID를 보존해 다음 호출에서 재사용합니다. 응답을 확인한 뒤 다시 호출하면 새 갱신 요청이 됩니다. 같은 요청을 다시 조회하려면 동일한 `--request-id`를 지정하세요.
+
+`--update-mode`의 기본값은 `rebuild`입니다. `warm_start`와 `incremental`도 요청할 수 있지만, 선택한 알고리즘이 지원하는 모드만 허용합니다. 현재 kNN은 `rebuild`를 지원합니다.
 
 ## 진행 상태와 실패 확인하기
 

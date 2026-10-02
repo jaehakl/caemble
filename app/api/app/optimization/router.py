@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 
 from optimization import service
-from optimization.schemas import OptimizationCreateRequest, OptimizationRetryRequest
+from optimization.schemas import OptimizationCreateRequest, OptimizationRetryRequest, OptimizationModelUpdateRequest
 from gpstation.utils.csrf import require_web_csrf
 from user_auth.schemas import UserData
 from db import get_db
@@ -43,6 +43,20 @@ async def trials(optimization_id: UUID, limit: int = Query(50, ge=1, le=200), of
 @router.post("/{optimization_id}/stop")
 async def stop(optimization_id: UUID, db=Depends(get_db), user: UserData = Depends(authenticated)):
     return await service.stop_optimization(db, str(optimization_id), user)
+
+
+@router.post("/{optimization_id}/model-updates")
+async def model_update(optimization_id: UUID, body: OptimizationModelUpdateRequest,
+                       db=Depends(get_db), user: UserData = Depends(authenticated)):
+    from gpstation.service.batches import serialize_events
+    from optimization.controller import wake_controller
+    from optimization.model_updates import request_update
+    await serialize_events(db)
+    optimization = await service.require_optimization(db, str(optimization_id), user, lock=True)
+    await request_update(db, optimization, body)
+    await db.commit()
+    wake_controller()
+    return await service.optimization_detail(db, optimization)
 
 
 @router.post("/{optimization_id}/resume")

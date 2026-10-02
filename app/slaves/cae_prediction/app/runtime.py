@@ -84,6 +84,8 @@ class PredictorRuntime:
         if action in ("artifact.backup", "artifact.restore", "artifact.remove", "artifact.verify", "operation.inspect"):
             if action == "artifact.remove" and payload.get("kind") == "dataset":
                 self.training.reconcile_dataset(payload["identity"], cancel)
+            if action == "artifact.remove" and payload.get("kind") == "model":
+                self.training.reconcile_model(payload["identity"], cancel)
             result = self.operations.run(action, payload, cancel)
             return {**result, "protocolVersion": PREDICTION_PROTOCOL_VERSION, "requestId": payload["requestId"], "sessionId": self.session_id}
         if action == "model.prepare":
@@ -126,6 +128,8 @@ class PredictorRuntime:
             return {**result, "protocolVersion": PREDICTION_PROTOCOL_VERSION, "requestId": payload["requestId"], "sessionId": self.session_id}
         if action in ("dataset.sync", "dataset.delete"):
             self.training.reconcile_dataset(payload["datasetId"], cancel)
+        if action == "model.delete":
+            self.training.reconcile_model(payload["modelId"], cancel)
         disk = self.store.transaction(cancel) if action not in ("model.predict", "model.predict_batch", "model.release", "model.list", "dataset.list", "dataset.preview") else nullcontext()
         with self.lock, disk:
             check_cancel(cancel)

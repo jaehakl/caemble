@@ -254,7 +254,7 @@ export function ModelDetail({
         >
           {model.revisions.map((item) => (
             <option key={item.revision} value={item.revision}>
-              r{item.revision} · Dataset r{item.dataset_revision}
+              {item.version_name ? `${item.version_name} · ` : ''}r{item.revision} · Dataset r{item.dataset_revision}
               {item.state === 'ready' ? '' : ' · 준비 중'}
             </option>
           ))}

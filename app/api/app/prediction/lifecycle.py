@@ -84,6 +84,7 @@ async def delete_asset(db, kind, identity, body, user_id, *, complete=False):
             if kind == "dataset":
                 await require_dataset_idle(db, row.id)
             else:
+                await operations.assert_model_pins_idle(db, row.id)
                 active = await db.scalar(select(ModelLease.job_id).join(Job, Job.id == ModelLease.job_id).where(
                     ModelLease.model_id == row.id,
                     (~Job.state.in_(JOB_TERMINAL_STATES)) | Job.cleaned_at.is_(None)).limit(1))

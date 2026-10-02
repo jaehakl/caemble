@@ -54,10 +54,17 @@ async def require_dataset_idle(db, dataset_id):
     if training is not None:
         raise HTTPException(409, {"message": "Dataset is pinned by training. Wait for the training process to finish cleanup.",
             "operation_id": training})
-    from prediction.training import release_finished_grants
+    from prediction.training import release_finished_grants, retained_runs
+    retained = await retained_runs(db, dataset_id)
+    if retained:
+        raise HTTPException(409, {"message": "Dataset is retained for model preparation or a retryable update. Finish or cancel it first.",
+            "operation_id": retained[0][0].operation_id})
     await release_finished_grants(db, dataset_id)
+    from datetime import timedelta
+    from prediction.grants import RENEWAL_GRACE_SECONDS
     expiry = await db.scalar(select(DatasetGrant.expires_at).where(
-        DatasetGrant.dataset_id == dataset_id, DatasetGrant.expires_at > utcnow()).order_by(DatasetGrant.expires_at.desc()).limit(1))
+        DatasetGrant.dataset_id == dataset_id, DatasetGrant.expires_at > utcnow() - timedelta(seconds=RENEWAL_GRACE_SECONDS))
+        .order_by(DatasetGrant.expires_at.desc()).limit(1))
     if expiry is not None:
         raise HTTPException(409, {"message": "Dataset is being read. Finish or cancel preparation before changing it.",
             "lease_expires_at": expiry.isoformat()})

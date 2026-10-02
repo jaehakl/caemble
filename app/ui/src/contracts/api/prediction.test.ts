@@ -96,6 +96,26 @@ const operation = {
 }
 
 describe('Prediction migrated location contracts', () => {
+  it('preserves model revision names, Optimization origin and training lineage', () => {
+    const lineage = { mode: 'rebuild', baseModel: { modelId: assetId, revision: 1 }, recipe: { seed: 7 } }
+    const response = {
+      ...model,
+      revisions: [
+        {
+          ...model.revisions[0],
+          version_name: 'Optimization update 1',
+          origin_optimization_id: requestId,
+          training_update: lineage,
+        },
+      ],
+    }
+    expect(predictionModelSchema.parse(response).revisions[0]).toMatchObject({
+      version_name: 'Optimization update 1',
+      origin_optimization_id: requestId,
+      training_update: lineage,
+    })
+  })
+
   it('accepts migrated copy and storage IDs unchanged throughout asset and operation responses', () => {
     expect(z.uuid().safeParse(migratedReplicaId).success).toBe(false)
     expect(z.uuid().safeParse(migratedStorageId).success).toBe(false)

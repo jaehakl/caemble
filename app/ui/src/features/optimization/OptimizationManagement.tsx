@@ -16,6 +16,7 @@ import type { Optimization, OptimizationEvaluation, OptimizationTrial } from '@/
 import { useAuth } from '@/features/auth/use-auth'
 import { describeResourceWait, formatMemory } from '@/features/runtime/resources'
 import { useOptimizationData } from './useOptimizationData'
+import { OptimizationModelUpdates } from './OptimizationModelUpdates'
 
 const stateLabels: Record<string, string> = {
   running: '진행 중',
@@ -300,6 +301,14 @@ export function OptimizationManagementView({
                 요청을 처리하고 있습니다…
               </p>
             ) : null}
+            {hybrid ? (
+              <OptimizationModelUpdates
+                optimization={optimization}
+                busy={busy}
+                compact={compact}
+                onUpdate={() => void data.modelUpdate(optimization.id)}
+              />
+            ) : null}
             <div className="space-y-3 rounded-lg bg-muted/40 p-3">
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="font-medium">평가 예산</span>
@@ -367,6 +376,14 @@ export function OptimizationManagementView({
                       {Number(bestPredicted.result.objective.toPrecision(8))}
                     </p>
                     <p className="text-xs text-muted-foreground">kNN 예측 · 제약 충족 · 실제 해석 검증과 별도 결과</p>
+                    {bestPredicted.source ? (
+                      <p className="text-xs text-muted-foreground">
+                        예측 모델 revision {String(bestPredicted.source.model_revision ?? '')}
+                        {typeof bestPredicted.source.version_name === 'string'
+                          ? ` · ${bestPredicted.source.version_name}`
+                          : ''}
+                      </p>
+                    ) : null}
                     {!compact ? (
                       <details>
                         <summary className="cursor-pointer text-xs">예측 Vars 확인</summary>
@@ -436,7 +453,7 @@ export function OptimizationManagementView({
                     ))}
                     {optimization.definition.hybrid ? (
                       <>
-                        <dt>고정 kNN 모델</dt>
+                        <dt>초기 모델</dt>
                         <dd>
                           {optimization.definition.hybrid.model_id} · revision{' '}
                           {optimization.definition.hybrid.model_revision}

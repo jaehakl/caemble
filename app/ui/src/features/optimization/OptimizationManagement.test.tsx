@@ -6,7 +6,7 @@ import { optimizationApi } from '@/api/optimization'
 import { ApiError } from '@/api/http'
 import { optimizationDetailSchema, optimizationTrialSchema } from '@/contracts/api/optimization'
 import { OptimizationManagement } from './OptimizationManagement'
-import { optimizationFixture, trialFixture } from './fixtures.test-support'
+import { hybridOptimizationFixture, optimizationFixture, trialFixture } from './fixtures.test-support'
 import { optimizationQueryKeys } from './queryKeys'
 
 const auth = vi.hoisted(() => ({ isAuthenticated: true, queryScope: 'user:first' }))
@@ -18,6 +18,7 @@ vi.mock('@/api/optimization', () => ({
     trials: vi.fn(),
     retry: vi.fn(),
     retryEvaluation: vi.fn(),
+    modelUpdate: vi.fn(),
     stop: vi.fn(),
     resume: vi.fn(),
     remove: vi.fn(),
@@ -31,6 +32,90 @@ beforeEach(() => {
   vi.mocked(optimizationApi.trials).mockResolvedValue({ items: [trialFixture], total: 1 })
   vi.mocked(optimizationApi.retry).mockResolvedValue(optimizationFixture)
   vi.mocked(optimizationApi.retryEvaluation).mockResolvedValue(optimizationFixture)
+  vi.mocked(optimizationApi.modelUpdate).mockResolvedValue(hybridOptimizationFixture)
+})
+
+it('shows initial and adopted models, disables a pending update, and keeps a lost update request idempotent', async () => {
+  let current = hybridOptimizationFixture
+  vi.mocked(optimizationApi.read).mockImplementation(async () => current)
+  vi.mocked(optimizationApi.modelUpdate)
+    .mockRejectedValueOnce(new Error('Update response lost'))
+    .mockImplementation(async (_id, requestId) => {
+      current = {
+        ...current,
+        model_update: {
+          ...current.model_update!,
+          waiting: false,
+          updates: [
+            {
+              request_id: requestId,
+              operation_id: 'training-operation',
+              model_id: 'model-1',
+              revision: 2,
+              version_name: 'Design search update 1',
+              state: 'queued',
+            },
+          ],
+        },
+      }
+      return current
+    })
+  renderManagement()
+  const panel = within(await screen.findByLabelText('Hybrid 모델 갱신'))
+  expect(panel.getByText('초기 모델')).toBeInTheDocument()
+  expect(panel.getByText('현재 채택 모델')).toBeInTheDocument()
+  fireEvent.click(panel.getByRole('button', { name: '모델 갱신' }))
+  await screen.findByText('Update response lost')
+  fireEvent.click(panel.getByRole('button', { name: '모델 갱신' }))
+  await waitFor(() => expect(panel.getByRole('button', { name: '모델 갱신' })).toBeDisabled())
+  expect(optimizationApi.modelUpdate).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(optimizationApi.modelUpdate).mock.calls[0]).toEqual(
+    vi.mocked(optimizationApi.modelUpdate).mock.calls[1],
+  )
+  expect(panel.getByText('Design search update 1 · 학습 대기')).toBeInTheDocument()
+})
+
+it('keeps model update errors separate from evaluations and directs retries to Prediction operations', async () => {
+  const active = {
+    ...hybridOptimizationFixture.model_update!.active_model,
+    model_revision: 2,
+    version_name: 'Design search update 1',
+    checksum: 'b'.repeat(64),
+  }
+  const optimization = {
+    ...hybridOptimizationFixture,
+    model_update: {
+      ...hybridOptimizationFixture.model_update!,
+      active_model: active,
+      updates: [
+        {
+          request_id: 'update-2',
+          operation_id: 'training-operation',
+          model_id: 'model-1',
+          revision: 3,
+          version_name: 'Design search update 2',
+          state: 'failed',
+          error: { message: 'Training interrupted' },
+        },
+      ],
+    },
+  }
+  expect(optimizationDetailSchema.parse(optimization).model_update).toEqual(optimization.model_update)
+  vi.mocked(optimizationApi.read).mockResolvedValue(optimization)
+  renderManagement()
+  const panel = within(await screen.findByLabelText('Hybrid 모델 갱신'))
+  expect(panel.getByText('Design search update 1 · revision 2')).toBeInTheDocument()
+  expect(panel.getByText('Training interrupted')).toBeInTheDocument()
+  expect(panel.getByRole('link', { name: 'Prediction 관리' })).toHaveAttribute('href', '/settings/prediction')
+  expect(panel.getByText('Operation training-operation')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '재개' })).toBeEnabled()
+})
+
+it.each(['pausing', 'completed'])('does not offer a model update while %s', async (state) => {
+  vi.mocked(optimizationApi.read).mockResolvedValue({ ...hybridOptimizationFixture, state })
+  renderManagement()
+  await screen.findByLabelText('Hybrid 모델 갱신')
+  expect(screen.queryByRole('button', { name: '모델 갱신' })).not.toBeInTheDocument()
 })
 
 it('restores separate predictions and verifications, applies only verified Vars, and retries Calculation after budget exhaustion', async () => {

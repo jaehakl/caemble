@@ -20,6 +20,7 @@ from .fixtures import dataset, definition, stage
 def model_case(tmp_path, monkeypatch):
     descriptor = {**copy.deepcopy(ALGORITHMS["knn"]), "kind": "fixture", "implementationVersion": "fixture-v1"}
     descriptor["resources"]["training"] = {"cpu_cores": 2, "gpu_count": 1, "vram_budget_gb": 0.125}
+    descriptor["supportedUpdateModes"] = ["rebuild", "warm_start"]
     monkeypatch.setitem(ALGORITHMS, "fixture", descriptor)
     calls, contexts, instances = [], [], []
 
@@ -57,6 +58,15 @@ def model_case(tmp_path, monkeypatch):
                     "warningMeasurementIds": [], "diagnostics": [], "omittedDiagnosticGroups": 0,
                     "excluded": {}, "resources": {"persistentBytes": self.persistent_bytes, "workingSetBytes": 8}}
 
+        @classmethod
+        def update(cls, data, model_definition, model_ref, base, update, context):
+            calls.append("update")
+            contexts.append(("update", context))
+            check_cancel(context.cancel)
+            model = cls.prepare(data, model_definition, model_ref, context)
+            model.output["values"] = [base.output["values"][0] + 1]
+            return model
+
         def preparation_details(self):
             return {"rules": self.metadata["rules"], "errors": {}, "recordProfiles": [
                 {"recordId": record["id"], "name": record["name"], "error": None, "profile": self.profile()}
@@ -89,7 +99,7 @@ def model_case(tmp_path, monkeypatch):
         @staticmethod
         def validate_artifact(path, manifest, content):
             calls.append("validate")
-            assert content["output"]["values"] == [42]
+            assert content["output"]["values"] in ([42], [43])
             return {"model.json"}
 
         def close(self):

@@ -33,7 +33,7 @@ async def create_grant(db, identity, revision, user_id, *, pinned=False, commit=
     if row.state not in {"active", "deleting"}:
         raise HTTPException(410, "Dataset was deleted.")
     item = await db.get(DatasetRevision, (row.id, revision))
-    if row.source_kind != "server" or row.current_revision != revision or item is None or item.payload is None:
+    if row.source_kind != "server" or (not pinned and row.current_revision != revision) or item is None or item.payload is None:
         raise HTTPException(410, "Dataset payload is local, retired, or deleted.")
     if not settings.JWT_SECRET:
         raise HTTPException(503, "Dataset grant signing is not configured.")
@@ -70,7 +70,7 @@ async def granted_scope(db, identity, revision, authorization, *, renew=False):
         raise HTTPException(401, "Dataset grant renewal window expired.")
     item = await db.get(DatasetRevision, (str(identity), revision))
     lease = await db.get(DatasetGrant, claims["jti"])
-    if (row is None or row.user_id != claims["sub"] or row.state not in {"active", "deleting"} or row.current_revision != revision
+    if (row is None or row.user_id != claims["sub"] or row.state not in {"active", "deleting"}
             or item is None or item.payload is None or item.fingerprint != claims["fingerprint"]
             or lease is None or lease.dataset_id != str(identity) or lease.revision != revision
             or lease.expires_at.timestamp() + (RENEWAL_GRACE_SECONDS if renew else 0) <= now):
@@ -111,5 +111,8 @@ async def release_grant(db, identity, grant_id, user_id):
         if lease.dataset_id != row.id:
             raise HTTPException(404, "Dataset grant not found.")
         await db.delete(lease)
+        await db.flush()
+        from prediction.datasets import retire_server_payloads
+        await retire_server_payloads(db, row.id)
         await db.commit()
     return {"released": True}

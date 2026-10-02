@@ -169,6 +169,23 @@ export async function optimizationCommand(command: string, context: CommandConte
   if (command === 'stop') return optimizations.stop(id, { signal })
   if (command === 'resume') return optimizations.resume(id, { signal })
   if (command === 'delete') return optimizations.remove(id, { signal })
+  if (command === 'model-update') {
+    const updateMode = options['update-mode'] ?? 'rebuild'
+    if (updateMode !== 'rebuild' && updateMode !== 'warm_start' && updateMode !== 'incremental')
+      throw new CliError('--update-mode must be rebuild, warm_start, or incremental.')
+    const body = { optimization: id, update_mode: updateMode }
+    const key = createHash('sha256')
+      .update(JSON.stringify([client.baseUrl, id, 'model-update']))
+      .digest('hex')
+    return submitRequest(
+      path.join(environment.repo, '.data/cli/optimization-requests', `${key}.json`),
+      client.baseUrl,
+      body,
+      options['request-id'] as string | undefined,
+      false,
+      (requestId) => optimizations.modelUpdate(id, requestId, body.update_mode, { signal }),
+    )
+  }
   if (command === 'retry') {
     if (options.evaluation) {
       if (options.trial) throw new CliError('Choose either --evaluation <evaluation-id> or --trial <trial-id>.')

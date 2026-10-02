@@ -69,6 +69,7 @@ class ModelReserve(RequestModel):
     definition: dict[str, Any]
     storage_id: UUID
     launcher_id: UUID
+    training_update: dict[str, Any] | None = None
 
 
 class ArtifactFile(RequestModel):
@@ -86,6 +87,8 @@ class ModelComplete(RequestModel):
     output_layouts: Any
     format_version: Literal[1] = 1
     verified: bool = True
+    update: dict[str, Any] | None = None
+    validation: dict[str, Any] | None = None
 
 
 class DeleteRequest(RequestModel):

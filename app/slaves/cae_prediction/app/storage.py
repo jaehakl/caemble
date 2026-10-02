@@ -117,6 +117,11 @@ class ArtifactStore:
     def assert_unused(self, identity: str, revision: int | None, kind: str = "models") -> None:
         if kind == "datasets":
             self.assert_dataset_idle(identity)
+        elif kind == "models":
+            for pin in (self.path("models", identity) / "training-pins").glob("*.json"):
+                content = json.loads(pin.read_bytes())
+                if revision is None or content["baseModel"]["revision"] == revision:
+                    raise PredictionError("model-in-use", "Wait for base-model training and process cleanup before deleting its files.")
         directories = [self.path("read-leases", f"{kind}-{identity}", revision)]
         if kind == "models":
             directories.append(self.path("leases", identity, revision))
@@ -366,20 +371,27 @@ class ArtifactStore:
         """Removing one copy never creates the logical deletion tombstone."""
         if kind not in ("models", "datasets"):
             raise PredictionError("invalid-reference", "Unknown artifact category.")
-        removed = None
-        with self.transaction(cancel):
-            self.assert_unused(identity, revision, kind)
-            target = self.path(kind, identity, revision)
-            if target.exists():
-                removed = target.parent / f".removing-{uuid.uuid4()}"
-                os.replace(target, removed)
-            if kind == "datasets":
-                (target.parent / "retained" / str(revision)).unlink(missing_ok=True)
-                latest = target.parent / "latest"
-                if latest.exists() and latest.read_text(encoding="utf-8").strip() == str(revision):
-                    latest.unlink()
-        if removed is not None:
-            self._remove(removed)
+        target = self.path(kind, identity, revision)
+        staged = target.parent / f".removing-{revision}"
+        removal_id = "remove-" + hashlib.sha256(encode_json([kind, identity, revision])).hexdigest()
+        # Keep the exact revision's removal serialized through physical cleanup.
+        # A failed recursive delete leaves a recoverable, revision-specific stage.
+        with self.transaction(cancel, operation_id=removal_id):
+            with self.transaction(cancel):
+                self.assert_unused(identity, revision, kind)
+            if staged.exists():
+                self._remove(staged)
+            with self.transaction(cancel):
+                self.assert_unused(identity, revision, kind)
+                if target.exists():
+                    os.replace(target, staged)
+                if kind == "datasets":
+                    (target.parent / "retained" / str(revision)).unlink(missing_ok=True)
+                    latest = target.parent / "latest"
+                    if latest.exists() and latest.read_text(encoding="utf-8").strip() == str(revision):
+                        latest.unlink()
+            if staged.exists():
+                self._remove(staged)
 
     def publish_replica(self, kind: str, identity: str, revision: int, staged: Path, checksum: str, cancel=None) -> bool:
         """Publish previously verified bytes; a collision compares the exact manifest."""

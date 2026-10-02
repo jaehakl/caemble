@@ -7,7 +7,7 @@ import logging
 from contextlib import suppress
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import Text, select
 
 from optimization.algorithm import next_round, trial_rank
 from optimization.db import Evaluation, StageSubmission, Optimization, Trial
@@ -42,6 +42,8 @@ async def cancel_optimization(db, optimization, reason="user"):
         return
     optimization.state = "pausing"
     optimization.pause_reason = "Stopped by user." if reason == "user" else str(reason)
+    from optimization.model_updates import cancel_updates
+    await cancel_updates(db, optimization)
     trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == optimization.id))).all())
     for trial in trials:
         trial.manual_retry_requested = False
@@ -219,8 +221,20 @@ async def reconcile_once(catalog):
     async with SessionLocal() as db:
         await reconcile_children(db)
         await db.commit()
+    from optimization.model_maintenance import reconcile_pruning
     async with SessionLocal() as db:
-        ids = list((await db.scalars(select(Optimization.id).where(Optimization.state != "completed").order_by(Optimization.created_at))).all())
+        await reconcile_pruning(db)
+    async with SessionLocal() as db:
+        from prediction.db import Operation, TrainingRun
+        changed_update = select(Operation.id).join(TrainingRun, TrainingRun.operation_id == Operation.id).outerjoin(
+            Job, Job.id == TrainingRun.job_id).where(
+            Operation.kind == "prepare",
+            Operation.details["online_origin"]["optimization_id"].astext == Optimization.id.cast(Text),
+            (Operation.updated_at > Optimization.updated_at) | Job.state.in_(SERVER_ACTIVE_STATES)
+            | (Job.launcher_id.is_not(None) & Job.cleaned_at.is_(None)),
+        ).exists()
+        ids = list((await db.scalars(select(Optimization.id).where(
+            (Optimization.state != "completed") | changed_update).order_by(Optimization.created_at))).all())
     for optimization_id in ids:
         async with SessionLocal() as db:
             await serialize_events(db)
@@ -244,7 +258,8 @@ async def reconcile_once(catalog):
     # Deliver persisted cancellations after their transaction commits. Repeating
     # the command is safe: launcher cancellation uses the complete attempt ID.
     async with SessionLocal() as db:
-        cancelled = list((await db.scalars(select(Job).join(StageSubmission, StageSubmission.job_id == Job.id).where(
+        cancelled = list((await db.scalars(select(Job).outerjoin(StageSubmission, StageSubmission.job_id == Job.id).where(
+            StageSubmission.id.is_not(None) | ((Job.handler_type == "prediction.train") & Job.artifact_metadata.has_key("optimization_id")),
             Job.cancel_requested_at.is_not(None), Job.launcher_id.is_not(None), Job.cleaned_at.is_(None),
         ))).all())
     for job in cancelled:

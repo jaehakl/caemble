@@ -49,6 +49,29 @@ export const optimizationFixture: Optimization = {
   },
   optimizer_state: {},
 }
+const hybridSource = {
+  model_id: 'model-1',
+  model_revision: 1,
+  replica_id: 'replica-1',
+  launcher_id: 'launcher-1',
+  max_solver_runs: 8,
+  checksum: 'a'.repeat(64),
+}
+export const hybridOptimizationFixture: Optimization = {
+  ...optimizationFixture,
+  failed: 0,
+  pause_reason: null,
+  settings: { ...optimizationFixture.settings, hybrid: hybridSource },
+  definition: { ...optimizationFixture.definition, hybrid: hybridSource },
+  model_update: {
+    initial_model: hybridSource,
+    active_model: hybridSource,
+    round_model: hybridSource,
+    pending_model: null,
+    updates: [],
+    waiting: false,
+  },
+}
 export const trialFixture: OptimizationTrial = {
   id: 'trial-2',
   optimization_id: 'optimization-1',

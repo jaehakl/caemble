@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
 
 from prediction.common import IDENTITY_NAMESPACE, connected_storage, digest, lock_identity, owned, require_dataset_idle
-from prediction.db import Dataset, DatasetObject, DatasetRequest, DatasetRevision, Replica
+from prediction.db import Dataset, DatasetGrant, DatasetObject, DatasetRequest, DatasetRevision, PredictionStorage, Replica
 from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
 from storage.service import object_refs, reference
 from storage.db import StorageObject
@@ -119,7 +119,7 @@ async def list_datasets(db, user_id, experiment_id=None):
     return {"items": [await dataset_view(db, row) for row in rows]}
 
 
-async def freeze_dataset(db, selection, user_id, dataset_id=None):
+async def freeze_dataset(db, selection, user_id, dataset_id=None, *, commit=True, online=False):
     from gpstation.service.batches import serialize_events
     await serialize_events(db)
     identity = str(dataset_id) if dataset_id else str(uuid5(IDENTITY_NAMESPACE, f"{user_id}/dataset/{selection.request_id}"))
@@ -138,7 +138,8 @@ async def freeze_dataset(db, selection, user_id, dataset_id=None):
             raise HTTPException(409, "Dataset source cannot be replaced by another Experiment or storage.")
         if selection.expected_revision != row.current_revision:
             raise HTTPException(409, "Dataset changed. Reload before synchronizing.")
-        await require_dataset_idle(db, identity)
+        if not online:
+            await require_dataset_idle(db, identity)
     elif dataset_id:
         raise HTTPException(404, "Dataset not found.")
     payload = await capture(db, selection, user_id)
@@ -153,7 +154,10 @@ async def freeze_dataset(db, selection, user_id, dataset_id=None):
         if current.fingerprint == fingerprint:
             db.add(DatasetRequest(dataset_id=identity, request_id=str(selection.request_id),
                 request_hash=request_hash, revision=row.current_revision))
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             return await dataset_view(db, row)
     revision = row.current_revision + 1
     payload.update(datasetId=identity, revision=revision, fingerprint=fingerprint)
@@ -171,17 +175,63 @@ async def freeze_dataset(db, selection, user_id, dataset_id=None):
     for object_id in {ref["id"] for ref in object_refs(payload)}:
         db.add(DatasetObject(dataset_id=identity, revision=revision, object_id=object_id))
     await db.flush()
-    # Only the latest Dataset retains payload. Old model artifacts contain their
-    # own samples and never need these retired Dataset payloads to reload.
-    await db.execute(delete(DatasetObject).where(DatasetObject.dataset_id == identity, DatasetObject.revision != revision))
-    await db.execute(update(DatasetRevision).where(DatasetRevision.dataset_id == identity,
-        DatasetRevision.revision != revision).values(payload=None))
-    await db.execute(update(Replica).where(Replica.dataset_id == identity, Replica.revision != revision,
-        Replica.storage_id == server_storage.storage_id).values(state="deleted"))
     row.name, row.current_revision = selection.name.strip(), revision
     row.selection = selection.model_dump(mode="json", exclude={"request_id", "expected_revision", "name"})
-    await db.commit()
+    await db.flush()
+    await retire_server_payloads(db, identity)
+    if commit:
+        await db.commit()
     return await dataset_view(db, row)
+
+
+async def retire_server_payloads(db, dataset_id=None):
+    """Retain current inputs and exact readers, rather than blocking collection."""
+    from datetime import timedelta
+    from gpstation.service.state import utcnow
+    from prediction.grants import RENEWAL_GRACE_SECONDS
+    from prediction.training import retained_snapshots
+    await db.flush()
+    rows = (await db.scalars(select(Dataset).where(Dataset.source_kind == "server", Dataset.state == "active",
+        *([Dataset.id == dataset_id] if dataset_id else [])).order_by(Dataset.id).with_for_update())).all()
+    retained = await retained_snapshots(db, dataset_id)
+    grants = (await db.execute(select(DatasetGrant.dataset_id, DatasetGrant.revision).where(
+        DatasetGrant.expires_at > utcnow() - timedelta(seconds=RENEWAL_GRACE_SECONDS),
+        *([DatasetGrant.dataset_id == dataset_id] if dataset_id else [])))).all()
+    retained.update(grants)
+    api_storages = select(PredictionStorage.storage_id).where(PredictionStorage.kind == "api_dataset")
+    for row in rows:
+        revisions = (await db.scalars(select(DatasetRevision).where(DatasetRevision.dataset_id == row.id,
+            DatasetRevision.revision != row.current_revision, DatasetRevision.payload.is_not(None)))).all()
+        retired = [item.revision for item in revisions if (row.id, item.revision) not in retained]
+        if not retired:
+            continue
+        await db.execute(delete(DatasetObject).where(DatasetObject.dataset_id == row.id,
+            DatasetObject.revision.in_(retired)))
+        await db.execute(update(DatasetRevision).where(DatasetRevision.dataset_id == row.id,
+            DatasetRevision.revision.in_(retired)).values(payload=None))
+        await db.execute(update(Replica).where(Replica.dataset_id == row.id, Replica.revision.in_(retired),
+            Replica.storage_id.in_(api_storages), Replica.state.not_in(["deleting", "deleted"])).values(state="deleted"))
+
+
+async def dataset_change_set(db, base_ref, target_ref, user_id):
+    snapshots = []
+    for ref in (base_ref, target_ref):
+        await owned(db, Dataset, ref["datasetId"], user_id)
+        item = await db.get(DatasetRevision, (ref["datasetId"], ref["revision"]))
+        if item is None or item.fingerprint != ref["fingerprint"]:
+            raise HTTPException(409, "Training snapshot identity changed or is unavailable.")
+        inventory = item.summary.get("sample_fingerprints")
+        if inventory is None and item.payload is not None:
+            inventory = sample_fingerprints(item.payload)
+        if inventory is None:
+            raise HTTPException(409, "This Dataset has no immutable sample inventory for model updates.")
+        snapshots.append(inventory)
+    before, after = snapshots
+    return {"baseSnapshot": deepcopy(base_ref), "targetSnapshot": deepcopy(target_ref),
+        "added": sorted(int(key) for key in after.keys() - before.keys()),
+        "changed": sorted(int(key) for key in before.keys() & after.keys() if before[key] != after[key]),
+        "removed": sorted(int(key) for key in before.keys() - after.keys())}
+
 
 
 async def register_local_dataset(db, body, user_id):

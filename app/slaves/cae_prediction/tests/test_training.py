@@ -271,7 +271,7 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     assert {"stage": "training", "fraction": .5, "metrics": {"loss": 1.0}} in updates
     assert resource_requirements(spec["definition"], "training")["gpu_count"] == 1
     assert resource_requirements(spec["definition"], "inference")["gpu_count"] == 0
-    assert implementation_calls == ["prepare"]
+    assert implementation_calls == ["prepare", "load"]
     assert model_case.contexts[0][1].allocation == model_case.allocation
     assert model_case.instances[0].close_calls == 1
     assert worker.instances == {}
@@ -282,7 +282,7 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     recovered = runtime(tmp_path / "source")
     retried = recovered.training.train(spec, lambda: pytest.fail("Completed model recovery must not access its Dataset."))
     assert retried["artifact"]["manifestChecksum"] == trained["artifact"]["manifestChecksum"]
-    assert implementation_calls == ["prepare", "validate"]
+    assert implementation_calls == ["prepare", "load", "validate"]
     assert recovered.instances == {}
 
     verified = call(recovered, "artifact.verify", kind="model", identity="trained", revision=1,
@@ -294,10 +294,10 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     unpack_archive(archive, target.store.path("models", "trained", 1), "model", "trained", 1, trained["artifact"]["manifestChecksum"])
     assert implementation_calls.count("prepare") == 1
     assert implementation_calls.count("validate") >= 3
-    assert "load" not in implementation_calls
+    assert implementation_calls.count("load") == 1  # Initial saved-model validation only.
     assert recovered.instances == target.instances == {}
     loaded = call(target, "model.load", modelId="trained", revision=1)
-    assert implementation_calls.count("load") == 1
+    assert implementation_calls.count("load") == 2
     assert loaded["rules"] == dataset()["rules"]
     assert loaded["profile"]["inputLayouts"] == [{"key": "x", "dtype": "float64", "shape": [], "minimum": 0, "maximum": 2}]
     assert loaded["profile"]["includedMeasurementIds"] == [1, 2, 3]

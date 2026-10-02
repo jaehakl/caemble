@@ -1,5 +1,6 @@
 """Saved models outlive execution instances and retain their training provenance."""
 from uuid import uuid5
+from copy import deepcopy
 from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
@@ -8,7 +9,7 @@ from gpstation.service.job_service import JOB_ACTIVE_STATES
 from gpstation.service.state import utcnow
 
 from prediction.common import IDENTITY_NAMESPACE, connected_storage, digest, lock_identity, owned
-from prediction.datasets import source_contracts
+from prediction.datasets import dataset_change_set, source_contracts
 from prediction.db import Dataset, DatasetRevision, ModelLease, ModelRevision, PredictionModel, Replica, Operation
 
 
@@ -30,6 +31,7 @@ async def model_view(db, row):
                 support = "unsupported"
         support_by_revision[revision.revision] = support
     return {"id": row.id, "name": row.name, "experiment_id": row.experiment_id, "direction": row.direction,
+        "origin_optimization_id": (current.preparation.get("online_origin") or {}).get("optimization_id") if current else None,
         "algorithm": algorithm.get("kind", "unknown") if isinstance(algorithm, dict) else "unknown",
         "support_status": support_by_revision.get(current.revision, "unsupported") if current else "unsupported",
         "state": row.state, "current_revision": row.current_revision,
@@ -39,6 +41,10 @@ async def model_view(db, row):
             "dataset_id": item.dataset_id, "dataset_revision": item.dataset_revision,
             "dataset_fingerprint": item.dataset_fingerprint, "definition": item.definition,
             "source_contracts": item.source_contracts, "artifact": item.artifact,
+            "training_update": item.preparation.get("training_update"),
+            "online_origin": item.preparation.get("online_origin"),
+            "version_name": item.preparation.get("version_name"),
+            "origin_optimization_id": (item.preparation.get("online_origin") or {}).get("optimization_id"),
             "replicas": await revision_replicas(db, "model", row.id, item.revision),
             "created_at": item.created_at} for item in revisions]}
 
@@ -51,7 +57,42 @@ async def list_models(db, user_id, experiment_id=None):
     return {"items": [await model_view(db, row) for row in rows]}
 
 
-async def reserve_model(db, body, user_id):
+async def validate_update_references(db, update, definition, model_id, target_ref, user_id, storage_id, launcher_id):
+    from prediction_contracts import validate_training_update
+    try:
+        mode = validate_training_update(update, definition)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if update["targetSnapshot"] != target_ref:
+        raise HTTPException(409, "Model update targets another frozen Dataset snapshot.")
+    base = update.get("baseModel")
+    if base is None:
+        raise HTTPException(422, "A model update requires its completed base model.")
+    if base["modelId"] != str(model_id):
+        raise HTTPException(409, "A model update must publish a new revision of its base model.")
+    await owned(db, PredictionModel, base["modelId"], user_id)
+    baseline = await db.get(ModelRevision, (base["modelId"], base["revision"]))
+    replica = await db.get(Replica, base["replicaId"])
+    if (baseline is None or baseline.state != "ready" or baseline.artifact is None
+            or baseline.artifact.get("manifest_sha256") != base["checksum"]
+            or replica is None or replica.model_id != base["modelId"] or replica.revision != base["revision"]
+            or replica.storage_id != base["storageId"] or replica.manifest_sha256 != base["checksum"]
+            or replica.state not in {"present", "unverified"}):
+        raise HTTPException(409, "The exact base model copy is unavailable or changed.")
+    if base["storageId"] != str(storage_id):
+        raise HTTPException(409, "Restore the base model to the training storage before updating it.")
+    await connected_storage(db, base["storageId"], launcher_id, user_id)
+    base_ref = {"datasetId": baseline.dataset_id, "revision": baseline.dataset_revision,
+        "fingerprint": baseline.dataset_fingerprint}
+    expected_changes = await dataset_change_set(db, base_ref, target_ref, user_id)
+    if update["changeSet"] != expected_changes:
+        raise HTTPException(409, "Model update changes differ from the frozen snapshot inventory.")
+    target = await db.get(DatasetRevision, (target_ref["datasetId"], target_ref["revision"]))
+    if mode != "rebuild" and target.summary.get("source_contracts") != baseline.source_contracts:
+        raise HTTPException(409, "Continued training requires unchanged source and preprocessing contracts.")
+
+
+async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, force_api_source=False):
     from gpstation.service.batches import serialize_events
     from prediction_contracts import validate_definition
     from prediction import training
@@ -77,6 +118,7 @@ async def reserve_model(db, body, user_id):
                 **({"training": view["training"]} if "training" in view else {})}
         if body.expected_revision != row.current_revision or row.direction != body.direction:
             raise HTTPException(409, "Model changed or targets another direction. Reload before updating.")
+        await training.assert_model_update_available(db, identity, user_id, online_origin=online_origin)
     elif body.model_id:
         raise HTTPException(404, "Model not found.")
     await connected_storage(db, body.storage_id, body.launcher_id, user_id)
@@ -86,6 +128,10 @@ async def reserve_model(db, body, user_id):
         Replica.revision == body.dataset_revision, Replica.storage_id == str(body.storage_id),
         Replica.state.in_(["present", "unverified"])))
     server_payload = dataset_revision is not None and dataset.source_kind == "server" and dataset_revision.payload is not None
+    if force_api_source:
+        if not server_payload:
+            raise HTTPException(409, "Online updates require their retained server Dataset snapshot.")
+        local_copy = None
     if dataset_revision is None or (not server_payload and local_copy is None):
         raise HTTPException(409, "Restore the exact Dataset revision to the selected storage before preparing a model.")
     definition = body.definition
@@ -97,6 +143,11 @@ async def reserve_model(db, body, user_id):
         raise HTTPException(422, "Model definition must identify its requested direction.")
     if definition.get("snapshotFingerprint", dataset_revision.fingerprint) != dataset_revision.fingerprint:
         raise HTTPException(409, "Model definition targets another Dataset fingerprint.")
+    training_update = deepcopy(body.training_update)
+    if training_update is not None:
+        await validate_update_references(db, training_update, definition, identity,
+            {"datasetId": dataset.id, "revision": body.dataset_revision, "fingerprint": dataset_revision.fingerprint},
+            user_id, str(body.storage_id), str(body.launcher_id))
     if row is None:
         row = PredictionModel(id=identity, user_id=user_id, experiment_id=dataset.experiment_id,
             name=body.name.strip(), direction=body.direction, state="active", current_revision=0)
@@ -105,10 +156,16 @@ async def reserve_model(db, body, user_id):
     elif row.experiment_id != dataset.experiment_id:
         raise HTTPException(409, "Model cannot move to another Experiment.")
     number = (await db.scalar(select(func.max(ModelRevision.revision)).where(ModelRevision.model_id == identity)) or 0) + 1
-    await db.execute(update(ModelRevision).where(ModelRevision.model_id == identity,
-        ModelRevision.state == "reserved").values(state="abandoned"))
+    version_name = f"{row.name} · r{number} · {online_origin['optimization_name']}" if online_origin else body.name.strip()
     previous_operations = list((await db.scalars(select(Operation).where(Operation.asset_id == identity,
         Operation.kind == "prepare", Operation.state.not_in(["completed", "cancelled"])))).all())
+    previous_operations = [operation for operation in previous_operations
+        if (operation.details.get("online_origin") or {}).get("optimization_id")
+        == (online_origin or {}).get("optimization_id")]
+    if previous_operations:
+        await db.execute(update(ModelRevision).where(ModelRevision.model_id == identity,
+            ModelRevision.state == "reserved", ModelRevision.request_id.in_([operation.id for operation in previous_operations]))
+            .values(state="abandoned"))
     for previous_operation in previous_operations:
         await training.cancel(db, previous_operation)
         previous_operation.stage = "superseded"
@@ -118,7 +175,10 @@ async def reserve_model(db, body, user_id):
     revision = ModelRevision(model_id=identity, revision=number, request_id=str(body.request_id),
         request_hash=request_hash, state="reserved", dataset_id=dataset.id, dataset_revision=body.dataset_revision,
         dataset_fingerprint=dataset_revision.fingerprint, definition=definition, source_contracts=contracts,
-        preparation={"storage_id": str(body.storage_id), "launcher_id": str(body.launcher_id)})
+        preparation={"storage_id": str(body.storage_id), "launcher_id": str(body.launcher_id),
+            "version_name": version_name,
+            **({"training_update": training_update} if training_update is not None else {}),
+            **({"online_origin": deepcopy(online_origin)} if online_origin is not None else {})})
     db.add(revision)
     operation = Operation(id=str(body.request_id), request_id=str(body.request_id), request_hash=request_hash,
         user_id=user_id, kind="prepare", asset_kind="model", asset_id=identity, revision=number,
@@ -126,14 +186,20 @@ async def reserve_model(db, body, user_id):
         expires_at=utcnow() + timedelta(minutes=15),
         details={"target_storage_id": str(body.storage_id), "target_launcher_id": str(body.launcher_id),
             "dataset_id": dataset.id, "dataset_revision": body.dataset_revision, "definition": definition,
-            "direction": body.direction, "name": body.name.strip()})
+            "direction": body.direction, "name": version_name,
+            **({"update": training_update} if training_update is not None else {}),
+            **({"online_origin": deepcopy(online_origin)} if online_origin is not None else {})})
     db.add(operation)
     await db.flush()
     await training.create_run(db, operation, revision, local_copy)
-    row.name = body.name.strip()
-    await db.commit()
-    for previous_operation in previous_operations:
-        await training.notify_cancel(db, previous_operation)
+    if online_origin is None:
+        row.name = body.name.strip()
+    if commit:
+        await db.commit()
+        for previous_operation in previous_operations:
+            await training.notify_cancel(db, previous_operation)
+    else:
+        await db.flush()
     return {**await model_view(db, row), "reserved_revision": number, "operation_id": str(body.request_id),
         "training": (await training.operation_view(db, operation))["training"]}
 
@@ -143,7 +209,7 @@ async def complete_model(db, model_id, revision, body, user_id, *, commit=True, 
     item = await db.get(ModelRevision, (row.id, revision))
     if item is None or item.request_id != str(body.request_id):
         raise HTTPException(404, "Reserved model revision not found.")
-    artifact = body.model_dump(mode="json", exclude={"request_id", "verified"})
+    artifact = body.model_dump(mode="json", exclude={"request_id", "verified"}, exclude_none=True)
     if len({entry["name"] for entry in artifact["files"]}) != len(artifact["files"]):
         raise HTTPException(422, "Artifact file names must be unique.")
     if item.state == "ready":
@@ -168,7 +234,7 @@ async def complete_model(db, model_id, revision, body, user_id, *, commit=True, 
         operation.state = operation.stage = "completed"
         operation.completed_at = operation.updated_at = utcnow()
         operation.details = {**operation.details, "result_replicas": {"model": replica.id}}
-    row.current_revision = revision
+    row.current_revision = max(row.current_revision, revision)
     if commit:
         await db.commit()
     return await model_view(db, row)

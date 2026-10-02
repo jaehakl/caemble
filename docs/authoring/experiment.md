@@ -241,6 +241,7 @@ Evaluation 1개와 Predictor 1개입니다. Solver 예산은 실행 시도 기�
 .\caemble.cmd optimization retry <optimization-id> --trial <trial-id>
 .\caemble.cmd optimization retry <optimization-id> --evaluation <evaluation-id>
 .\caemble.cmd optimization resume <optimization-id>
+.\caemble.cmd optimization model-update <optimization-id> --request-id <uuid>
 .\caemble.cmd optimization delete <optimization-id>
 ```
 
@@ -254,7 +255,12 @@ Solver 예산(`solver_budget`)과 종료 사유(`termination_reason`)가 포함�
 `watch`는 `{ "type": "snapshot", "optimization": ... }` 형식으로 2초 간격으로 관찰하며 Ctrl+C나 관찰 timeout으로 서버 실행이 중지되지 않습니다.
 완료는 종료 코드 0, 일시정지·실패는 1, 관찰 timeout은 5, Ctrl+C는 130입니다.
 
-생성 요청은 설정 파일 옆의 `.submission.json`, 재시도 요청은 저장소의
+진행 중이거나 중지된 Hybrid는 `model-update`로 수동 갱신할 수 있습니다. 기본 모드는
+`--update-mode rebuild`이며 kNN은 이 전체 재학습 모드를 지원합니다. `warm_start`와 `incremental`은
+선택한 알고리즘이 지원해야 합니다. 완료 모델은 다음 탐색 회차부터 사용합니다. `show`의 `model_update`에서 초기·현재·대기
+모델과 학습 Operation 이력을 확인하세요. 기존 예측과 Solver 결과는 보존합니다.
+
+생성 요청은 설정 파일 옆의 `.submission.json`, 재시도와 모델 갱신 요청은 저장소의
 `.data/cli/optimization-requests`에 요청 ID를 먼저 기록합니다. 응답을 확인하지 못하면 같은 ID로
 다시 전송합니다. 같은 설정으로 별도 Optimization을 만들려면 새 `--request-id <uuid>`를 지정합니다.
 재시도 응답을 확인한 뒤 다시 호출하면 새로운 명시적 재시도입니다. 토큰은 기록하지 않습니다.

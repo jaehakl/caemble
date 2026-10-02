@@ -83,7 +83,9 @@ def advance_search(trials, evaluations, settings, state, budget):
         state["round_ordinals"] = [1]
         return state, [{"ordinal": 1, "round_index": 0, "variables": variables,
                         "fingerprint": variables_fingerprint(variables)}], [], None
-    predicted = {item.trial_id: item for item in evaluations if item.kind == "prediction" and item.state == "succeeded"}
+    source_hash = state.get("round_source_hash")
+    predicted = {item.trial_id: item for item in evaluations if item.kind == "prediction" and item.state == "succeeded"
+                 and (source_hash is None or item.source_hash == source_hash)}
     solved = {item.trial_id: item for item in evaluations if item.kind == "solver"}
     by_id = {trial.id: trial for trial in trials}
     if budget["remaining"] == 0:
@@ -110,7 +112,14 @@ def advance_search(trials, evaluations, settings, state, budget):
     if generated:
         return state, generated, [], None
     # Candidate generation has ended: spend remaining budget on saved predictions.
-    pool = [trial for trial in trials if trial.id in predicted and trial.id not in solved]
+    pool = sorted((trial for trial in trials if trial.id not in solved), key=lambda trial: trial.ordinal)
+    if pool and state.get("round_source_hash") is not None and state.get("selection"):
+        # Comparing saved candidates is another decision round. The controller
+        # binds its model and ensures every member has that model's Evaluation.
+        state.update(round_index=state["round_index"] + 1, selection=[],
+                     round_ordinals=[trial.ordinal for trial in pool], generation_complete=True)
+        return state, [], [], None
+    pool = [trial for trial in pool if trial.id in predicted]
     chosen = select_verifications(pool, predicted, verified, settings["axes"], direction, budget["remaining"])
     if chosen:
         state["selection"] = chosen
