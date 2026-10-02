@@ -263,6 +263,7 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     descriptor = {**copy.deepcopy(ALGORITHMS["knn"]), "kind": "fixture", "implementationVersion": "fixture-v1"}
     descriptor["resources"]["training"] = {"cpu_cores": 2, "gpu_count": 1, "gpu_memory_bytes": 128}
     monkeypatch.setitem(ALGORITHMS, "fixture", descriptor)
+    implementation_calls = []
 
     class FixtureModel:
         def __init__(self, metadata):
@@ -271,6 +272,7 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
 
         @classmethod
         def prepare(cls, data, model_definition, model_ref, memory_budget, cancel=None, progress=None):
+            implementation_calls.append("prepare")
             if progress:
                 progress({"stage": "training", "fraction": .5, "metrics": {"loss": 1.0}})
             return cls({**model_ref, "formatVersion": 1, "direction": "forward", "algorithm": "fixture",
@@ -291,11 +293,13 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
 
         @classmethod
         def load(cls, metadata, content, path, files, memory_budget, cancel=None):
+            implementation_calls.append("load")
             assert content["value"] == 42
             return cls(metadata)
 
         @staticmethod
         def validate_artifact(path, manifest, content):
+            implementation_calls.append("validate")
             assert content["value"] == 42
             return {"model.json"}
 
@@ -310,11 +314,31 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     assert {"stage": "training", "fraction": .5, "metrics": {"loss": 1.0}} in updates
     assert resource_requirements(spec["definition"], "training")["gpu_count"] == 1
     assert resource_requirements(spec["definition"], "inference")["gpu_count"] == 0
+    assert implementation_calls == ["prepare"]
+    assert worker.instances == {}
+
+    spec.update(canPin=False, canRelease=True)
+    call(worker, "training.unpin", grant=grant)
+    worker.store.delete("datasets", spec["dataset"]["datasetId"])
+    recovered = runtime(tmp_path / "source")
+    retried = recovered.training.train(spec, lambda: pytest.fail("Completed model recovery must not access its Dataset."))
+    assert retried["artifact"]["manifestChecksum"] == trained["artifact"]["manifestChecksum"]
+    assert implementation_calls == ["prepare", "validate"]
+    assert recovered.instances == {}
+
+    verified = call(recovered, "artifact.verify", kind="model", identity="trained", revision=1,
+                    manifestChecksum=trained["artifact"]["manifestChecksum"])
+    assert verified["state"] == "present"
     archive = tmp_path / "fixture.zip"
-    create_archive(worker.store, "model", "trained", 1, archive)
+    create_archive(recovered.store, "model", "trained", 1, archive)
     target = runtime(tmp_path / "target")
     unpack_archive(archive, target.store.path("models", "trained", 1), "model", "trained", 1, trained["artifact"]["manifestChecksum"])
+    assert implementation_calls.count("prepare") == 1
+    assert implementation_calls.count("validate") >= 3
+    assert "load" not in implementation_calls
+    assert recovered.instances == target.instances == {}
     loaded = call(target, "model.load", modelId="trained", revision=1)
+    assert implementation_calls.count("load") == 1
     assert loaded["rules"] == []
     assert call(target, "model.predict", instance=loaded["instance"], input={"direction": "forward", "vars": {}})["value"] == 42
 

@@ -204,6 +204,17 @@ No model is automatically converted or deleted. Inverse design belongs to Optimi
 live in the NumPy-free `shared/prediction_contracts` package. A future algorithm implements the same
 Vars-to-BoxGrid boundary without changing Dataset or process lifecycle management.
 
+`ForwardModelImplementation` declares the implementation class contract: `prepare` builds a
+`ForwardModel`, `load` reconstructs one from its saved files, and `validate_artifact` inspects inert
+files and returns their exact inventory without constructing an inference model. The typed
+implementation registry uses this contract for training, loading, completed-training recovery
+and archive validation. `artifact.verify` checks stored checksums without loading the model.
+`ForwardModel` declares the instance metadata, memory footprint, layouts, profile, preparation
+details, prediction and file-writing methods. Per-record profile construction belongs to the
+algorithm; management consumes its preparation details without assuming kNN groups or neighbors.
+Dataset compatibility and numerical preprocessing also remain algorithm-owned. Storage publication,
+leases, cancellation, Dataset pins and resource allocation remain in the execution/management layers.
+
 `CAEMBLE_PREDICTOR_OWNER_ID` and `CAEMBLE_PREDICTOR_API_URL` are trusted launcher
 environment values required at session initialization. `CAEMBLE_PREDICTOR_STORAGE_ROOT`
 optionally selects a managed root (default: user application data). A root UUID and

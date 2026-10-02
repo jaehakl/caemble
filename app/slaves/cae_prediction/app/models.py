@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from prediction_contracts import algorithm_descriptor, validate_definition
 
@@ -21,16 +21,33 @@ class ForwardModel(Protocol):
     output_layouts: list[dict]
 
     def profile(self) -> dict: ...
-    def record_profiles(self) -> list[dict]: ...
     def preparation_details(self) -> dict: ...
-    def predict(self, values: dict, cancel=None) -> dict: ...
-    def write(self, path: Path, cancel=None) -> None: ...
+    def predict(self, values: dict, cancel: threading.Event | None = None) -> dict: ...
+    def write(self, path: Path, cancel: threading.Event | None = None) -> None: ...
 
 
-IMPLEMENTATIONS = {"knn": KnnForwardModel}
+class ForwardModelImplementation(Protocol):
+    """Class-side model construction and inert artifact inspection."""
+
+    @classmethod
+    def prepare(cls, dataset: dict, definition: dict, model_ref: dict, memory_budget: int,
+                cancel: threading.Event | None = None,
+                progress: Callable[[str | dict], None] | None = None) -> ForwardModel: ...
+
+    @classmethod
+    def load(cls, metadata: dict, content: dict, path: Path, files: list[dict], memory_budget: int,
+             cancel: threading.Event | None = None) -> ForwardModel: ...
+
+    @staticmethod
+    def validate_artifact(path: Path, manifest: dict, content: dict) -> set[str]:
+        """Validate inert files and return their exact inventory without loading a model."""
+        ...
 
 
-def implementation_for(definition: dict):
+IMPLEMENTATIONS: dict[str, type[ForwardModelImplementation]] = {"knn": KnnForwardModel}
+
+
+def implementation_for(definition: dict) -> type[ForwardModelImplementation]:
     try:
         descriptor = algorithm_descriptor(definition)
         if any(definition.get(key) != descriptor[key] for key in ("implementationVersion", "preprocessingVersion")):
@@ -48,7 +65,8 @@ class ModelBundle:
 
     @classmethod
     def prepare(cls, dataset: dict, direction: str, definition: dict, model_ref: dict,
-                memory_budget: int, cancel: threading.Event | None = None, progress=None) -> "ModelBundle":
+                memory_budget: int, cancel: threading.Event | None = None,
+                progress: Callable[[str | dict], None] | None = None) -> "ModelBundle":
         if direction != "forward" or definition.get("direction", "forward") != "forward":
             raise PredictionError("unsupported-model", "Inverse Prediction is retired. Use Optimization for inverse design.")
         try:
@@ -85,7 +103,8 @@ class ModelBundle:
                 "files": manifest["files"], "manifestChecksum": checksum, "verified": True}
 
     @classmethod
-    def load(cls, store: ArtifactStore, model_id: str, revision: int, memory_budget: int, cancel=None):
+    def load(cls, store: ArtifactStore, model_id: str, revision: int, memory_budget: int,
+             cancel: threading.Event | None = None) -> tuple["ModelBundle", dict]:
         if store.deleted(model_id, revision):
             raise PredictionError("deleted", "This model revision has been deleted.")
         manifest, path, checksum = store.read("models", model_id, revision, memory_budget, cancel)

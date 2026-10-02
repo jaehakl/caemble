@@ -33,7 +33,11 @@ Hybrid는 시작할 때 선택한 저장 모델 revision, checksum과 Dataset �
 
 **Solver 실행 예산**에는 사용·예약·잔여 횟수가 표시됩니다. Solver Job을 큐에 만들 때 예약하고 실제 실행이 승인되면 사용으로 바뀝니다. 실행 전 취소하면 예약이 반환됩니다. 실행 승인 후 실패·연결 단절과 실패 후 Solver 재실행은 사용 횟수에 포함됩니다. 빌드·예측·Calculation 재시도는 Solver 예산을 사용하지 않습니다. 예산이 소진되면 새 Solver 실행을 막고 확보한 결과의 후처리와 자원 정리를 마칩니다. 마지막 실패와 예산 소진 종료 사유도 이력에 남습니다.
 
-선택한 Predictor Launcher에는 Evaluation과 Predictor가 함께 실행될 CPU 최소 2개와 두 작업에 필요한 RAM이 있어야 합니다. 각 작업은 CPU 1개, GPU 0개를 요청하고 Launcher당 예측 부모 작업 하나만 활성화됩니다. 자원 경합으로 Predictor 연결이 30초 넘게 대기하면 두 작업을 정리한 뒤 다시 대기합니다.
+모델의 자원 요구량은 학습용 `training`과 추론용 `inference`로 나뉩니다. 학습은 서버가 소유한 별도 Job으로 실행하고, 완료 모델을 등록한 뒤 새 추론 세션에서 같은 revision을 로드합니다. 학습·추론에서 지정하지 않은 CPU·RAM은 Launcher 기본값을 사용합니다.
+
+Hybrid는 선택한 Launcher에서 Evaluation과 Predictor가 함께 사용할 CPU·RAM·GPU를 합쳐 검사합니다. 현재 kNN은 학습·추론 모두 GPU를 요구하지 않으며, Hybrid 추론은 기본적으로 Evaluation과 Predictor가 CPU 1개씩을 요청합니다. 따라서 이 구성에는 CPU 최소 2개와 두 작업에 필요한 RAM이 있어야 합니다. Launcher당 예측 부모 작업 하나만 활성화되며, 자원 경합으로 Predictor 연결이 30초 넘게 대기하면 두 작업을 정리한 뒤 다시 대기합니다.
+
+작은 전체 흐름을 확인하려면 Catalog의 `hybrid-box-conductor`와 동반 Calculation을 사용하세요. 기준 검사는 실제 학습 해석 3회로 Dataset을 만들고 서버 소유 kNN 학습을 완료한 뒤, 새 추론 세션에서 후보 5개를 예측하고 그중 3개를 Solver로 검증합니다. 같은 Candidate의 예측·실제 BoxGrid에 고정된 Calculation을 적용하고 두 목적값을 따로 남깁니다. 첫 학습 데이터용 Solver 작업 제출부터 모든 관련 Job의 자원 정리까지 하나의 180초를 사용하며 환경 준비·빌드와 DB 생성·삭제 시간은 별도로 기록합니다. 로컬 개발 환경에서 재현하는 명령과 결과 확인은 [작은 Box 도체 예제 안내](../../authoring/experiment.md#작은-box-도체-예제로-hybrid-실행하기)를 참고하세요.
 
 ## 진행 상태와 실패 확인하기
 

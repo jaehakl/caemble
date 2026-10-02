@@ -217,8 +217,11 @@ Calculation ID와 탐색 설정을 적습니다. 목적 Calculation은 필수이
 ```
 
 모델 revision과 checksum·Dataset 출처는 생성 시 고정됩니다. 서버가 소유권·Experiment·Record·Vars
-호환성을 검증하며 다른 revision으로 자동 대체하지 않습니다. Predictor Launcher에는 Evaluation과
-Predictor가 함께 사용할 CPU 최소 2개와 충분한 RAM이 필요합니다. Solver 예산은 실행 시도 기준으로,
+호환성을 검증하며 다른 revision으로 자동 대체하지 않습니다. 학습에는 모델의 `training`, 추론에는
+`inference` 자원 요구량을 적용하며 지정하지 않은 CPU·RAM은 Launcher 기본값을 사용합니다.
+Hybrid는 Evaluation과 Predictor의 CPU·RAM·GPU 요구량을 합쳐 동시에 실행 가능한지 검사합니다.
+현재 kNN은 학습·추론 모두 GPU를 요구하지 않으며, Hybrid 추론의 기본 CPU 요청은
+Evaluation 1개와 Predictor 1개입니다. Solver 예산은 실행 시도 기준으로,
 실행 전 취소한 예약은 반환하고 실행 승인 후 실패 및 Solver 재실행은 차감합니다. 빌드·예측·후처리
 재시도는 Solver 예산을 사용하지 않습니다.
 
@@ -268,27 +271,29 @@ Catalog의 `hybrid-box-conductor`는 두 Vars인 `length`, `width`로 작은 도
 
 ```powershell
 .\caemble.cmd doctor
-.\caemble.cmd catalog show examples hybrid-box-conductor
+.\caemble.cmd catalog show example hybrid-box-conductor
 .\caemble.cmd experiment init .work/hybrid-source --example hybrid-box-conductor
 .\caemble.cmd agent context experiment --source .work/hybrid-source
 .\caemble.cmd experiment build .work/hybrid-source --vars-mode nominal --out .work/hybrid-nominal
-.\caemble.cmd experiment test .work/hybrid-nominal --out .work/hybrid-nominal-result --timeout 180
 ```
 
-학습 데이터는 실제 해석으로 준비합니다. Experiment를 서버에 저장한 뒤 Workbench에서
-각 변수의 하한·중앙·상한을 조합한 작은 Candidate 집합을 실행합니다. 처음에는 중앙과
-네 모서리의 5개 Measurement로 시작할 수 있습니다. 각 실행의 `totalCurrent` 기록과
-성공 상태를 확인하고, 해당 Measurement들로 Dataset을 만듭니다. Prediction에서
-`totalCurrent`를 선택해 Forward kNN 모델을 저장하고 모델 ID, revision, 파일 checksum,
-복제본과 Launcher를 확인합니다. 이 학습용 해석은 이후 Optimization의 Solver 예산과
-별개입니다. Dataset이나 저장 모델을 수정했다면 새 Optimization에서 새 revision을
-명시적으로 선택합니다.
+이 단계는 입력을 빌드하며 Solver를 실행하지 않습니다. 기존 예제와 동반 Calculation을
+그대로 사용하고, 저장·실행에는 준비한 artifact를 재사용합니다.
+
+학습 데이터는 실제 해석으로 준비합니다. Experiment를 서버에 저장한 뒤 시작 Candidate를
+포함한 서로 다른 조건 3개를 실행합니다. 각 실행의 `totalCurrent` 기록과 성공 상태를
+확인하고 해당 Measurement들로 Dataset revision을 고정합니다. Prediction에서
+`totalCurrent`를 선택해 Forward kNN 학습을 제출합니다. 학습은 서버가 소유한 Job으로
+실행되므로 브라우저를 닫아도 계속됩니다. 완료 모델의 파일 저장과 서버 등록, 학습
+프로세스 정리를 확인한 뒤 새 추론 세션에서 저장된 revision을 다시 로드합니다.
+모델 ID, revision, 파일 checksum, 복제본과 Launcher를 확인하세요. 학습용 Solver 3회는
+이후 Optimization의 Solver 예산과 별개입니다. Dataset이나 저장 모델을 갱신했다면
+새 Optimization에서 새 revision을 명시적으로 선택합니다.
 
 Optimization 설정에서 **kNN Hybrid**, 저장 모델·revision·실행 위치를 선택하고
-목적 Calculation으로 `Current target error`를 지정합니다. 첫 실행은 후보 20개,
-동시 후보 2개, Solver 시도 8회를 사용할 수 있습니다. Predictor 실행 위치에는
-Evaluation과 Predictor가 동시에 사용할 CPU 2개 이상과 충분한 RAM이 필요합니다.
-위 CLI의 `hybrid` 설정으로 같은 실행을 만들 수도 있습니다.
+목적 Calculation으로 `Current target error`를 지정합니다. 작은 기준 실행은 후보 5개,
+동시 후보 2개, Solver 시도 3회로 설정합니다. 선택한 Launcher에 Evaluation과 Predictor가
+함께 사용할 자원이 있어야 합니다. 위 CLI의 `hybrid` 설정으로 같은 실행을 만들 수도 있습니다.
 
 시작 Candidate는 예측과 실제 검증을 모두 수행합니다. 이후 예측이 끝난 라운드에서
 목적값이 좋은 후보와 아직 검증한 후보에서 먼 탐색 후보를 실제로 검증합니다.
@@ -297,8 +302,41 @@ Evaluation과 Predictor가 동시에 사용할 CPU 2개 이상과 충분한 RAM�
 다시 열거나 `optimization show`와 `optimization trials`로 같은 ID를 조회해 평가 이력,
 예산의 사용·예약·잔여 횟수와 종료 사유를 확인합니다.
 
-예제 검증 기록에는 전체 경과 시간, 학습용 Solver 호출 수, Optimization Solver 시도 수,
-예측·검증 결과와 자원 정리 완료 여부를 구분해 남깁니다. 작은 로컬 통합 검증의 기준은 실제 학습 해석 3회, Hybrid 후보 5개·Solver 예산 3회입니다. 이 구성은
-학습 데이터·고정 모델 준비부터 실제 검증과 자원 정리까지 기준 환경에서 180초 이내를 목표로 합니다. 원격 대기 시간이나 더 큰 학습 집합의 완료 시간을
-보장하는 값은 아닙니다. Calculation 실패는 저장된 예측 산출물이나 실제 Measurement에서
+예측과 실제 BoxGrid에는 동일하게 고정된 Calculation을 적용합니다. 같은 Candidate의
+두 평가와 목적값은 별도로 보존되며, 예측 결과로 Measurement를 만들거나 실제 결과를
+덮어쓰지 않습니다. Calculation 실패는 저장된 예측 산출물이나 실제 Measurement에서
 재시도하므로 추가 추론이나 Solver 실행 없이 복구할 수 있습니다.
+
+### 로컬 기준선 검증 재현하기
+
+개발 환경의 통합 검사는 이 Catalog 예제로 학습용 Solver 3회, 서버 소유 kNN 학습,
+새 추론 세션과 Hybrid 후보 5개·Solver 검증 3회를 실행합니다. 시작 Candidate의 예측·실제
+목적값을 비교하고 모델 revision, 저장된 평가 이력과 프로세스·자원 정리까지 확인합니다.
+다른 후보의 예측 오차도 기록하지만 이 작은 검사는 최적화 개선율을 보장하지 않습니다.
+
+저장소 루트에서 CLI·Node bundle과 API·Launcher·CAE·Predictor 개발 환경을 준비하고
+`doctor`를 통과한 뒤, `vector` 확장을 설치한 로컬 PostgreSQL을 선택합니다.
+아래 명령은 **`app/api` 디렉터리**에서 실행합니다. `<local-user>`는 로컬 계정으로
+바꾸고 인증은 해당 PostgreSQL 설정을 사용합니다. `DB_URL`은 `localhost`, `127.0.0.1`
+또는 `::1`을 명시해야 하며 원격 DB는 테스트가 거부합니다. 테스트는 이름이 고유한
+임시 DB를 생성하고 종료 시 삭제하므로 해당 로컬 계정에는 DB 생성 권한이 필요합니다.
+
+```powershell
+$env:DB_URL = 'postgresql+asyncpg://<local-user>@127.0.0.1:5432/postgres'
+$env:RUN_HYBRID_E2E = '1'
+try {
+    .\.venv\Scripts\python.exe -m pytest tests/test_hybrid_end_to_end.py -q -s
+} finally {
+    Remove-Item Env:RUN_HYBRID_E2E -ErrorAction SilentlyContinue
+}
+```
+
+실행 예산은 **첫 학습 데이터용 Solver 작업 제출부터 모든 관련 Job의 프로세스·자원
+정리 완료까지 하나의 180초**입니다. Dataset 고정, kNN 학습·저장·등록, 새 추론 세션,
+Calculation과 Hybrid 검증이 모두 이 시간에 포함됩니다. 환경 준비·입력 빌드와 DB
+생성·삭제 시간은 별도로 기록하며 실행 예산을 단계마다 새로 시작하지 않습니다.
+이는 기준 로컬 환경의 예산이며 원격 대기나 더 큰 학습 집합의 완료 시간을 보장하지 않습니다.
+
+결과는 저장소의 `.work/hybrid-demo-acceptance.json`에 남습니다. 전체 테스트 시간과
+준비·실행·정리 시간, 학습·검증 Solver 횟수, 같은 Candidate의 예측·실제 목적값과 오차,
+모델·Dataset revision 및 checksum, 자원 정리 완료 여부를 함께 확인합니다.
