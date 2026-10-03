@@ -129,6 +129,87 @@ Keep the file selection explicit: `test_cae_end_to_end.py` also uses
 `RUN_CAE_DB_TESTS` and starts a real Solver. Optimization end-to-end execution has its own
 `RUN_OPTIMIZATION_E2E` opt-in. Neither belongs in a package-structure verification run.
 
+### Optimization regression baseline
+
+Run these commands from `app/api`. The default regression list uses fixed
+prediction/Solver results and saved model/Training Operation metadata. It does
+not connect to PostgreSQL, launch workers, or train a Predictor. It covers
+verified-best selection, JSON search/RNG recovery, duplicate completion,
+retry admission, and model handoff at round boundaries:
+
+```powershell
+$optimizationUnitTests = @(
+    'tests/test_optimization_algorithm.py'
+    'tests/test_optimization_search.py'
+    'tests/test_optimization_strategies.py'
+    'tests/test_hybrid_lifecycle.py'
+    'tests/test_optimization_update_policy.py'
+    'tests/test_optimization_versions.py'
+    'tests/test_hybrid_quality.py'
+    'tests/test_optimization_quality_comparison.py'
+    'tests/test_optimization_model_update_lifecycle.py'
+)
+poetry run python -m pytest @optimizationUnitTests -q --tb=short
+```
+
+For persistence and concurrent admission, set `DB_URL` to an explicitly selected
+loopback PostgreSQL server with `vector`, as above. These tests create and remove
+their own databases and supply fake stage results without Solver execution or
+model training. The budget cases assert that unstarted failure/cancellation
+returns a reservation, started failure/cancellation retains usage, duplicate
+notifications/retry requests count once, and Calculation retries reuse the
+existing Measurement without another Solver run:
+
+```powershell
+$optimizationDatabaseTests = @(
+    'tests/test_hybrid_optimization.py'
+    'tests/test_optimization_controller.py'
+    'tests/test_optimization_api.py::OptimizationPersistenceTests'
+)
+$previousOptimizationDbTests = $env:RUN_CAE_DB_TESTS
+try {
+    $env:RUN_CAE_DB_TESTS = '1'
+    poetry run python -m pytest @optimizationDatabaseTests -q --tb=short
+} finally {
+    $env:RUN_CAE_DB_TESTS = $previousOptimizationDbTests
+}
+```
+
+Keep both lists explicit. `test_optimization_model_updates.py`,
+`test_optimization_automatic_updates.py`, and their fixture consumers perform
+real kNN training even though they do not call a Solver; they are not part of
+this inexpensive baseline.
+
+After both lists pass, run exactly one real fixed-model Hybrid path using the
+same disposable-database setup. Check the checkout CLI with `doctor` first;
+if it is stale, rebuild the development CLI with `npm run build:cli` in `app/ui`
+and verify it from `app/api` with
+`node ../ui/dist-cli/caemble.cjs --repo ../.. doctor`. The fixture uses this
+development CLI to build the example; rebuilding it does not replace the
+packaged release used by the checkout wrapper.
+
+```powershell
+..\..\caemble.cmd doctor
+$previousFixedHybridE2e = $env:RUN_HYBRID_E2E
+try {
+    $env:RUN_HYBRID_E2E = '1'
+    poetry run python -m pytest tests/test_hybrid_end_to_end.py::HybridEndToEndTests::test_fixed_knn_revision_selects_real_verified_candidates_without_browser -q -s --tb=short
+} finally {
+    $env:RUN_HYBRID_E2E = $previousFixedHybridE2e
+}
+```
+
+This uses the existing `hybrid-box-conductor@1.0.0` example: three initial-data
+Solver Jobs, one initial kNN training operation, five predicted candidates,
+and three Hybrid Solver verifications. The existing 180-second flow deadline
+includes initial data, training, Hybrid execution, and Job/resource cleanup;
+environment setup and teardown are reported separately. Acceptance also checks
+saved history after reconnect, distinct prediction/verified results, and cleanup
+of processes, leases, reservations, and temporary databases. Evidence is written
+to `.work/hybrid-demo-acceptance.json` or `.work/hybrid-demo-last-failure.json`
+at the repository root. This command does not select other Hybrid variants,
+the CAE `full` suite, or all Catalog examples.
+
 ## Security and runtime boundaries
 
 - First-party UI requests use HttpOnly cookies, `/web`, and CSRF protection.

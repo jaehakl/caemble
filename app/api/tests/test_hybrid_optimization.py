@@ -215,6 +215,43 @@ class HybridOptimizationTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             self.assertEqual(await solver_budget(db, optimization), {"limit": 1, "used": 0, "reserved": 0, "remaining": 1})
 
+    async def test_failure_and_cancellation_return_only_unstarted_solver_reservations(self):
+        for started in (False, True):
+            for outcome in ("failed", "cancelled"):
+                with self.subTest(started=started, outcome=outcome):
+                    optimization_id = await self.hybrid(limit=2, count=1)
+                    _, _, evaluation_id = (await self.candidates(optimization_id, solver=True))[0]
+                    job_id = await self.submit_solver(optimization_id, evaluation_id)
+                    async with self.sessions() as db:
+                        optimization = await db.get(Optimization, optimization_id)
+                        self.assertEqual(await solver_budget(db, optimization),
+                            {"limit": 2, "used": 0, "reserved": 1, "remaining": 1})
+                    if started:
+                        await self.started(job_id)
+                    async with self.sessions() as db:
+                        await serialize_events(db)
+                        optimization = await db.get(Optimization, optimization_id)
+                        job = await db.get(Job, job_id)
+                        self.assertEqual(await solver_budget(db, optimization),
+                            {"limit": 2, "used": int(started), "reserved": int(not started), "remaining": 1})
+                        if outcome == "cancelled":
+                            await cancel_optimization(db, optimization)
+                        else:
+                            self.assertTrue(await finish_job(db, job, "failed", "fixture Solver failure"))
+                        await db.commit()
+                        self.assertEqual((job.state, job.started_at is not None), (outcome, started))
+                        # A repeated terminal notification must not spend or refund twice.
+                        self.assertFalse(await finish_job(db, job, outcome, "replayed terminal notification"))
+                        await db.commit()
+                    async with self.sessions() as db:
+                        optimization = await db.get(Optimization, optimization_id)
+                        self.assertEqual(await solver_budget(db, optimization),
+                            {"limit": 2, "used": int(started), "reserved": 0, "remaining": 2 - int(started)})
+                        item = await db.get(Evaluation, evaluation_id)
+                        self.assertEqual(item.state, outcome)
+                    self.assertEqual(sum(job.handler_type == "cae.simulation"
+                        for job in await self.jobs(optimization_id)), 1)
+
     async def test_solver_retry_reserves_once_and_final_failure_retains_used_budget(self):
         optimization_id = await self.hybrid(limit=2, count=1)
         _, _, evaluation_id = (await self.candidates(optimization_id, solver=True))[0]
