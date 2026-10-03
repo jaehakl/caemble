@@ -10,6 +10,8 @@ from simulation.services.batches import job_snapshot
 from simulation.services.source_bundle import require_experiment_source_bundle
 from optimization.db import Evaluation, EvaluationSubmission, StageSubmission, Optimization, Trial
 from optimization.schemas import OptimizationCreateRequest
+from optimization.guards import require_continuation
+from optimization.search import continuation_assessment, initialize_search
 from calculation.db import Calculation, CalculationExperimentRecord, CalculationSource
 from simulation.db import Experiment, ExperimentRecord
 from gpstation.db import Job
@@ -117,7 +119,7 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
     optimization = Optimization(user_id=user.id, experiment_id=experiment.id,
                   name=request.name.strip() if request.name and request.name.strip() else f"{experiment.name} optimization",
                   request_id=str(request.request_id), request_hash=digest, state="running", definition=definition,
-                  settings=settings, optimizer_state={})
+                  settings=settings, optimizer_state=initialize_search(settings))
     db.add(optimization)
     await db.flush()
     if request.hybrid is not None:
@@ -160,6 +162,7 @@ async def optimization_summaries(db, optimizations: list[Optimization]) -> list[
         totals, winner = by_optimization[optimization.id], best.get(optimization.best_trial_id)
         result.append({"id": optimization.id, "name": optimization.name, "experiment_id": optimization.experiment_id,
                        "state": optimization.state, "pause_reason": optimization.pause_reason,
+                       "continuation": continuation_assessment(optimization.settings, optimization.optimizer_state),
                        "created_at": optimization.created_at, "updated_at": optimization.updated_at, "finished_at": optimization.finished_at,
                        "max_trials": optimization.settings["max_trials"], "max_parallel": optimization.settings["max_parallel"],
                        "trial_count": sum(totals.values()), "succeeded": totals.get("succeeded", 0),
@@ -286,6 +289,7 @@ async def resume_optimization(db, optimization: Optimization) -> None:
     from optimization.model_updates import round_source, update_jobs
     from prediction.common import digest
     from prediction.training import cleanup_pending
+    require_continuation(optimization)
     if optimization.state == "running":
         return
     if optimization.state != "paused":
@@ -390,6 +394,7 @@ async def retry_evaluation(db, optimization_id, evaluation_id, request_id, user,
     if request_id in (evaluation.retry_requests or []):
         await db.commit()
         return await optimization_detail(db, optimization)
+    require_continuation(optimization)
     if optimization.state not in {"paused", "completed"} or evaluation.state != "failed":
         raise HTTPException(409, "Pause the Optimization and select a failed Evaluation to retry.")
     jobs = [job for _, job in await optimization_jobs(db, optimization.id)]

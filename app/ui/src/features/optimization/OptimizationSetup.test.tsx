@@ -94,7 +94,7 @@ it.each(['coordinate', 'random'] as const)(
   },
 )
 
-it.each(['omitted', 'failed', 'unassessed', 'automatic'])(
+it.each(['omitted', 'failed', 'unassessed', 'automatic', 'legacy-auto'])(
   'selects an older revision and submits optional quality conditions (%s) for the server to judge',
   async (scenario) => {
     const withQuality = scenario === 'failed' || scenario === 'unassessed'
@@ -124,7 +124,11 @@ it.each(['omitted', 'failed', 'unassessed', 'automatic'])(
       dataset_id: 'dataset',
       dataset_revision: 1,
       dataset_fingerprint: 'data-hash',
-      definition: { fingerprint: 'definition', algorithm: { kind: 'knn' } },
+      definition: {
+        fingerprint: 'definition',
+        algorithm: { kind: 'knn' },
+        ...(scenario === 'legacy-auto' ? { qualityValidation: { version: 1 } } : {}),
+      },
       source_contracts: {
         records: [{ id: 10, name: 'temperature', data_schema: { unit: 'K', boxGrid: { components: ['value'] } } }],
       },
@@ -202,10 +206,15 @@ it.each(['omitted', 'failed', 'unassessed', 'automatic'])(
     fireEvent.click(screen.getByLabelText('Forward Hybrid Optimization'))
     await screen.findByText('Saved kNN')
     fireEvent.change(screen.getByLabelText('저장된 Forward 모델'), { target: { value: 'model' } })
+    if (scenario === 'legacy-auto') fireEvent.click(screen.getByLabelText('자동 재학습'))
     fireEvent.change(screen.getByLabelText('모델 revision'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('모델 복제본 · 실행 Launcher'), { target: { value: 'replica:launcher' } })
     expect(screen.getByLabelText('Solver 실행 시도 예산')).toHaveValue(8)
     expect(screen.getByLabelText('자동 재학습')).not.toBeChecked()
+    if (scenario === 'legacy-auto') {
+      expect(screen.getByLabelText('자동 재학습')).toBeDisabled()
+      expect(screen.getByText(/모델 갱신과 자동 재학습에는 새 v2 모델이 필요합니다/)).toBeInTheDocument()
+    }
     if (scenario === 'automatic') {
       fireEvent.click(screen.getByLabelText('자동 재학습'))
       expect(screen.getByLabelText('갱신에 필요한 새 결과 수')).toHaveValue(3)

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from prediction_contracts import ALGORITHMS, QUALITY_VALIDATION_V1, validate_quality_report, validate_training_update
+from prediction_contracts import ALGORITHMS, QUALITY_VALIDATION_V1, QUALITY_VALIDATION_V2, validate_quality_report, validate_training_update
 from prediction_contracts.quality import split_fingerprint
 from predictor.archives import create_archive, unpack_archive
 from predictor.errors import PredictionError
@@ -62,7 +62,7 @@ def quality_training(tmp_path, monkeypatch):
     spec = {"operationId": "quality-operation", "pinId": "quality-pin", "storageId": worker.store.storage_id,
             "launcherId": worker.store.launcher_id, "sourceKind": "local", "canPin": True, "canRelease": False,
             "model": {"modelId": "quality-model", "revision": 1, "operationId": "quality-operation", "name": "Quality"},
-            "definition": {**definition(manifest), "qualityValidation": copy.deepcopy(QUALITY_VALIDATION_V1)}, "dataset": reference}
+            "definition": {**definition(manifest), "qualityValidation": copy.deepcopy(QUALITY_VALIDATION_V2)}, "dataset": reference}
     grant = authorize(monkeypatch, worker, spec)
     call(worker, "training.pin", grant=grant)
     return SimpleNamespace(worker=worker, manifest=manifest, reference=reference, spec=spec, grant=grant)

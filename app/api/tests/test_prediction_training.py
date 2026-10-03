@@ -16,11 +16,11 @@ from gpstation.service.state import utcnow
 from prediction import training
 from prediction.common import digest, require_dataset_idle
 from prediction.datasets import dataset_change_set, freeze_dataset, retire_server_payloads
-from prediction.db import Dataset, DatasetObject, DatasetRevision, ModelRevision, Operation, Replica, TrainingRun
+from prediction.db import Dataset, DatasetObject, DatasetRevision, ModelLease, ModelRevision, Operation, Replica, TrainingRun
 from prediction.grants import create_grant, read_granted_revision, release_grant, renew_grant
 from prediction.models import complete_model, model_view, reserve_model
 from prediction.replicas import put_replica
-from prediction_contracts.quality import QUALITY_VALIDATION_V1, split_fingerprint
+from prediction_contracts.quality import QUALITY_VALIDATION_V1, QUALITY_VALIDATION_V2, lineage_fingerprint, split_fingerprint
 from prediction.operations import expire_operation, list_operations
 import test_prediction_assets as assets
 from simulation.db import Measurement, RecordedData
@@ -39,6 +39,15 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
         self.previous_handler = server_handlers.get(training.HANDLER)
         register_server_handler(training.HANDLER, training, on_finished=training.on_finished)
         async with self.sessions() as db:
+            from optimization.db import Optimization
+            from optimization.search import initialize_search
+            search_settings = {"initial_vars": {"width": 2}, "axes": [], "max_trials": 5,
+                "objective": {"direction": "minimize"}, "constraints": []}
+            self.origins = {name: str(uuid4()) for name in ("A", "B")}
+            for name, identity in self.origins.items():
+                db.add(Optimization(id=identity, user_id=self.owner, experiment_id=self.experiment_id,
+                    name=name, request_id=str(uuid4()), request_hash="fixture", definition={},
+                    settings=search_settings, optimizer_state=initialize_search(search_settings)))
             launcher = await db.get(Launcher, self.launcher_id)
             launcher.slave_app_ids = ["predictor", "predictor-training"]
             launcher.job_modes = {"predictor": "webrtc", "predictor-training": "websocket"}
@@ -124,6 +133,90 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             job.cleaned_at = utcnow()
             await db.flush()
             await require_dataset_idle(db, dataset["id"])
+
+    async def test_saved_pending_v1_quality_rejects_new_training_without_changing_preflight(self):
+        async with self.sessions() as db:
+            _, reserved = await self.reserve(db)
+            identity = reserved["operation_id"]
+            nonce = str(uuid4())
+            prepared = await training.preflight(db, identity, nonce, self.owner)
+            revision = await db.get(ModelRevision, (reserved["id"], 1))
+            revision.definition = {**revision.definition, "qualityValidation": QUALITY_VALIDATION_V1}
+            await db.commit()
+            run = await db.get(TrainingRun, identity)
+            pin = (run.pin_id, run.preflight_request_id, run.preflight_expires_at)
+            leases = await db.scalar(select(func.count()).select_from(ModelLease).where(ModelLease.model_id == reserved["id"]))
+            replay = await training.preflight(db, identity, nonce, self.owner)
+            self.assertEqual(replay["training"]["pinId"], prepared["training"]["pinId"])
+            with self.assertRaises(HTTPException) as preflight:
+                await training.preflight(db, identity, str(uuid4()), self.owner)
+            with self.assertRaises(HTTPException) as submit:
+                await training.submit(db, identity, self.owner)
+            for error in (preflight.exception, submit.exception):
+                self.assertEqual(error.status_code, 422)
+                self.assertIn("create a fresh model", error.detail)
+            self.assertEqual((run.pin_id, run.preflight_request_id, run.preflight_expires_at), pin)
+            self.assertIsNone(run.job_id)
+            self.assertEqual((await db.get(Operation, identity)).state, "pending")
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Job).where(Job.user_id == self.owner)), 0)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ModelLease).where(ModelLease.model_id == reserved["id"])), leases)
+
+    async def test_saved_v1_training_submission_receipts_still_replay_without_new_jobs(self):
+        async with self.sessions() as db:
+            _, reserved = await self.reserve(db)
+            identity = reserved["operation_id"]
+            initial = await training.submit(db, identity, self.owner)
+            await self.mark_failed(db, await db.get(Job, initial["training"]["jobId"]))
+            nonce = str(uuid4())
+            await training.preflight(db, identity, nonce, self.owner)
+            retried = await training.submit(db, identity, self.owner, retry_request_id=nonce)
+            await self.mark_failed(db, await db.get(Job, retried["training"]["jobId"]))
+            revision = await db.get(ModelRevision, (reserved["id"], 1))
+            revision.definition = {**revision.definition, "qualityValidation": QUALITY_VALIDATION_V1}
+            await db.commit()
+            run = await db.get(TrainingRun, identity)
+            pin = run.pin_id
+            for replay in (
+                await training.submit(db, identity, self.owner),
+                await training.submit(db, identity, self.owner, retry_request_id=nonce),
+                await training.preflight(db, identity, nonce, self.owner),
+            ):
+                self.assertEqual(replay["training"]["jobId"], retried["training"]["jobId"])
+            with self.assertRaises(HTTPException) as rejected:
+                await training.preflight(db, identity, str(uuid4()), self.owner)
+            self.assertEqual(rejected.exception.status_code, 422)
+            self.assertEqual(run.pin_id, pin)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Job).where(Job.user_id == self.owner)), 2)
+
+    async def test_linked_training_admission_rejects_legacy_origin_without_new_jobs_or_pins(self):
+        from optimization.db import Optimization
+        async with self.sessions() as db:
+            _, reserved, _ = await self.reserve_update(db, online_origin={
+                "optimization_id": self.origins["A"], "optimization_name": "Fixture"})
+            identity = reserved["operation_id"]
+            nonce = str(uuid4())
+            prepared = await training.preflight(db, identity, nonce, self.owner)
+            origin = await db.get(Optimization, self.origins["A"])
+            self.assertEqual(origin.optimizer_state["search_version"], 2)
+            origin.optimizer_state = {"search_version": 1}
+            await db.commit()
+            run = await db.get(TrainingRun, identity)
+            pin = (run.pin_id, run.preflight_request_id, run.preflight_expires_at)
+            leases = await db.scalar(select(func.count()).select_from(ModelLease).where(ModelLease.model_id == reserved["id"]))
+            replay = await training.preflight(db, identity, nonce, self.owner)
+            self.assertEqual(replay["training"]["pinId"], prepared["training"]["pinId"])
+            with self.assertRaises(HTTPException) as preflight:
+                await training.preflight(db, identity, str(uuid4()), self.owner)
+            with self.assertRaises(HTTPException) as submit:
+                await training.submit(db, identity, self.owner)
+            for error in (preflight.exception, submit.exception):
+                self.assertEqual(error.status_code, 409)
+                self.assertEqual(error.detail["code"], "optimization_version_unsupported")
+            self.assertEqual((run.pin_id, run.preflight_request_id, run.preflight_expires_at), pin)
+            self.assertIsNone(run.job_id)
+            self.assertEqual((await db.get(Operation, identity)).state, "pending")
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Job).where(Job.user_id == self.owner)), 0)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ModelLease).where(ModelLease.model_id == reserved["id"])), leases)
 
     async def test_mlp_resources_freeze_at_reservation_and_survive_configuration_changes_and_retry(self):
         async with self.sessions() as db:
@@ -302,7 +395,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             dataset = await freeze_dataset(db, self.selection(), self.owner)
             definition = {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1",
                 "preprocessingVersion": "box-relative-v2", "fingerprint": "sha256:" + "c" * 64,
-                "snapshotFingerprint": dataset["revisions"][0]["fingerprint"], "qualityValidation": QUALITY_VALIDATION_V1}
+                "snapshotFingerprint": dataset["revisions"][0]["fingerprint"], "qualityValidation": QUALITY_VALIDATION_V2}
             reserved = await reserve_model(db, self.model_request(dataset, definition=definition), self.owner)
             submitted = await training.submit(db, reserved["operation_id"], self.owner)
             job = await db.get(Job, submitted["training"]["jobId"])
@@ -312,10 +405,15 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as missing:
                 await training.complete_job(db, job, {"artifact": artifact})
             self.assertEqual(missing.exception.status_code, 422)
-            split = {"version": 1, "seed": 0, "holdoutFraction": .2, "trainingMeasurementIds": identities[:4],
+            source = {"datasetId": dataset["id"], "revision": 1, "fingerprint": definition["snapshotFingerprint"]}
+            lineage = {"rootSnapshot": source,
+                "validationGroups": [{"designFingerprint": "d" * 64, "measurementIds": identities[4:]}]}
+            lineage["fingerprint"] = lineage_fingerprint(lineage, QUALITY_VALIDATION_V2)
+            split = {"version": 2, "seed": 0, "holdoutFraction": .2, "trainingMeasurementIds": identities[:4],
+                "lineageFingerprint": lineage["fingerprint"],
                 "validationMeasurementIds": identities[4:], "trainingGroupCount": 4, "validationGroupCount": 1, "excluded": []}
             split["fingerprint"] = split_fingerprint(split)
-            quality = {"version": 1, "evaluation": "pre-save-holdout", "status": "complete",
+            quality = {"version": 2, "evaluation": "pre-save-holdout", "status": "complete", "lineage": lineage,
                 "dataset": {"datasetId": dataset["id"], "revision": 1, "fingerprint": definition["snapshotFingerprint"]},
                 "definitionFingerprint": definition["fingerprint"], "split": split, "records": [{
                     "recordId": self.record_id, "key": "temperature", "unit": "K", "status": "evaluated",
@@ -562,7 +660,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
     async def test_update_retry_retains_exact_snapshot_across_newer_freezes_and_cleanup(self):
         async with self.sessions() as db:
             target, reserved, update = await self.reserve_update(db,
-                online_origin={"optimization_id": 12, "optimization_name": "Fixture"})
+                online_origin={"optimization_id": self.origins["A"], "optimization_name": "Fixture"})
             submitted = await training.submit(db, reserved["operation_id"], self.owner)
             measurement = await db.get(Measurement, self.measurement_id)
             measurement.vars = {"width": 5}
@@ -629,7 +727,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_reservation_cannot_cancel_active_optimization_update(self):
         async with self.sessions() as db:
             target, reserved, _ = await self.reserve_update(db,
-                online_origin={"optimization_id": 12, "optimization_name": "Fixture"})
+                online_origin={"optimization_id": self.origins["A"], "optimization_name": "Fixture"})
             with self.assertRaises(HTTPException) as busy:
                 await reserve_model(db, self.model_request(target, model_id=reserved["id"], expected_revision=1), self.owner)
             self.assertEqual(busy.exception.status_code, 409)
@@ -652,13 +750,13 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_optimization_update_retries_after_another_origin_publishes(self):
         async with self.sessions() as db:
             target, first, update = await self.reserve_update(db,
-                online_origin={"optimization_id": "origin-a", "optimization_name": "A"})
+                online_origin={"optimization_id": self.origins["A"], "optimization_name": "A"})
             submitted = await training.submit(db, first["operation_id"], self.owner)
             await self.mark_failed(db, await db.get(Job, submitted["training"]["jobId"]))
             definition = (await db.get(ModelRevision, (first["id"], 2))).definition
             second = await reserve_model(db, self.model_request(target, model_id=first["id"], expected_revision=1,
                 definition=definition, training_update=update), self.owner,
-                online_origin={"optimization_id": "origin-b", "optimization_name": "B"}, force_api_source=True)
+                online_origin={"optimization_id": self.origins["B"], "optimization_name": "B"}, force_api_source=True)
             second_job = await training.submit(db, second["operation_id"], self.owner)
             job = await db.get(Job, second_job["training"]["jobId"])
             job.launcher_id = self.launcher_id
@@ -680,7 +778,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             third = await reserve_model(db, self.model_request(target, model_id=first["id"], expected_revision=3,
                 definition=definition, training_update=update), self.owner,
-                online_origin={"optimization_id": "origin-a", "optimization_name": "A"}, force_api_source=True)
+                online_origin={"optimization_id": self.origins["A"], "optimization_name": "A"}, force_api_source=True)
             await training.cancel(db, await db.get(Operation, third["operation_id"]))
             await db.commit()
             with self.assertRaises(HTTPException) as superseded:

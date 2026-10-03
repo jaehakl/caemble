@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { predictionExecutionMetricsSchema, predictionQualityReportSchema } from '@/contracts/api/prediction'
 import { PredictionModelReports } from './PredictionModelReports'
-import { executionMetricsFixture, qualityReportFixture } from './qualityReport.fixture'
+import { executionMetricsFixture, qualityReportFixture, qualityReportV2Fixture } from './qualityReport.fixture'
 
 it('parses stored reports and rejects nonfinite error metrics at the API boundary', () => {
   expect(predictionQualityReportSchema.parse(qualityReportFixture)).toEqual(qualityReportFixture)
@@ -45,7 +45,20 @@ it('distinguishes saved execution certification from held-out error and measured
   expect(screen.getByRole('cell', { name: '0.5' })).toBeInTheDocument()
   expect(screen.getByLabelText('학습·품질 평가 측정')).toHaveTextContent('8 MiB')
   expect(screen.getByLabelText('전체 학습 실행 측정')).toHaveTextContent('측정 불가')
-  expect(screen.getByText(/자동 채택 기준으로 사용하지 않습니다/)).toBeInTheDocument()
+  expect(screen.getByText(/Hybrid 채택에는 지정한 RMSE 상한을 적용합니다/)).toBeInTheDocument()
+  expect(screen.getByText(/이전 품질 보고서\(v1\)/)).toBeInTheDocument()
+})
+
+it('requires the fixed validation lineage for v2 reports while retaining v1 reads', () => {
+  expect(predictionQualityReportSchema.parse(qualityReportV2Fixture)).toEqual(qualityReportV2Fixture)
+  expect(predictionQualityReportSchema.safeParse({ ...qualityReportV2Fixture, lineage: undefined }).success).toBe(false)
+  expect(predictionQualityReportSchema.safeParse({ ...qualityReportV2Fixture, version: 3 }).success).toBe(false)
+  expect(
+    predictionQualityReportSchema.safeParse({ ...qualityReportV2Fixture, split: qualityReportFixture.split }).success,
+  ).toBe(false)
+  render(<PredictionModelReports artifact={{ quality_report: qualityReportV2Fixture }} />)
+  expect(screen.getByText(/최초 Dataset revision 1의 검증 표본을 고정/)).toBeInTheDocument()
+  expect(screen.queryByText(/이전 품질 보고서\(v1\)/)).not.toBeInTheDocument()
 })
 
 it('shows partial outputs and reasons without inventing accuracy for unavailable records', () => {

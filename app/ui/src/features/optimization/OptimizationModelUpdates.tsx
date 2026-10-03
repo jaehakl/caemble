@@ -72,6 +72,9 @@ export function OptimizationModelUpdates({
   const initial = update?.initial_model ?? optimization.definition.hybrid
   if (!initial) return null
   const active = update?.active_model ?? initial
+  const definition = active.model_definition as { qualityValidation?: { version?: unknown } } | undefined
+  const legacyQuality = definition?.qualityValidation?.version === 1
+  const updateBlockedReason = legacyQuality ? '모델 갱신에는 새 품질 평가 v2 모델이 필요합니다.' : null
   const latest = update?.updates[update.updates.length - 1]
   const waiting =
     update?.waiting ||
@@ -85,12 +88,19 @@ export function OptimizationModelUpdates({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="font-semibold">Hybrid 모델</h4>
         {['running', 'paused'].includes(optimization.state) ? (
-          <Button size="sm" variant="outline" disabled={busy || waiting} onClick={onUpdate}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || waiting || !optimization.continuation.supported || legacyQuality}
+            title={optimization.continuation.reason ?? updateBlockedReason ?? undefined}
+            onClick={onUpdate}
+          >
             <RefreshCw className="size-3.5" />
             모델 갱신
           </Button>
         ) : null}
       </div>
+      {updateBlockedReason ? <p role="status">{updateBlockedReason}</p> : null}
       {policy ? (
         <div aria-label="자동 재학습 상태" className="space-y-1">
           <p>
@@ -150,7 +160,10 @@ export function OptimizationModelUpdates({
       {latest?.quality_assessment ? (
         <OptimizationQuality assessment={latest.quality_assessment} label="최근 갱신 모델 품질" />
       ) : null}
-      {latest && ['failed', 'interrupted', 'cancelled', 'timed_out'].includes(latest.state) ? (
+      {latest &&
+      optimization.continuation.supported &&
+      !legacyQuality &&
+      ['failed', 'interrupted', 'cancelled', 'timed_out'].includes(latest.state) ? (
         <p>
           <Link className="underline" to="/settings/prediction">
             Prediction 관리
@@ -176,6 +189,20 @@ export function OptimizationModelUpdates({
                     </p>
                     <p className="text-muted-foreground">Operation {item.operation_id}</p>
                     {item.adopted_round != null ? <p>{item.adopted_round}회차부터 사용</p> : null}
+                    {item.quality_comparison ? (
+                      <div aria-label={`${item.version_name} 품질 비교`} className="mt-1 space-y-1">
+                        <p>같은 검증 표본의 RMSE · 차이 = 신규 − 이전</p>
+                        {item.quality_comparison.items.map((comparison) => (
+                          <p key={`${comparison.recordId}:${comparison.component}`}>
+                            Record {comparison.recordId} · {comparison.component}: 이전{' '}
+                            {Number(comparison.previous_rmse.toPrecision(5))} → 신규{' '}
+                            {Number(comparison.current_rmse.toPrecision(5))} · 차이 {comparison.delta > 0 ? '+' : ''}
+                            {Number(comparison.delta.toPrecision(5))} {comparison.unit}
+                          </p>
+                        ))}
+                        <p className="text-muted-foreground">채택 판정에는 설정한 RMSE 상한을 적용합니다.</p>
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>

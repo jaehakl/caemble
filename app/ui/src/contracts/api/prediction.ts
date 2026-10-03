@@ -14,7 +14,7 @@ const revision = z.number().int().nonnegative()
 const definition = z.object({ fingerprint: z.string().min(1) }).passthrough()
 const measurementIds = z.array(z.number().int().positive())
 const excludedMeasurements = z.array(z.object({ measurementId: z.number().int().positive(), reason: z.string() }))
-export const predictionQualityReportSchema = z.object({
+const predictionQualityReportV1Schema = z.object({
   version: z.literal(1),
   evaluation: z.literal('pre-save-holdout'),
   status: z.enum(['complete', 'partial']),
@@ -52,6 +52,21 @@ export const predictionQualityReportSchema = z.object({
     }),
   ),
 })
+export const predictionQualityReportSchema = z.discriminatedUnion('version', [
+  predictionQualityReportV1Schema,
+  predictionQualityReportV1Schema.extend({
+    version: z.literal(2),
+    split: predictionQualityReportV1Schema.shape.split.extend({
+      version: z.literal(2),
+      lineageFingerprint: z.string(),
+    }),
+    lineage: z.object({
+      rootSnapshot: predictionQualityReportV1Schema.shape.dataset,
+      validationGroups: z.array(z.object({ designFingerprint: z.string(), measurementIds })),
+      fingerprint: z.string(),
+    }),
+  }),
+])
 export type PredictionQualityReport = z.infer<typeof predictionQualityReportSchema>
 export const predictionExecutionMetricsSchema = z
   .object({

@@ -11,6 +11,8 @@ from sqlalchemy import Text, select
 
 from optimization.algorithm import next_round, trial_rank
 from optimization.db import Evaluation, StageSubmission, Optimization, Trial
+from optimization.guards import require_continuation
+from optimization.search import continuation_assessment
 from optimization.evaluations import ensure_evaluation, project_solver, solver_budget, submission_evaluations
 from optimization.submissions import submit_stage
 from db import SessionLocal
@@ -36,7 +38,7 @@ async def optimization_jobs(db, optimization_id):
                                   .where(Trial.optimization_id == optimization_id).order_by(Job.id))).all())
 
 
-async def cancel_optimization(db, optimization, reason="user"):
+async def cancel_optimization(db, optimization, reason="user", *, origin="user"):
     """Caller holds the event/Optimization locks and commits before cancellation delivery."""
     if optimization.state == "completed":
         return
@@ -52,16 +54,17 @@ async def cancel_optimization(db, optimization, reason="user"):
     for submission, job in await optimization_jobs(db, optimization.id):
         if job.state not in SERVER_ACTIVE_STATES:
             continue
-        job.artifact_metadata = {**(job.artifact_metadata or {}), "optimization_cancel_reason": "user"}
+        job.artifact_metadata = {**(job.artifact_metadata or {}), "optimization_cancel_reason": origin}
         job.cancel_requested_at = utcnow()
         await finish_job(db, job, "cancelled", optimization.pause_reason)
     optimization.updated_at = utcnow()
 
 
 async def request_retry(db, optimization, trial, request_id):
-    evaluation = await ensure_evaluation(db, optimization, trial)
     if trial.retry_request_id == request_id or request_id in (trial.retry_requests or []):
         return
+    require_continuation(optimization)
+    evaluation = await ensure_evaluation(db, optimization, trial)
     if optimization.state != "paused" or trial.state != "failed":
         raise HTTPException(409, "Pause the Optimization and select a failed Trial to retry.")
     jobs = await optimization_jobs(db, optimization.id)
@@ -152,7 +155,52 @@ async def on_job_finished(db, job, result=None):
                 optimization.best_trial_id = trial.id
 
 
+async def reconcile_incompatible(db, optimization, reason):
+    """Drain old executions without interpreting their numerical search state."""
+    from optimization.model_updates import cancel_updates, model_state, update_jobs
+    from prediction.db import Operation
+    from prediction.training import cleanup_pending
+
+    jobs = await optimization_jobs(db, optimization.id)
+    for submission, job in jobs:
+        if job.state in TERMINAL_STATES and submission.state not in TERMINAL_STATES:
+            await on_job_finished(db, job)
+    children = list((await db.scalars(select(Job).where(
+        Job.artifact_metadata["optimization_id"].astext == optimization.id,
+        Job.artifact_metadata.has_key("optimization_parent"),
+    ))).all())
+    training_jobs = await update_jobs(db, optimization)
+    update_ids = [item["operation_id"] for item in (model_state(optimization) or {}).get("updates", [])]
+    pending_training = await db.scalar(select(Operation.id).where(Operation.id.in_(update_ids),
+        Operation.state.in_(["pending", "queued", "running"])).limit(1)) if update_ids else None
+    retrying = await db.scalar(select(Trial.id).where(Trial.optimization_id == optimization.id,
+        Trial.manual_retry_requested).limit(1))
+    if retrying is None:
+        retrying = await db.scalar(select(Evaluation.id).where(Evaluation.optimization_id == optimization.id,
+            Evaluation.manual_retry_requested).limit(1))
+    owned_jobs = [job for _, job in jobs] + children + training_jobs
+    active = any(job.state in SERVER_ACTIVE_STATES for job in owned_jobs)
+    if optimization.state not in {"paused", "completed"} or active or pending_training or retrying:
+        completed = optimization.state == "completed"
+        if completed:
+            # Completed history stays terminal, including explicitly retried training.
+            await cancel_updates(db, optimization)
+        else:
+            await cancel_optimization(db, optimization, reason, origin="version")
+        for job in owned_jobs:
+            if job.state in SERVER_ACTIVE_STATES:
+                job.artifact_metadata = {**(job.artifact_metadata or {}), "optimization_cancel_reason": "version"}
+                job.cancel_requested_at = utcnow()
+                await finish_job(db, job, "cancelled", reason)
+        if not completed and not any(cleanup_pending(job) for job in owned_jobs):
+            optimization.state = "paused"
+        optimization.updated_at = utcnow()
+
+
 async def reconcile_optimization(db, optimization, catalog):
+    compatibility = continuation_assessment(optimization.settings, optimization.optimizer_state)
+    if not compatibility["supported"]:
+        return await reconcile_incompatible(db, optimization, compatibility["reason"])
     if optimization.settings.get("hybrid"):
         from optimization.hybrid import reconcile_hybrid
         return await reconcile_hybrid(db, optimization, catalog)
@@ -176,7 +224,10 @@ async def reconcile_optimization(db, optimization, catalog):
         optimization.pause_reason = "Retry failed Trials before resuming this Optimization."
         return
     if optimization.state == "running":
-        state, candidates, completed = next_round(trials, optimization.settings, optimization.optimizer_state)
+        observations = list((await db.scalars(select(Evaluation).where(
+            Evaluation.optimization_id == optimization.id))).all())
+        state, candidates, completed = next_round(trials, optimization.settings, optimization.optimizer_state,
+            evaluations=observations)
         optimization.optimizer_state = state
         for candidate in candidates:
             trial = Trial(optimization_id=optimization.id, **candidate, state="pending", next_stage="build", manual_retry_requested=False)
@@ -259,7 +310,8 @@ async def reconcile_once(catalog):
     # the command is safe: launcher cancellation uses the complete attempt ID.
     async with SessionLocal() as db:
         cancelled = list((await db.scalars(select(Job).outerjoin(StageSubmission, StageSubmission.job_id == Job.id).where(
-            StageSubmission.id.is_not(None) | ((Job.handler_type == "prediction.train") & Job.artifact_metadata.has_key("optimization_id")),
+            StageSubmission.id.is_not(None) | ((Job.handler_type == "prediction.train") & Job.artifact_metadata.has_key("optimization_id"))
+            | Job.artifact_metadata.has_key("optimization_parent"),
             Job.cancel_requested_at.is_not(None), Job.launcher_id.is_not(None), Job.cleaned_at.is_(None),
         ))).all())
     for job in cancelled:

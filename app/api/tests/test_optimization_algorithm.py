@@ -7,6 +7,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from optimization.algorithm import coordinate_candidates, evaluate_metrics, next_round, prepare_axes, variables_fingerprint
+from optimization.search import initialize_search
 
 
 class OptimizationAlgorithmTests(unittest.TestCase):
@@ -73,7 +74,7 @@ class OptimizationAlgorithmTests(unittest.TestCase):
     def test_rounds_budget_and_completion_order(self):
         settings = {"initial_vars": {"x": 0.5}, "axes": prepare_axes({"x": {"shape": [], "min": 0, "max": 1}}, {"x": 0.5}),
                     "objective": {"direction": "maximize"}, "max_trials": 5, "constraints": []}
-        state, definitions, done = next_round([], settings, {})
+        state, definitions, done = next_round([], settings, initialize_search(settings))
         trials = []
         while not done:
             for definition in definitions:
@@ -85,15 +86,16 @@ class OptimizationAlgorithmTests(unittest.TestCase):
         self.assertEqual(len({trial.fingerprint for trial in trials}), len(trials))
 
     def test_failed_round_waits_for_explicit_retry(self):
-        trial = SimpleNamespace(id="1", ordinal=1, state="failed")
-        state, candidates, done = next_round([trial], {"initial_step": .25}, {})
+        settings = {"initial_vars": {"x": 0.5}, "axes": [], "objective": {"direction": "minimize"}, "max_trials": 5}
+        trial = SimpleNamespace(id="1", ordinal=1, variables={"x": 0.5}, fingerprint="one", state="failed")
+        state, candidates, done = next_round([trial], settings, initialize_search(settings))
         self.assertFalse(done)
         self.assertEqual(candidates, [])
 
     def test_coordinate_round_reuses_known_candidate_without_resubmitting_it(self):
         settings = {"initial_vars": {"x": 0.5}, "axes": prepare_axes({"x": {"shape": [], "min": 0, "max": 1}}, {"x": 0.5}),
                     "objective": {"direction": "minimize"}, "max_trials": 6}
-        trials, state, generated_rounds, memberships = [], {}, [], []
+        trials, state, generated_rounds, memberships = [], initialize_search(settings), [], []
         for _ in range(8):
             state, candidates, done = next_round(trials, settings, state)
             if candidates:
@@ -107,7 +109,8 @@ class OptimizationAlgorithmTests(unittest.TestCase):
         self.assertTrue(done)
         self.assertEqual(generated_rounds, [[0.5], [0.75, 0.25], [0], [0.375, 0.125]])
         self.assertEqual(memberships, [[1], [2, 3], [1, 4], [5, 6]])
-        self.assertEqual((state["incumbent_ordinal"], state["step"]), (3, 0.0625))
+        data = state["algorithm_state"]["data"]
+        self.assertEqual((data["incumbent_ordinal"], data["step"]), (3, 0.0625))
 
 
 if __name__ == "__main__":

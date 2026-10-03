@@ -341,6 +341,29 @@ it('resumes dormant pending Trials when there are no failed Trials or active exe
   expect(await screen.findByText('재개')).toBeEnabled()
 })
 
+it.each(['paused', 'running'])('keeps incompatible %s history readable while blocking new work', async (state) => {
+  const reason = 'Stored search state is unsupported. Create a new Optimization.'
+  vi.mocked(optimizationApi.read).mockResolvedValue({
+    ...hybridOptimizationFixture,
+    state,
+    continuation: { supported: false, reason },
+  })
+  renderManagement()
+  expect(await screen.findByText(reason)).toBeInTheDocument()
+  expect(await screen.findByText('실패 단계 재시도')).toBeDisabled()
+  expect(screen.getByRole('button', { name: '모델 갱신' })).toBeDisabled()
+  if (state === 'paused') {
+    expect(screen.getByRole('button', { name: '재개' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '삭제' })).toBeEnabled()
+  } else {
+    expect(screen.getByRole('button', { name: '중지' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '삭제' })).toBeDisabled()
+  }
+  expect(screen.getByText('Job solve-job')).toBeInTheDocument()
+  expect(optimizationApi.retry).not.toHaveBeenCalled()
+  expect(optimizationApi.modelUpdate).not.toHaveBeenCalled()
+})
+
 it('keeps ambiguous transport retries idempotent but advances after an accepted retry fails before submission', async () => {
   vi.mocked(optimizationApi.retry)
     .mockRejectedValueOnce(new Error('Connection lost'))

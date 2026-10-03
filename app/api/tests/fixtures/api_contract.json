@@ -13586,6 +13586,16 @@
                   "type": "null"
                 }
               ]
+            },
+            "model_update_policy": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ModelUpdatePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false,
@@ -13820,6 +13830,60 @@
           "additionalProperties": false,
           "type": "object",
           "title": "VerificationPolicy"
+        },
+        "ModelUpdateConfig": {
+          "properties": {
+            "min_new_measurements": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Min New Measurements",
+              "default": 3
+            },
+            "max_updates": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Max Updates",
+              "default": 3
+            },
+            "update_timeout_seconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Update Timeout Seconds",
+              "default": 180
+            },
+            "total_timeout_seconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0.0,
+              "title": "Total Timeout Seconds",
+              "default": 540
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "ModelUpdateConfig"
+        },
+        "ModelUpdatePolicy": {
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "new_solver_results",
+              "title": "Id",
+              "default": "new_solver_results"
+            },
+            "version": {
+              "type": "integer",
+              "maximum": 1.0,
+              "minimum": 1.0,
+              "title": "Version",
+              "default": 1
+            },
+            "config": {
+              "$ref": "#/components/schemas/ModelUpdateConfig"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "ModelUpdatePolicy"
         }
       }
     }

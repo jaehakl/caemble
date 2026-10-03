@@ -6,6 +6,7 @@ import {
   defaultMlpAlgorithm,
   defaultPredictionQualityValidation,
   predictionAlgorithmSchema,
+  predictionQualityValidationSchema,
 } from './modelDefinition'
 
 const sourceContracts = {
@@ -32,6 +33,19 @@ it('preserves the pre-MLP kNN definition fingerprint exactly', async () => {
   expect(definition.algorithm).toEqual(defaultKnnAlgorithm)
   expect(definition).not.toHaveProperty('qualityValidation')
   expect(await buildPredictionModelDefinition({ ...input, recordIds: [5, 5] })).toEqual(definition)
+})
+
+it('uses quality v2 for new models and retains distinct v1 definition identity for stored models', async () => {
+  expect(defaultPredictionQualityValidation.version).toBe(2)
+  const legacy = { ...defaultPredictionQualityValidation, version: 1 as const }
+  expect(predictionQualityValidationSchema.parse(legacy)).toEqual(legacy)
+  const previous = await buildPredictionModelDefinition({ ...input, qualityValidation: legacy })
+  const current = await buildPredictionModelDefinition({
+    ...input,
+    qualityValidation: defaultPredictionQualityValidation,
+  })
+  expect(previous.fingerprint).not.toBe(current.fingerprint)
+  expect(predictionQualityValidationSchema.safeParse({ ...legacy, version: 3 }).success).toBe(false)
 })
 
 it('freezes every MLP setting and the same held-out quality policy in model identity', async () => {

@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from optimization.algorithm import prepare_axes, variables_fingerprint
-from optimization.search import advance_search, generate_coordinate_round, select_verifications
+from optimization.search import advance_search, initialize_search, select_verifications
 
 
 class HybridSelectionTests(unittest.TestCase):
@@ -35,9 +35,9 @@ class HybridSelectionTests(unittest.TestCase):
         settings = {"initial_vars": {"x": [4]}, "initial_step": 0.25, "min_step": 0.001, "max_trials": 3,
                     "objective": {"direction": "minimize"}, "axes": [{"name": "x", "indices": [0], "min": 0, "max": 10, "fixed": False}]}
         state, generated, selected, reason = advance_search(trials, evaluations, settings,
-            {"round_ordinals": [1], "selection": ["1"], "round_index": 0}, {"remaining": 2})
+            {**initialize_search(settings), "round_ordinals": [1], "selection": ["1"], "round_index": 0}, {"remaining": 2})
         self.assertEqual((generated, selected, reason), ([], ["3", "2"], None))
-        self.assertEqual(state["incumbent_ordinal"], 1)
+        self.assertEqual(state["algorithm_state"]["data"]["incumbent_ordinal"], 1)
         self.assertEqual(state["selections"][-1]["trial_ids"], selected)
 
 
@@ -60,7 +60,7 @@ class HybridSearchTests(unittest.TestCase):
     def test_multiple_rounds_preserve_history_and_resume_from_json(self):
         def run(resume):
             trials, evaluations, trace = [], [], []
-            state = {"runtime_id": "saved-runtime", "future_metadata": {"values": [1, 2]}}
+            state = {**initialize_search(self.settings), "runtime_id": "saved-runtime", "future_metadata": {"values": [1, 2]}}
             for _ in range(30):
                 if resume:
                     state = json.loads(json.dumps(state))
@@ -96,16 +96,20 @@ class HybridSearchTests(unittest.TestCase):
                          [[0.5], [0.75, 0.25], [0], [0.375, 0.125], [0.3125, 0.1875]])
         self.assertEqual([selected for _, _, selected, _ in trace if selected],
                          [["1"], ["2", "3"], ["4"], ["5", "6"], ["7", "8"]])
-        self.assertEqual((trace[-1][0]["incumbent_ordinal"], trace[-1][3]), (3, "candidate_limit"))
+        self.assertEqual((trace[-1][0]["algorithm_state"]["data"]["incumbent_ordinal"], trace[-1][3]), (3, "candidate_limit"))
 
-    def test_prediction_winner_and_failed_solver_cannot_move_center(self):
+    def test_failed_solver_waits_for_retry_before_observing_predictions_or_moving_center(self):
         trials = [self.trial(1, 0.5), self.trial(2, 0.75), self.trial(3, 0.25)]
         evaluations = [self.evaluation(trial, "prediction", -trial.ordinal) for trial in trials]
         evaluations.extend([self.evaluation(trials[0], "solver", 10),
                             self.evaluation(trials[1], "solver", -100, state="failed")])
-        state, generated, selected, reason = advance_search(trials, evaluations, self.settings,
-            {"round_ordinals": [1, 2, 3], "selection": ["1", "2"]}, {"remaining": 3})
-        self.assertEqual(state["incumbent_ordinal"], 1)
+        initial = {**initialize_search(self.settings), "round_ordinals": [1, 2, 3], "selection": ["1", "2"]}
+        state, generated, selected, reason = advance_search(trials, evaluations, self.settings, initial, {"remaining": 3})
+        self.assertEqual((state, generated, selected, reason), (initial, [], [], None))
+        evaluations[-1].state = "succeeded"
+        evaluations[-1].result["objective"] = 20
+        state, generated, selected, reason = advance_search(trials, evaluations, self.settings, state, {"remaining": 3})
+        self.assertEqual(state["algorithm_state"]["data"]["incumbent_ordinal"], 1)
         self.assertEqual([item["variables"]["x"] for item in generated], [0.625, 0.375])
         self.assertEqual((selected, reason), ([], None))
 
@@ -114,7 +118,7 @@ class HybridSearchTests(unittest.TestCase):
         evaluations = [self.evaluation(trial, "prediction", 1)]
         for used, reserved, reason in ((1, 1, None), (2, 0, "solver_budget_exhausted")):
             with self.subTest(used=used, reserved=reserved):
-                result = advance_search([trial], evaluations, self.settings, {},
+                result = advance_search([trial], evaluations, self.settings, initialize_search(self.settings),
                     {"limit": 2, "used": used, "reserved": reserved, "remaining": 0})
                 self.assertEqual(result[1:], ([], [], reason))
 
@@ -126,16 +130,19 @@ class HybridSearchTests(unittest.TestCase):
                 with self.subTest(kind=kind, state=status):
                     evaluations = [self.evaluation(trial, "prediction", 1)] if kind == "solver" else []
                     evaluations.append(self.evaluation(trial, kind, 1, state=status))
-                    result = advance_search([trial], evaluations, self.settings, {}, {"remaining": 1})
+                    result = advance_search([trial], evaluations, self.settings, initialize_search(self.settings), {"remaining": 1})
                     self.assertEqual(result[1:], ([], [], None))
 
     def test_candidate_generation_skips_known_vars_and_preserves_input_state(self):
         trials = [self.trial(1, 0.5), self.trial(2, 0.75), self.trial(3, 0.25)]
-        state = {"step": 0.25, "round_index": 1, "runtime_id": "runtime", "extra": {"values": [1]}}
+        state = {**initialize_search(self.settings), "round_index": 1, "runtime_id": "runtime", "extra": {"values": [1]}}
+        state["selection"] = ["1"]
+        evaluations = [self.evaluation(trial, "prediction", trial.ordinal) for trial in trials]
+        evaluations.append(self.evaluation(trials[0], "solver", 1))
         original = deepcopy((trials, self.settings, state))
-        result, candidates = generate_coordinate_round(trials, trials[0], self.settings, state)
+        result, candidates, _, _ = advance_search(trials, evaluations, self.settings, state, {"remaining": 2})
         self.assertEqual((trials, self.settings, state), original)
-        self.assertEqual((result["step"], result["round_index"], result["round_ordinals"]), (0.125, 2, [4, 5]))
+        self.assertEqual((result["algorithm_state"]["data"]["step"], result["round_index"], result["round_ordinals"]), (0.125, 2, [4, 5]))
         self.assertEqual([candidate["variables"]["x"] for candidate in candidates], [0.625, 0.375])
         result["extra"]["values"].append(2)
         self.assertEqual(state["extra"], {"values": [1]})
@@ -146,10 +153,10 @@ class HybridSearchTests(unittest.TestCase):
         trial = self.trial(1, 0.5)
         evaluations = [self.evaluation(trial, kind, 1) for kind in ("prediction", "solver")]
         state, candidates, selected, reason = advance_search([trial], evaluations, self.settings,
-            {"selection": [trial.id]}, {"remaining": 2})
+            {**initialize_search(self.settings), "selection": [trial.id]}, {"remaining": 2})
         self.assertEqual((candidates, selected, reason), ([], [], "search_converged"))
         self.assertTrue(state["generation_complete"])
-        self.assertLess(state["step"], self.settings["min_step"])
+        self.assertLess(state["algorithm_state"]["data"]["step"], self.settings["min_step"])
 
     def test_selection_ordinal_ties_ignore_input_order_and_fixed_axes(self):
         trials = [self.trial(1, 0.5), self.trial(2, 0.25), self.trial(3, 0.75)]
@@ -171,7 +178,7 @@ class HybridSearchTests(unittest.TestCase):
                 item = self.evaluation(trial, "prediction", value)
                 item.source_hash = source
                 evaluations.append(item)
-        state = {"round_ordinals": [1, 2, 3], "round_source_hash": "M2"}
+        state = {**initialize_search(self.settings), "round_ordinals": [1, 2, 3], "round_source_hash": "M2"}
         first = advance_search(trials, evaluations, self.settings, state, {"remaining": 1})
         second = advance_search(trials, list(reversed(evaluations)), self.settings, state, {"remaining": 1})
         self.assertEqual(first, second)
@@ -185,7 +192,7 @@ class HybridSearchTests(unittest.TestCase):
             item.source_hash = "M1"
         evaluations.append(self.evaluation(trials[0], "solver", 1))
         state, candidates, selected, reason = advance_search(trials, evaluations, self.settings,
-            {"round_ordinals": [1], "selection": ["1"], "round_index": 0, "round_source_hash": "M1"}, {"remaining": 2})
+            {**initialize_search(self.settings), "round_ordinals": [1], "selection": ["1"], "round_index": 0, "round_source_hash": "M1"}, {"remaining": 2})
         self.assertEqual((state["round_index"], state["round_ordinals"], selected, candidates, reason), (1, [2, 3], [], [], None))
         state["round_source_hash"] = "M2"
         self.assertEqual(advance_search(trials, evaluations, self.settings, state, {"remaining": 2})[1:], ([], [], None))

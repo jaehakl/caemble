@@ -32,6 +32,17 @@ export const qualityReportFixture: PredictionQualityReport = {
   ],
 }
 
+export const qualityReportV2Fixture: PredictionQualityReport = {
+  ...qualityReportFixture,
+  version: 2,
+  split: { ...qualityReportFixture.split, version: 2, lineageFingerprint: 'sha256:' + 'b'.repeat(64) },
+  lineage: {
+    rootSnapshot: qualityReportFixture.dataset,
+    validationGroups: [{ designFingerprint: 'validation-design', measurementIds: [5] }],
+    fingerprint: 'sha256:' + 'b'.repeat(64),
+  },
+}
+
 export const executionMetricsFixture: PredictionExecutionMetrics = {
   version: 1,
   scope: 'process-tree',

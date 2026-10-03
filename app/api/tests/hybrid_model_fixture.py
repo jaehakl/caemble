@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select
-from prediction_contracts import MLP_DEFAULT_ALGORITHM, QUALITY_VALIDATION_V1
+from prediction_contracts import MLP_DEFAULT_ALGORITHM, QUALITY_VALIDATION_V2
 
 from gpstation.db import Job
 from prediction import training
@@ -47,7 +47,7 @@ async def prepare_hybrid_model(sessions, *, owner: str, experiment_id: int,
             "preprocessingVersion": "box-relative-v2", "algorithm": {"kind": "knn", "kMode": "manual", "manualK": 2, "weighting": "distance"}}
         if algorithm == "mlp":
             definition.update(algorithm=deepcopy(MLP_DEFAULT_ALGORITHM),
-                qualityValidation=deepcopy(QUALITY_VALIDATION_V1), requiredRecordIds=sorted(record_ids))
+                qualityValidation=deepcopy(QUALITY_VALIDATION_V2), requiredRecordIds=sorted(record_ids))
         reserved = await reserve_model(db, ModelReserve(request_id=uuid4(), name=f"Hybrid E2E {algorithm}", direction="forward",
             dataset_id=dataset["id"], dataset_revision=dataset["current_revision"], definition=definition,
             storage_id=storage_id, launcher_id=launcher_id), owner)

@@ -138,6 +138,11 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
             assert frozen["quality_assessment"]["status"] == "passed"
             capacity.assert_awaited_once()
             capacity.reset_mock()
+            automatic = request.model_copy(update={"model_update_policy": {"id": "budgeted"}})
+            db.get.side_effect = [revision, replica]
+            with pytest.raises(HTTPException, match="fresh version 2 model lineage"):
+                await freeze_hybrid(db, automatic, "owner", experiment, [])
+            capacity.assert_not_awaited()
             revision.artifact["quality_report"]["records"][0]["components"][0]["rmse"] = 2
             db.get.side_effect = [revision, replica]
             with pytest.raises(HTTPException, match="rmse-exceeded"):
@@ -165,6 +170,7 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
             with self.subTest(rmse=rmse):
                 original = saved_revision()
                 initial = {"model_id": "model", "model_revision": 1, "quality_requirements": limits(),
+                    "model_definition": original.definition,
                     "source_contracts": original.source_contracts, **freeze_quality(original, limits())}
                 revision = saved_revision(rmse if rmse is not None else 0.5)
                 revision.revision = 2

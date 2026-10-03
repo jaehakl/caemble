@@ -8,9 +8,33 @@ from sqlalchemy import delete, select
 from gpstation.db import Job
 from gpstation.service.state import utcnow
 from optimization.db import OptimizationModelPin
+from optimization.guards import require_continuation
 from optimization.automatic_updates import record_requested_snapshot, reconcile_automatic_attempt, refresh_automatic_state
 from prediction.common import digest
 from prediction.db import Dataset, ModelRevision, Operation, PredictionModel, Replica, TrainingRun
+
+
+def compare_quality(previous, current):
+    """Report comparable errors without introducing a relative acceptance policy."""
+    if (not previous or not current or previous.get("version") != 2 or current.get("version") != 2
+            or previous.get("lineage") != current.get("lineage")):
+        return None
+    baseline = {(record["recordId"], metric["component"]): (record, metric)
+        for record in previous["records"] if record["status"] == "evaluated"
+        for metric in record["components"]}
+    items = []
+    for record in current["records"]:
+        if record["status"] != "evaluated":
+            continue
+        for metric in record["components"]:
+            before = baseline.get((record["recordId"], metric["component"]))
+            if (before is None or before[0]["unit"] != record["unit"]
+                    or before[0]["evaluatedMeasurementIds"] != record["evaluatedMeasurementIds"]):
+                continue
+            items.append({"recordId": record["recordId"], "component": metric["component"],
+                "unit": record["unit"], "previous_rmse": before[1]["rmse"], "current_rmse": metric["rmse"],
+                "delta": metric["rmse"] - before[1]["rmse"]})
+    return {"lineage_fingerprint": current["lineage"]["fingerprint"], "items": items} if items else None
 
 
 def model_state(optimization):
@@ -69,9 +93,15 @@ async def request_update(db, optimization, body, *, automatic_request=None):
         if previous["update_mode"] != body.update_mode:
             raise HTTPException(409, "This model update request ID has another mode.")
         return False
+    require_continuation(optimization)
     if optimization.state not in {"running", "paused"}:
         raise HTTPException(409, "Model updates require a running or paused Hybrid Optimization.")
     base = state["active_model"]
+    from prediction_contracts import validate_new_training
+    try:
+        validate_new_training(base["model_definition"])
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
     model = await db.scalar(select(PredictionModel).where(PredictionModel.id == base["model_id"]).with_for_update())
     if model is None or model.user_id != optimization.user_id or model.state != "active":
         raise HTTPException(409, "The Optimization model is unavailable.")
@@ -198,8 +228,23 @@ async def reconcile_updates(db, optimization):
                 quality = freeze_quality(revision, initial.get("quality_requirements"))
                 item["quality_assessment"] = quality["quality_assessment"]
                 require_quality(quality["quality_assessment"])
-            except HTTPException as error:
-                item.update(state="failed", error={"message": str(error.detail)})
+                from prediction_contracts import validate_quality_lineage
+                active_model = state["active_model"]
+                frozen_update = operation.details.get("update")
+                if frozen_update is not None:
+                    base = frozen_update["baseModel"]
+                    if any(base.get(key) != active_model[value] for key, value in (
+                            ("modelId", "model_id"), ("revision", "model_revision"), ("checksum", "checksum"))):
+                        raise ValueError("The updated model does not descend from the active model revision.")
+                elif (quality.get("quality_report") or {}).get("version") == 2:
+                    raise ValueError("Quality model adoption requires its exact base model update receipt.")
+                validate_quality_lineage(quality.get("quality_report"), revision.definition, update=frozen_update,
+                    base_definition=active_model["model_definition"], base_report=active_model.get("quality_report"))
+                comparison = compare_quality(active_model.get("quality_report"), quality.get("quality_report"))
+                if comparison is not None:
+                    item["quality_comparison"] = comparison
+            except (HTTPException, ValueError) as error:
+                item.update(state="failed", error={"message": str(getattr(error, "detail", None) or error)})
                 continue
             state["pending_model"] = {**initial, **quality, "model_revision": revision.revision,
                 "replica_id": replica.id, "checksum": artifact["manifest_sha256"],

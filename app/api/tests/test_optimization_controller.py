@@ -6,6 +6,8 @@ import unittest
 import uuid
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 import test_optimization_api as persistence_fixture
 
 from simulation.services import recording
@@ -96,16 +98,94 @@ class OptimizationControllerTests(unittest.IsolatedAsyncioTestCase):
         optimization_id = await self.create(algorithm={"id": "random"})
         async with self.sessions() as db:
             optimization = await db.get(Optimization, optimization_id)
-            optimization.optimizer_state = {"search_version": 2, "runtime_id": "retained"}
+            optimization.optimizer_state = {"search_version": 99, "runtime_id": "retained"}
             await db.commit()
         with patch("optimization.controller.SessionLocal", self.sessions):
             await reconcile_once(self.catalog)
         async with self.sessions() as db:
             optimization = await db.get(Optimization, optimization_id)
             self.assertEqual(optimization.state, "paused")
-            self.assertIn("Unsupported Optimization search state version", optimization.pause_reason)
-            self.assertEqual(optimization.optimizer_state, {"search_version": 2, "runtime_id": "retained"})
+            self.assertIn("Create a new Optimization", optimization.pause_reason)
+            self.assertEqual(optimization.optimizer_state, {"search_version": 99, "runtime_id": "retained"})
         self.assertEqual(await self.jobs(optimization_id), [])
+
+    async def test_legacy_version_cancels_queued_work_and_keeps_readable_history(self):
+        optimization_id = await self.create(max_trials=2)
+        await self.advance(optimization_id)
+        first = (await self.jobs(optimization_id))[0]
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            optimization.optimizer_state = {"search_version": 1, "runtime_id": "retained"}
+            await db.commit()
+        await self.advance(optimization_id)
+        await self.advance(optimization_id)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            self.assertEqual(optimization.state, "paused")
+            self.assertEqual((await db.get(Job, first.id)).state, "cancelled")
+            detail = await optimization_detail(db, optimization)
+            self.assertFalse(detail["continuation"]["supported"])
+            self.assertFalse(detail["cleanup_pending"])
+            history = await list_trials(db, optimization, limit=50, offset=0)
+            self.assertEqual(history["total"], 1)
+            self.assertEqual(history["items"][0]["stages"][0]["job_id"], first.id)
+            with self.assertRaises(HTTPException) as rejected:
+                await resume_optimization(db, optimization)
+            self.assertEqual(rejected.exception.status_code, 409)
+        self.assertEqual(len(await self.jobs(optimization_id)), 1)
+
+    async def test_corrupt_version_cancels_running_work_and_waits_for_matching_cleanup(self):
+        optimization_id = await self.create(max_trials=2)
+        await self.advance(optimization_id)
+        first = (await self.jobs(optimization_id))[0]
+        async with self.sessions() as db:
+            launcher = Launcher(user_id=self.owner.id, launcher_name="version cleanup fixture", status="busy",
+                connected_at=utcnow(), last_heartbeat_at=utcnow())
+            db.add(launcher)
+            await db.flush()
+            job = await db.get(Job, first.id)
+            job.launcher_id, job.boot_id = launcher.id, "version-boot"
+            job.instance_id, job.reservation_id = "version-instance", "version-reservation"
+            job.state = "running"
+            identity = execution_identity(job)
+            optimization = await db.get(Optimization, optimization_id)
+            optimization.optimizer_state = {"search_version": 2}
+            await db.commit()
+        await self.advance(optimization_id)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            self.assertEqual(optimization.state, "pausing")
+            self.assertEqual((await db.get(Job, first.id)).state, "cancelled")
+            self.assertTrue((await optimization_detail(db, optimization))["cleanup_pending"])
+            self.assertFalse(await worker_cleaned(db, identity={**identity, "reservation_id": "stale"},
+                user_id=self.owner.id))
+        await self.advance(optimization_id)
+        async with self.sessions() as db:
+            self.assertTrue(await worker_cleaned(db, identity=identity, user_id=self.owner.id))
+        await self.advance(optimization_id)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            self.assertEqual(optimization.state, "paused")
+            self.assertFalse((await optimization_detail(db, optimization))["cleanup_pending"])
+        self.assertEqual(len(await self.jobs(optimization_id)), 1)
+
+    async def test_late_success_is_recorded_after_version_change_without_followup(self):
+        optimization_id = await self.create(max_trials=2)
+        await self.advance(optimization_id)
+        first = (await self.jobs(optimization_id))[0]
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            optimization.optimizer_state = {}
+            await db.commit()
+        await self.complete(first.id)
+        await self.advance(optimization_id)
+        await self.advance(optimization_id)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            trial = await db.scalar(select(Trial).where(Trial.optimization_id == optimization_id))
+            self.assertEqual((optimization.state, trial.state, trial.next_stage), ("paused", "pending", "solve"))
+            self.assertEqual((await db.get(Job, first.id)).state, "succeeded")
+        self.assertEqual(len(await self.jobs(optimization_id)), 1)
 
     async def verify_concurrent_search(self, **settings):
         optimization_id = await self.create(max_trials=3, **settings)

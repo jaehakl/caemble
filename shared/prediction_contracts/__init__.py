@@ -5,8 +5,9 @@ from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING
 import re
 
-from .quality import (QUALITY_VALIDATION_V1, assess_quality, validate_quality_report,
-                      validate_quality_requirements, validate_quality_settings)
+from .quality import (QUALITY_VALIDATION_V1, QUALITY_VALIDATION_V2, assess_quality, validate_quality_lineage,
+                      validate_quality_report, validate_quality_requirements, validate_quality_settings,
+                      validate_quality_update)
 from .mlp import MLP_DEFAULT_ALGORITHM, validate_mlp_algorithm
 
 PREDICTION_PROTOCOL_VERSION = 3
@@ -90,7 +91,7 @@ def validate_training_update(update: dict | None, definition: dict) -> str:
         raise ValueError("This algorithm does not support the requested training update mode.")
     mode = update["mode"]
     if definition.get("qualityValidation") is not None and mode != "rebuild":
-        raise ValueError("Quality validation v1 requires rebuild; a base model may already contain validation samples.")
+        raise ValueError("Quality validation requires rebuild; continued-weight validation is not supported.")
     target = update.get("targetSnapshot")
     if (not isinstance(target, dict) or not isinstance(target.get("datasetId"), str) or not target["datasetId"]
             or type(target.get("revision")) is not int or target["revision"] < 1
@@ -125,6 +126,14 @@ def validate_training_update(update: dict | None, definition: dict) -> str:
         raise ValueError("Incremental training supports added samples only; use rebuild for corrections or removals.")
     if not isinstance(update.get("recipe"), dict):
         raise ValueError("Training update recipe must be a frozen object.")
+    return mode
+
+
+def validate_new_training(definition: dict, update: dict | None = None) -> str:
+    """New operations use v2 quality; legacy definitions remain readable for inference."""
+    mode = validate_training_update(update, definition)
+    if (definition.get("qualityValidation") or {}).get("version") == 1:
+        raise ValueError("New quality training requires version 2; create a fresh model instead.")
     return mode
 
 

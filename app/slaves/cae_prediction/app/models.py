@@ -122,6 +122,8 @@ class ModelBundle:
             if model is base_model.implementation:
                 raise PredictionError("unsupported-update", "Training must return a new immutable model, not its base object.")
         try:
+            if (definition.get("qualityValidation") or {}).get("version") == 2:
+                model.metadata["rules"] = deepcopy(dataset.get("rules", []))
             if update is not None:
                 model.metadata["update"] = deepcopy(update)
             return cls(model)

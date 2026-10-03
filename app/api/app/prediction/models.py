@@ -58,7 +58,7 @@ async def list_models(db, user_id, experiment_id=None):
 
 
 async def validate_update_references(db, update, definition, model_id, target_ref, user_id, storage_id, launcher_id):
-    from prediction_contracts import validate_training_update
+    from prediction_contracts import validate_quality_update, validate_training_update
     try:
         mode = validate_training_update(update, definition)
     except ValueError as error:
@@ -88,13 +88,19 @@ async def validate_update_references(db, update, definition, model_id, target_re
     if update["changeSet"] != expected_changes:
         raise HTTPException(409, "Model update changes differ from the frozen snapshot inventory.")
     target = await db.get(DatasetRevision, (target_ref["datasetId"], target_ref["revision"]))
-    if mode != "rebuild" and target.summary.get("source_contracts") != baseline.source_contracts:
+    if ((mode != "rebuild" or definition.get("qualityValidation") is not None
+            or baseline.definition.get("qualityValidation") is not None)
+            and target.summary.get("source_contracts") != baseline.source_contracts):
         raise HTTPException(409, "Continued training requires unchanged source and preprocessing contracts.")
+    try:
+        validate_quality_update(update, definition, baseline.definition, baseline.artifact.get("quality_report"))
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
 
 
 async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, force_api_source=False):
     from gpstation.service.batches import serialize_events
-    from prediction_contracts import validate_definition
+    from prediction_contracts import validate_new_training
     from prediction import training
     await serialize_events(db)
     if body.direction != "forward":
@@ -121,9 +127,13 @@ async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, f
                 **({"training": view["training"]} if "training" in view else {})}
         if body.expected_revision != row.current_revision or row.direction != body.direction:
             raise HTTPException(409, "Model changed or targets another direction. Reload before updating.")
+        if row.current_revision and body.training_update is None and body.definition.get("qualityValidation") is not None:
+            raise HTTPException(409, "Create a new model for a fresh quality lineage, or update the exact completed base model.")
         await training.assert_model_update_available(db, identity, user_id, online_origin=online_origin)
     elif body.model_id:
         raise HTTPException(404, "Model not found.")
+    from optimization.guards import require_training_continuation
+    await require_training_continuation(db, online_origin)
     await connected_storage(db, body.storage_id, body.launcher_id, user_id)
     dataset = await owned(db, Dataset, body.dataset_id, user_id)
     dataset_revision = await db.get(DatasetRevision, (dataset.id, body.dataset_revision))
@@ -139,7 +149,7 @@ async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, f
         raise HTTPException(409, "Restore the exact Dataset revision to the selected storage before preparing a model.")
     definition = body.definition
     try:
-        validate_definition(definition)
+        validate_new_training(definition, body.training_update)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     if definition.get("direction", body.direction) != body.direction:
@@ -228,10 +238,21 @@ async def complete_model(db, model_id, revision, body, user_id, *, commit=True, 
         raise HTTPException(409, "Inverse Prediction preparation is retired. Existing saved files are retained.")
     if item.state != "reserved":
         raise HTTPException(410, "Model preparation was superseded by a newer request.")
-    from prediction_contracts import validate_quality_report
+    from prediction_contracts import validate_quality_lineage, validate_quality_report
     try:
         validate_quality_report(body.quality_report, item.definition, {
             "datasetId": item.dataset_id, "revision": item.dataset_revision, "fingerprint": item.dataset_fingerprint})
+        frozen_update = item.preparation.get("training_update")
+        parent = None
+        if frozen_update is not None:
+            base = frozen_update["baseModel"]
+            parent = await db.get(ModelRevision, (base["modelId"], base["revision"]))
+            if (parent is None or parent.state != "ready" or not parent.artifact
+                    or parent.artifact.get("manifest_sha256") != base["checksum"]):
+                raise ValueError("The immutable base model is unavailable for lineage validation.")
+        validate_quality_lineage(body.quality_report, item.definition, update=frozen_update,
+            base_definition=parent.definition if parent else None,
+            base_report=parent.artifact.get("quality_report") if parent else None)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     operation = await db.get(Operation, item.request_id)

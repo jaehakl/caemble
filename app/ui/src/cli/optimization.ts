@@ -245,12 +245,15 @@ export async function optimizationCommand(command: string, context: CommandConte
       if (
         optimization.state !== 'running' &&
         !optimization.manual_retry_pending &&
-        !optimization.active &&
+        (!optimization.active || !optimization.continuation.supported) &&
         !optimization.executions_active &&
         !optimization.cleanup_pending
       ) {
         if (optimization.state !== 'completed')
-          throw new CliError(`Optimization is ${optimization.state}: ${optimization.pause_reason ?? 'not running'}.`, 1)
+          throw new CliError(
+            `Optimization is ${optimization.state}: ${optimization.continuation.reason ?? optimization.pause_reason ?? 'not running'}.`,
+            1,
+          )
         return undefined
       }
       await delay(2000, undefined, { signal: observed.signal })

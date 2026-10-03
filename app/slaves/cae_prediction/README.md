@@ -175,13 +175,24 @@ retained in `model.json` for recovery without the Dataset, while the public rece
 its Measurement ID and the validated checksum. The temporary validation model is closed without
 installing a browser inference handle.
 
-Optional `definition.qualityValidation` freezes `{version: 1, split: "design-point",
+Optional `definition.qualityValidation` freezes `{version: 2, split: "design-point",
 holdoutFraction: 0.2, seed: 0, minimumGroups: 5}` before the definition fingerprint is computed.
-Omission preserves full-data training. Quality v1 requires rebuild: continued training may have
-already seen a validation point. Canonical Vars group repeated Measurements together, normalize
-numeric spelling/signed zero, and assign the first `ceil(groups * 0.2)` seeded hash-sorted groups
-to validation. Invalid Vars are excluded with reasons. The worker passes only the training
-partition's Measurements and recorded values to model preparation and preprocessing.
+Omission preserves full-data training. Quality training supports rebuild only. Canonical Vars
+group repeated Measurements together, normalize numeric spelling/signed zero, and assign the
+first `ceil(groups * 0.2)` seeded hash-sorted groups to the initial validation partition. Invalid
+Vars are excluded with reasons. The worker passes only the training partition's Measurements
+and recorded values to model preparation and preprocessing.
+
+The v2 report's `lineage` freezes the root Dataset snapshot, validation design fingerprints and
+their Measurement IDs. Each rebuild update evaluates those exact root Measurements; genuinely
+new designs enter training. Added repeats of a root validation design are excluded from both
+training and evaluation so the comparison set stays fixed. The API's immutable sample inventories
+and frozen change set verify that root validation data was not changed or removed. Such changes,
+or changed source/preprocessing/output contracts, require a fresh model instead of an update.
+Rebuilds can incorporate corrections and removals of training samples while preserving the
+minimum-data requirements. Base metadata and its checksum are verified before splitting; rebuild
+does not load base inference weights. Legacy v1 reports remain readable, portable and usable for
+inference, but new quality training and updates require v2 and never silently convert a v1 lineage.
 
 `qualityReport` measures the actual prepared model before saving, independently of the later
 saved-model execution check. It supports real-valued, non-modal BoxGrid outputs with the existing
@@ -189,9 +200,13 @@ relative-cell layout contract. Each Record/component reports MAE, RMSE and maxim
 error in its own unit. Measurement errors are averaged within each design point, then design
 points receive equal weight. Incompatible/missing outputs are reported as excluded, never as
 zero error; no evaluable output or fewer than five valid design points fails the requested
-evaluation. Poor accuracy is advisory and does not block model use or change Hybrid adoption.
-The report freezes the source/definition/split fingerprints and partition inventories in both
-model metadata and manifest. Different splits are not comparable fixed evaluation sets.
+evaluation. Consumers can require absolute per-component RMSE limits. Hybrid rejects failed or
+unassessed configured limits at startup and successor adoption, while omitted limits preserve
+ordinary use. Same-lineage base/new differences are informational; relative degradation adds no
+separate rejection rule. A failed successor leaves the active model unchanged, and an accepted
+model is adopted only at a round boundary. The report freezes source/definition/split fingerprints,
+root lineage and partition inventories in model metadata and manifest. A v2 split also carries its
+`lineageFingerprint`; different lineages are not comparable fixed evaluation sets.
 Archives and saved-artifact recovery preserve this report without rereading the Dataset.
 
 `trainingMetrics` is the immutable pre-save process-tree observation, including loading,
@@ -214,7 +229,7 @@ belongs to a later algorithm implementation; no incomplete artifact appears in t
 An optional frozen `update` on the server training specification names the completed base model
 copy, target Dataset snapshot, added/changed/removed Measurement IDs and training recipe. An omitted
 update keeps ordinary rebuild behavior. Descriptors declare `supportedUpdateModes`; production kNN
-supports `rebuild` only. Warm-start and incremental requests require an explicitly supported
+and MLP support `rebuild` only. Warm-start and incremental requests require an explicitly supported
 implementation and a completed base. Incremental currently rejects corrections/removals. New
 models retain the complete update as immutable lineage; completed-operation recovery compares it
 exactly before returning a previously saved artifact. Training updates are separate from checkpoint

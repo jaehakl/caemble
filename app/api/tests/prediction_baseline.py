@@ -192,7 +192,7 @@ def predictor_worker(args) -> None:
     module = importlib.util.module_from_spec(spec)
     sys.modules["predictor"] = module
     spec.loader.exec_module(module)
-    from prediction_contracts import MLP_DEFAULT_ALGORITHM, QUALITY_VALIDATION_V1
+    from prediction_contracts import MLP_DEFAULT_ALGORITHM, QUALITY_VALIDATION_V2
     from predictor.execution import ModelExecutionContext
     from predictor.models import ModelBundle
     from predictor.quality import evaluate_quality, split_dataset
@@ -206,13 +206,13 @@ def predictor_worker(args) -> None:
     bundle = torch = None
     try:
         if args.worker == "train":
-            training, groups, split = split_dataset(dataset)
+            training, groups, split = split_dataset(dataset, settings=QUALITY_VALIDATION_V2)
             algorithm = (deepcopy(MLP_DEFAULT_ALGORITHM) if args.algorithm == "mlp" else
                          {"kind": "knn", "kMode": "auto", "manualK": 1, "weighting": "distance"})
             definition = {"direction": "forward", "algorithm": algorithm, "implementationVersion": args.algorithm + "-v1",
                 "preprocessingVersion": "box-relative-v2", "snapshotFingerprint": dataset["fingerprint"],
                 "requiredRecordIds": [record["id"] for record in dataset["records"]],
-                "qualityValidation": deepcopy(QUALITY_VALIDATION_V1)}
+                "qualityValidation": deepcopy(QUALITY_VALIDATION_V2)}
             definition["fingerprint"] = "sha256:" + hashlib.sha256(encode_json(definition)).hexdigest()
             reference = {"modelId": args.model_id, "revision": 1, "operationId": args.model_id, "name": args.model_id}
             with ProcessMetrics(devices) as metrics:

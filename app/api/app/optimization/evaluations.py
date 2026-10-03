@@ -127,6 +127,9 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
     if model.state != "active" or model.direction != "forward" or revision is None or revision.state != "ready":
         raise HTTPException(409, "Hybrid requires the exact saved, ready Forward revision.")
     if request.model_update_policy is not None:
+        quality_settings = revision.definition.get("qualityValidation")
+        if quality_settings is not None and quality_settings.get("version") != 2:
+            raise HTTPException(409, "Automatic quality updates require a fresh version 2 model lineage. Fixed-model Hybrid remains available.")
         from prediction.db import Dataset, DatasetRevision
         dataset = await db.get(Dataset, revision.dataset_id)
         snapshot = await db.get(DatasetRevision, (revision.dataset_id, revision.dataset_revision))

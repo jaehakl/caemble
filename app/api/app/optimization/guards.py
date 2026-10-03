@@ -9,6 +9,22 @@ from gpstation.db import Job
 from optimization.db import Evaluation, StageSubmission, Optimization, Trial
 
 
+def require_continuation(optimization) -> None:
+    from optimization.search import continuation_assessment
+    assessment = continuation_assessment(optimization.settings, optimization.optimizer_state)
+    if not assessment["supported"]:
+        raise HTTPException(409, {"code": "optimization_version_unsupported", "message": assessment["reason"]})
+
+
+async def require_training_continuation(db, origin) -> None:
+    if origin is None:
+        return
+    optimization = await db.get(Optimization, str(origin["optimization_id"]))
+    if optimization is None:
+        raise HTTPException(409, "The originating Optimization is unavailable.")
+    require_continuation(optimization)
+
+
 async def require_unreferenced_experiments(db, experiment_ids: list[int]) -> None:
     if await db.scalar(select(Optimization.id).where(Optimization.experiment_id.in_(experiment_ids)).limit(1)) is not None:
         raise HTTPException(409, "Delete retained Optimizations before changing or deleting their Experiment source. Use Save As for a new version.")

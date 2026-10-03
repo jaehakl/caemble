@@ -39,7 +39,7 @@ export const defaultMlpAlgorithm = Object.freeze(
 )
 
 export const predictionQualityValidationSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   split: z.literal('design-point'),
   holdoutFraction: z.literal(0.2),
   seed: z.literal(0),
@@ -47,7 +47,7 @@ export const predictionQualityValidationSchema = z.object({
 })
 export type PredictionQualityValidation = z.infer<typeof predictionQualityValidationSchema>
 export const defaultPredictionQualityValidation: PredictionQualityValidation = Object.freeze({
-  version: 1,
+  version: 2,
   split: 'design-point',
   holdoutFraction: 0.2,
   seed: 0,

@@ -238,6 +238,11 @@ export function OptimizationManagementView({
               {optimization.pause_reason ? (
                 <p className="mt-3 rounded-md bg-muted p-3 text-xs leading-relaxed">{optimization.pause_reason}</p>
               ) : null}
+              {!optimization.continuation.supported ? (
+                <p role="status" className="mt-3 rounded-md bg-muted p-3 text-xs leading-relaxed">
+                  {optimization.continuation.reason}
+                </p>
+              ) : null}
               <p className="mt-2 text-xs text-muted-foreground" aria-label="저장된 탐색 설정">
                 {algorithm.id === 'random'
                   ? `무작위 탐색 · seed ${algorithm.config.seed} · 회차당 ${algorithm.config.candidates_per_round}개`
@@ -279,8 +284,11 @@ export function OptimizationManagementView({
               {optimization.state === 'paused' ? (
                 <Button
                   size="sm"
-                  disabled={busy || executionBusy || optimization.failed > 0}
-                  title={optimization.failed > 0 ? '실패한 Trial을 재시도한 뒤 재개하세요.' : undefined}
+                  disabled={busy || executionBusy || optimization.failed > 0 || !optimization.continuation.supported}
+                  title={
+                    optimization.continuation.reason ??
+                    (optimization.failed > 0 ? '실패한 Trial을 재시도한 뒤 재개하세요.' : undefined)
+                  }
                   onClick={() => void data.resume(optimization.id)}
                 >
                   <Play className="size-3.5" />
@@ -502,7 +510,12 @@ export function OptimizationManagementView({
                     <TrialHistory
                       key={trial.id}
                       trial={trial}
-                      disabled={busy || executionBusy || !['paused', 'completed'].includes(optimization.state)}
+                      disabled={
+                        busy ||
+                        executionBusy ||
+                        !optimization.continuation.supported ||
+                        !['paused', 'completed'].includes(optimization.state)
+                      }
                       solverBudgetExhausted={optimization.solver_budget?.remaining === 0}
                       onRetry={() => void data.retry(optimization.id, trial)}
                       onRetryEvaluation={(evaluation) => void data.retryEvaluation(optimization.id, evaluation)}

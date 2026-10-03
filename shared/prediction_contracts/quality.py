@@ -4,9 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+from copy import deepcopy
 
 QUALITY_VALIDATION_V1 = {"version": 1, "split": "design-point", "holdoutFraction": .2,
                          "seed": 0, "minimumGroups": 5}
+QUALITY_VALIDATION_V2 = {**QUALITY_VALIDATION_V1, "version": 2}
 
 
 def validate_quality_requirements(requirements: list[dict] | None) -> None:
@@ -69,15 +72,23 @@ def assess_quality(report: dict | None, requirements: list[dict] | None) -> dict
 def validate_quality_settings(settings: dict | None) -> None:
     if settings is None:
         return
-    if (not isinstance(settings, dict) or settings != QUALITY_VALIDATION_V1
+    if (not isinstance(settings, dict) or settings not in (QUALITY_VALIDATION_V1, QUALITY_VALIDATION_V2)
             or any(type(settings.get(key)) is not int for key in ("version", "seed", "minimumGroups"))
             or type(settings.get("holdoutFraction")) not in (int, float)):
-        raise ValueError("Quality validation v1 requires design-point splitting, 20% holdout, seed 0 and five groups.")
+        raise ValueError("Quality validation requires version 1 or 2, design-point splitting, 20% initial holdout, seed 0 and five groups.")
+
+
+def lineage_fingerprint(lineage: dict, settings: dict) -> str:
+    content = {"settings": settings, **{key: lineage[key] for key in ("rootSnapshot", "validationGroups")}}
+    return "sha256:" + hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":"),
+                                                allow_nan=False).encode("utf-8")).hexdigest()
 
 
 def split_fingerprint(split: dict) -> str:
     content = {key: split[key] for key in ("version", "seed", "holdoutFraction", "trainingMeasurementIds",
                                           "validationMeasurementIds", "trainingGroupCount", "validationGroupCount", "excluded")}
+    if split["version"] == 2:
+        content["lineageFingerprint"] = split.get("lineageFingerprint")
     return "sha256:" + hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":"),
                                                 allow_nan=False).encode("utf-8")).hexdigest()
 
@@ -96,6 +107,88 @@ def _exclusions(value) -> set[int]:
     return _measurement_ids([item.get("measurementId") for item in value], "exclusions")
 
 
+def validate_quality_update(update: dict | None, definition: dict, base_definition: dict,
+                            base_report: dict | None) -> dict | None:
+    """Inherit a checked root holdout using the server-verified snapshot change set."""
+    settings, previous = definition.get("qualityValidation"), base_definition.get("qualityValidation")
+    validate_quality_settings(settings)
+    validate_quality_settings(previous)
+    if settings is None and previous is None:
+        if base_report is not None:
+            raise ValueError("An unconfigured base model cannot carry a quality report.")
+        return None
+    if settings != QUALITY_VALIDATION_V2 or previous != QUALITY_VALIDATION_V2:
+        raise ValueError("Quality updates require a version 2 lineage; create a fresh model instead.")
+    if (not isinstance(update, dict) or update.get("mode") != "rebuild"
+            or not isinstance(update.get("changeSet"), dict)):
+        raise ValueError("Quality lineage currently supports rebuild updates only.")
+    changes = update["changeSet"]
+    before = changes.get("baseSnapshot")
+    if not isinstance(before, dict) or set(before) != {"datasetId", "revision", "fingerprint"}:
+        raise ValueError("Quality updates require the exact base Dataset snapshot.")
+    validate_quality_report(base_report, base_definition, before)
+    target = update.get("targetSnapshot")
+    if (not isinstance(target, dict) or changes.get("targetSnapshot") != target
+            or target.get("datasetId") != base_report["dataset"]["datasetId"]
+            or type(target.get("revision")) is not int or target["revision"] < base_report["dataset"]["revision"]
+            or target.get("fingerprint") != definition.get("snapshotFingerprint")):
+        raise ValueError("Quality updates must continue the same frozen Dataset lineage.")
+    for key in ("implementationVersion", "preprocessingVersion", "requiredRecordIds"):
+        if definition.get(key) != base_definition.get(key):
+            raise ValueError("Quality updates require unchanged implementation, preprocessing and output contracts.")
+    held_out = set(base_report["split"]["validationMeasurementIds"])
+    changed = _measurement_ids(changes.get("changed"), "changed samples")
+    removed = _measurement_ids(changes.get("removed"), "removed samples")
+    if held_out & (changed | removed):
+        raise ValueError("Root validation samples changed or were removed; create a fresh model instead.")
+    return deepcopy(base_report["lineage"])
+
+
+def validate_quality_lineage(report: dict | None, definition: dict, *, update: dict | None = None,
+                             base_definition: dict | None = None, base_report: dict | None = None) -> None:
+    """Validate publication against its parent, independently of metric suitability."""
+    validate_quality_report(report, definition)
+    if update is not None:
+        if base_definition is None:
+            raise ValueError("Quality publication requires its verified base model definition.")
+        expected = validate_quality_update(update, definition, base_definition, base_report)
+        if expected is not None and report["lineage"] != expected:
+            raise ValueError("The updated model changed its frozen validation lineage.")
+    elif report is not None and report["version"] == 2:
+        if report["lineage"]["rootSnapshot"] != report["dataset"]:
+            raise ValueError("A new quality model must establish its own root snapshot.")
+
+
+def _validate_lineage(report: dict, settings: dict) -> None:
+    lineage, source, split = report.get("lineage"), report["dataset"], report["split"]
+    if not isinstance(lineage, dict):
+        raise ValueError("Quality version 2 requires its frozen root lineage.")
+    root, groups = lineage.get("rootSnapshot"), lineage.get("validationGroups")
+    if (not isinstance(root, dict) or set(root) != {"datasetId", "revision", "fingerprint"}
+            or root.get("datasetId") != source["datasetId"] or type(root.get("revision")) is not int
+            or not 1 <= root["revision"] <= source["revision"]
+            or not isinstance(root.get("fingerprint"), str) or not root["fingerprint"]
+            or (root["revision"] == source["revision"] and root != source)
+            or not isinstance(groups, list) or not groups):
+        raise ValueError("Quality lineage has an invalid root snapshot or design-point inventory.")
+    designs, identities = [], []
+    for group in groups:
+        if (not isinstance(group, dict) or not isinstance(group.get("designFingerprint"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", group["designFingerprint"])):
+            raise ValueError("Quality lineage requires canonical design-point fingerprints.")
+        members = group.get("measurementIds")
+        if not _measurement_ids(members, "root validation group") or members != sorted(members):
+            raise ValueError("Quality lineage requires nonempty sorted validation groups.")
+        designs.append(group["designFingerprint"])
+        identities.extend(members)
+    if (designs != sorted(set(designs)) or len(identities) != len(set(identities))
+            or sorted(identities) != split["validationMeasurementIds"]
+            or len(groups) != split["validationGroupCount"]
+            or lineage.get("fingerprint") != lineage_fingerprint(lineage, settings)
+            or split.get("lineageFingerprint") != lineage["fingerprint"]):
+        raise ValueError("Quality lineage differs from its frozen validation partition or fingerprint.")
+
+
 def validate_quality_report(report: dict | None, definition: dict, dataset: dict | None = None) -> None:
     settings = definition.get("qualityValidation")
     validate_quality_settings(settings)
@@ -103,7 +196,7 @@ def validate_quality_report(report: dict | None, definition: dict, dataset: dict
         return
     if settings is None or not isinstance(report, dict):
         raise ValueError("Requested quality validation requires its frozen report.")
-    if (type(report.get("version")) is not int or report["version"] != 1
+    if (type(report.get("version")) is not int or report["version"] != settings["version"]
             or report.get("evaluation") != "pre-save-holdout"
             or report.get("status") not in ("complete", "partial")
             or not isinstance(report.get("definitionFingerprint"), str) or not report["definitionFingerprint"]
@@ -127,10 +220,15 @@ def validate_quality_report(report: dict | None, definition: dict, dataset: dict
         raise ValueError("Quality training, validation and excluded partitions must be disjoint.")
     counts = [split.get(key) for key in ("trainingGroupCount", "validationGroupCount")]
     if (any(type(count) is not int or count < 1 for count in counts) or sum(counts) < settings["minimumGroups"]
-            or counts[1] != math.ceil(sum(counts) * settings["holdoutFraction"])
+            or (settings["version"] == 1 and counts[1] != math.ceil(sum(counts) * settings["holdoutFraction"]))
             or counts[0] > len(training) or counts[1] > len(validation)
             or split.get("fingerprint") != split_fingerprint(split)):
         raise ValueError("Quality split inventory or fingerprint is invalid.")
+    if settings["version"] == 2:
+        _validate_lineage(report, settings)
+        if (report["lineage"]["rootSnapshot"] == source
+                and counts[1] != math.ceil(sum(counts) * settings["holdoutFraction"])):
+            raise ValueError("A root quality split must use its configured initial holdout fraction.")
     records = report.get("records")
     if not isinstance(records, list) or not records or any(not isinstance(record, dict) for record in records):
         raise ValueError("Quality report requires output records.")

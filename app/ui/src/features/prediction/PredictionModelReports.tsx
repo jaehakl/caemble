@@ -30,9 +30,17 @@ export function PredictionModelReports({
               {quality.split.validationMeasurementIds.length}개 Measurement
             </p>
             <p className="text-muted-foreground">
-              저장 직전 모델로 평가했습니다. 평가용 설계점은 학습에서 제외했으며, 이 보고서는 모델의 자동 채택 기준으로
-              사용하지 않습니다.
+              저장 직전 모델로 평가했습니다. 평가용 설계점은 학습과 전처리에서 제외했습니다. Hybrid 채택에는 지정한 RMSE
+              상한을 적용합니다.
             </p>
+            {quality.version === 2 ? (
+              <p>
+                최초 Dataset revision {quality.lineage.rootSnapshot.revision}의 검증 표본을 고정해 후속 revision을
+                비교합니다. 같은 Vars의 추가 측정도 학습에서 제외합니다.
+              </p>
+            ) : (
+              <p>이전 품질 보고서(v1)입니다. 고정 검증 표본으로 갱신하려면 새 모델을 만드세요.</p>
+            )}
             {quality.status === 'partial' && <p>일부 출력 또는 평가 표본을 비교할 수 없습니다.</p>}
             {quality.split.excluded.length > 0 && (
               <p>

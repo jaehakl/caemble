@@ -20,13 +20,14 @@ from sqlalchemy import func, select
 from gpstation.db import Job, Launcher
 from gpstation.service.batches import finish_job, serialize_events
 from optimization.algorithm import prepare_axes, variables_fingerprint
-from optimization.controller import cancel_optimization
+from optimization.controller import cancel_optimization, reconcile_optimization
 from optimization.db import Evaluation, Optimization, OptimizationModelPin, Trial
 from optimization.evaluations import ensure_evaluation
 from optimization.hybrid import reconcile_hybrid
 from optimization.model_updates import bind_round, finish_updates, model_state, request_update, sync_pins
 from optimization.schemas import OptimizationModelUpdateRequest
 from optimization.service import resume_optimization
+from optimization.search import initialize_search
 from prediction import training
 from prediction.db import Dataset, DatasetRevision, ModelRevision, Operation, Replica, TrainingRun
 from prediction.operations import assert_copy_idle
@@ -150,9 +151,23 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             return result["artifact"], prediction
 
-    async def optimization(self, algorithm=None):
+    async def optimization(self, algorithm=None, *, quality=False):
+        if quality:
+            await self.record(4, 40)
+            await self.record(5, 50)
         async with self.sessions() as db:
-            dataset, model = await self.reserve(db)
+            if quality:
+                from prediction.datasets import freeze_dataset
+                from prediction.models import reserve_model
+                from prediction_contracts import QUALITY_VALIDATION_V2
+                dataset = await freeze_dataset(db, self.selection(), self.owner)
+                definition = {"algorithm": {"kind": "knn", "kMode": "auto", "manualK": 1, "weighting": "distance"},
+                    "implementationVersion": "knn-v1", "preprocessingVersion": "box-relative-v2",
+                    "fingerprint": "sha256:" + "c" * 64, "snapshotFingerprint": dataset["revisions"][0]["fingerprint"],
+                    "qualityValidation": deepcopy(QUALITY_VALIDATION_V2)}
+                model = await reserve_model(db, self.model_request(dataset, definition=definition), self.owner)
+            else:
+                dataset, model = await self.reserve(db)
         await self.train_and_publish(model["operation_id"])
         async with self.sessions() as db:
             revision = await db.get(ModelRevision, (model["id"], 1))
@@ -165,6 +180,9 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
                 "source_contracts": revision.source_contracts, "max_solver_runs": 5,
                 "resources": {name: {"cpu_cores": 1, "startup_ram_bytes": 2 ** 20, "gpu_count": 0}
                     for name in ("evaluation", "predictor")}}
+            if quality:
+                from optimization.evaluations import freeze_quality
+                source.update(freeze_quality(revision, None))
             settings = {"max_trials": 5, "max_parallel": 2, "initial_vars": {"width": 2},
                 "initial_step": 0.25, "min_step": 0.01, "objective": {"direction": "minimize"},
                 "constraints": [], "hybrid": source,
@@ -176,10 +194,7 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
                 definition={"hash": "optimization-definition", "catalog_revision": "test-catalog", "catalog": {},
                     "source_bundle": experiment.source_bundle, "source_hash": experiment.source_hash,
                     "result_contracts": {}, "calculations": [], "hybrid": source},
-                optimizer_state={"round_index": 0, "round_ordinals": [1], "step": 0.25})
-            if algorithm is not None:
-                from optimization.search import prepare_search
-                _, optimization.optimizer_state, _, _ = prepare_search(settings, optimization.optimizer_state, False)
+                optimizer_state=initialize_search(settings))
             db.add(optimization)
             await db.flush()
             trial = Trial(optimization_id=optimization.id, ordinal=1, round_index=0, variables={"width": 2},
@@ -217,6 +232,77 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_random_stream_waits_without_consumption_then_adopts_next_round(self):
         await self.verify_update_boundary({"id": "random", "config": {"seed": 42, "candidates_per_round": 2}})
+
+    async def test_quality_rebuild_inherits_holdout_and_adopts_comparable_report(self):
+        optimization_id = await self.optimization(quality=True)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            original = model_state(optimization)["active_model"]["quality_report"]
+            held_id = original["split"]["validationMeasurementIds"][0]
+            held = await db.get(Measurement, held_id)
+            held_width = held.vars["width"]
+        added = await self.record(3, 90)
+        repeated = await self.record(held_width, 123)
+        update = await self.request(optimization_id)
+        await self.advance(optimization_id)
+        artifact, _ = await self.train_and_publish(update["operation_id"])
+        report = artifact["qualityReport"]
+        self.assertEqual(report["version"], 2)
+        self.assertEqual(report["lineage"], original["lineage"])
+        self.assertEqual(report["split"]["validationMeasurementIds"], original["split"]["validationMeasurementIds"])
+        self.assertIn(added, report["split"]["trainingMeasurementIds"])
+        self.assertNotIn(repeated, report["split"]["trainingMeasurementIds"])
+        self.assertIn(repeated, [item["measurementId"] for item in report["split"]["excluded"]])
+        state = await self.advance(optimization_id)
+        self.assertEqual(state["active_model"]["model_revision"], 2)
+        self.assertEqual(state["round_model"]["quality_report"], report)
+        comparison = state["updates"][0]["quality_comparison"]
+        self.assertEqual(comparison["lineage_fingerprint"], original["lineage"]["fingerprint"])
+        self.assertTrue(comparison["items"])
+        for item in comparison["items"]:
+            self.assertEqual(item["delta"], item["current_rmse"] - item["previous_rmse"])
+
+    async def test_changed_holdout_rejects_snapshot_and_keeps_current_model(self):
+        optimization_id = await self.optimization(quality=True)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            original = deepcopy(model_state(optimization)["active_model"])
+            held_id = original["quality_report"]["split"]["validationMeasurementIds"][0]
+            recorded = await db.scalar(select(RecordedData).where(RecordedData.measurement_id == held_id))
+            recorded.data = self.tensor(999)
+            await db.commit()
+        with self.assertRaises(HTTPException) as rejected:
+            await self.request(optimization_id)
+        self.assertEqual(rejected.exception.status_code, 409)
+        self.assertIn("validation samples", str(rejected.exception.detail))
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            state = model_state(optimization)
+            self.assertEqual(state["active_model"], original)
+            self.assertEqual(state["updates"], [])
+            self.assertEqual((await db.get(Dataset, original["dataset_id"])).current_revision, 1)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ModelRevision)
+                .where(ModelRevision.model_id == original["model_id"])), 1)
+
+    async def test_legacy_hybrid_cancels_pending_training_without_submission(self):
+        optimization_id = await self.optimization()
+        await self.record(3, 90)
+        update = await self.request(optimization_id)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            optimization.optimizer_state = {**optimization.optimizer_state, "search_version": 1}
+            original = deepcopy(model_state(optimization)["active_model"])
+            await db.commit()
+            with patch("prediction.training.submit") as submit:
+                await reconcile_optimization(db, optimization, self.catalog)
+                await db.commit()
+            submit.assert_not_called()
+            self.assertEqual(optimization.state, "paused")
+            self.assertIn("Create a new Optimization", optimization.pause_reason)
+            self.assertEqual((await db.get(Operation, update["operation_id"])).state, "cancelled")
+            self.assertIsNone((await db.get(TrainingRun, update["operation_id"])).job_id)
+            self.assertEqual(model_state(optimization)["active_model"], original)
+            self.assertIsNone(model_state(optimization)["pending_model"])
 
     async def verify_update_boundary(self, algorithm=None):
         optimization_id = await self.optimization(algorithm)

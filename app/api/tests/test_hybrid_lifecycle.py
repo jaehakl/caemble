@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from optimization import controller, service, submissions
 from optimization.model_updates import round_source
+from optimization.search import initialize_search
 
 
 class HybridLifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -22,7 +23,10 @@ class HybridLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.optimization = SimpleNamespace(id=str(uuid4()), user_id="owner", state="running",
             definition={"hash": "definition", "source_hash": "source", "source_bundle": {},
                 "catalog": {}, "hybrid": deepcopy(self.source)}, optimizer_state={},
-            settings={"objective": {"direction": "minimize"}}, best_trial_id=None, finished_at=None)
+            settings={"objective": {"direction": "minimize"}, "initial_vars": {"x": 0},
+                "axes": [{"name": "x", "indices": [], "min": 0, "max": 10, "fixed": False}],
+                "constraints": [], "max_trials": 5, "max_parallel": 2}, best_trial_id=None, finished_at=None)
+        self.optimization.optimizer_state = initialize_search(self.optimization.settings)
         self.trials = [SimpleNamespace(id=str(uuid4()), ordinal=index + 1, variables={"x": index},
             state="pending", next_stage="build") for index in range(2)]
         self.evaluations = [SimpleNamespace(id=str(uuid4()), trial_id=trial.id, kind="prediction",
@@ -173,7 +177,8 @@ class HybridLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_json_restored_round_dispatches_original_revision_and_candidate_ids(self):
         initial = deepcopy(self.source)
         updated = {**initial, "model_revision": 4, "checksum": "b" * 64}
-        self.optimization.optimizer_state = json.loads(json.dumps({"runtime_id": "saved-runtime", "model_update": {
+        self.optimization.optimizer_state = json.loads(json.dumps({**self.optimization.optimizer_state,
+            "runtime_id": "saved-runtime", "model_update": {
             "initial_model": initial, "active_model": updated, "round_model": initial,
             "pending_model": None, "updates": [], "waiting": False}}))
         for item in self.evaluations:

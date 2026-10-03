@@ -20,7 +20,7 @@ from gpstation.service.state import utcnow
 from prediction.common import connected_storage, owned
 from prediction.db import Dataset, DatasetGrant, DatasetRevision, ModelLease, ModelRevision, Operation, PredictionModel, Replica, TrainingRun
 from prediction.schemas import ModelComplete
-from prediction_contracts import validate_definition
+from prediction_contracts import validate_new_training
 from prediction.resources import resolve_resources
 from settings import settings
 
@@ -170,6 +170,8 @@ async def preflight(db, identity, request_id, user_id):
     request_id = str(request_id)
     if request_id in run.retry_requests or run.preflight_request_id == request_id:
         return await operation_view(db, row)
+    from optimization.guards import require_training_continuation
+    await require_training_continuation(db, row.details.get("online_origin"))
     job = await db.get(Job, run.job_id) if run.job_id else None
     if row.state not in {"failed", "interrupted", "pending", "cancelled"} or cleanup_pending(job):
         raise HTTPException(409, "Wait for failed training cleanup before preparing a retry.")
@@ -177,6 +179,10 @@ async def preflight(db, identity, request_id, user_id):
     revision = await db.get(ModelRevision, (model.id, row.revision))
     if revision.state != "reserved":
         raise HTTPException(410, "This model preparation was superseded.")
+    try:
+        validate_new_training(revision.definition, row.details.get("update"))
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     await assert_model_update_available(db, model.id, user_id, operation_id=row.id,
         online_origin=row.details.get("online_origin"))
     origin = row.details.get("online_origin")
@@ -204,6 +210,8 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None, c
     nonce = str(retry_request_id) if retry_request_id else None
     if (nonce is not None and nonce in run.retry_requests) or (nonce is None and run.job_id):
         return await operation_view(db, row)
+    from optimization.guards import require_training_continuation
+    await require_training_continuation(db, row.details.get("online_origin"))
     previous = await db.get(Job, run.job_id) if run.job_id else None
     if cleanup_pending(previous):
         raise HTTPException(409, "Wait for the previous training process to finish cleanup.")
@@ -220,7 +228,7 @@ async def submit(db, identity, user_id, *, pin_id=None, retry_request_id=None, c
     await assert_model_update_available(db, model.id, user_id, operation_id=row.id,
         online_origin=row.details.get("online_origin"))
     try:
-        validate_definition(revision.definition)
+        validate_new_training(revision.definition, row.details.get("update"))
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     await connected_storage(db, row.details["target_storage_id"], row.details["target_launcher_id"], user_id)

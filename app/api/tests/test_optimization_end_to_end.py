@@ -293,7 +293,7 @@ class OptimizationEndToEndTests(unittest.TestCase):
                 self.assertEqual(history["total"], count)
                 if self.random_box:
                     self.assertEqual(restored["settings"]["algorithm"], algorithm)
-                    self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"])
+                    self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"]["data"])
                     self.assertTrue(all(len(item["evaluations"]) == 1 and item["evaluations"][0]["kind"] == "solver" for item in history["items"]))
                 self.assertTrue(all(len(item["stages"]) == 3 for item in history["items"]))
             async with sessions() as db:

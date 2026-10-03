@@ -71,3 +71,58 @@ it('rejects unsupported policy versions and nonpositive or fractional limits', (
   }
   expect(optimizationDetailSchema.parse(hybridOptimizationFixture).model_update?.automatic).toBeUndefined()
 })
+
+it('disables updates for incompatible search state and shows comparable RMSE without changing the verdict', () => {
+  const optimization = optimizationDetailSchema.parse({
+    ...hybridOptimizationFixture,
+    continuation: { supported: false, reason: 'Create a new Optimization.' },
+    model_update: {
+      ...hybridOptimizationFixture.model_update,
+      updates: [
+        {
+          request_id: 'request',
+          operation_id: 'operation',
+          model_id: 'model-1',
+          revision: 2,
+          version_name: 'Updated model',
+          state: 'adopted',
+          quality_comparison: {
+            lineage_fingerprint: 'lineage',
+            items: [{ recordId: 10, component: 'value', unit: 'K', previous_rmse: 0.3, current_rmse: 0.4, delta: 0.1 }],
+          },
+        },
+      ],
+    },
+  })
+  render(
+    <MemoryRouter>
+      <OptimizationModelUpdates optimization={optimization} busy={false} compact={false} onUpdate={vi.fn()} />
+    </MemoryRouter>,
+  )
+  expect(screen.getByRole('button', { name: '모델 갱신' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '모델 갱신' })).toHaveAttribute('title', 'Create a new Optimization.')
+  expect(screen.getByLabelText('Updated model 품질 비교')).toHaveTextContent('이전 0.3 → 신규 0.4 · 차이 +0.1 K')
+  expect(screen.getByText(/수동 갱신 · Updated model · 채택 완료/)).toBeInTheDocument()
+})
+
+it.each([undefined, 1, 2])('keeps fixed-model use separate from quality version %s update eligibility', (version) => {
+  const source = {
+    ...hybridOptimizationFixture.model_update!.active_model,
+    model_definition: version === undefined ? {} : { qualityValidation: { version } },
+  }
+  const optimization = optimizationDetailSchema.parse({
+    ...hybridOptimizationFixture,
+    model_update: { ...hybridOptimizationFixture.model_update, active_model: source },
+  })
+  render(
+    <MemoryRouter>
+      <OptimizationModelUpdates optimization={optimization} busy={false} compact={false} onUpdate={vi.fn()} />
+    </MemoryRouter>,
+  )
+  const button = screen.getByRole('button', { name: '모델 갱신' })
+  if (version === 1) {
+    expect(button).toBeDisabled()
+    expect(screen.getByText('모델 갱신에는 새 품질 평가 v2 모델이 필요합니다.')).toBeInTheDocument()
+  } else expect(button).toBeEnabled()
+  expect(screen.getByText('현재 채택 모델')).toBeInTheDocument()
+})

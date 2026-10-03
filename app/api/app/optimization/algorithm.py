@@ -126,8 +126,8 @@ def trial_rank(trial, direction: str) -> tuple:
     return (1, result["violation"], trial.ordinal)
 
 
-def next_round(trials: list, settings: dict, state: dict) -> tuple[dict, list[dict], bool]:
+def next_round(trials: list, settings: dict, state: dict, *, evaluations=None) -> tuple[dict, list[dict], bool]:
     """Compatibility entry point for the pure Solver-only search coordinator."""
     from optimization.search import advance_solver_search
-    state, candidates, _, reason = advance_solver_search(trials, settings, state)
+    state, candidates, _, reason = advance_solver_search(trials, settings, state, evaluations=evaluations)
     return state, candidates, reason is not None

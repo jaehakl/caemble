@@ -101,6 +101,22 @@ export const optimizationModelUpdateSchema = z.object({
       origin: z.enum(['manual', 'automatic']).optional(),
       requested_round: z.number().int().nonnegative().optional(),
       quality_assessment: optimizationQualityAssessmentSchema.optional(),
+      quality_comparison: z
+        .object({
+          lineage_fingerprint: z.string(),
+          items: z.array(
+            z.object({
+              recordId: z.number().int().positive(),
+              component: z.string(),
+              unit: z.string(),
+              previous_rmse: z.number().finite().nonnegative(),
+              current_rmse: z.number().finite().nonnegative(),
+              delta: z.number().finite(),
+            }),
+          ),
+        })
+        .nullable()
+        .optional(),
     }),
   ),
   waiting: z.boolean(),
@@ -202,6 +218,7 @@ export const optimizationSummarySchema = z.object({
   executions_active: z.number().int(),
   cleanup_pending: z.boolean(),
   manual_retry_pending: z.boolean(),
+  continuation: z.object({ supported: z.boolean(), reason: z.string().nullable() }),
   best_trial: bestTrialSchema.nullable(),
   best_predicted_trial: bestTrialSchema.nullable().optional(),
   best_verified_trial: bestTrialSchema.nullable().optional(),

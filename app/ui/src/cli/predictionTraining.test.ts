@@ -108,7 +108,7 @@ describe('server-owned Prediction CLI', () => {
         algorithm: config.algorithm,
         requiredRecordIds: [10, 12],
         snapshotFingerprint: source.fingerprint,
-        qualityValidation: { version: 1, minimumGroups: 5 },
+        qualityValidation: { version: 2, minimumGroups: 5 },
         implementationVersion: 'mlp-v1',
       },
     })

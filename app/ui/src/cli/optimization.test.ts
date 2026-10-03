@@ -449,3 +449,16 @@ it('writes optimization snapshots when observation completes', async () => {
   })
   expect(JSON.parse(String(output.mock.calls[0][0]))).not.toHaveProperty('study')
 })
+
+it('ends observation with the continuation reason after incompatible work has cleaned up', async () => {
+  const reason = 'Unsupported search state. Create a new Optimization.'
+  fetch.mockResolvedValueOnce(
+    Response.json({ ...optimizationFixture, active: 2, continuation: { supported: false, reason } }),
+  )
+  const output = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+  await expect(
+    optimizationCommand('watch', { ...context, args: [optimizationFixture.id], options: {} }),
+  ).rejects.toThrow(reason)
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(JSON.parse(String(output.mock.calls[0][0])).optimization.continuation).toEqual({ supported: false, reason })
+})

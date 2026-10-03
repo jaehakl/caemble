@@ -51,6 +51,7 @@ export function OptimizationHybridSettings({
   const revisions = model?.revisions ?? []
   const revision = revisions.find((item) => String(item.revision) === draft.modelRevision)
   const quality = revision?.artifact?.quality_report
+  const legacyQuality = (revision?.definition.qualityValidation as { version?: unknown } | undefined)?.version === 1
   const records = revision?.source_contracts.records
   const outputs = (Array.isArray(records) ? records : []).flatMap((record: unknown) => {
     const parsed = qualityOutputSchema.safeParse(record)
@@ -99,9 +100,17 @@ export function OptimizationHybridSettings({
           value={draft.modelRevision}
           required
           disabled={!model}
-          onChange={(event) =>
-            onChange({ modelRevision: event.target.value, replicaId: '', launcherId: '', qualityRequirements: [] })
-          }
+          onChange={(event) => {
+            const selected = revisions.find((item) => String(item.revision) === event.target.value)
+            const qualityValidation = selected?.definition.qualityValidation as { version?: unknown } | undefined
+            onChange({
+              modelRevision: event.target.value,
+              replicaId: '',
+              launcherId: '',
+              qualityRequirements: [],
+              ...(qualityValidation?.version === 1 ? { automaticUpdates: false } : {}),
+            })
+          }}
         >
           <option value="">revision 선택</option>
           {revisions.map((item) => (
@@ -149,11 +158,16 @@ export function OptimizationHybridSettings({
           <input
             type="checkbox"
             checked={draft.automaticUpdates}
+            disabled={legacyQuality}
             onChange={(event) => onChange({ automaticUpdates: event.target.checked })}
           />
           자동 재학습
         </label>
-        {draft.automaticUpdates ? (
+        {legacyQuality ? (
+          <p role="status" className="text-xs text-muted-foreground">
+            품질 평가 v1 모델은 고정 모델로 사용할 수 있습니다. 모델 갱신과 자동 재학습에는 새 v2 모델이 필요합니다.
+          </p>
+        ) : draft.automaticUpdates ? (
           <>
             <div className="grid grid-cols-2 gap-3">
               {(

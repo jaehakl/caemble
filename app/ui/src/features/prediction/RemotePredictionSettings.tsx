@@ -342,8 +342,8 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
                       미학습 설계점으로 품질 평가
                     </label>
                     <p className="text-xs text-muted-foreground">
-                      서로 다른 설계점이 5개 이상 필요합니다. 약 20%를 평가용으로 분리하며, 평가용 설계점은 저장 모델
-                      학습에 사용하지 않습니다.
+                      최초 학습에는 서로 다른 설계점이 5개 이상 필요합니다. 약 20%를 평가용으로 고정하고 후속 버전도
+                      같은 표본으로 비교합니다. 평가용 설계점과 같은 Vars의 측정은 학습과 전처리에서 제외합니다.
                     </p>
                   </div>
                   <div className="flex gap-2">

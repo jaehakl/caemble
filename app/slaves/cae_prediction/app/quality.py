@@ -2,22 +2,26 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
 import hashlib
 import json
 import math
 
 import numpy as np
 
-from prediction_contracts import QUALITY_VALIDATION_V1, validate_quality_report
-from prediction_contracts.quality import split_fingerprint
+from prediction_contracts import QUALITY_VALIDATION_V1, validate_quality_report, validate_quality_settings
+from prediction_contracts.quality import lineage_fingerprint, split_fingerprint
 
 from .errors import PredictionError
 from .representations import recorded_sample, validate_sample, vars_samples
 from .storage import check_cancel
 
 
-def split_dataset(dataset: dict, cancel=None) -> tuple[dict, list[list[dict]], dict]:
+def split_dataset(dataset: dict, cancel=None, *, settings: dict | None = None,
+                  lineage: dict | None = None) -> tuple[dict, list[list[dict]], dict]:
     """Partition shallow views; the immutable source payload and its identity stay intact."""
+    settings = settings or QUALITY_VALIDATION_V1
+    validate_quality_settings(settings)
     groups, excluded = {}, []
     for row in sorted(dataset["measurements"], key=lambda item: item["id"]):
         check_cancel(cancel)
@@ -26,22 +30,48 @@ def split_dataset(dataset: dict, cancel=None) -> tuple[dict, list[list[dict]], d
             # Normalize both integer/float spelling and signed zero before hashing.
             values = [[sample["layout"]["key"], [0.0 if value == 0 else float(value)
                        for value in sample["values"]]] for sample in samples]
-            canonical = json.dumps([QUALITY_VALIDATION_V1["seed"], values], separators=(",", ":"), allow_nan=False)
+            canonical = json.dumps([settings["seed"], values], separators=(",", ":"), allow_nan=False)
             key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
             groups.setdefault(key, []).append(row)
         except (PredictionError, KeyError, TypeError, ValueError) as error:
             excluded.append({"measurementId": row["id"], "reason": str(error)})
-    if len(groups) < QUALITY_VALIDATION_V1["minimumGroups"]:
+    if len(groups) < settings["minimumGroups"]:
         raise PredictionError("quality-unavailable", "Quality validation requires at least five distinct valid design points.")
-    ordered = [groups[key] for key in sorted(groups)]
-    count = math.ceil(len(ordered) * QUALITY_VALIDATION_V1["holdoutFraction"])
-    validation, training = ordered[:count], ordered[count:]
+    if lineage is None:
+        ordered = sorted(groups)
+        count = math.ceil(len(ordered) * settings["holdoutFraction"])
+        validation = [groups[key] for key in ordered[:count]]
+        training = [groups[key] for key in ordered[count:]]
+        if settings["version"] == 2:
+            lineage = {"rootSnapshot": {key: dataset[key] for key in ("datasetId", "revision", "fingerprint")},
+                       "validationGroups": [{"designFingerprint": key, "measurementIds": sorted(row["id"] for row in groups[key])}
+                                            for key in ordered[:count]]}
+            lineage["fingerprint"] = lineage_fingerprint(lineage, settings)
+    else:
+        if settings["version"] != 2:
+            raise PredictionError("quality-lineage", "Frozen validation lineage requires quality version 2.")
+        validation, training = [], []
+        held_out = {group["designFingerprint"]: set(group["measurementIds"]) for group in lineage["validationGroups"]}
+        for key, identities in held_out.items():
+            rows = {row["id"]: row for row in groups.get(key, [])}
+            if not identities.issubset(rows):
+                raise PredictionError("quality-lineage", "Root validation designs changed or were removed; create a fresh model instead.")
+            validation.append([rows[identity] for identity in sorted(identities)])
+            excluded.extend({"measurementId": identity, "reason": "Repeated root validation design is reserved from training."}
+                            for identity in sorted(rows.keys() - identities))
+        training = [rows for key, rows in sorted(groups.items()) if key not in held_out]
+        if not training:
+            raise PredictionError("quality-unavailable", "Quality validation requires training designs outside its root holdout.")
     training_ids = sorted(row["id"] for group in training for row in group)
     validation_ids = sorted(row["id"] for group in validation for row in group)
-    split = {"version": 1, "seed": 0, "holdoutFraction": .2, "trainingMeasurementIds": training_ids,
+    split = {"version": settings["version"], "seed": settings["seed"], "holdoutFraction": settings["holdoutFraction"], "trainingMeasurementIds": training_ids,
              "validationMeasurementIds": validation_ids, "trainingGroupCount": len(training),
-             "validationGroupCount": len(validation), "excluded": excluded}
+             "validationGroupCount": len(validation), "excluded": sorted(excluded, key=lambda item: item["measurementId"])}
+    if lineage is not None:
+        split["lineageFingerprint"] = lineage["fingerprint"]
     split["fingerprint"] = split_fingerprint(split)
+    if lineage is not None:
+        split["lineage"] = deepcopy(lineage)
     selected = set(training_ids)
     payload = {**dataset, "measurements": [row for row in dataset["measurements"] if row["id"] in selected]}
     for key in ("recorded", "calculationData"):
@@ -128,9 +158,12 @@ def evaluate_quality(bundle, dataset: dict, groups: list[list[dict]], split: dic
         report["excluded"].sort(key=lambda item: item["measurementId"])
     if not any(report["status"] == "evaluated" for report in reports):
         raise PredictionError("quality-unavailable", "No compatible held-out BoxGrid output could be evaluated.")
-    report = {"version": 1, "evaluation": "pre-save-holdout",
+    report = {"version": split["version"], "evaluation": "pre-save-holdout",
               "status": "partial" if split["excluded"] or any(item["excluded"] for item in reports) else "complete",
               "dataset": {key: dataset[key] for key in ("datasetId", "revision", "fingerprint")},
-              "definitionFingerprint": definition["fingerprint"], "split": split, "records": reports}
+              "definitionFingerprint": definition["fingerprint"],
+              "split": {key: value for key, value in split.items() if key != "lineage"}, "records": reports}
+    if "lineage" in split:
+        report["lineage"] = deepcopy(split["lineage"])
     validate_quality_report(report, definition, dataset)
     return report

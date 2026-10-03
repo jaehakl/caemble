@@ -650,7 +650,7 @@ class HybridEndToEndTests(unittest.TestCase):
                 self.assertEqual(restored["best_trial"]["id"], best.id)
                 if self.algorithm is not None:
                     self.assertEqual(restored["settings"]["algorithm"], self.algorithm)
-                    self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"])
+                    self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"]["data"])
                 self.assertEqual(restored["best_trial"], restored["best_verified_trial"])
                 self.assertIsNotNone(restored["best_predicted_trial"])
                 self.assertIsNone(restored["best_predicted_trial"]["measurement_id"])

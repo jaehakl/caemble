@@ -82,7 +82,9 @@ class HybridOptimizationTests(unittest.IsolatedAsyncioTestCase):
                 if verified:
                     await submit_stage(db, optimization, trial, self.catalog, verified)
                 identities.append((trial.id, predicted.id, verified.id if verified else None))
-            optimization.optimizer_state = {"round_ordinals": list(range(1, count + 1)), "selection": [item[0] for item in identities] if solver else [], "round_index": 0}
+            optimization.optimizer_state = {**optimization.optimizer_state,
+                "round_ordinals": list(range(1, count + 1)),
+                "selection": [item[0] for item in identities] if solver else [], "round_index": 0}
             await db.commit()
         if solver:
             for job in await self.jobs(optimization_id):

@@ -20,6 +20,7 @@ export const optimizationFixture: Optimization = {
   executions_active: 0,
   cleanup_pending: false,
   manual_retry_pending: false,
+  continuation: { supported: true, reason: null },
   best_trial: {
     id: 'trial-1',
     ordinal: 1,

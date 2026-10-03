@@ -12,7 +12,8 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, build_opener
 
-from prediction_contracts import validate_quality_report, validate_training_update
+from prediction_contracts import (validate_new_training, validate_quality_lineage, validate_quality_report,
+                                  validate_quality_update, validate_training_update)
 from sdk.process_metrics import ProcessMetrics
 
 from .dataset import NoRedirect
@@ -99,6 +100,13 @@ class TrainingOperations:
                 or any(metadata.get(key) != before[other] for key, other in
                        (("datasetId", "datasetId"), ("datasetRevision", "revision"), ("datasetFingerprint", "fingerprint")))):
             raise PredictionError("artifact-checksum", "Training base model differs from its frozen model or Dataset reference.")
+        try:
+            validate_quality_report(metadata.get("qualityReport"), metadata["definition"], before)
+            validate_quality_update(spec["update"], spec["definition"], metadata["definition"], metadata.get("qualityReport"))
+        except ValueError as error:
+            raise PredictionError("quality-lineage", str(error)) from error
+        if metadata.get("qualityReport") != manifest["metadata"].get("qualityReport"):
+            raise PredictionError("artifact-checksum", "Base model quality report differs from its manifest.")
         expected_files = implementation_for(metadata["definition"]).validate_artifact(path, manifest, content)
         if expected_files != {file["name"] for file in manifest["files"]}:
             raise PredictionError("artifact-checksum", "Training base model inventory differs from its implementation.")
@@ -142,7 +150,10 @@ class TrainingOperations:
     def run(self, action: str, payload: dict, cancel=None) -> dict:
         spec = self.authority(payload["grant"], cancel)
         try:
-            validate_training_update(spec.get("update"), spec["definition"])
+            if action == "training.pin":
+                validate_new_training(spec["definition"], spec.get("update"))
+            else:
+                validate_training_update(spec.get("update"), spec["definition"])
         except ValueError as error:
             raise PredictionError("unsupported-update", str(error)) from error
         operation_id, pin_id = safe_id(spec["operationId"]), safe_id(spec["pinId"])
@@ -286,6 +297,10 @@ class TrainingOperations:
             try:
                 artifact = self.saved_artifact(spec, cancel)
                 if artifact is None:
+                    try:
+                        validate_new_training(spec["definition"], spec.get("update"))
+                    except ValueError as error:
+                        raise PredictionError("unsupported-model", str(error)) from error
                     self.store.save_receipt(operation_id, receipt)
                     report("loading-dataset")
                     if spec["sourceKind"] == "local":
@@ -299,21 +314,31 @@ class TrainingOperations:
                         raise PredictionError("dataset-checksum", "Training input differs from its pinned Dataset revision.")
                     report("training")
                     training_dataset, validation_groups, quality_split = dataset, None, None
-                    if spec["definition"].get("qualityValidation") is not None:
-                        training_dataset, validation_groups, quality_split = split_dataset(dataset, cancel)
                     base = (spec.get("update") or {}).get("baseModel")
                     with ExitStack() as base_access:
-                        base_model = None
+                        base_model, base_metadata, lineage = None, None, None
                         if base is not None:
                             pin = self.store.path("models", base["modelId"]) / "training-pins" / f"{safe_id(spec['pinId'])}.json"
                             expected = {"operationId": operation_id, "pinId": spec["pinId"], "baseModel": base}
                             if not pin.exists() or any(json.loads(pin.read_bytes()).get(key) != value for key, value in expected.items()):
                                 raise PredictionError("model-in-use", "Training requires its durable preflight base-model pin.")
                             base_access.enter_context(self.store.read_lease("models", base["modelId"], base["revision"], cancel))
-                            self.base_artifact(spec, cancel)
+                            base_metadata = self.base_artifact(spec, cancel)
+                            try:
+                                lineage = validate_quality_update(spec["update"], spec["definition"],
+                                    base_metadata["definition"], base_metadata.get("qualityReport"))
+                            except ValueError as error:
+                                raise PredictionError("quality-lineage", str(error)) from error
+                            if lineage is not None and any(base_metadata.get(key, default) != dataset.get(key, default)
+                                    for key, default in (("sourceHash", None), ("varsSchema", {}), ("records", []),
+                                                         ("rules", []), ("resultContracts", {}))):
+                                raise PredictionError("quality-lineage", "Quality updates require unchanged source and output contracts; create a fresh model instead.")
                             if mode != "rebuild":
                                 base_model, _ = ModelBundle.load(self.store, base["modelId"], base["revision"], self.model_context(cancel, report))
                         try:
+                            if spec["definition"].get("qualityValidation") is not None:
+                                training_dataset, validation_groups, quality_split = split_dataset(dataset, cancel,
+                                    settings=spec["definition"]["qualityValidation"], lineage=lineage)
                             context = self.model_context(cancel, report)
                             if base_model is not None:
                                 context = replace(context, available_ram_bytes=max(0, context.available_ram_bytes - base_model.persistent_bytes))
@@ -324,6 +349,13 @@ class TrainingOperations:
                                     report("quality-evaluation")
                                     bundle.metadata["qualityReport"] = evaluate_quality(
                                         bundle, dataset, validation_groups, quality_split, lambda: self.model_context(cancel))
+                                    try:
+                                        validate_quality_lineage(bundle.metadata["qualityReport"], spec["definition"],
+                                            update=spec.get("update"),
+                                            base_definition=base_metadata["definition"] if base_metadata else None,
+                                            base_report=base_metadata.get("qualityReport") if base_metadata else None)
+                                    except ValueError as error:
+                                        raise PredictionError("quality-lineage", str(error)) from error
                                 included = set(bundle.profile()["includedMeasurementIds"])
                                 sample = next((row for row in sorted(dataset["measurements"], key=lambda row: row["id"])
                                                if row["id"] in included), None)
