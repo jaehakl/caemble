@@ -1,4 +1,8 @@
-import type { OptimizationAxis } from '@/contracts/api/optimization'
+import {
+  optimizationModelUpdatePolicySchema,
+  type OptimizationAxis,
+  type OptimizationHybrid,
+} from '@/contracts/api/optimization'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { optimizationAxes } from './variables'
 
@@ -22,6 +26,8 @@ export type OptimizationDraft = {
   launcherId: string
   maxSolverRuns: number
   qualityRequirements: { recordId: number; component: string; rmseMaximum: string }[]
+  automaticUpdates: boolean
+  modelUpdateConfig: NonNullable<OptimizationHybrid['model_update_policy']>['config']
 }
 
 export function createOptimizationDraft(workbench: CaeWorkbenchState): OptimizationDraft {
@@ -45,5 +51,7 @@ export function createOptimizationDraft(workbench: CaeWorkbenchState): Optimizat
     launcherId: '',
     maxSolverRuns: 8,
     qualityRequirements: [],
+    automaticUpdates: false,
+    modelUpdateConfig: optimizationModelUpdatePolicySchema.parse({ id: 'new_solver_results' }).config,
   }
 }

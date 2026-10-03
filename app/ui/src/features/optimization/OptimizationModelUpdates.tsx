@@ -17,6 +17,21 @@ const updateStates: Record<string, string> = {
   interrupted: '학습 중단',
   cancelled: '학습 취소',
   superseded: '이후 갱신으로 교체됨',
+  timed_out: '자동 학습 시간 초과',
+}
+
+const automaticReasons: Record<string, string> = {
+  awaiting_round: '다음 회차 경계에서 확인',
+  not_running: '탐색 중지 중',
+  training_busy: '학습 또는 자원 정리 대기',
+  awaiting_adoption: '다음 회차 채택 대기',
+  round_already_requested: '이번 회차 갱신 요청 완료',
+  update_limit: '최대 자동 갱신 횟수 도달',
+  time_limit: '누적 자동 학습 시간 소진',
+  insufficient_results: '새 확정 결과 대기',
+  admission_deferred: '자동 갱신 요청 보류 · 기존 모델로 계속',
+  source_unavailable: '학습 입력 확인 필요 · 기존 모델로 계속',
+  search_finished: '탐색 종료 · 자동 갱신 완료',
 }
 
 function ModelVersion({
@@ -63,6 +78,8 @@ export function OptimizationModelUpdates({
     !!update?.pending_model ||
     (!!latest && ['pending', 'preparing', 'queued', 'running'].includes(latest.state))
   const error = typeof latest?.error === 'string' ? latest.error : latest?.error?.message
+  const policy = optimization.settings.hybrid?.model_update_policy
+  const automatic = update?.automatic
   return (
     <section aria-label="Hybrid 모델 갱신" className="space-y-3 rounded-lg border p-3 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -74,6 +91,21 @@ export function OptimizationModelUpdates({
           </Button>
         ) : null}
       </div>
+      {policy ? (
+        <div aria-label="자동 재학습 상태" className="space-y-1">
+          <p>
+            자동 재학습 · 새 결과 {automatic?.new_measurements ?? 0} / {policy.config.min_new_measurements}개
+          </p>
+          <p>
+            갱신 {automatic?.attempts ?? 0} / {policy.config.max_updates}회 · 대기·학습{' '}
+            {Math.ceil(automatic?.elapsed_seconds ?? 0)} / {policy.config.total_timeout_seconds}초 · 회당 제한{' '}
+            {policy.config.update_timeout_seconds}초
+          </p>
+          {automatic ? <p>{automaticReasons[automatic.reason] ?? automatic.reason}</p> : null}
+          {automatic?.error ? <p role="status">{automatic.error.message}</p> : null}
+          {update?.waiting ? <p role="status">다음 탐색 회차가 학습 완료와 자원 정리를 기다리고 있습니다.</p> : null}
+        </div>
+      ) : null}
       <dl className="grid gap-3 sm:grid-cols-2">
         <div>
           <dt className="text-muted-foreground">초기 모델</dt>
@@ -106,7 +138,8 @@ export function OptimizationModelUpdates({
       </dl>
       {latest ? (
         <p role="status">
-          {latest.version_name} · {updateStates[latest.state] ?? latest.state}
+          {latest.origin === 'automatic' ? '자동 갱신' : '수동 갱신'} · {latest.version_name} ·{' '}
+          {updateStates[latest.state] ?? latest.state}
         </p>
       ) : null}
       {error ? (
@@ -117,7 +150,7 @@ export function OptimizationModelUpdates({
       {latest?.quality_assessment ? (
         <OptimizationQuality assessment={latest.quality_assessment} label="최근 갱신 모델 품질" />
       ) : null}
-      {latest && ['failed', 'interrupted', 'cancelled'].includes(latest.state) ? (
+      {latest && ['failed', 'interrupted', 'cancelled', 'timed_out'].includes(latest.state) ? (
         <p>
           <Link className="underline" to="/settings/prediction">
             Prediction 관리
@@ -138,7 +171,8 @@ export function OptimizationModelUpdates({
                 {update.updates.map((item) => (
                   <li key={item.request_id} className="break-all">
                     <p>
-                      {item.version_name} · revision {item.revision} · {updateStates[item.state] ?? item.state}
+                      {item.origin === 'automatic' ? '자동' : '수동'} · {item.version_name} · revision {item.revision} ·{' '}
+                      {updateStates[item.state] ?? item.state}
                     </p>
                     <p className="text-muted-foreground">Operation {item.operation_id}</p>
                     {item.adopted_round != null ? <p>{item.adopted_round}회차부터 사용</p> : null}

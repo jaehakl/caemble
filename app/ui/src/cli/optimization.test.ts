@@ -133,6 +133,48 @@ it('sends a fixed Hybrid model revision, Solver budget and output quality condit
   expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).hybrid).toEqual(hybrid)
 })
 
+it('preserves automatic policy configuration and status across create and show', async () => {
+  const policy = {
+    id: 'new_solver_results',
+    version: 1,
+    config: {
+      min_new_measurements: 3,
+      max_updates: 3,
+      update_timeout_seconds: 180,
+      total_timeout_seconds: 540,
+    },
+  }
+  const automatic = {
+    version: 1,
+    new_measurements: 2,
+    attempts: 1,
+    elapsed_seconds: 12.5,
+    reason: 'insufficient_results',
+    error: null,
+  }
+  const response = {
+    ...hybridOptimizationFixture,
+    settings: {
+      ...hybridOptimizationFixture.settings,
+      hybrid: { ...hybridOptimizationFixture.settings.hybrid, model_update_policy: policy },
+    },
+    model_update: { ...hybridOptimizationFixture.model_update, automatic },
+  }
+  fetch.mockImplementation(async () => Response.json(response))
+  await writeFile(
+    String(context.options.config),
+    JSON.stringify({
+      ...config,
+      hybrid: { ...hybridOptimizationFixture.settings.hybrid, model_update_policy: policy },
+    }),
+  )
+  await optimizationCommand('create', context)
+  expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).hybrid.model_update_policy).toEqual(policy)
+  expect(await optimizationCommand('show', { ...context, args: [response.id] })).toMatchObject({
+    model_update: { automatic },
+  })
+})
+
 it('preserves strategy configuration through a lost response and rejects a changed seed on replay', async () => {
   const algorithm = { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } }
   await writeFile(String(context.options.config), JSON.stringify({ ...config, algorithm }))

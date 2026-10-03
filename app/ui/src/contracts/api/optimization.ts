@@ -98,10 +98,22 @@ export const optimizationModelUpdateSchema = z.object({
       error: z.union([z.string(), optimizationErrorSchema]).nullable().optional(),
       created_at: z.string().optional(),
       adopted_round: z.number().int().nonnegative().nullable().optional(),
+      origin: z.enum(['manual', 'automatic']).optional(),
+      requested_round: z.number().int().nonnegative().optional(),
       quality_assessment: optimizationQualityAssessmentSchema.optional(),
     }),
   ),
   waiting: z.boolean(),
+  automatic: z
+    .object({
+      version: z.literal(1),
+      new_measurements: z.number().int().nonnegative(),
+      attempts: z.number().int().nonnegative(),
+      elapsed_seconds: z.number().finite().nonnegative(),
+      reason: z.string(),
+      error: optimizationErrorSchema.nullable(),
+    })
+    .optional(),
 })
 export const optimizationAlgorithmSchema = z.discriminatedUnion('id', [
   z
@@ -141,6 +153,22 @@ export const optimizationVerificationPolicySchema = z
   })
   .strict()
 
+export const optimizationModelUpdatePolicySchema = z
+  .object({
+    id: z.literal('new_solver_results'),
+    version: z.literal(1).default(1),
+    config: z
+      .object({
+        min_new_measurements: z.number().int().positive().default(3),
+        max_updates: z.number().int().positive().default(3),
+        update_timeout_seconds: z.number().int().positive().default(180),
+        total_timeout_seconds: z.number().int().positive().default(540),
+      })
+      .strict()
+      .default({ min_new_measurements: 3, max_updates: 3, update_timeout_seconds: 180, total_timeout_seconds: 540 }),
+  })
+  .strict()
+
 export const optimizationHybridSchema = z
   .object({
     model_id: z.string(),
@@ -149,6 +177,7 @@ export const optimizationHybridSchema = z
     launcher_id: z.string(),
     max_solver_runs: z.number().int().positive(),
     verification_policy: optimizationVerificationPolicySchema.optional(),
+    model_update_policy: optimizationModelUpdatePolicySchema.optional(),
     ...qualityFields,
   })
   .passthrough()
@@ -295,5 +324,8 @@ export type OptimizationCreateRequest = Readonly<{
   hybrid?: Pick<
     OptimizationHybrid,
     'model_id' | 'model_revision' | 'replica_id' | 'launcher_id' | 'max_solver_runs' | 'quality_requirements'
-  > & { verification_policy?: z.input<typeof optimizationVerificationPolicySchema> }
+  > & {
+    verification_policy?: z.input<typeof optimizationVerificationPolicySchema>
+    model_update_policy?: z.input<typeof optimizationModelUpdatePolicySchema>
+  }
 }>

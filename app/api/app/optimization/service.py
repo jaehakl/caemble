@@ -41,6 +41,8 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
         payload["hybrid"].pop("quality_requirements", None)  # Preserve Hybrid receipts made before quality limits.
     if payload.get("hybrid") and payload["hybrid"].get("verification_policy") is None:
         payload["hybrid"].pop("verification_policy", None)
+    if payload.get("hybrid") and payload["hybrid"].get("model_update_policy") is None:
+        payload["hybrid"].pop("model_update_policy", None)
     try:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                                           allow_nan=False).encode("utf-8")).hexdigest()

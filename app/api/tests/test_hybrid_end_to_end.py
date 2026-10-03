@@ -1,4 +1,4 @@
-"""Opt-in fixed-revision kNN and MLP Hybrid flows with real local worker processes."""
+"""Opt-in fixed and automatically rebuilt Hybrid flows with real local workers."""
 from __future__ import annotations
 
 import asyncio
@@ -41,7 +41,7 @@ from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedDat
 from db import make_async_db_url
 from gpstation.db import APIKey, Job, Launcher
 from prediction import training
-from prediction.db import DatasetGrant, ModelLease
+from prediction.db import DatasetGrant, DatasetRevision, ModelLease, ModelRevision
 from prediction.router import authenticated as prediction_authenticated, router as prediction_router
 from gpstation.service import launcher_connection, worker_connection
 from gpstation.service.job_orchestrator import JobOrchestrator
@@ -54,7 +54,7 @@ from test_calculation_database import _create_database, _database_url, _drop_dat
 from user_auth.db import Role, UserRole
 from db import get_db
 from user_auth.utils.auth_utils import hash_token
-from hybrid_metrics_fixture import recorded_solver_invocations, recorded_values
+from hybrid_metrics_fixture import hybrid_jobs_cleaned, recorded_solver_invocations, recorded_values
 
 
 THERMAL_POINTS = ((100, 12), (90, 11), (90, 13), (110, 11), (110, 13))
@@ -101,6 +101,10 @@ class HybridEndToEndTests(unittest.TestCase):
     def test_fixed_knn_revision_selects_real_verified_candidates_without_browser(self):
         self.run_case(thermal=False)
 
+    @unittest.skipUnless(os.getenv("RUN_AUTOMATIC_HYBRID_E2E") == "1", "Set RUN_AUTOMATIC_HYBRID_E2E=1 for automatic rebuilding.")
+    def test_automatic_knn_rebuild_uses_new_solver_data_in_the_next_round(self):
+        self.run_case(thermal=False, automatic=True)
+
     @unittest.skipUnless(os.getenv("RUN_SEARCH_STRATEGY_E2E") == "1", "Set RUN_SEARCH_STRATEGY_E2E=1 for random Hybrid search.")
     def test_random_knn_revision_selects_real_verified_candidates_without_browser(self):
         self.run_case(thermal=False, algorithm={"id": "random", "version": 1,
@@ -110,12 +114,15 @@ class HybridEndToEndTests(unittest.TestCase):
     def test_fixed_mlp_revision_uses_heldout_temperature_and_real_verification(self):
         self.run_case(thermal=True)
 
-    def run_case(self, *, thermal, algorithm=None):
+    def run_case(self, *, thermal, algorithm=None, automatic=False):
         self.thermal = thermal
         self.algorithm = algorithm
+        self.automatic = automatic
         self.report_prefix = "mlp-hybrid-demo" if thermal else "hybrid-demo"
         if algorithm is not None:
             self.report_prefix = "random-hybrid-demo"
+        if automatic:
+            self.report_prefix = "automatic-hybrid-demo"
         self.test_started = time.monotonic()
         report_dir = Path(__file__).resolve().parents[3] / ".work"
         report_dir.mkdir(exist_ok=True)
@@ -251,6 +258,8 @@ class HybridEndToEndTests(unittest.TestCase):
                     "budget_seconds": 180, "launcher_cpu_cores": 4, "cae_cpu_cores": 1,
                     "jobs": [{"id": job.id, "handler": job.handler_type, "state": job.state,
                         "optimization_id": (job.artifact_metadata or {}).get("optimization_id"),
+                        "created_at": job.created_at.isoformat(),
+                        "queue_seconds": (job.started_at - job.created_at).total_seconds() if job.started_at else None,
                         "started_at": job.started_at.isoformat() if job.started_at else None,
                         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
                         "duration_seconds": (job.finished_at - job.started_at).total_seconds()
@@ -430,6 +439,10 @@ class HybridEndToEndTests(unittest.TestCase):
                 hybrid["quality_requirements"] = [{"recordId": output_quality["recordId"],
                     "component": "value", "rmseMaximum": THERMAL_RMSE_K}]
             self.report["phase_seconds"]["model_training"] = time.monotonic() - model_started
+            if self.automatic:
+                hybrid["model_update_policy"] = {"id": "new_solver_results", "version": 1, "config": {
+                    "min_new_measurements": 1, "max_updates": 1,
+                    "update_timeout_seconds": 180, "total_timeout_seconds": 180}}
             training_seconds = time.monotonic() - training_started
             started = asyncio.get_running_loop().time()
             self.report["phase"] = "hybrid"
@@ -471,7 +484,7 @@ class HybridEndToEndTests(unittest.TestCase):
                 active_launcher = await runtime.get_launcher(launcher.id)
                 remaining_processes = {(child.pid, child.create_time())
                     for child in psutil.Process(process.pid).children(recursive=True)} - launcher_processes
-                if (all(job.state == "succeeded" and job.cleaned_at is not None for job in all_jobs)
+                if (hybrid_jobs_cleaned(all_jobs)
                         and not leases and not grants and active_launcher is not None
                         and not active_launcher.instances and active_launcher.resources.get("cpu_reserved") == 0
                         and not remaining_processes):
@@ -505,6 +518,20 @@ class HybridEndToEndTests(unittest.TestCase):
                     .where(Measurement.experiment_id == experiment_id, ExperimentRecord.name == record_name))).all()
                 invocation_records = list((await db.scalars(select(RecordedData)
                     .where(RecordedData.measurement_id.in_([measurement.id for measurement, _ in recorded])))).all())
+                if self.automatic:
+                    updates = optimization.optimizer_state["model_update"]["updates"]
+                    self.assertEqual(len(updates), 1)
+                    update = updates[0]
+                    self.assertEqual((update["origin"], update["state"], update["adopted_round"]), ("automatic", "adopted", 1))
+                    revision = await db.get(ModelRevision, (update["model_id"], update["revision"]))
+                    snapshot = await db.get(DatasetRevision, (revision.dataset_id, revision.dataset_revision))
+                    first_solver = next(item for item in evaluations if item.kind == "solver" and item.trial_id == trials[0].id)
+                    self.assertIn(str(first_solver.measurement_id), snapshot.summary["sample_fingerprints"])
+                    self.report["automatic_training"] = {"model_revision": revision.revision,
+                        "snapshot": update["target_snapshot"], "included_solver_measurement": first_solver.measurement_id,
+                        "execution_metrics": revision.artifact.get("execution_metrics"), "attempt": update["automatic_attempt"]}
+                baseline_trials = list((await db.scalars(select(Trial).where(Trial.optimization_id.in_(training_ids))
+                    .order_by(Trial.ordinal))).all())
             predicted = [item for item in evaluations if item.kind == "prediction"]
             verified = [item for item in evaluations if item.kind == "solver"]
             self.assertEqual(len(trials), 5)
@@ -516,6 +543,7 @@ class HybridEndToEndTests(unittest.TestCase):
             self.assertTrue(child_jobs)
             self.assertTrue(all(job.state == "succeeded" and job.cleaned_at is not None for job in jobs))
             self.assertTrue(all(job.cleaned_at is not None for job in child_jobs))
+            self.assertTrue(hybrid_jobs_cleaned(all_jobs))
             solver_jobs = [job for job in jobs if job.slave_app_id == "cae"]
             self.assertEqual(len(solver_jobs), 3)
             self.assertTrue(all(job.started_at for job in solver_jobs))
@@ -572,9 +600,14 @@ class HybridEndToEndTests(unittest.TestCase):
                 predicted_value = max(output["values"])
                 predicted_objective = prediction.result["objective"]
                 self.assertEqual(saved["provenance"]["modelId"], hybrid["model_id"])
-                self.assertEqual(saved["provenance"]["modelRevision"], hybrid["model_revision"])
-                self.assertEqual(saved["provenance"]["manifestChecksum"], self.report["model_training"]["checksum"])
-                self.assertEqual(prediction.source, optimization.definition["hybrid"])
+                expected_source = optimization.optimizer_state["round_sources"][str(trial.round_index)]
+                self.assertEqual(saved["provenance"]["modelRevision"], expected_source["model_revision"])
+                self.assertEqual(saved["provenance"]["manifestChecksum"], expected_source["checksum"])
+                self.assertEqual(prediction.source, expected_source)
+                if not self.automatic:
+                    self.assertEqual(prediction.source, optimization.definition["hybrid"])
+                else:
+                    self.assertEqual(expected_source["model_revision"], 1 if trial.round_index == 0 else 2)
                 self.assertAlmostEqual(predicted_objective, abs(predicted_value - target), delta=1e-12)
                 verified_value = verified_objective = None
                 if solver is not None:
@@ -593,6 +626,7 @@ class HybridEndToEndTests(unittest.TestCase):
                     "prediction_evaluation_id": prediction.id, "solver_evaluation_id": solver.id if solver else None,
                     "measurement_id": solver.measurement_id if solver else None,
                     "definition_hash": prediction.definition_hash, "calculation_source_hash": source_hash,
+                    "model_revision": prediction.source["model_revision"], "model_checksum": prediction.source["checksum"],
                     f"predicted_{output_label}": predicted_value, f"verified_{output_label}": verified_value,
                     **({"analytic_current": 0.5 * trial.variables["width"] / trial.variables["length"]} if not self.thermal else {}),
                     "predicted_objective": predicted_objective, "verified_objective": verified_objective,
@@ -629,6 +663,9 @@ class HybridEndToEndTests(unittest.TestCase):
                 self.assertEqual(restored["solver_budget"], {"limit": 3, "used": 3, "reserved": 0, "remaining": 0})
                 self.assertEqual(history["total"], 5)
                 self.assertEqual(sum(len(item["evaluations"]) for item in history["items"]), 8)
+                if self.automatic:
+                    self.assertEqual(restored["model_update"]["active_model"]["model_revision"], 2)
+                    self.assertEqual(restored["model_update"]["automatic"]["attempts"], 1)
             prediction_metrics = [{"job_id": submission.job_id, **submission.result["execution_metrics"]}
                 for submission in prediction_submissions if submission.result.get("execution_metrics") is not None]
             if self.thermal:
@@ -675,10 +712,24 @@ class HybridEndToEndTests(unittest.TestCase):
                 "model": hybrid, "browser_disconnected_during_execution": True, "reconnected_history_verified": True,
                 "model_checksum": restored["definition"]["hybrid"]["checksum"],
                 "solver_budget": restored["solver_budget"], "termination_reason": restored["termination_reason"],
+                "model_update": restored["model_update"],
+                "comparison": {"solver_only": {"solver_runs": len(training_solver_jobs),
+                    "best_objective": min(item.result["objective"] for item in baseline_trials),
+                    "elapsed_seconds": self.report["phase_seconds"]["training_solver"]},
+                    "hybrid": {"solver_runs": len(solver_jobs), "best_objective": best.result["objective"],
+                        "reuse_model_seconds": elapsed, "including_initial_training_seconds": training_seconds + elapsed},
+                    "separate_transfer_seconds": None},
                 "predictor_cleanup": [{"job_id": job.id, "state": job.state,
                     "cleaned_at": job.cleaned_at.isoformat() if job.cleaned_at else None} for job in child_jobs],
                 "cleanup_verified": True, "object_storage": "local HTTP bucket with real hash/size validation"}
             report.update(await execution_report("passed"))
+            report["job_costs"] = {handler: {
+                "count": sum(job.handler_type == handler for job in all_jobs),
+                "execution_seconds": sum((job.finished_at - job.started_at).total_seconds()
+                    for job in all_jobs if job.handler_type == handler and job.started_at and job.finished_at),
+                "queue_seconds": sum((job.started_at - job.created_at).total_seconds()
+                    for job in all_jobs if job.handler_type == handler and job.started_at),
+            } for handler in sorted({job.handler_type for job in all_jobs})}
             self.report.update(report)
             self.report["phase_seconds"]["result_assertions"] = time.monotonic() - phase_started
         except BaseException as error:

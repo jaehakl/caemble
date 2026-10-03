@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from prediction_contracts import validate_quality_requirements
-from optimization.configuration import OptimizationAlgorithm, VerificationPolicy
+from optimization.configuration import ModelUpdatePolicy, OptimizationAlgorithm, VerificationPolicy
 
 
 class OptimizationAxis(BaseModel):
@@ -59,6 +59,7 @@ class HybridSettings(BaseModel):
     max_solver_runs: int = Field(default=8, strict=True, ge=1)
     quality_requirements: list[HybridQualityRequirement] | None = Field(default=None, min_length=1)
     verification_policy: VerificationPolicy | None = None
+    model_update_policy: ModelUpdatePolicy | None = None
 
     @model_validator(mode="after")
     def validate_quality_limits(self):

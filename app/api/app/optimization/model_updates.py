@@ -1,4 +1,4 @@
-"""Manual, durable Hybrid training and adoption at decision-round boundaries."""
+"""Shared manual/automatic Hybrid training and adoption at round boundaries."""
 from copy import deepcopy
 from uuid import UUID, uuid5
 
@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from gpstation.db import Job
 from gpstation.service.state import utcnow
 from optimization.db import OptimizationModelPin
+from optimization.automatic_updates import record_requested_snapshot, reconcile_automatic_attempt, refresh_automatic_state
 from prediction.common import digest
 from prediction.db import Dataset, ModelRevision, Operation, PredictionModel, Replica, TrainingRun
 
@@ -51,7 +52,7 @@ async def sync_pins(db, optimization):
     await db.flush()
 
 
-async def request_update(db, optimization, body):
+async def request_update(db, optimization, body, *, automatic_request=None):
     """Caller holds the event/Optimization locks. All admission writes are atomic."""
     from prediction import training
     from prediction.datasets import dataset_change_set, freeze_dataset
@@ -67,15 +68,15 @@ async def request_update(db, optimization, body):
     if previous is not None:
         if previous["update_mode"] != body.update_mode:
             raise HTTPException(409, "This model update request ID has another mode.")
-        return
+        return False
     if optimization.state not in {"running", "paused"}:
         raise HTTPException(409, "Model updates require a running or paused Hybrid Optimization.")
     base = state["active_model"]
     model = await db.scalar(select(PredictionModel).where(PredictionModel.id == base["model_id"]).with_for_update())
     if model is None or model.user_id != optimization.user_id or model.state != "active":
         raise HTTPException(409, "The Optimization model is unavailable.")
-    # Failed requests keep their frozen input until the user explicitly replaces
-    # them. Busy requests are never implicitly cancelled by a newer request.
+    # Failed requests retain their input until a new request replaces them.
+    # Busy requests are never implicitly cancelled by a newer request.
     busy = False
     for item in state["updates"]:
         operation = await db.get(Operation, item["operation_id"])
@@ -109,7 +110,7 @@ async def request_update(db, optimization, body):
     if same is not None:
         same["request_ids"] = [*same.get("request_ids", []), request_id]
         save_state(optimization, state)
-        return
+        return False
     if busy or state.get("pending_model") is not None:
         raise HTTPException(409, "Wait for this Optimization's existing model update before requesting another.")
     await training.assert_model_update_available(db, model.id, optimization.user_id,
@@ -125,12 +126,17 @@ async def request_update(db, optimization, body):
     result = await reserve_model(db, request, optimization.user_id, commit=False, force_api_source=True,
         online_origin={"optimization_id": optimization.id, "optimization_name": optimization.name})
     revision = await db.get(ModelRevision, (model.id, result["reserved_revision"]))
-    state["updates"].append({"request_id": request_id, "request_ids": [], "identity": identity,
+    item = {"request_id": request_id, "request_ids": [], "identity": identity,
         "operation_id": result["operation_id"], "model_id": model.id, "revision": revision.revision,
         "version_name": revision.preparation.get("version_name", f"{model.name} · r{revision.revision} · {optimization.name}"),
-        "update_mode": body.update_mode, "state": "pending", "error": None, "created_at": utcnow().isoformat()})
+        "update_mode": body.update_mode, "origin": "manual", "target_snapshot": target,
+        "state": "pending", "error": None, "created_at": utcnow().isoformat()}
+    state["updates"].append(item)
+    run = await db.get(TrainingRun, result["operation_id"])
+    record_requested_snapshot(optimization, state, target, item, run, automatic_request)
     save_state(optimization, state)
     await sync_pins(db, optimization)
+    return True
 
 
 async def reconcile_updates(db, optimization):
@@ -144,24 +150,28 @@ async def reconcile_updates(db, optimization):
     for item in state["updates"]:
         operation = await db.get(Operation, item["operation_id"])
         run = await db.get(TrainingRun, item["operation_id"])
+        timed_out = await reconcile_automatic_attempt(db, item, operation, run)
         if operation is None or run is None:
             item.update(state="failed", error="The training operation is unavailable.")
             continue
         job = await db.get(Job, run.job_id) if run.job_id else None
-        if operation.state == "pending" and run.job_id is None:
+        if operation.state == "pending" and run.job_id is None and not timed_out:
             try:
                 async with db.begin_nested():
                     await training.submit(db, operation.id, optimization.user_id, commit=False)
                 job = await db.get(Job, run.job_id)
+                if item.get("automatic_attempt") and run.pin_id == item["automatic_attempt"]["pin_id"]:
+                    item["automatic_attempt"]["job_id"] = run.job_id
             except Exception as error:
                 await db.refresh(operation)
                 await db.refresh(run)
                 operation.state = operation.stage = "failed"
                 operation.error = {"message": str(getattr(error, "detail", None) or error)}
                 operation.updated_at = utcnow()
+            timed_out = await reconcile_automatic_attempt(db, item, operation, run)
         active = training.cleanup_pending(job)
         busy |= active or operation.state in {"pending", "queued", "running"}
-        if item["state"] in {"adopted", "completed_unadopted", "superseded"}:
+        if timed_out or item["state"] in {"adopted", "completed_unadopted", "superseded"}:
             continue
         item["error"] = operation.error
         item["state"] = operation.state
@@ -197,6 +207,7 @@ async def reconcile_updates(db, optimization):
                 "dataset_fingerprint": revision.dataset_fingerprint, "model_definition": revision.definition,
                 "source_contracts": revision.source_contracts, "version_name": item["version_name"]}
             item["state"] = "ready"
+    await refresh_automatic_state(db, optimization, state)
     save_state(optimization, state)
     await sync_pins(db, optimization)
     return busy
@@ -212,6 +223,9 @@ async def bind_round(db, optimization, round_index):
                 item.update(state="adopted", adopted_round=round_index)
     state["round_model"] = deepcopy(state["active_model"])
     state["waiting"] = False
+    automatic = state.get("automatic")
+    if automatic and automatic["reason"] in {"training_busy", "awaiting_adoption", "round_already_requested"}:
+        automatic["reason"] = "awaiting_round"
     save_state(optimization, state)
     source_hash = digest(state["round_model"])
     optimization.optimizer_state = {**optimization.optimizer_state, "round_source_hash": source_hash,
@@ -230,6 +244,8 @@ async def cancel_updates(db, optimization):
             await training.cancel(db, operation)
             item["state"] = "cancelled"
     state["waiting"] = False
+    if state.get("automatic"):
+        state["automatic"]["reason"] = "not_running"
     save_state(optimization, state)
 
 
@@ -246,5 +262,7 @@ async def finish_updates(db, optimization):
             if item["state"] == "ready":
                 item["state"] = "completed_unadopted"
         state["pending_model"], state["waiting"] = None, False
+        if state.get("automatic"):
+            state["automatic"]["reason"] = "search_finished"
         save_state(optimization, state)
         await db.execute(delete(OptimizationModelPin).where(OptimizationModelPin.optimization_id == optimization.id))

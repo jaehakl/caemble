@@ -2,6 +2,22 @@
 import math
 
 
+def hybrid_jobs_cleaned(jobs):
+    """A successful prediction may explicitly cancel its disposable Predictor."""
+    successful = {job.id: job for job in jobs if job.state == "succeeded"}
+    for job in jobs:
+        if job.cleaned_at is None:
+            return False
+        if job.state == "succeeded":
+            continue
+        binding = (job.artifact_metadata or {}).get("optimization_parent", {})
+        parent = successful.get(binding.get("job_id"))
+        if (job.state not in {"cancelled", "killed"} or parent is None
+                or parent.handler_type != "cae.evaluation.predict" or binding.get("attempt_id") != parent.attempt_id):
+            return False
+    return True
+
+
 def recorded_solver_invocations(records, *, measurement_ids, task_names):
     """Invocation ordinals are task-local; multiple Records may share one call."""
     invocations = set()

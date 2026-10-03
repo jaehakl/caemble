@@ -143,6 +143,52 @@ export function OptimizationHybridSettings({
           onChange={(event) => onChange({ maxSolverRuns: event.target.valueAsNumber })}
         />
       </label>
+      <fieldset className="space-y-3 rounded border p-3">
+        <legend className="px-1 font-medium">모델 갱신</legend>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={draft.automaticUpdates}
+            onChange={(event) => onChange({ automaticUpdates: event.target.checked })}
+          />
+          자동 재학습
+        </label>
+        {draft.automaticUpdates ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              {(
+                [
+                  ['min_new_measurements', '갱신에 필요한 새 결과 수'],
+                  ['max_updates', '최대 자동 갱신 횟수'],
+                  ['update_timeout_seconds', '회당 대기·학습 제한 (초)'],
+                  ['total_timeout_seconds', '누적 대기·학습 제한 (초)'],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="space-y-1">
+                  <span>{label}</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    required
+                    value={Number.isFinite(draft.modelUpdateConfig[key]) ? draft.modelUpdateConfig[key] : ''}
+                    onChange={(event) =>
+                      onChange({ modelUpdateConfig: { ...draft.modelUpdateConfig, [key]: event.target.valueAsNumber } })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              같은 Experiment의 새 확정 해석 결과가 쌓이면 전체 재학습합니다. 다음 회차는 학습과 정리를 기다리며,
+              실패하거나 지정한 품질 조건을 충족하지 못하면 기존 모델로 계속합니다. 같은 입력은 자동 재시도하지
+              않습니다.
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">시작 후 모델 갱신을 직접 요청할 수 있습니다.</p>
+        )}
+      </fieldset>
       {revision ? (
         <fieldset className="space-y-3 rounded border p-3">
           <legend className="px-1 font-medium">출력별 품질 조건 · 선택 사항</legend>
@@ -202,8 +248,8 @@ export function OptimizationHybridSettings({
         </fieldset>
       ) : null}
       <p className="text-xs leading-relaxed text-muted-foreground">
-        선택한 revision으로 시작하고 예측한 후보를 실제 Solver로 검증합니다. 모델 갱신은 시작 후 직접 요청합니다. 실패
-        후 Solver 재실행도 예산을 사용합니다. 예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher에는
+        선택한 revision으로 시작하고 예측한 후보를 실제 Solver로 검증합니다. 새 모델은 회차 경계에서 채택합니다. 실패 후
+        Solver 재실행도 예산을 사용합니다. 예측·빌드·후처리 재시도에는 Solver 예산이 들지 않습니다. 실행 Launcher에는
         Evaluation과 선택한 알고리즘의 추론에 필요한 CPU·RAM·GPU 자원이 함께 필요합니다.
       </p>
       {!assets.isPending && !models.length ? (

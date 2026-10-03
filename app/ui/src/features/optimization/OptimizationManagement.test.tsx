@@ -92,7 +92,7 @@ it('shows initial and adopted models, disables a pending update, and keeps a los
   expect(vi.mocked(optimizationApi.modelUpdate).mock.calls[0]).toEqual(
     vi.mocked(optimizationApi.modelUpdate).mock.calls[1],
   )
-  expect(panel.getByText('Design search update 1 · 학습 대기')).toBeInTheDocument()
+  expect(panel.getByText('수동 갱신 · Design search update 1 · 학습 대기')).toBeInTheDocument()
 })
 
 it('keeps model update errors separate from evaluations and directs retries to Prediction operations', async () => {

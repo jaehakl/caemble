@@ -7,6 +7,7 @@ from gpstation.service.state import utcnow
 from optimization.db import Evaluation, EvaluationSubmission, Trial
 from optimization.evaluations import ensure_evaluation, project_solver, solver_budget
 from optimization.search import advance_search
+from optimization.automatic_updates import request_automatic_update
 from optimization.submissions import submit_predictions, submit_stage
 from optimization.model_updates import bind_round, finish_updates, model_state, reconcile_updates, round_source, save_state
 from prediction.common import digest
@@ -48,6 +49,13 @@ async def reconcile_hybrid(db, optimization, catalog):
     if optimization.state == "running" or draining:
         state, candidates, selected, reason = advance_search(trials, evaluations, optimization.settings, optimization.optimizer_state, budget)
         boundary = state.get("round_index", 0) != optimization.optimizer_state.get("round_index", 0) or not trials
+        if boundary and trials and not reason and not exhausted:
+            requested = await request_automatic_update(db, optimization, next_round=True, training_busy=training_busy)
+            if requested:
+                training_busy = await reconcile_updates(db, optimization)
+            # Admission/accounting changed only model state. Keep the proposed
+            # search decision, including its RNG, uncommitted while training waits.
+            state["model_update"] = model_state(optimization)
         if boundary and training_busy:
             pending = model_state(optimization)
             pending["waiting"] = True

@@ -5,7 +5,7 @@ import { getListRequest } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/features/auth/use-auth'
-import { optimizationAlgorithmSchema } from '@/contracts/api/optimization'
+import { optimizationAlgorithmSchema, optimizationModelUpdatePolicySchema } from '@/contracts/api/optimization'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { calculationsQueryOptions } from '@/features/calculation/queryOptions'
 import { OptimizationVariables } from './OptimizationVariables'
@@ -123,6 +123,16 @@ export function OptimizationSetup({
           throw new Error('RMSE 상한은 0 이상의 유한한 값이어야 합니다.')
         return { ...requirement, rmseMaximum: maximum }
       })
+      const updatePolicy =
+        draft.hybrid && draft.automaticUpdates
+          ? optimizationModelUpdatePolicySchema.safeParse({
+              id: 'new_solver_results',
+              version: 1,
+              config: draft.modelUpdateConfig,
+            })
+          : null
+      if (updatePolicy && !updatePolicy.success)
+        throw new Error('자동 재학습의 새 결과 수, 최대 갱신 횟수와 시간 제한은 양의 정수여야 합니다.')
       const payload = {
         name: name.trim(),
         experiment_id: workbench.experimentId,
@@ -144,6 +154,7 @@ export function OptimizationSetup({
                 launcher_id: draft.launcherId,
                 max_solver_runs: draft.maxSolverRuns,
                 ...(qualityRequirements.length ? { quality_requirements: qualityRequirements } : {}),
+                ...(updatePolicy?.success ? { model_update_policy: updatePolicy.data } : {}),
               },
             }
           : {}),

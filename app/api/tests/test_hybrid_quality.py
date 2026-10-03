@@ -152,6 +152,7 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
         original.pop("algorithm")
         original["hybrid"].pop("quality_requirements")
         original["hybrid"].pop("verification_policy")
+        original["hybrid"].pop("model_update_policy")
         fingerprint = hashlib.sha256(json.dumps(original, sort_keys=True, separators=(",", ":"),
                                                 ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
         existing = SimpleNamespace(request_hash=fingerprint)
@@ -171,7 +172,7 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
                 revision.artifact["quality_report"]["dataset"]["revision"] = 2
                 if rmse is None:
                     revision.artifact.pop("quality_report")
-                optimization = SimpleNamespace(definition={"hybrid": initial}, optimizer_state={"model_update": {
+                optimization = SimpleNamespace(settings={}, definition={"hybrid": initial}, optimizer_state={"model_update": {
                     "initial_model": deepcopy(initial), "active_model": deepcopy(initial), "round_model": deepcopy(initial),
                     "pending_model": None, "updates": [{"model_id": "model", "revision": 2, "state": "running",
                         "operation_id": "operation", "version_name": "r2"}], "waiting": False}})

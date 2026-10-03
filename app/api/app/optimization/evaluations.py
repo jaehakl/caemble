@@ -126,6 +126,14 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
         raise HTTPException(404, "Owned model for this Experiment not found.")
     if model.state != "active" or model.direction != "forward" or revision is None or revision.state != "ready":
         raise HTTPException(409, "Hybrid requires the exact saved, ready Forward revision.")
+    if request.model_update_policy is not None:
+        from prediction.db import Dataset, DatasetRevision
+        dataset = await db.get(Dataset, revision.dataset_id)
+        snapshot = await db.get(DatasetRevision, (revision.dataset_id, revision.dataset_revision))
+        if (dataset is None or dataset.user_id != user_id or dataset.state != "active" or dataset.source_kind != "server"
+                or snapshot is None or snapshot.fingerprint != revision.dataset_fingerprint
+                or (snapshot.summary.get("sample_fingerprints") is None and snapshot.payload is None)):
+            raise HTTPException(409, "Automatic updates require the original server-owned Dataset and its sample inventory.")
     try:
         validate_definition(revision.definition)
     except ValueError as error:
@@ -145,7 +153,7 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
             if predicted is None or predicted.get("data_schema") != record["data_schema"]:
                 raise HTTPException(422, "The model must predict compatible Records for every objective and constraint.")
     # Verification policy belongs to search settings, not the pinned model source.
-    settings = request.model_dump(mode="json", exclude_none=True, exclude={"verification_policy"})
+    settings = request.model_dump(mode="json", exclude_none=True, exclude={"verification_policy", "model_update_policy"})
     quality = freeze_quality(revision, settings.get("quality_requirements"))
     require_quality(quality["quality_assessment"])
     resources = await validate_hybrid_capacity(db, str(request.launcher_id), user_id, revision.definition)

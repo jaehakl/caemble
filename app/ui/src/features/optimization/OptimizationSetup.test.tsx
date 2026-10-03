@@ -94,10 +94,10 @@ it.each(['coordinate', 'random'] as const)(
   },
 )
 
-it.each(['omitted', 'failed', 'unassessed'])(
+it.each(['omitted', 'failed', 'unassessed', 'automatic'])(
   'selects an older revision and submits optional quality conditions (%s) for the server to judge',
   async (scenario) => {
-    const withQuality = scenario !== 'omitted'
+    const withQuality = scenario === 'failed' || scenario === 'unassessed'
     const rejection =
       scenario === 'unassessed'
         ? 'Hybrid quality unassessed: Record 10/value has no saved quality report.'
@@ -205,6 +205,15 @@ it.each(['omitted', 'failed', 'unassessed'])(
     fireEvent.change(screen.getByLabelText('모델 revision'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('모델 복제본 · 실행 Launcher'), { target: { value: 'replica:launcher' } })
     expect(screen.getByLabelText('Solver 실행 시도 예산')).toHaveValue(8)
+    expect(screen.getByLabelText('자동 재학습')).not.toBeChecked()
+    if (scenario === 'automatic') {
+      fireEvent.click(screen.getByLabelText('자동 재학습'))
+      expect(screen.getByLabelText('갱신에 필요한 새 결과 수')).toHaveValue(3)
+      expect(screen.getByLabelText('최대 자동 갱신 횟수')).toHaveValue(3)
+      expect(screen.getByLabelText('회당 대기·학습 제한 (초)')).toHaveValue(180)
+      expect(screen.getByLabelText('누적 대기·학습 제한 (초)')).toHaveValue(540)
+      fireEvent.change(screen.getByLabelText('갱신에 필요한 새 결과 수'), { target: { value: '2' } })
+    }
     expect(
       screen.getByText(scenario === 'unassessed' ? '저장 보고서 RMSE: 미평가' : '저장 보고서 RMSE: 0.6 K'),
     ).toBeInTheDocument()
@@ -239,5 +248,19 @@ it.each(['omitted', 'failed', 'unassessed'])(
     } else {
       expect(vi.mocked(optimizationApi.create).mock.calls[0][0].hybrid?.quality_requirements).toBeUndefined()
     }
+    expect(vi.mocked(optimizationApi.create).mock.calls[0][0].hybrid?.model_update_policy).toEqual(
+      scenario === 'automatic'
+        ? {
+            id: 'new_solver_results',
+            version: 1,
+            config: {
+              min_new_measurements: 2,
+              max_updates: 3,
+              update_timeout_seconds: 180,
+              total_timeout_seconds: 540,
+            },
+          }
+        : undefined,
+    )
   },
 )

@@ -51,6 +51,21 @@ class VerificationPolicy(BaseModel):
     config: VerificationConfig = Field(default_factory=VerificationConfig)
 
 
+class ModelUpdateConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    min_new_measurements: int = Field(default=3, strict=True, gt=0)
+    max_updates: int = Field(default=3, strict=True, gt=0)
+    update_timeout_seconds: int = Field(default=180, strict=True, gt=0)
+    total_timeout_seconds: int = Field(default=540, strict=True, gt=0)
+
+
+class ModelUpdatePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Literal["new_solver_results"] = "new_solver_results"
+    version: int = Field(default=1, strict=True, ge=1, le=1)
+    config: ModelUpdateConfig = Field(default_factory=ModelUpdateConfig)
+
+
 def saved_algorithm(settings):
     """Old saved settings keep their coordinate steps and evaluation identities."""
     definition = settings.get("algorithm")
