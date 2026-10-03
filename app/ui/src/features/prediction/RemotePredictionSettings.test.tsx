@@ -262,22 +262,37 @@ async function show(initial = setup(), refresh = true) {
   return { ...props, ...render(<RemotePredictionSettings {...props} />), props }
 }
 
-it('offers quality validation explicitly for new models and preserves the previous revision choice', async () => {
+it('requires held-out validation for new models and v2 revisions without an opt-out', async () => {
   const evaluated = model('forward')
   evaluated.revisions[0].definition.qualityValidation = defaultPredictionQualityValidation
   mocks.models.mockResolvedValue([evaluated])
   await show()
   fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
-  expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).not.toBeChecked()
+  expect(screen.getByText('미학습 설계점으로 품질 평가 · 필수')).toBeInTheDocument()
+  expect(screen.queryByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: /forward saved/ }))
   fireEvent.click(screen.getByRole('button', { name: '새 버전 만들기' }))
-  expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).toBeChecked()
+  expect(screen.getByText('미학습 설계점으로 품질 평가 · 필수')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '새 모델 만들기' }))
-  expect(screen.getByRole('checkbox', { name: '미학습 설계점으로 품질 평가' })).not.toBeChecked()
+  expect(screen.getByText('미학습 설계점으로 품질 평가 · 필수')).toBeInTheDocument()
 })
+
+it.each([undefined, 1])(
+  'keeps a quality version %s model usable but requires a fresh model for training',
+  async (version) => {
+    const legacy = model('forward')
+    legacy.revisions[0].definition.qualityValidation = version === undefined ? undefined : { version }
+    mocks.models.mockResolvedValue([legacy])
+    await show()
+    fireEvent.click(screen.getByRole('button', { name: /forward saved/ }))
+    expect(screen.getByRole('button', { name: '새 버전 만들기' })).toBeDisabled()
+    expect(screen.getByText(/모델 갱신에는 검증 데이터를 배분한 새 v2 모델이 필요합니다/)).toBeInTheDocument()
+  },
+)
 
 it('restores the saved MLP recipe when using a model or preparing its next revision', async () => {
   const saved = model('forward')
+  saved.revisions[0].definition.qualityValidation = defaultPredictionQualityValidation
   const algorithm = { ...defaultMlpAlgorithm, hiddenLayers: [16, 8], epochs: 900, seed: 12 }
   saved.revisions[0].definition.algorithm = algorithm
   expect(setupUsingSavedModel(setup(), saved, 1, { storageId, launcherId }).algorithm).toEqual(algorithm)

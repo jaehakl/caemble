@@ -36,12 +36,25 @@ beforeEach(() => {
   vi.mocked(optimizationApi.modelUpdate).mockResolvedValue(hybridOptimizationFixture)
 })
 
-it('restores the persisted random configuration in the execution detail', async () => {
+it.each([
+  {
+    algorithm: { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } },
+    label: '무작위 탐색 · seed 42 · 회차당 4개',
+  },
+  {
+    algorithm: {
+      id: 'de',
+      version: 1,
+      config: { seed: 42, population_size: 8, mutation_factor: 0.8, crossover_rate: 0.9 },
+    },
+    label: 'DE · seed 42 · 개체군 8개 · F 0.8 · CR 0.9',
+  },
+])('restores the persisted $algorithm.id configuration in the execution detail', async ({ algorithm, label }) => {
   const saved = optimizationDetailSchema.parse({
     ...optimizationFixture,
     settings: {
       ...optimizationFixture.settings,
-      algorithm: { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } },
+      algorithm,
     },
   })
   vi.mocked(optimizationApi.read).mockResolvedValue(saved)
@@ -52,7 +65,7 @@ it('restores the persisted random configuration in the execution detail', async 
       </MemoryRouter>
     </QueryClientProvider>,
   )
-  expect(await screen.findByLabelText('저장된 탐색 설정')).toHaveTextContent('무작위 탐색 · seed 42 · 회차당 4개')
+  expect(await screen.findByLabelText('저장된 탐색 설정')).toHaveTextContent(label)
 })
 
 it('shows initial and adopted models, disables a pending update, and keeps a lost update request idempotent', async () => {

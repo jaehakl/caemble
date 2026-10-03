@@ -11,11 +11,38 @@ import { optimizationFixture } from './fixtures.test-support'
 import { createOptimizationDraft } from './optimizationDraft'
 import { useOptimizationCreation } from './useOptimizationData'
 import { qualityReportFixture } from '@/features/prediction/qualityReport.fixture'
+import { optimizationAlgorithmSchema } from '@/contracts/api/optimization'
 
 vi.mock('@/features/auth/use-auth', () => ({ useAuth: () => ({ queryScope: 'user:first' }) }))
 vi.mock('@/api/optimization', () => ({ optimizationApi: { create: vi.fn() } }))
 
-it.each(['coordinate', 'random'] as const)(
+it('validates DE defaults and bounded settings', () => {
+  expect(optimizationAlgorithmSchema.parse({ id: 'de' })).toEqual({
+    id: 'de',
+    version: 1,
+    config: { seed: 0, population_size: 8, mutation_factor: 0.8, crossover_rate: 0.9 },
+  })
+  for (const config of [
+    { seed: -1 },
+    { seed: 2 ** 32 },
+    { seed: true },
+    { population_size: 3 },
+    { population_size: 33 },
+    { population_size: 4.5 },
+    { mutation_factor: 0 },
+    { mutation_factor: 2 },
+    { mutation_factor: Infinity },
+    { crossover_rate: -0.1 },
+    { crossover_rate: 1.1 },
+    { unknown: true },
+  ])
+    expect(optimizationAlgorithmSchema.safeParse({ id: 'de', config }).success).toBe(false)
+  expect(optimizationAlgorithmSchema.safeParse({ id: 'de', version: 2 }).success).toBe(false)
+  expect(optimizationAlgorithmSchema.safeParse({ id: 'de', config: { crossover_rate: 0 } }).success).toBe(true)
+  expect(optimizationAlgorithmSchema.safeParse({ id: 'de', config: { crossover_rate: 1 } }).success).toBe(true)
+})
+
+it.each(['coordinate', 'random', 'de'] as const)(
   'submits Tensor elements and current Candidate with %s search settings',
   async (algorithmId) => {
     vi.mocked(optimizationApi.create).mockClear()
@@ -69,6 +96,18 @@ it.each(['coordinate', 'random'] as const)(
       fireEvent.change(screen.getByLabelText('탐색 알고리즘'), { target: { value: 'coordinate' } })
       fireEvent.change(screen.getByLabelText('탐색 알고리즘'), { target: { value: 'random' } })
       expect(screen.getByLabelText('난수 seed')).toHaveValue(42)
+    } else if (algorithmId === 'de') {
+      fireEvent.change(screen.getByLabelText('난수 seed'), { target: { value: '42' } })
+      fireEvent.change(screen.getByLabelText('개체군 크기'), { target: { value: '12' } })
+      fireEvent.change(screen.getByLabelText('변이 계수 F'), { target: { value: '0.6' } })
+      fireEvent.change(screen.getByLabelText('교차 확률 CR'), { target: { value: '0.7' } })
+      fireEvent.change(screen.getByLabelText('탐색 알고리즘'), { target: { value: 'random' } })
+      expect(screen.getByLabelText('난수 seed')).toHaveValue(0)
+      fireEvent.change(screen.getByLabelText('탐색 알고리즘'), { target: { value: 'de' } })
+      expect(screen.getByLabelText('난수 seed')).toHaveValue(42)
+      expect(screen.getByLabelText('개체군 크기')).toHaveValue(12)
+      expect(screen.getByLabelText('변이 계수 F')).toHaveValue(0.6)
+      expect(screen.getByLabelText('교차 확률 CR')).toHaveValue(0.7)
     } else {
       fireEvent.change(screen.getByLabelText('초기 step'), { target: { value: '0.2' } })
     }
@@ -88,7 +127,12 @@ it.each(['coordinate', 'random'] as const)(
     expect(payload.algorithm).toEqual({
       id: algorithmId,
       version: 1,
-      config: algorithmId === 'random' ? { seed: 42, candidates_per_round: 4 } : { initial_step: 0.2, min_step: 0.001 },
+      config:
+        algorithmId === 'random'
+          ? { seed: 42, candidates_per_round: 4 }
+          : algorithmId === 'de'
+            ? { seed: 42, population_size: 12, mutation_factor: 0.6, crossover_rate: 0.7 }
+            : { initial_step: 0.2, min_step: 0.001 },
     })
     await waitFor(() => expect(created).toHaveBeenCalledWith(optimizationFixture))
   },
@@ -127,7 +171,7 @@ it.each(['omitted', 'failed', 'unassessed', 'automatic', 'legacy-auto'])(
       definition: {
         fingerprint: 'definition',
         algorithm: { kind: 'knn' },
-        ...(scenario === 'legacy-auto' ? { qualityValidation: { version: 1 } } : {}),
+        qualityValidation: { version: scenario === 'legacy-auto' ? 1 : 2 },
       },
       source_contracts: {
         records: [{ id: 10, name: 'temperature', data_schema: { unit: 'K', boxGrid: { components: ['value'] } } }],
@@ -216,6 +260,7 @@ it.each(['omitted', 'failed', 'unassessed', 'automatic', 'legacy-auto'])(
       expect(screen.getByText(/모델 갱신과 자동 재학습에는 새 v2 모델이 필요합니다/)).toBeInTheDocument()
     }
     if (scenario === 'automatic') {
+      fireEvent.change(screen.getByLabelText('탐색 알고리즘'), { target: { value: 'de' } })
       fireEvent.click(screen.getByLabelText('자동 재학습'))
       expect(screen.getByLabelText('갱신에 필요한 새 결과 수')).toHaveValue(3)
       expect(screen.getByLabelText('최대 자동 갱신 횟수')).toHaveValue(3)
@@ -235,6 +280,7 @@ it.each(['omitted', 'failed', 'unassessed', 'automatic', 'legacy-auto'])(
     expect(vi.mocked(optimizationApi.create).mock.calls[0][0]).toMatchObject({
       max_trials: 20,
       max_parallel: 2,
+      ...(scenario === 'automatic' ? { algorithm: { id: 'de', version: 1 } } : {}),
       hybrid: {
         model_id: 'model',
         model_revision: 1,

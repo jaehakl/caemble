@@ -28,6 +28,7 @@ from gpstation.service.state import utcnow
 from gpstation.utils.csrf import require_web_csrf
 from prediction.common import canonical_bytes
 from prediction import training
+from prediction_contracts import QUALITY_VALIDATION_V2
 from prediction.datasets import source_contracts
 from prediction.db import Dataset, DatasetGrant, DatasetRevision, Operation
 from prediction.replicas import managed_storage, put_replica
@@ -163,12 +164,12 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_grants_ephemeral_dataset_split_launchers_and_lost_reply(self):
         source = await self.worker("model-source", self.launcher_id)
-        data = sample.dataset()
+        data = sample.dataset((0, 1, 2, .25, 1.75))
         data.update(datasetId=str(uuid4()), experimentId=self.experiment_id, sourceHash="a" * 64)
         for calculation in data["calculations"]:
             calculation.update(source_revision=1, revision=1, contract_status="ready")
         data["fingerprint"] = "sha256:" + hashlib.sha256(canonical_bytes(data)).hexdigest()
-        definition = sample.definition(data)
+        definition = {**sample.definition(data), "qualityValidation": dict(QUALITY_VALIDATION_V2)}
         async with self.sessions() as db:
             db.add(Dataset(id=data["datasetId"], user_id=self.owner, experiment_id=self.experiment_id,
                 name=data["name"], source_kind="server", selection={}, current_revision=1))
@@ -209,7 +210,7 @@ class PredictionTransferIntegrationTests(unittest.IsolatedAsyncioTestCase):
         complete_body = {"request_id": prepare_id, "manifest_sha256": artifact["manifestChecksum"], "files": artifact["files"],
             "profile": artifact["profile"], "input_layouts": artifact["inputLayouts"], "output_layouts": artifact["outputLayouts"],
             "validation": artifact["validation"], "training_metrics": artifact["trainingMetrics"],
-            "execution_metrics": artifact["executionMetrics"], "verified": False}
+            "execution_metrics": artifact["executionMetrics"], "quality_report": artifact["qualityReport"], "verified": False}
         hello = await self.rpc(source, "predictor.hello")
         self.assertFalse(hello["models"][0]["verified"])
         rejected = await self.client.post(f"/prediction/models/{reserved['id']}/revisions/1/complete", json=complete_body)

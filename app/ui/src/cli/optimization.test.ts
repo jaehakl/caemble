@@ -175,8 +175,10 @@ it('preserves automatic policy configuration and status across create and show',
   })
 })
 
-it('preserves strategy configuration through a lost response and rejects a changed seed on replay', async () => {
-  const algorithm = { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } }
+it.each([
+  { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } },
+  { id: 'de', version: 1, config: { seed: 42, population_size: 8, mutation_factor: 0.8, crossover_rate: 0.9 } },
+])('preserves $id through a lost response and rejects a changed seed on replay', async (algorithm) => {
   await writeFile(String(context.options.config), JSON.stringify({ ...config, algorithm }))
   fetch.mockRejectedValueOnce(new TypeError('response lost'))
   await expect(optimizationCommand('create', context)).rejects.toThrow('response lost')

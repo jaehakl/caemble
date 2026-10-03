@@ -75,11 +75,18 @@ export function OptimizationSetup({
         config:
           draft.algorithmId === 'random'
             ? { seed: draft.randomSeed, candidates_per_round: draft.candidatesPerRound }
-            : { initial_step: draft.initialStep, min_step: draft.minStep },
+            : draft.algorithmId === 'de'
+              ? {
+                  seed: draft.deSeed,
+                  population_size: draft.populationSize,
+                  mutation_factor: draft.mutationFactor,
+                  crossover_rate: draft.crossoverRate,
+                }
+              : { initial_step: draft.initialStep, min_step: draft.minStep },
       })
       if (!algorithm.success)
         throw new Error(
-          '탐색 설정을 확인하세요. step은 0 초과 1 이하이고 최소 step은 초기 step 이하여야 합니다. seed는 0–4,294,967,295, 회차 후보 수는 1–32 사이의 정수여야 합니다.',
+          '탐색 설정을 확인하세요. step은 0 초과 1 이하이고 최소 step은 초기 step 이하여야 합니다. seed는 0–4,294,967,295, 회차 후보 수는 1–32, DE 개체군 크기는 4–32 사이의 정수여야 합니다. DE 변이 계수는 0 초과 2 미만, 교차 확률은 0–1입니다.',
         )
       if (!name.trim()) throw new Error('최적화 이름을 입력하세요.')
       if (!choices.some((row) => row.id === Number(objectiveId)))
@@ -316,8 +323,9 @@ export function OptimizationSetup({
           >
             <option value="coordinate">좌표 탐색</option>
             <option value="random">무작위 탐색</option>
+            <option value="de">Differential Evolution (DE)</option>
           </select>
-          {draft.algorithmId === 'random' ? (
+          {draft.algorithmId !== 'coordinate' ? (
             <label className="block space-y-1">
               <span>난수 seed</span>
               <Input
@@ -327,8 +335,16 @@ export function OptimizationSetup({
                 max={0xffffffff}
                 step={1}
                 required
-                value={Number.isFinite(draft.randomSeed) ? draft.randomSeed : ''}
-                onChange={(event) => updateDraft({ randomSeed: event.target.valueAsNumber })}
+                value={
+                  Number.isFinite(draft.algorithmId === 'de' ? draft.deSeed : draft.randomSeed)
+                    ? draft.algorithmId === 'de'
+                      ? draft.deSeed
+                      : draft.randomSeed
+                    : ''
+                }
+                onChange={(event) =>
+                  updateDraft({ [draft.algorithmId === 'de' ? 'deSeed' : 'randomSeed']: event.target.valueAsNumber })
+                }
               />
               <span className="block text-xs text-muted-foreground">같은 설정과 seed는 같은 후보 순서를 만듭니다.</span>
             </label>
@@ -352,6 +368,35 @@ export function OptimizationSetup({
                   한 회차에서 비교할 후보 수입니다. 동시 실행 수와 별개입니다.
                 </span>
               </label>
+            ) : draft.algorithmId === 'de' ? (
+              <div className="grid grid-cols-2 gap-3">
+                {(
+                  [
+                    ['populationSize', '개체군 크기', 4, 32, 1],
+                    ['mutationFactor', '변이 계수 F', 0, 2, 'any'],
+                    ['crossoverRate', '교차 확률 CR', 0, 1, 'any'],
+                  ] as const
+                ).map(([key, label, min, max, step]) => (
+                  <label key={key} className="space-y-1">
+                    <span>{label}</span>
+                    <Input
+                      aria-label={label}
+                      type="number"
+                      min={min}
+                      max={max}
+                      step={step}
+                      required
+                      value={Number.isFinite(draft[key]) ? draft[key] : ''}
+                      onChange={(event) => updateDraft({ [key]: event.target.valueAsNumber })}
+                    />
+                  </label>
+                ))}
+                <p className="col-span-2 text-xs text-muted-foreground">
+                  DE/rand/1/bin을 사용합니다. 개체군 크기는 동시 실행 수와 별개이며 변이 계수는 0 초과 2 미만입니다.
+                  Hybrid에서 미검증 초기 개체는 위치만 유지하며, 부모 교체와 최선 후보 선정에는 실제 검증 결과를
+                  사용합니다.
+                </p>
+              </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 {(['initialStep', 'minStep'] as const).map((key) => (

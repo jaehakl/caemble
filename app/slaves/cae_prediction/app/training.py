@@ -79,7 +79,8 @@ async def run_training(message: dict, attachments, context) -> dict:
 
     def train():
         reference = None
-        if spec.get("update") is not None and runtime.training.saved_artifact(spec, cancelled) is None:
+        if (spec.get("update") is not None and spec["sourceKind"] == "api"
+                and runtime.training.saved_artifact(spec, cancelled) is None):
             access = dataset_reference()
             if not isinstance(access.get("trainingGrant"), dict) or not isinstance(access.get("grant"), dict):
                 raise PredictionError("data-access", "Server training update requires its attempt-scoped Dataset and pin grants.")

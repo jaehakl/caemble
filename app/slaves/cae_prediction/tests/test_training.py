@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from prediction_contracts import resource_requirements, validate_definition
+from prediction_contracts import QUALITY_VALIDATION_V1, QUALITY_VALIDATION_V2, resource_requirements, validate_definition
 from sdk.protocol.execution import ResourceAllocation
 from predictor.archives import create_archive, unpack_archive
 from predictor.errors import PredictionError
@@ -21,12 +21,12 @@ from .test_prediction import call, runtime
 
 
 def training_spec(worker):
-    manifest = dataset()
+    manifest = dataset((0, 1, 2, .25, 1.75))
     reference = stage(worker, manifest)
     return {"operationId": "training-1", "pinId": "attempt-1", "storageId": worker.store.storage_id,
             "launcherId": worker.store.launcher_id, "sourceKind": "local", "canPin": True, "canRelease": False,
             "model": {"modelId": "trained", "revision": 1, "operationId": "training-1", "name": "Trained"},
-            "definition": definition(manifest), "dataset": reference}
+            "definition": {**definition(manifest), "qualityValidation": copy.deepcopy(QUALITY_VALIDATION_V2)}, "dataset": reference}
 
 
 def authorize(monkeypatch, worker, spec):
@@ -39,6 +39,40 @@ def authorize(monkeypatch, worker, spec):
     monkeypatch.setattr(worker.training, "authority", authority)
     monkeypatch.setattr(worker.training, "_ack_pin", lambda value, pin, saved, cancel=None: {"operationId": value["operation_id"], "pinId": pin})
     return grant
+
+
+@pytest.mark.parametrize("algorithm", ["knn", "mlp"])
+@pytest.mark.parametrize("settings", [None, QUALITY_VALIDATION_V1])
+def test_new_training_cannot_bypass_required_quality_through_pin_or_direct_worker(tmp_path, monkeypatch, algorithm, settings):
+    worker = runtime(tmp_path)
+    spec = training_spec(worker)
+    spec["definition"].update(algorithm={"kind": algorithm}, implementationVersion=f"{algorithm}-v1")
+    if settings is None:
+        spec["definition"].pop("qualityValidation")
+    else:
+        spec["definition"]["qualityValidation"] = copy.deepcopy(settings)
+    grant = authorize(monkeypatch, worker, spec)
+    with pytest.raises(PredictionError, match="version 2; create a fresh model"):
+        call(worker, "training.pin", grant=grant)
+    with pytest.raises(PredictionError, match="version 2; create a fresh model"):
+        worker.training.train(spec, lambda: pytest.fail("Rejected training must not read Dataset access."))
+    assert worker.store.list("models") == []
+
+
+@pytest.mark.parametrize("algorithm", ["knn", "mlp"])
+def test_required_holdout_counts_distinct_designs_before_model_training(tmp_path, monkeypatch, algorithm):
+    worker = runtime(tmp_path)
+    spec = training_spec(worker)
+    manifest = dataset((0, 1, 2, 0, 1))
+    manifest["revision"] = 2
+    spec["dataset"] = stage(worker, manifest)
+    spec["definition"].update(algorithm={"kind": algorithm}, implementationVersion=f"{algorithm}-v1",
+        snapshotFingerprint=manifest["fingerprint"])
+    grant = authorize(monkeypatch, worker, spec)
+    call(worker, "training.pin", grant=grant)
+    with pytest.raises(PredictionError, match="five|5"):
+        worker.training.train(spec, lambda: spec["dataset"])
+    assert worker.store.list("models") == []
 
 
 def test_pin_survives_browser_and_process_cleanup_is_authoritative(tmp_path, monkeypatch):
@@ -300,7 +334,8 @@ def test_second_algorithm_owns_artifacts_and_metadata_without_knn_groups(tmp_pat
     assert implementation_calls.count("load") == 2
     assert loaded["rules"] == dataset()["rules"]
     assert loaded["profile"]["inputLayouts"] == [{"key": "x", "dtype": "float64", "shape": [], "minimum": 0, "maximum": 2}]
-    assert loaded["profile"]["includedMeasurementIds"] == [1, 2, 3]
+    assert loaded["profile"]["includedMeasurementIds"] == [2, 3, 4, 5]
+    assert loaded["artifact"]["qualityReport"]["split"]["validationMeasurementIds"] == [1]
     assert loaded["profile"]["inputSize"] == loaded["profile"]["outputSize"] == 1
     assert "knn" not in loaded["profile"]
     assert loaded["recordProfiles"][0]["recordId"] == 10

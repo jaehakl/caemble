@@ -275,11 +275,15 @@ the existing Evaluation/Job services. Solver-only uses `advance_solver_search` t
 coordinate policy keeps candidate order and tie breaks deterministic, preserves unrelated state keys
 such as `runtime_id`, and changes its incumbent only from successful Solver evaluations. A policy
 change belongs behind this boundary, with JSON save/resume tests; no second scheduler is needed.
-Frozen `settings.algorithm` identifies `coordinate@1` or `random@1` and its configuration.
+Frozen `settings.algorithm` identifies `coordinate@1`, `random@1` or `de@1` and its configuration.
 Missing descriptors use the saved legacy coordinate steps. `optimizer_state` preserves execution/model
 metadata alongside versioned algorithm state, a completed-round cursor, current candidate ordinals and
 verification selections. Random search stores its local MT19937 state as JSON; it never uses process-global
 randomness or restarts the seed after recovery. State, Trials and Evaluation selections commit together.
+DE/rand/1/bin also persists population membership, generation and parent/offspring associations.
+Only successful Solver results replace parents: an unverified parent accepts a verified child,
+while a verified parent requires a better verified child. Unverified initial members remain usable
+as donor positions. Predictions select verification work, never supply DE fitness or the final best.
 Unsupported saved versions pause the run instead of resetting it. Omitted new request fields are excluded
 from receipt hashing to retain old CLI/API retries. No additional persistence tables are required.
 Hybrid verification defaults to `best_predicted_maximin@1`; prediction comparisons remain scoped to the
@@ -290,6 +294,10 @@ and artifact references. `shared/prediction_contracts` owns algorithm descriptor
 supported versions and separate training/inference resource requirements without
 numerical dependencies. Predictor owns numerical adapters and artifact-content
 validation; the API owns preparation Operations, immutable revisions and replicas.
+New model definitions always include v2 design-point validation (20% initial holdout,
+seed 0, minimum five groups). New-training admission enforces this independently of
+legacy inference validation. Existing unvalidated/v1 models need a fresh v2 model
+before another training revision; v2 rebuilds preserve their root holdout lineage.
 The same Predictor environment exposes `predictor` for WebRTC inference/management
 and `predictor-training` for server-owned WebSocket training. Training publishes a
 complete model without installing an inference handle. Revision publication and

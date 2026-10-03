@@ -293,12 +293,13 @@ Catalog의 `hybrid-box-conductor`는 두 Vars인 `length`, `width`로 작은 도
 그대로 사용하고, 저장·실행에는 준비한 artifact를 재사용합니다.
 
 학습 데이터는 실제 해석으로 준비합니다. Experiment를 서버에 저장한 뒤 시작 Candidate를
-포함한 서로 다른 조건 3개를 실행합니다. 각 실행의 `totalCurrent` 기록과 성공 상태를
+포함한 서로 다른 조건 5개 이상을 실행합니다. 각 실행의 `totalCurrent` 기록과 성공 상태를
 확인하고 해당 Measurement들로 Dataset revision을 고정합니다. Prediction에서
 `totalCurrent`를 선택해 Forward kNN 학습을 제출합니다. 학습은 서버가 소유한 Job으로
 실행되므로 브라우저를 닫아도 계속됩니다. 완료 모델의 파일 저장과 서버 등록, 학습
 프로세스 정리를 확인한 뒤 새 추론 세션에서 저장된 revision을 다시 로드합니다.
-모델 ID, revision, 파일 checksum, 복제본과 Launcher를 확인하세요. 학습용 Solver 3회는
+모든 신규 학습은 약 20%의 설계점을 검증용으로 고정하고 학습·전처리에서 제외합니다.
+모델 ID, revision, 파일 checksum, 복제본과 Launcher를 확인하세요. 학습용 Solver 5회는
 이후 Optimization의 Solver 예산과 별개입니다. Dataset이나 저장 모델을 갱신했다면
 새 Optimization에서 새 revision을 명시적으로 선택합니다.
 
@@ -307,7 +308,7 @@ Optimization 설정에서 **kNN Hybrid**, 저장 모델·revision·실행 위치
 동시 후보 2개, Solver 시도 3회로 설정합니다. 선택한 Launcher에 Evaluation과 Predictor가
 함께 사용할 자원이 있어야 합니다. 위 CLI의 `hybrid` 설정으로 같은 실행을 만들 수도 있습니다.
 
-시작 Candidate는 예측과 실제 검증을 모두 수행합니다. 이후 예측이 끝난 라운드에서
+기본 좌표 탐색의 시작 Candidate는 예측과 실제 검증을 모두 수행합니다. 이후 예측이 끝난 라운드에서
 목적값이 좋은 후보와 아직 검증한 후보에서 먼 탐색 후보를 실제로 검증합니다.
 예측 최선 후보와 검증 최선 후보의 Vars·목적값을 따로 확인하고, 최선 Vars 적용에는
 검증된 결과를 사용하세요. 실행 중 브라우저를 닫아도 서버 작업은 계속됩니다.
@@ -321,7 +322,7 @@ Optimization 설정에서 **kNN Hybrid**, 저장 모델·revision·실행 위치
 
 ### 로컬 기준선 검증 재현하기
 
-개발 환경의 통합 검사는 이 Catalog 예제로 학습용 Solver 3회, 서버 소유 kNN 학습,
+개발 환경의 통합 검사는 이 Catalog 예제로 학습용 Solver 5회, 서버 소유 kNN 학습,
 새 추론 세션과 Hybrid 후보 5개·Solver 검증 3회를 실행합니다. 시작 Candidate의 예측·실제
 목적값을 비교하고 모델 revision, 저장된 평가 이력과 프로세스·자원 정리까지 확인합니다.
 다른 후보의 예측 오차도 기록하지만 이 작은 검사는 최적화 개선율을 보장하지 않습니다.
@@ -350,7 +351,7 @@ try {
 180초 예산과 정리 기준은 고정 모델 검사와 같습니다. 자동 검사의 보고서는
 `.work/automatic-hybrid-demo-acceptance.json`에 남으며 실행 후 환경변수를 해제합니다.
 
-두 보고서는 학습 데이터 생성용 Solver-only 3회와 Hybrid 검증 3회의 목적값·비용을
+두 보고서는 학습 데이터 생성용 Solver-only 5회와 Hybrid 검증 3회의 목적값·비용을
 비교합니다. 최초 학습을 포함한 시간과 준비된 모델로 탐색한 시간을 구분하고,
 Job별 빌드·학습·추론·해석·후처리·큐 대기를 집계합니다. 병행 실행 시간은 합산 Job
 시간과 다를 수 있으며, 별도로 측정하지 않은 전송 시간은 `null`로 표시합니다.

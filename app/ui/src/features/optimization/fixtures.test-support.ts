@@ -51,6 +51,7 @@ export const optimizationFixture: Optimization = {
   optimizer_state: {},
 }
 const hybridSource = {
+  model_definition: { qualityValidation: { version: 2 } },
   model_id: 'model-1',
   model_revision: 1,
   replica_id: 'replica-1',

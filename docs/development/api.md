@@ -142,6 +142,7 @@ $optimizationUnitTests = @(
     'tests/test_optimization_algorithm.py'
     'tests/test_optimization_search.py'
     'tests/test_optimization_strategies.py'
+    'tests/test_optimization_de.py'
     'tests/test_hybrid_lifecycle.py'
     'tests/test_optimization_update_policy.py'
     'tests/test_optimization_versions.py'
@@ -199,7 +200,7 @@ try {
 }
 ```
 
-This uses the existing `hybrid-box-conductor@1.0.0` example: three initial-data
+This uses the existing `hybrid-box-conductor@1.0.0` example: five initial-data
 Solver Jobs, one initial kNN training operation, five predicted candidates,
 and three Hybrid Solver verifications. The existing 180-second flow deadline
 includes initial data, training, Hybrid execution, and Job/resource cleanup;
@@ -209,6 +210,22 @@ of processes, leases, reservations, and temporary databases. Evidence is written
 to `.work/hybrid-demo-acceptance.json` or `.work/hybrid-demo-last-failure.json`
 at the repository root. This command does not select other Hybrid variants,
 the CAE `full` suite, or all Catalog examples.
+
+For DE acceptance, use the same disposable loopback setup and select these two
+tests explicitly with `RUN_OPTIMIZATION_E2E=1` and `RUN_SEARCH_STRATEGY_E2E=1`:
+
+```powershell
+poetry run python -m pytest tests/test_optimization_end_to_end.py::OptimizationEndToEndTests::test_de_box_evolves_a_generation_and_restores_its_population tests/test_hybrid_end_to_end.py::HybridEndToEndTests::test_de_knn_evolves_with_partial_verification_and_automatic_rebuild -q -s --tb=short
+```
+
+The Solver-only case evaluates eight candidates with population four. The Hybrid
+case trains on five real design points with mandatory v2 holdout, proposes twelve
+candidates, verifies five, and rebuilds once with the same holdout before adopting
+revision 2 at the next round. Both verify mutation and population selection beyond
+initialization, actual-result-only best selection, and cleanup within each case's
+180-second flow budget. Reports are `.work/de-solver-demo-acceptance.json` and
+`.work/de-automatic-hybrid-demo-acceptance.json`. Restore both environment flags
+after running the selected tests.
 
 ## Security and runtime boundaries
 

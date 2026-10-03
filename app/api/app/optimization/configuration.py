@@ -22,6 +22,14 @@ class RandomConfig(BaseModel):
     candidates_per_round: int = Field(default=8, strict=True, ge=1, le=32)
 
 
+class DifferentialEvolutionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    population_size: int = Field(default=8, strict=True, ge=4, le=32)
+    mutation_factor: float = Field(default=0.8, strict=True, gt=0, lt=2)
+    crossover_rate: float = Field(default=0.9, strict=True, ge=0, le=1)
+    seed: int = Field(default=0, strict=True, ge=0, le=0xffffffff)
+
+
 class CoordinateAlgorithm(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: Literal["coordinate"] = "coordinate"
@@ -36,7 +44,15 @@ class RandomAlgorithm(BaseModel):
     config: RandomConfig = Field(default_factory=RandomConfig)
 
 
-OptimizationAlgorithm = Annotated[CoordinateAlgorithm | RandomAlgorithm, Field(discriminator="id")]
+class DifferentialEvolutionAlgorithm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Literal["de"] = "de"
+    version: int = Field(default=1, strict=True, ge=1, le=1)
+    config: DifferentialEvolutionConfig = Field(default_factory=DifferentialEvolutionConfig)
+
+
+OptimizationAlgorithm = Annotated[
+    CoordinateAlgorithm | RandomAlgorithm | DifferentialEvolutionAlgorithm, Field(discriminator="id")]
 ALGORITHM_CONFIG = TypeAdapter(OptimizationAlgorithm)
 
 

@@ -143,6 +143,12 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
             with pytest.raises(HTTPException, match="fresh version 2 model lineage"):
                 await freeze_hybrid(db, automatic, "owner", experiment, [])
             capacity.assert_not_awaited()
+            legacy_definition = revision.definition.pop("qualityValidation")
+            db.get.side_effect = [revision, replica]
+            with pytest.raises(HTTPException, match="fresh version 2 model lineage"):
+                await freeze_hybrid(db, automatic, "owner", experiment, [])
+            capacity.assert_not_awaited()
+            revision.definition["qualityValidation"] = legacy_definition
             revision.artifact["quality_report"]["records"][0]["components"][0]["rmse"] = 2
             db.get.side_effect = [revision, replica]
             with pytest.raises(HTTPException, match="rmse-exceeded"):

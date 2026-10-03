@@ -5,7 +5,7 @@ import hashlib
 import json
 
 
-def dataset():
+def dataset(values=(0, 1, 2)):
     grid = {"version": 1, "sampling": "point", "components": ["scalar"], "channels": ["value"],
             "channelUnits": ["K"], "origin": [0, 0, 0], "size": [2, 4, 6], "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
             "gridShape": [1, 1, 1], "lengthUnit": "m", "source": "task", "rootId": "box"}
@@ -14,9 +14,9 @@ def dataset():
             zip(("x", "y", "z", "time", "frequency", "amplitudePhase", "component"), ticks, ("m", "m", "m", "s", "Hz", None, None))]
     schema = {"dtype": "float64", "unit": "K", "quantityKind": "thermodynamics.Temperature", "axes": axes, "boxGrid": grid}
     records = [{"id": 10, "name": "heat.T", "contract_hash": "heat-contract"}]
-    measurements = [{"id": index + 1, "vars": {"x": value}} for index, value in enumerate((0, 1, 2))]
+    measurements = [{"id": index + 1, "vars": {"x": value}} for index, value in enumerate(values)]
     recorded = []
-    for index, value in enumerate((10, 20, 30)):
+    for index, value in enumerate(10 + 10 * value for value in values):
         cell = value
         for _ in range(7):
             cell = [cell]
@@ -33,7 +33,7 @@ def dataset():
               "calculations": [{"id": 4, "name": "Maximum", "source_code": "maximum", "source_hash": "calculation-source",
                                 "output_layout": {"dtype": "float64", "shape": [], "axes": []}, "experiment_record_ids": [10]}],
               "calculationData": [{"id": 30 + index, "calculation_id": 4, "measurement_id": index + 1,
-                                   "data": {"dtype": "float64", "shape": [], "axes": [], "data": value}} for index, value in enumerate((10, 20, 30))]}
+                                   "data": {"dtype": "float64", "shape": [], "axes": [], "data": 10 + 10 * value}} for index, value in enumerate(values)]}
     result["fingerprint"] = "sha256:" + hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
     return result
 

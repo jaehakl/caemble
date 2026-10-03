@@ -54,6 +54,23 @@ def test_new_training_uses_v2_while_legacy_definition_and_report_remain_readable
         validate_new_training(definition)
 
 
+@pytest.mark.parametrize("algorithm", ["knn", "mlp"])
+@pytest.mark.parametrize("settings", [None, QUALITY_VALIDATION_V1, QUALITY_VALIDATION_V2])
+def test_all_algorithms_require_v2_for_new_training_but_accept_legacy_inference(algorithm, settings):
+    definition, _ = root_case()
+    definition.update(algorithm={"kind": algorithm}, implementationVersion=f"{algorithm}-v1")
+    if settings is None:
+        definition.pop("qualityValidation")
+    else:
+        definition["qualityValidation"] = deepcopy(settings)
+    validate_definition(definition)
+    if settings == QUALITY_VALIDATION_V2:
+        assert validate_new_training(definition) == "rebuild"
+    else:
+        with pytest.raises(ValueError, match="version 2; create a fresh model"):
+            validate_new_training(definition)
+
+
 def test_successor_keeps_exact_root_holdout_when_dataset_grows():
     definition, report = root_case()
     update, child_definition, child = successor_case(definition, report)

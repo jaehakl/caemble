@@ -174,6 +174,9 @@ export function ModelDetail({
   )
   const profile = revision.artifact?.profile as { rowCount?: number } | undefined
   const active = model.state === 'active'
+  const currentQuality = model.revisions.find((item) => item.revision === model.current_revision)?.definition
+    .qualityValidation as { version?: unknown } | undefined
+  const requiresFreshModel = currentQuality?.version !== 2
   const executable =
     model.direction === 'forward' && revision.support_status !== 'retired' && revision.support_status !== 'unsupported'
   const useModel = () => {
@@ -320,9 +323,20 @@ export function ModelDetail({
               선택 해제
             </Button>
           )}
-          <Button type="button" variant="outline" size="sm" disabled={!active} onClick={() => onNewVersion(model)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!active || requiresFreshModel}
+            onClick={() => onNewVersion(model)}
+          >
             새 버전 만들기
           </Button>
+          {requiresFreshModel ? (
+            <p className="text-xs text-muted-foreground">
+              모델 갱신에는 검증 데이터를 배분한 새 v2 모델이 필요합니다. 새 모델 만들기를 사용하세요.
+            </p>
+          ) : null}
         </div>
       )}
       <details>

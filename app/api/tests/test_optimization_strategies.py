@@ -62,11 +62,13 @@ class StrategyTests(unittest.TestCase):
         self.assertTrue(all(trial.variables["tensor"][0][1] == 0.5 for trial in trials))
         return trace
 
-    def test_both_strategies_and_modes_resume_identically_from_json(self):
-        for algorithm in ("coordinate", "random"):
+    def test_all_strategies_and_modes_resume_identically_from_json(self):
+        for algorithm in ("coordinate", "random", "de"):
             for hybrid in (False, True):
                 with self.subTest(algorithm=algorithm, hybrid=hybrid):
-                    settings = self.settings(algorithm, **({"seed": 14, "candidates_per_round": 2} if algorithm == "random" else {}))
+                    config = {"coordinate": {}, "random": {"seed": 14, "candidates_per_round": 2},
+                              "de": {"seed": 14, "population_size": 4}}[algorithm]
+                    settings = self.settings(algorithm, **config)
                     self.assertEqual(self.run_search(settings, hybrid=hybrid),
                                      self.run_search(settings, hybrid=hybrid, restore=True))
 

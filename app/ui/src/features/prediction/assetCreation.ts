@@ -4,7 +4,6 @@ import type {
   PredictionDatasetRecord,
   PredictionDatasetSelection,
   PredictionModelRecord,
-  PredictionQualityValidation,
 } from '@/contracts/api/prediction'
 import type { RecordedDataRule, VarsSchemaEntry } from '@caemble/execution/cad/model'
 import type { RecordedResultContracts } from '@caemble/execution/contracts/results'
@@ -30,7 +29,6 @@ export type PredictionCreationInput = Readonly<{
   datasetRevision?: number
   previous?: PredictionModelRecord
   refreshDataset?: boolean
-  qualityValidation?: PredictionQualityValidation
 }>
 
 export function predictionDatasetSelection(
@@ -54,6 +52,12 @@ export function predictionDatasetSelection(
 export function createPredictionModel(manager: PredictionAssetController, input: PredictionCreationInput) {
   if (!input.setup.recordIds.length) throw new Error('학습할 BoxGrid를 하나 이상 선택하세요.')
   if (input.previous?.direction === 'inverse') throw new Error('Inverse 모델은 지원 종료되어 관리만 가능합니다.')
+  const previousRevision = input.previous?.revisions.find((item) => item.revision === input.previous?.current_revision)
+  if (
+    input.previous &&
+    (previousRevision?.definition.qualityValidation as { version?: unknown } | undefined)?.version !== 2
+  )
+    throw new Error('모델 갱신에는 검증 데이터를 배분한 새 v2 모델이 필요합니다. 새 모델 만들기를 사용하세요.')
   // These identities are captured by retries, including a lost create/reserve response.
   const datasetRequestId = crypto.randomUUID()
   const modelRequestId = crypto.randomUUID()
@@ -132,7 +136,6 @@ export function createPredictionModel(manager: PredictionAssetController, input:
       descriptor: algorithm,
       sourceContracts: source.source_contracts,
       recordIds: requiredRecordIds,
-      ...(input.qualityValidation ? { qualityValidation: input.qualityValidation } : {}),
     })
     const local = source.replicas.find(
       (replica) => replica.storage_id === hello.storageId && ['present', 'unverified'].includes(replica.state),

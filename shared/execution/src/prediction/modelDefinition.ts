@@ -1,9 +1,5 @@
 import { z } from 'zod'
-import {
-  predictionAlgorithmSchema,
-  predictionQualityValidationSchema,
-  type PredictionQualityValidation,
-} from '../contracts/prediction'
+import { defaultPredictionQualityValidation, predictionAlgorithmSchema } from '../contracts/prediction'
 export {
   predictionKnnAlgorithmSchema,
   predictionMlpAlgorithmSchema,
@@ -55,7 +51,6 @@ export type PredictionDefinitionInput = Readonly<{
   }>
   sourceContracts: unknown
   recordIds: readonly number[]
-  qualityValidation?: PredictionQualityValidation
 }>
 
 /** Freeze training meaning once; transport, storage routing and resources are separate. */
@@ -78,9 +73,7 @@ export async function buildPredictionModelDefinition(input: PredictionDefinition
     contract: { ...frozen, records: Object.fromEntries(requiredRecordIds.map((id) => [id, frozen.records[id]])) },
     direction: 'forward' as const,
     requiredRecordIds,
-    ...(input.qualityValidation
-      ? { qualityValidation: predictionQualityValidationSchema.parse(input.qualityValidation) }
-      : {}),
+    qualityValidation: defaultPredictionQualityValidation,
   }
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(predictionFingerprint([meaning])))
   const fingerprint = `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`

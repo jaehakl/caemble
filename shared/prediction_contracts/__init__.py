@@ -132,8 +132,8 @@ def validate_training_update(update: dict | None, definition: dict) -> str:
 def validate_new_training(definition: dict, update: dict | None = None) -> str:
     """New operations use v2 quality; legacy definitions remain readable for inference."""
     mode = validate_training_update(update, definition)
-    if (definition.get("qualityValidation") or {}).get("version") == 1:
-        raise ValueError("New quality training requires version 2; create a fresh model instead.")
+    if definition.get("qualityValidation") != QUALITY_VALIDATION_V2:
+        raise ValueError("New training requires quality validation version 2; create a fresh model instead.")
     return mode
 
 

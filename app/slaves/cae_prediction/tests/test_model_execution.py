@@ -43,7 +43,7 @@ def test_training_load_and_inference_receive_allocated_context(pinned_case):
     single = dispatch(worker, "model.predict", cancelled, instance=loaded["instance"], input=query)
     batch = dispatch(worker, "model.predict_batch", cancelled, instance=loaded["instance"],
         inputs=[{"candidateId": str(index), "input": query} for index in range(2)])
-    assert [stage for stage, _ in case.contexts] == ["prepare", "load", "predict", "load", "predict", "predict", "predict"]
+    assert [stage for stage, _ in case.contexts] == ["prepare", "predict", "load", "predict", "load", "predict", "predict", "predict"]
     for _, context in case.contexts:
         assert context.allocation == case.allocation
         assert context.allocation.cpu_ids == [2, 4]

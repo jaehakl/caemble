@@ -347,8 +347,12 @@ serve the UI and CLI.
 Replace the IDs with existing asset IDs and save the configuration as
 `training.json`. To train kNN, replace `algorithm` with
 `{"kind":"knn","kMode":"auto","manualK":1,"weighting":"distance"}`.
-Quality validation defaults to false and requires at least five distinct valid
-design points when enabled.
+Every new training request requires quality validation v2 and at least five distinct
+valid design points. The CLI accepts an omitted `quality_validation` or `true` and
+rejects `false`. A deterministic 20% of initial design-point groups, rounded up,
+is reserved from training and preprocessing. Rebuilds keep that root holdout.
+Existing models without validation or with v1 validation remain readable for
+inference; create a fresh v2 model before requesting another training revision.
 
 ```powershell
 .\caemble.cmd prediction train --config training.json --request-id <UUID>

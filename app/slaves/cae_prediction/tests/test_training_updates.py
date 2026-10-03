@@ -25,11 +25,11 @@ from .test_training import authorize, training_spec
 
 
 def next_spec(worker, initial, artifact, mode="rebuild"):
-    manifest = dataset()
+    manifest = dataset((0, 1, 2, .25, 1.75))
     manifest.update(revision=2, fingerprint="sha256:" + "b" * 64)
-    manifest["measurements"].append({"id": 4, "vars": {"x": .5}})
+    manifest["measurements"].append({"id": 6, "vars": {"x": .5}})
     recorded = copy.deepcopy(manifest["recorded"][0])
-    recorded.update(id=23, measurement_id=4)
+    recorded.update(id=25, measurement_id=6)
     recorded["data"]["storage"]["value"] = [[[[[[[100]]]]]]]
     manifest["recorded"].append(recorded)
     target = stage(worker, manifest)
@@ -40,7 +40,7 @@ def next_spec(worker, initial, artifact, mode="rebuild"):
         "definition": {**initial["definition"], "snapshotFingerprint": target["fingerprint"], "fingerprint": "model-fingerprint-2"},
         "update": {"mode": mode, "baseModel": base, "targetSnapshot": target,
             "changeSet": {"baseSnapshot": initial["dataset"], "targetSnapshot": target,
-                          "added": [4], "changed": [], "removed": []}, "recipe": {"seed": 7}}}
+                          "added": [6], "changed": [], "removed": []}, "recipe": {"seed": 7}}}
 
 
 def complete_initial(worker, spec, monkeypatch):
@@ -67,7 +67,7 @@ def test_knn_update_rebuilds_and_keeps_base_files_until_authoritative_cleanup(tm
     artifact = result["artifact"]
     assert artifact["update"] == spec["update"]
     assert artifact["validation"] == {"version": 1, "manifestChecksum": artifact["manifestChecksum"],
-        "loadPassed": True, "predictPassed": True, "measurementId": 1}
+        "loadPassed": True, "predictPassed": True, "measurementId": 2}
     assert worker.store.read("models", "trained", 1)[2] == original["manifestChecksum"]
     loaded = call(worker, "model.load", modelId="trained", revision=2)
     assert call(worker, "model.predict", instance=loaded["instance"], input={"direction": "forward", "vars": {"x": .5}})["output"][0]["values"] == [100]
@@ -84,22 +84,19 @@ def test_knn_update_rebuilds_and_keeps_base_files_until_authoritative_cleanup(tm
     assert fresh.store.path("models", "trained", 2).exists()
 
 
-def test_non_knn_warm_start_uses_separate_model_and_counts_base_ram(monkeypatch, model_case):
+def test_non_knn_rebuild_keeps_base_model_and_recovers_saved_archive(monkeypatch, model_case):
     case = model_case
     original = complete_initial(case.worker, case.spec, monkeypatch)
-    spec = next_spec(case.worker, case.spec, original, "warm_start")
+    spec = next_spec(case.worker, case.spec, original)
     spec.update(canPin=True, canRelease=False)
     grant = authorize(monkeypatch, case.worker, spec)
     call(case.worker, "training.pin", grant=grant)
     artifact = case.worker.training.train(spec, lambda: spec["dataset"])["artifact"]
-    assert "update" in case.calls
-    base = next(instance for instance in case.instances[2:] if instance.metadata["revision"] == 1)
+    assert "update" not in case.calls
+    base = case.instances[0]
     updated = next(instance for instance in case.instances if instance.metadata["revision"] == 2)
     assert base is not updated and base.output["values"] == [42]
-    assert updated.output["values"] == [43]
-    update_context = next(context for kind, context in case.contexts if kind == "update")
-    base_context = [context for kind, context in case.contexts if kind == "load"][-2]
-    assert update_context.available_ram_bytes == base_context.available_ram_bytes - 8
+    assert updated.output["values"] == [42]
     assert all(instance.close_calls == 1 for instance in case.instances)
     assert case.worker.instances == {}
     assert artifact["validation"]["predictPassed"] is True
@@ -110,8 +107,20 @@ def test_non_knn_warm_start_uses_separate_model_and_counts_base_ram(monkeypatch,
     unpack_archive(archive, target.store.path("models", "trained", 2), "model", "trained", 2, artifact["manifestChecksum"])
     loaded = call(target, "model.load", modelId="trained", revision=2)
     assert loaded["artifact"]["update"] == spec["update"]
-    assert call(target, "model.predict", instance=loaded["instance"], input={"direction": "forward", "vars": {"x": .5}})["output"][0]["values"] == [43]
+    assert call(target, "model.predict", instance=loaded["instance"], input={"direction": "forward", "vars": {"x": .5}})["output"][0]["values"] == [42]
     call(target, "model.release", instance=loaded["instance"])
+
+
+def test_quality_warm_start_is_rejected_even_when_implementation_supports_it(monkeypatch, model_case):
+    case = model_case
+    original = complete_initial(case.worker, case.spec, monkeypatch)
+    spec = next_spec(case.worker, case.spec, original, "warm_start")
+    spec.update(canPin=True, canRelease=False)
+    grant = authorize(monkeypatch, case.worker, spec)
+    with pytest.raises(PredictionError, match="requires rebuild"):
+        call(case.worker, "training.pin", grant=grant)
+    assert "update" not in case.calls
+    assert not case.worker.store.path("models", "trained", 2).exists()
 
 
 @pytest.mark.parametrize("mutation", ["mode", "checksum", "snapshot", "changes"])
@@ -128,7 +137,7 @@ def test_invalid_update_is_rejected_before_base_pin(tmp_path, monkeypatch, mutat
     elif mutation == "snapshot":
         spec["update"]["targetSnapshot"] = {**spec["dataset"], "fingerprint": "wrong"}
     else:
-        spec["update"]["changeSet"]["changed"] = [4]
+        spec["update"]["changeSet"]["changed"] = [6]
     grant = authorize(monkeypatch, worker, spec)
     with pytest.raises(PredictionError):
         call(worker, "training.pin", grant=grant)
@@ -138,13 +147,13 @@ def test_invalid_update_is_rejected_before_base_pin(tmp_path, monkeypatch, mutat
 def test_failed_smoke_recovers_saved_update_without_dataset(monkeypatch, model_case):
     case = model_case
     original = complete_initial(case.worker, case.spec, monkeypatch)
-    spec = next_spec(case.worker, case.spec, original, "warm_start")
+    spec = next_spec(case.worker, case.spec, original)
     spec.update(canPin=True, canRelease=False)
     grant = authorize(monkeypatch, case.worker, spec)
     call(case.worker, "training.pin", grant=grant)
     predict = case.implementation.predict
     def failed_predict(self, values, context):
-        if self.metadata["revision"] == 2:
+        if self.metadata["revision"] == 2 and self.metadata.get("validationSample"):
             raise PredictionError("model-validation", "Fixture validation failed")
         return predict(self, values, context)
     monkeypatch.setattr(case.implementation, "predict", failed_predict)
@@ -155,13 +164,13 @@ def test_failed_smoke_recovers_saved_update_without_dataset(monkeypatch, model_c
     monkeypatch.setattr(case.implementation, "predict", predict)
     artifact = case.worker.training.train(spec, lambda: pytest.fail("Validation retry must use the saved smoke input."))["artifact"]
     assert artifact["validation"]["predictPassed"] is True
-    assert case.calls.count("update") == 1
+    assert case.calls.count("prepare") == 2
 
 
-def test_failed_update_save_closes_both_objects_and_keeps_base_pin(monkeypatch, model_case):
+def test_failed_update_save_closes_model_and_keeps_base_pin(monkeypatch, model_case):
     case = model_case
     original = complete_initial(case.worker, case.spec, monkeypatch)
-    spec = next_spec(case.worker, case.spec, original, "warm_start")
+    spec = next_spec(case.worker, case.spec, original)
     spec.update(canPin=True, canRelease=False)
     grant = authorize(monkeypatch, case.worker, spec)
     call(case.worker, "training.pin", grant=grant)
@@ -265,12 +274,18 @@ def test_server_prune_fetches_attempt_scoped_grant_and_acknowledges_removal(tmp_
 
 
 @pytest.mark.parametrize("provide_pin", [True, False])
-def test_server_update_consumes_real_dataset_and_pin_grants(tmp_path, monkeypatch, provide_pin):
+@pytest.mark.parametrize("source_kind", ["api", "local"])
+def test_server_update_uses_source_specific_grants_and_preserves_required_pins(tmp_path, monkeypatch, provide_pin, source_kind):
     worker = runtime(tmp_path)
     initial = training_spec(worker)
     original = complete_initial(worker, initial, monkeypatch)
     spec = next_spec(worker, initial, original)
-    spec.update(canPin=True, canRelease=False, sourceKind="api")
+    spec.update(canPin=True, canRelease=False, sourceKind=source_kind)
+    if source_kind == "local" and provide_pin:
+        # Browser preflight pins the exact local Dataset and immutable base copy
+        # before API submission; the server Job inherits those durable pins.
+        pin_grant = authorize(monkeypatch, worker, spec)
+        call(worker, "training.pin", grant=pin_grant)
     content = (worker.store.path("datasets", "dataset-1", 2) / "dataset.json").read_bytes()
     dataset_reads, acknowledgements = [], []
     grant = {}
@@ -282,8 +297,8 @@ def test_server_update_consumes_real_dataset_and_pin_grants(tmp_path, monkeypatc
             if self.path.endswith("/attempts/attempt-2/dataset"):
                 assert self.headers["Authorization"] == "Bearer assignment"
                 dataset_reads.append(self.path)
-                response = {"grant": grant}
-                if provide_pin:
+                response = spec["dataset"] if source_kind == "local" else {"grant": grant}
+                if provide_pin and source_kind == "api":
                     response["trainingGrant"] = {"operation_id": "training-2", "token": "pin",
                         "manifest_url": worker.training.api_url + "/prediction/operations/training-2/training"}
                 raw = encode_json(response)
@@ -327,14 +342,15 @@ def test_server_update_consumes_real_dataset_and_pin_grants(tmp_path, monkeypatc
         if provide_pin:
             result = asyncio.run(training.run_training(spec, [], context))
             assert result["artifact"]["validation"]["predictPassed"] is True
-            assert acknowledgements == [{"pinId": "attempt-2", "artifactSaved": False}]
+            assert result["artifact"]["qualityReport"]["lineage"] == original["qualityReport"]["lineage"]
+            assert acknowledgements == ([{"pinId": "attempt-2", "artifactSaved": False}] if source_kind == "api" else [])
             recovered = asyncio.run(training.run_training(spec, [], context))
             assert recovered["artifact"] == result["artifact"]
         else:
-            with pytest.raises(PredictionError, match="pin grants"):
+            with pytest.raises(PredictionError, match="pin grants" if source_kind == "api" else "durable preflight Dataset pin"):
                 asyncio.run(training.run_training(spec, [], context))
             assert not worker.store.path("models", "trained", 2).exists()
-        assert len(dataset_reads) == 1
+        assert len(dataset_reads) == (0 if source_kind == "local" and not provide_pin else 1)
     finally:
         server.shutdown()
         server.server_close()

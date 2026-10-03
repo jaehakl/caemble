@@ -4,10 +4,11 @@ import hashlib
 import os
 import time
 import unittest
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import uuid4, uuid5
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -19,7 +20,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from db import make_async_db_url
 from gpstation.db import Job, Launcher
 from gpstation.service.state import utcnow
-from prediction.common import canonical_bytes
+from prediction.common import IDENTITY_NAMESPACE, canonical_bytes
+from prediction_contracts.quality import QUALITY_VALIDATION_V2, lineage_fingerprint, split_fingerprint
 from prediction.datasets import content_identity, freeze_dataset, register_local_dataset
 from prediction.db import Dataset, DatasetGrant, DatasetObject, DatasetRevision, ModelRevision, PredictionModel
 from prediction.grants import create_grant, read_granted_object, read_granted_revision, release_grant, renew_grant
@@ -146,6 +148,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
         self.owner, self.other, self.launcher_id, self.storage_id = (str(uuid4()) for _ in range(4))
         self.signing = patch.object(settings, "JWT_SECRET", "prediction-disposable-test-secret")
         self.signing.start()
+        self.quality_requests, self.quality_lineages = {}, {}
         async with self.sessions() as db:
             db.add_all([User(id=self.owner, is_active=True), User(id=self.other, is_active=True)])
             await db.flush()
@@ -176,6 +179,15 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             self.object_id, self.ref = stored.id, reference(stored)
             db.add(RecordedData(user_id=self.owner, measurement_id=measurement.id, experiment_record_id=record.id,
                 data={"shape": [2], "storage": {"kind": "inline", "value": self.ref}}))
+            self.quality_measurement_ids = [measurement.id]
+            for width in (0, 1, 4, 5):
+                sample = Measurement(user_id=self.owner, experiment_id=experiment.id, vars={"width": width},
+                    material_snapshot={}, recorded_at=utcnow())
+                db.add(sample)
+                await db.flush()
+                self.quality_measurement_ids.append(sample.id)
+                db.add(RecordedData(user_id=self.owner, measurement_id=sample.id, experiment_record_id=record.id,
+                    data={"shape": [2], "storage": {"kind": "inline", "value": [width, width + 1]}}))
             db.add(Launcher(id=self.launcher_id, user_id=self.owner, installation_id=str(uuid4()), launcher_name="fixture",
                 status="ready", connected_at=utcnow(), last_heartbeat_at=utcnow(), slave_app_ids=["predictor"]))
             await db.commit()
@@ -191,16 +203,42 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             "record_ids": [self.record_id], **changes})
 
     def model_request(self, dataset, **changes):
-        return ModelReserve(**{"request_id": str(uuid4()), "name": "Forward model", "direction": "forward",
+        body = {"request_id": str(uuid4()), "name": "Forward model", "direction": "forward",
             "dataset_id": dataset["id"], "dataset_revision": dataset["current_revision"],
             "definition": {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1",
                 "preprocessingVersion": "box-relative-v2"}, "storage_id": self.storage_id,
-            "launcher_id": self.launcher_id, **changes})
+            "launcher_id": self.launcher_id, **changes}
+        source = {"datasetId": dataset["id"], "revision": body["dataset_revision"],
+            "fingerprint": next(item["fingerprint"] for item in dataset["revisions"] if item["revision"] == body["dataset_revision"])}
+        body["definition"] = {"fingerprint": "sha256:" + "c" * 64, "snapshotFingerprint": source["fingerprint"],
+            "qualityValidation": deepcopy(QUALITY_VALIDATION_V2), **body["definition"]}
+        identity = str(body.get("model_id") or uuid5(IDENTITY_NAMESPACE, f"{self.owner}/model/{body['request_id']}"))
+        lineage = self.quality_lineages.get(identity)
+        if lineage is None:
+            lineage = {"rootSnapshot": source, "validationGroups": [{"designFingerprint": "d" * 64,
+                "measurementIds": self.quality_measurement_ids[-1:]}]}
+            lineage["fingerprint"] = lineage_fingerprint(lineage, QUALITY_VALIDATION_V2)
+            self.quality_lineages[identity] = deepcopy(lineage)
+        self.quality_requests[str(body["request_id"])] = (deepcopy(body["definition"]), source, deepcopy(lineage),
+                                                       list(self.quality_measurement_ids))
+        return ModelReserve(**body)
 
     def completion(self, operation_id, **changes):
+        definition, source, lineage, identities = self.quality_requests[str(operation_id)]
+        held = [identity for group in lineage["validationGroups"] for identity in group["measurementIds"]]
+        trained = [identity for identity in identities if identity not in held]
+        split = {"version": 2, "seed": 0, "holdoutFraction": .2, "trainingMeasurementIds": trained,
+            "validationMeasurementIds": held, "trainingGroupCount": len(trained), "validationGroupCount": len(held),
+            "excluded": [], "lineageFingerprint": lineage["fingerprint"]}
+        split["fingerprint"] = split_fingerprint(split)
+        quality = {"version": 2, "evaluation": "pre-save-holdout", "status": "complete", "dataset": source,
+            "definitionFingerprint": definition["fingerprint"], "lineage": lineage, "split": split,
+            "records": [{"recordId": self.record_id, "key": "temperature", "unit": "K", "status": "evaluated",
+                "trainingMeasurementIds": trained, "evaluatedMeasurementIds": held, "evaluatedGroupCount": len(held),
+                "excluded": [], "components": [{"component": "scalar", "mae": 1., "rmse": 1., "maxAbsoluteError": 1.}]}]}
         return ModelComplete(**{"request_id": operation_id, "manifest_sha256": "f" * 64,
             "files": [{"name": "samples.bin", "sha256": "e" * 64, "byteLength": 16}],
-            "profile": {"rowCount": 1}, "input_layouts": [], "output_layouts": [], **changes})
+            "profile": {"rowCount": len(trained)}, "input_layouts": [], "output_layouts": [], "quality_report": quality, **changes})
 
     async def test_snapshot_survives_source_deletion_and_scoped_downloads(self):
         async with self.sessions() as db:
@@ -244,7 +282,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             await release_grant(db, dataset["id"], grant["grant_id"], self.owner)
             changed = await freeze_dataset(db, sync, self.owner, dataset["id"])
             self.assertEqual(changed["current_revision"], 2)
-            self.assertEqual(changed["revisions"][0]["sample_count"], 0)
+            self.assertEqual(changed["revisions"][0]["sample_count"], 4)
             self.assertIsNone((await db.get(DatasetRevision, (dataset["id"], 1))).payload)
             self.assertEqual((await db.get(ModelRevision, (model["id"], 1))).dataset_revision, 1)
             self.assertIsNone(await db.scalar(select(DatasetObject).where(DatasetObject.dataset_id == dataset["id"])))
@@ -374,7 +412,7 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             await db.execute(delete(Measurement).where(Measurement.id == self.measurement_id))
             await db.commit()
             self.assertEqual((await freeze_dataset(db, noop, self.owner, dataset["id"]))["current_revision"], 1)
-            self.assertEqual((await db.get(DatasetRevision, (dataset["id"], 1))).summary["sample_count"], 1)
+            self.assertEqual((await db.get(DatasetRevision, (dataset["id"], 1))).summary["sample_count"], 5)
 
     async def test_explicit_model_update_supersedes_pending_completion(self):
         async with self.sessions() as db:

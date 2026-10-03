@@ -73,7 +73,7 @@ export function OptimizationModelUpdates({
   if (!initial) return null
   const active = update?.active_model ?? initial
   const definition = active.model_definition as { qualityValidation?: { version?: unknown } } | undefined
-  const legacyQuality = definition?.qualityValidation?.version === 1
+  const legacyQuality = definition?.qualityValidation?.version !== 2
   const updateBlockedReason = legacyQuality ? '모델 갱신에는 새 품질 평가 v2 모델이 필요합니다.' : null
   const latest = update?.updates[update.updates.length - 1]
   const waiting =

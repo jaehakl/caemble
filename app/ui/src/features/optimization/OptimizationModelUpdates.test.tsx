@@ -120,7 +120,7 @@ it.each([undefined, 1, 2])('keeps fixed-model use separate from quality version 
     </MemoryRouter>,
   )
   const button = screen.getByRole('button', { name: '모델 갱신' })
-  if (version === 1) {
+  if (version !== 2) {
     expect(button).toBeDisabled()
     expect(screen.getByText('모델 갱신에는 새 품질 평가 v2 모델이 필요합니다.')).toBeInTheDocument()
   } else expect(button).toBeEnabled()

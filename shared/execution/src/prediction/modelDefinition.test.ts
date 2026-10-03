@@ -27,11 +27,11 @@ const input = {
   recordIds: [5],
 }
 
-it('preserves the pre-MLP kNN definition fingerprint exactly', async () => {
+it('freezes mandatory quality v2 in every new kNN definition', async () => {
   const definition = await buildPredictionModelDefinition(input)
-  expect(definition.fingerprint).toBe('sha256:71e25a71d0c20f16795a52f2e41864eeac07033f67f817ca9e840317fd85d1a9')
+  expect(definition.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/)
   expect(definition.algorithm).toEqual(defaultKnnAlgorithm)
-  expect(definition).not.toHaveProperty('qualityValidation')
+  expect(definition.qualityValidation).toEqual(defaultPredictionQualityValidation)
   expect(await buildPredictionModelDefinition({ ...input, recordIds: [5, 5] })).toEqual(definition)
 })
 
@@ -39,12 +39,8 @@ it('uses quality v2 for new models and retains distinct v1 definition identity f
   expect(defaultPredictionQualityValidation.version).toBe(2)
   const legacy = { ...defaultPredictionQualityValidation, version: 1 as const }
   expect(predictionQualityValidationSchema.parse(legacy)).toEqual(legacy)
-  const previous = await buildPredictionModelDefinition({ ...input, qualityValidation: legacy })
-  const current = await buildPredictionModelDefinition({
-    ...input,
-    qualityValidation: defaultPredictionQualityValidation,
-  })
-  expect(previous.fingerprint).not.toBe(current.fingerprint)
+  const current = await buildPredictionModelDefinition(input)
+  expect(current.qualityValidation.version).toBe(2)
   expect(predictionQualityValidationSchema.safeParse({ ...legacy, version: 3 }).success).toBe(false)
 })
 
@@ -65,12 +61,7 @@ it('freezes every MLP setting and the same held-out quality policy in model iden
     { ...defaultMlpAlgorithm, seed: 1 },
   ])
     expect((await buildPredictionModelDefinition({ ...mlp, algorithm })).fingerprint).not.toBe(definition.fingerprint)
-  const evaluated = await buildPredictionModelDefinition({
-    ...mlp,
-    qualityValidation: defaultPredictionQualityValidation,
-  })
-  expect(evaluated.qualityValidation).toEqual(defaultPredictionQualityValidation)
-  expect(evaluated.fingerprint).not.toBe(definition.fingerprint)
+  expect(definition.qualityValidation).toEqual(defaultPredictionQualityValidation)
 })
 
 it.each([

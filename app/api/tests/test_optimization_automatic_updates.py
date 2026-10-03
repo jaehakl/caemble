@@ -46,6 +46,26 @@ class AutomaticModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             await reconcile_updates(db, row)
             await db.commit()
 
+    async def test_legacy_model_admission_keeps_active_model_and_reports_fresh_model_requirement(self):
+        identity = await self.optimization()
+        await self.enable(identity, min_new_measurements=1)
+        await self.record(3, 90)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, identity)
+            state = model_state(optimization)
+            state["active_model"]["model_definition"].pop("qualityValidation")
+            original = deepcopy(state["active_model"])
+            save_state(optimization, state)
+            await db.commit()
+            await reconcile_updates(db, optimization)
+            self.assertFalse(await request_automatic_update(db, optimization, next_round=True, training_busy=False))
+            state = model_state(optimization)
+            self.assertEqual(state["active_model"], original)
+            self.assertEqual(state["updates"], [])
+            self.assertEqual(state["automatic"]["reason"], "admission_deferred")
+            self.assertIn("create a fresh model", state["automatic"]["error"]["message"])
+            self.assertEqual(optimization.state, "running")
+
     async def test_real_automatic_rebuild_waits_and_adopts_without_consuming_random_state(self):
         identity = await self.optimization({"id": "random", "config": {"seed": 42, "candidates_per_round": 2}})
         await self.enable(identity, min_new_measurements=1)

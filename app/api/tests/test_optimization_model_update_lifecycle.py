@@ -44,10 +44,12 @@ class ModelUpdateLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "model_definition": initial.definition, "source_contracts": initial.source_contracts,
             "quality_requirements": limits() if quality else None,
             **freeze_quality(initial, limits() if quality else None)}
-        settings = {"algorithm": {"id": algorithm, "config": {"seed": 42, "candidates_per_round": 2}
-                                  if algorithm == "random" else {}},
+        configurations = {"coordinate": {}, "random": {"seed": 42, "candidates_per_round": 2},
+                          "de": {"seed": 42, "population_size": 4}}
+        settings = {"algorithm": {"id": algorithm, "config": configurations[algorithm]},
             "initial_vars": {"x": 0.5}, "axes": [{"name": "x", "indices": [], "min": 0, "max": 1, "fixed": False}],
-            "objective": {"direction": "minimize"}, "constraints": [], "max_trials": 5, "max_parallel": 2,
+            "objective": {"direction": "minimize"}, "constraints": [],
+            "max_trials": 8 if algorithm == "de" else 5, "max_parallel": 2,
             "hybrid": {"max_solver_runs": 5}}
         self.optimization = SimpleNamespace(id="optimization", user_id="owner", experiment_id=7,
             state="running", pause_reason=None, settings=settings,
@@ -67,6 +69,19 @@ class ModelUpdateLifecycleTests(unittest.IsolatedAsyncioTestCase):
             source=deepcopy(self.source) if kind == "prediction" else {"source_hash": "source"},
             result={"objective": -100 if kind == "prediction" else 10, "feasible": True, "violation": 0})
             for kind in ("prediction", "solver")]
+        if algorithm == "de":
+            # Complete a real initial proposal, with only two actually verified members.
+            state, candidates, _, _ = advance_search([], [], settings, self.optimization.optimizer_state,
+                                                      {"remaining": 5})
+            state["selection"] = ["trial-1", "trial-2"]
+            self.optimization.optimizer_state = state
+            self.trials = [SimpleNamespace(**candidate, id=f"trial-{candidate['ordinal']}", state="succeeded",
+                                          next_stage="complete") for candidate in candidates]
+            templates = {item.kind: item for item in self.evaluations}
+            self.evaluations = [SimpleNamespace(**{**deepcopy(vars(templates[kind])),
+                "id": f"{kind}-{trial.ordinal}", "trial_id": trial.id, "fingerprint": trial.fingerprint})
+                for trial in self.trials for kind in ("prediction", "solver")
+                if kind == "prediction" or trial.ordinal <= 2]
         self.revision = deepcopy(initial)
         self.revision.revision = self.revision.dataset_revision = 2
         self.revision.dataset_fingerprint = "snapshot-2"
@@ -167,7 +182,7 @@ class ModelUpdateLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.submit_predictions.assert_awaited_once()
 
     async def test_waiting_and_json_resume_match_uninterrupted_candidates_and_model_sources(self):
-        for algorithm in ("coordinate", "random"):
+        for algorithm in ("coordinate", "random", "de"):
             with self.subTest(algorithm=algorithm):
                 self.configure(algorithm)
                 self.complete_training()

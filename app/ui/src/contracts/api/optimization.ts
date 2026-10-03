@@ -134,6 +134,21 @@ export const optimizationModelUpdateSchema = z.object({
 export const optimizationAlgorithmSchema = z.discriminatedUnion('id', [
   z
     .object({
+      id: z.literal('de'),
+      version: z.literal(1).default(1),
+      config: z
+        .object({
+          seed: z.number().int().min(0).max(0xffffffff).default(0),
+          population_size: z.number().int().min(4).max(32).default(8),
+          mutation_factor: z.number().finite().positive().lt(2).default(0.8),
+          crossover_rate: z.number().finite().min(0).max(1).default(0.9),
+        })
+        .strict()
+        .default({ seed: 0, population_size: 8, mutation_factor: 0.8, crossover_rate: 0.9 }),
+    })
+    .strict(),
+  z
+    .object({
       id: z.literal('coordinate'),
       version: z.literal(1).default(1),
       config: z

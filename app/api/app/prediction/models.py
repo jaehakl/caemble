@@ -127,8 +127,6 @@ async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, f
                 **({"training": view["training"]} if "training" in view else {})}
         if body.expected_revision != row.current_revision or row.direction != body.direction:
             raise HTTPException(409, "Model changed or targets another direction. Reload before updating.")
-        if row.current_revision and body.training_update is None and body.definition.get("qualityValidation") is not None:
-            raise HTTPException(409, "Create a new model for a fresh quality lineage, or update the exact completed base model.")
         await training.assert_model_update_available(db, identity, user_id, online_origin=online_origin)
     elif body.model_id:
         raise HTTPException(404, "Model not found.")
@@ -157,9 +155,31 @@ async def reserve_model(db, body, user_id, *, commit=True, online_origin=None, f
     if definition.get("snapshotFingerprint", dataset_revision.fingerprint) != dataset_revision.fingerprint:
         raise HTTPException(409, "Model definition targets another Dataset fingerprint.")
     training_update = deepcopy(body.training_update)
+    target_ref = {"datasetId": dataset.id, "revision": body.dataset_revision, "fingerprint": dataset_revision.fingerprint}
+    if training_update is None and row is not None and row.current_revision:
+        baseline = await db.get(ModelRevision, (identity, row.current_revision))
+        if baseline is None or baseline.state != "ready" or not baseline.artifact:
+            raise HTTPException(409, "The completed base model is unavailable; create a fresh model instead.")
+        try:
+            validate_new_training(baseline.definition)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        checksum = baseline.artifact.get("manifest_sha256")
+        base_copy = await db.scalar(select(Replica).where(Replica.model_id == identity,
+            Replica.revision == baseline.revision, Replica.storage_id == str(body.storage_id),
+            Replica.manifest_sha256 == checksum, Replica.state.in_(["present", "unverified"])))
+        if base_copy is None:
+            raise HTTPException(409, "Restore the exact base model to the training storage before updating it.")
+        base_ref = {"datasetId": baseline.dataset_id, "revision": baseline.dataset_revision,
+            "fingerprint": baseline.dataset_fingerprint}
+        training_update = {"mode": "rebuild", "baseModel": {"modelId": identity, "revision": baseline.revision,
+            "checksum": checksum, "storageId": str(body.storage_id), "replicaId": base_copy.id},
+            "targetSnapshot": target_ref,
+            "changeSet": await dataset_change_set(db, base_ref, target_ref, user_id),
+            "recipe": {key: deepcopy(value) for key, value in definition.items()
+                       if key not in {"fingerprint", "snapshotFingerprint"}}}
     if training_update is not None:
-        await validate_update_references(db, training_update, definition, identity,
-            {"datasetId": dataset.id, "revision": body.dataset_revision, "fingerprint": dataset_revision.fingerprint},
+        await validate_update_references(db, training_update, definition, identity, target_ref,
             user_id, str(body.storage_id), str(body.launcher_id))
     if row is None:
         row = PredictionModel(id=identity, user_id=user_id, experiment_id=dataset.experiment_id,

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from prediction_contracts import ALGORITHMS
+from prediction_contracts import ALGORITHMS, QUALITY_VALIDATION_V2
 from sdk.protocol.execution import ResourceAllocation
 from predictor import models
 from predictor.representations import recorded_sample, vars_layouts, vars_samples
@@ -46,6 +46,7 @@ def model_case(tmp_path, monkeypatch):
             return cls({**model_ref, "formatVersion": 1, "direction": "forward", "algorithm": "fixture",
                         "definition": model_definition, "datasetId": data["datasetId"], "datasetRevision": data["revision"],
                         "datasetFingerprint": data["fingerprint"], "experimentId": data["experimentId"],
+                        "sourceHash": data["sourceHash"], "resultContracts": copy.deepcopy(data["resultContracts"]),
                         "varsSchema": copy.deepcopy(data["varsSchema"]), "rules": copy.deepcopy(data["rules"]),
                         "records": copy.deepcopy(data["records"]),
                         "includedMeasurementIds": sorted(row["id"] for row in data["measurements"])}, output)
@@ -119,12 +120,13 @@ def model_case(tmp_path, monkeypatch):
         vram_budget_bytes={"fixture-gpu": 128 * 1024**2})
     worker = PredictorRuntime(tmp_path / "source", "owner-1", "launcher-1", "http://127.0.0.1:8000",
                               128 * 1024**2, allocation=allocation)
-    manifest = dataset()
+    manifest = dataset((0, 1, 2, .25, 1.75))
     reference = stage(worker, manifest)
     spec = {"operationId": "training-1", "pinId": "attempt-1", "storageId": worker.store.storage_id,
             "launcherId": worker.store.launcher_id, "sourceKind": "local", "canPin": True, "canRelease": False,
             "model": {"modelId": "trained", "revision": 1, "operationId": "training-1", "name": "Trained"},
-            "definition": {**definition(manifest), "algorithm": {"kind": "fixture"}, "implementationVersion": "fixture-v1"},
+            "definition": {**definition(manifest), "algorithm": {"kind": "fixture"}, "implementationVersion": "fixture-v1",
+                "qualityValidation": copy.deepcopy(QUALITY_VALIDATION_V2)},
             "dataset": reference}
     return SimpleNamespace(worker=worker, spec=spec, allocation=allocation, implementation=FixtureModel,
                            calls=calls, contexts=contexts, instances=instances)

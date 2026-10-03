@@ -79,6 +79,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             vars={"width": 3}, material_snapshot={}, recorded_at=utcnow())
         db.add(measurement)
         await db.flush()
+        self.quality_measurement_ids.append(measurement.id)
         db.add(RecordedData(user_id=self.owner, measurement_id=measurement.id, experiment_record_id=self.record_id,
             data={"shape": [2], "storage": {"kind": "inline", "value": self.ref}}))
         await db.flush()
@@ -109,7 +110,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             "definition": revision.definition, "storageId": self.storage_id, "launcherId": self.launcher_id,
             "algorithm": "knn", "direction": "forward", "manifestChecksum": body.manifest_sha256,
             "files": [item.model_dump() for item in body.files], "profile": body.profile,
-            "inputLayouts": [], "outputLayouts": [], "formatVersion": 1}
+            "inputLayouts": [], "outputLayouts": [], "formatVersion": 1, "qualityReport": body.quality_report}
 
     async def test_submit_is_durable_idempotent_and_blocks_sync_through_cleanup(self):
         async with self.sessions() as db:
@@ -133,6 +134,26 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             job.cleaned_at = utcnow()
             await db.flush()
             await require_dataset_idle(db, dataset["id"])
+
+    async def test_manual_model_revision_builds_exact_rebuild_without_a_client_update_payload(self):
+        async with self.sessions() as db:
+            dataset, original = await self.reserve(db)
+            await complete_model(db, original["id"], 1, self.completion(original["operation_id"]), self.owner)
+            initial = await db.get(ModelRevision, (original["id"], 1))
+            request = self.model_request(dataset, model_id=original["id"], expected_revision=1,
+                definition=initial.definition)
+            reserved = await reserve_model(db, request, self.owner)
+            revision = await db.get(ModelRevision, (original["id"], 2))
+            update = revision.preparation["training_update"]
+            self.assertEqual(update["mode"], "rebuild")
+            self.assertEqual(update["baseModel"]["revision"], 1)
+            self.assertEqual(update["baseModel"]["checksum"], initial.artifact["manifest_sha256"])
+            self.assertEqual(update["changeSet"]["added"], [])
+            self.assertEqual(update["changeSet"]["changed"], [])
+            self.assertEqual(update["changeSet"]["removed"], [])
+            replay = await reserve_model(db, request, self.owner)
+            self.assertEqual(replay["operation_id"], reserved["operation_id"])
+            self.assertEqual((await db.get(Operation, reserved["operation_id"])).details["update"], update)
 
     async def test_saved_pending_v1_quality_rejects_new_training_without_changing_preflight(self):
         async with self.sessions() as db:
@@ -382,16 +403,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_quality_report_is_required_bound_to_snapshot_and_preserved_with_execution_evidence(self):
         async with self.sessions() as db:
-            identities = [self.measurement_id]
-            for width in range(3, 7):
-                measurement = Measurement(user_id=self.owner, experiment_id=self.experiment_id, vars={"width": width},
-                    material_snapshot={}, recorded_at=utcnow())
-                db.add(measurement)
-                await db.flush()
-                identities.append(measurement.id)
-                db.add(RecordedData(user_id=self.owner, measurement_id=measurement.id, experiment_record_id=self.record_id,
-                    data={"shape": [2], "storage": {"kind": "inline", "value": [width, width + 1]}}))
-            await db.commit()
+            identities = self.quality_measurement_ids
             dataset = await freeze_dataset(db, self.selection(), self.owner)
             definition = {"algorithm": {"kind": "knn"}, "implementationVersion": "knn-v1",
                 "preprocessingVersion": "box-relative-v2", "fingerprint": "sha256:" + "c" * 64,
@@ -402,6 +414,7 @@ class PredictionTrainingTests(unittest.IsolatedAsyncioTestCase):
             job.launcher_id = self.launcher_id
             revision = await db.get(ModelRevision, (reserved["id"], 1))
             artifact = self.artifact(reserved, revision)
+            artifact.pop("qualityReport")
             with self.assertRaises(HTTPException) as missing:
                 await training.complete_job(db, job, {"artifact": artifact})
             self.assertEqual(missing.exception.status_code, 422)

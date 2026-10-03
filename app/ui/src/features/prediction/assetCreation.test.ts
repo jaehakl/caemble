@@ -77,7 +77,12 @@ const model: PredictionModelRecord = {
       dataset_id: datasetId,
       dataset_revision: 2,
       dataset_fingerprint: fingerprint,
-      definition: { fingerprint: 'saved-model', contract: savedContractFromSource(sourceContracts), algorithm },
+      definition: {
+        fingerprint: 'saved-model',
+        contract: savedContractFromSource(sourceContracts),
+        algorithm,
+        qualityValidation: defaultPredictionQualityValidation,
+      },
       source_contracts: sourceContracts,
       artifact: { manifest_sha256: checksum },
       replicas: [
@@ -245,21 +250,36 @@ describe('independent Prediction training submission', () => {
     expect(mocks.submitTraining).toHaveBeenCalledTimes(1)
     expect(remote.command).toHaveBeenCalledWith('training.pin', expect.anything(), expect.anything())
   })
-  it('freezes opt-in quality splitting in the model fingerprint and keeps default training unchanged', async () => {
+  it('always freezes v2 quality splitting in new model definitions', async () => {
     const { manager } = harness()
     await createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3 })
-    const ordinary = mocks.reserve.mock.calls[0][0].definition
-    expect(ordinary).not.toHaveProperty('qualityValidation')
-    await createPredictionModel(manager, {
-      ...input,
-      dataset: historical,
-      datasetRevision: 3,
-      qualityValidation: defaultPredictionQualityValidation,
-    })
-    const evaluated = mocks.reserve.mock.calls[1][0].definition
+    const evaluated = mocks.reserve.mock.calls[0][0].definition
     expect(evaluated.qualityValidation).toEqual(defaultPredictionQualityValidation)
-    expect(evaluated.fingerprint).not.toBe(ordinary.fingerprint)
-    expect(evaluated.snapshotFingerprint).toBe(ordinary.snapshotFingerprint)
+    expect(evaluated.snapshotFingerprint).toBe(historical.revisions[0].fingerprint)
+  })
+
+  it.each([undefined, 1])('requires a fresh model when updating quality version %s', (version) => {
+    const previous = structuredClone(model)
+    previous.revisions[0].definition.qualityValidation = version === undefined ? undefined : { version }
+    const { manager } = harness()
+    expect(() => createPredictionModel(manager, { ...input, previous })).toThrow('새 v2 모델')
+    expect(mocks.reserve).not.toHaveBeenCalled()
+  })
+
+  it('preserves model identity and revision for server-derived v2 rebuilds', async () => {
+    const { manager } = harness()
+    await createPredictionModel(manager, { ...input, dataset: historical, datasetRevision: 3, previous: model })
+    expect(mocks.reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model_id: model.id,
+        expected_revision: 1,
+        dataset_id: historical.id,
+        dataset_revision: 3,
+        definition: expect.objectContaining({ qualityValidation: defaultPredictionQualityValidation }),
+      }),
+      expect.anything(),
+    )
+    expect(mocks.submitTraining).toHaveBeenCalledOnce()
   })
 
   it('freezes explicit BoxGrid outputs without requiring Calculation data', () => {

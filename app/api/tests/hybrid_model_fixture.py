@@ -21,7 +21,7 @@ from simulation.db import Experiment, ExperimentRecord
 async def prepare_hybrid_model(sessions, *, owner: str, experiment_id: int,
                                launcher_id: str, storage_root: Path, vars_schema: dict,
                                rules: list, report: dict, algorithm: str = "knn",
-                               measurement_count: int = 3) -> dict:
+                               measurement_count: int = 5) -> dict:
     """The caller's single flow deadline also bounds Dataset preparation and training."""
     async with sessions() as db:
         experiment = await db.get(Experiment, experiment_id)
@@ -44,10 +44,10 @@ async def prepare_hybrid_model(sessions, *, owner: str, experiment_id: int,
             name="Hybrid E2E Predictor"), owner)
         definition = {"fingerprint": hashlib.sha256((revision.fingerprint + "hybrid-" + algorithm).encode()).hexdigest(),
             "snapshotFingerprint": revision.fingerprint, "implementationId": "remote-predictor", "implementationVersion": f"{algorithm}-v1",
-            "preprocessingVersion": "box-relative-v2", "algorithm": {"kind": "knn", "kMode": "manual", "manualK": 2, "weighting": "distance"}}
+            "preprocessingVersion": "box-relative-v2", "algorithm": {"kind": "knn", "kMode": "manual", "manualK": 2, "weighting": "distance"},
+            "qualityValidation": deepcopy(QUALITY_VALIDATION_V2), "requiredRecordIds": sorted(record_ids)}
         if algorithm == "mlp":
-            definition.update(algorithm=deepcopy(MLP_DEFAULT_ALGORITHM),
-                qualityValidation=deepcopy(QUALITY_VALIDATION_V2), requiredRecordIds=sorted(record_ids))
+            definition["algorithm"] = deepcopy(MLP_DEFAULT_ALGORITHM)
         reserved = await reserve_model(db, ModelReserve(request_id=uuid4(), name=f"Hybrid E2E {algorithm}", direction="forward",
             dataset_id=dataset["id"], dataset_revision=dataset["current_revision"], definition=definition,
             storage_id=storage_id, launcher_id=launcher_id), owner)

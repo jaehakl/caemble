@@ -12416,12 +12416,16 @@
                     },
                     {
                       "$ref": "#/components/schemas/RandomAlgorithm"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DifferentialEvolutionAlgorithm"
                     }
                   ],
                   "discriminator": {
                     "propertyName": "id",
                     "mapping": {
                       "coordinate": "#/components/schemas/CoordinateAlgorithm",
+                      "de": "#/components/schemas/DifferentialEvolutionAlgorithm",
                       "random": "#/components/schemas/RandomAlgorithm"
                     }
                   }
@@ -13884,6 +13888,64 @@
           "additionalProperties": false,
           "type": "object",
           "title": "ModelUpdatePolicy"
+        },
+        "DifferentialEvolutionAlgorithm": {
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "de",
+              "title": "Id",
+              "default": "de"
+            },
+            "version": {
+              "type": "integer",
+              "maximum": 1.0,
+              "minimum": 1.0,
+              "title": "Version",
+              "default": 1
+            },
+            "config": {
+              "$ref": "#/components/schemas/DifferentialEvolutionConfig"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "DifferentialEvolutionAlgorithm"
+        },
+        "DifferentialEvolutionConfig": {
+          "properties": {
+            "population_size": {
+              "type": "integer",
+              "maximum": 32.0,
+              "minimum": 4.0,
+              "title": "Population Size",
+              "default": 8
+            },
+            "mutation_factor": {
+              "type": "number",
+              "exclusiveMaximum": 2.0,
+              "exclusiveMinimum": 0.0,
+              "title": "Mutation Factor",
+              "default": 0.8
+            },
+            "crossover_rate": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Crossover Rate",
+              "default": 0.9
+            },
+            "seed": {
+              "type": "integer",
+              "maximum": 4294967295.0,
+              "minimum": 0.0,
+              "title": "Seed",
+              "default": 0
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "DifferentialEvolutionConfig"
         }
       }
     }

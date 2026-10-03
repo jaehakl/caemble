@@ -97,6 +97,20 @@ afterEach(async () => {
 })
 
 describe('server-owned Prediction CLI', () => {
+  it('requires quality validation when omitted and rejects an explicit opt-out before network access', async () => {
+    await writeFile(
+      String(context.options.config),
+      JSON.stringify({ ...config, quality_validation: undefined }),
+      'utf8',
+    )
+    await predictionTrainingCommand('train', context)
+    expect(api.reserve.mock.calls[0][0].definition.qualityValidation.version).toBe(2)
+    vi.clearAllMocks()
+    await writeFile(String(context.options.config), JSON.stringify({ ...config, quality_validation: false }), 'utf8')
+    await expect(predictionTrainingCommand('train', context)).rejects.toThrow()
+    expect(api.datasets).not.toHaveBeenCalled()
+    expect(api.reserve).not.toHaveBeenCalled()
+  })
   it('derives the frozen definition and requests API source even with a local replica', async () => {
     const result = await predictionTrainingCommand('train', context)
     const body = api.reserve.mock.calls[0][0]

@@ -51,7 +51,8 @@ export function OptimizationHybridSettings({
   const revisions = model?.revisions ?? []
   const revision = revisions.find((item) => String(item.revision) === draft.modelRevision)
   const quality = revision?.artifact?.quality_report
-  const legacyQuality = (revision?.definition.qualityValidation as { version?: unknown } | undefined)?.version === 1
+  const legacyQuality =
+    !!revision && (revision.definition.qualityValidation as { version?: unknown } | undefined)?.version !== 2
   const records = revision?.source_contracts.records
   const outputs = (Array.isArray(records) ? records : []).flatMap((record: unknown) => {
     const parsed = qualityOutputSchema.safeParse(record)
@@ -108,7 +109,7 @@ export function OptimizationHybridSettings({
               replicaId: '',
               launcherId: '',
               qualityRequirements: [],
-              ...(qualityValidation?.version === 1 ? { automaticUpdates: false } : {}),
+              ...(qualityValidation?.version !== 2 ? { automaticUpdates: false } : {}),
             })
           }}
         >
@@ -165,7 +166,8 @@ export function OptimizationHybridSettings({
         </label>
         {legacyQuality ? (
           <p role="status" className="text-xs text-muted-foreground">
-            품질 평가 v1 모델은 고정 모델로 사용할 수 있습니다. 모델 갱신과 자동 재학습에는 새 v2 모델이 필요합니다.
+            검증 데이터가 없거나 품질 평가 v1인 모델은 고정 모델로 사용할 수 있습니다. 모델 갱신과 자동 재학습에는 새 v2
+            모델이 필요합니다.
           </p>
         ) : draft.automaticUpdates ? (
           <>

@@ -58,9 +58,13 @@ class OptimizationEndToEndTests(unittest.TestCase):
     def test_random_box_search_without_browser_and_reconnects_to_saved_history(self):
         self.run_case(random_box=True)
 
-    def run_case(self, *, random_box):
+    def test_de_box_evolves_a_generation_and_restores_its_population(self):
+        self.run_case(random_box=True, de=True)
+
+    def run_case(self, *, random_box, de=False):
         self.random_box = random_box
-        self.report_prefix = "random-solver-demo" if random_box else "optimization-demo"
+        self.de = de
+        self.report_prefix = "de-solver-demo" if de else "random-solver-demo" if random_box else "optimization-demo"
         self.test_started = time.monotonic()
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         asyncio.run(_create_database(database))
@@ -238,8 +242,11 @@ class OptimizationEndToEndTests(unittest.TestCase):
                 {**built["variables"], "fiberRadius": 1.2, "taper": 0.4, "bendAngle": 0.1, "bundleRadius": 3.5})
             axes = [{"name": name, "indices": [], "fixed": name not in ({"width", "length"} if self.random_box else {"fiberRadius"})}
                     for name in built["varsSchema"]]
-            count = 3 if self.random_box else 2
+            count = 8 if self.de else 3 if self.random_box else 2
             algorithm = {"id": "random", "version": 1, "config": {"seed": 42, "candidates_per_round": 8}}
+            if self.de:
+                algorithm = {"id": "de", "version": 1, "config": {
+                    "population_size": 4, "mutation_factor": 0.8, "crossover_rate": 0.9, "seed": 42}}
             async with asyncio.timeout(30):
                 while True:
                     async with sessions() as db:
@@ -254,7 +261,7 @@ class OptimizationEndToEndTests(unittest.TestCase):
                 response = await browser.post("/cae/optimizations", json={"request_id": str(uuid.uuid4()),
                     "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
                     "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "minimize" if self.random_box else "maximize"},
-                    "max_trials": count, "max_parallel": 2, "name": "Random Box acceptance" if self.random_box else "Fiber radius optimization acceptance",
+                    "max_trials": count, "max_parallel": 2, "name": "DE Box acceptance" if self.de else "Random Box acceptance" if self.random_box else "Fiber radius optimization acceptance",
                     **({"algorithm": algorithm} if self.random_box else {})})
                 self.assertEqual(response.status_code, 200, response.text)
                 optimization_id = response.json()["id"]
@@ -295,6 +302,13 @@ class OptimizationEndToEndTests(unittest.TestCase):
                     self.assertEqual(restored["settings"]["algorithm"], algorithm)
                     self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"]["data"])
                     self.assertTrue(all(len(item["evaluations"]) == 1 and item["evaluations"][0]["kind"] == "solver" for item in history["items"]))
+                if self.de:
+                    numerical = restored["optimizer_state"]["algorithm_state"]["data"]
+                    self.assertGreaterEqual(numerical["generation"], 1)
+                    self.assertEqual(len(numerical["population"]), 4)
+                    self.assertFalse(numerical["pending"])
+                    self.assertTrue(any(trial.round_index == 1 for trial in trials))
+                    self.assertEqual(numerical, json.loads(json.dumps(numerical)))
                 self.assertTrue(all(len(item["stages"]) == 3 for item in history["items"]))
             async with sessions() as db:
                 self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), count)
@@ -320,6 +334,8 @@ class OptimizationEndToEndTests(unittest.TestCase):
                 "cleanup": {"launcher_instances": 0, "cpu_reserved": 0, "worker_processes": 0}, "baseline_objective": baseline, "best_objective": best.result["objective"],
                 "best_vars": best.variables, "browser_disconnected_during_execution": True, "reconnected_history_verified": True,
                 "cleanup_verified": True, "object_storage": "local HTTP bucket with real hash/size validation"}
+            if self.de:
+                report["de_state"] = numerical
             report.update(await execution_report("passed"))
             self.report_path = report_dir / f"{self.report_prefix}-acceptance.json"
             self.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

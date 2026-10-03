@@ -73,16 +73,15 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as db:
             record = await db.get(ExperimentRecord, self.record_id)
             record.data_schema, record.tensor_order = self.native_schema, 7
-            recorded = await db.scalar(select(RecordedData).where(RecordedData.measurement_id == self.measurement_id))
-            recorded.data = self.tensor(20)
+            for recorded in (await db.scalars(select(RecordedData).where(RecordedData.user_id == self.owner))).all():
+                sample = await db.get(Measurement, recorded.measurement_id)
+                recorded.data = self.tensor(sample.vars["width"] * 10)
             launcher = await db.get(Launcher, self.launcher_id)
             launcher.slave_app_ids = ["predictor", "predictor-training", "evaluation"]
             launcher.job_modes = {"predictor": "webrtc", "predictor-training": "websocket", "evaluation": "websocket"}
             launcher.resources = {"cpu_total": 4, "ram_budget_bytes": 2 ** 30,
                 "defaults": {name: {"startup_ram_bytes": 2 ** 20} for name in launcher.slave_app_ids}}
             await db.commit()
-        await self.record(0, 0)
-        await self.record(1, 10)
 
     async def asyncTearDown(self):
         self.temporary.cleanup()
@@ -152,9 +151,6 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             return result["artifact"], prediction
 
     async def optimization(self, algorithm=None, *, quality=False):
-        if quality:
-            await self.record(4, 40)
-            await self.record(5, 50)
         async with self.sessions() as db:
             if quality:
                 from prediction.datasets import freeze_dataset
@@ -180,9 +176,8 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
                 "source_contracts": revision.source_contracts, "max_solver_runs": 5,
                 "resources": {name: {"cpu_cores": 1, "startup_ram_bytes": 2 ** 20, "gpu_count": 0}
                     for name in ("evaluation", "predictor")}}
-            if quality:
-                from optimization.evaluations import freeze_quality
-                source.update(freeze_quality(revision, None))
+            from optimization.evaluations import freeze_quality
+            source.update(freeze_quality(revision, None))
             settings = {"max_trials": 5, "max_parallel": 2, "initial_vars": {"width": 2},
                 "initial_step": 0.25, "min_step": 0.01, "objective": {"direction": "minimize"},
                 "constraints": [], "hybrid": source,
@@ -323,7 +318,7 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
                 .where(ModelRevision.model_id == update["model_id"])), 2)
             revision = await db.get(ModelRevision, (update["model_id"], 2))
             target = await db.get(DatasetRevision, (revision.dataset_id, revision.dataset_revision))
-            self.assertEqual(target.summary["sample_count"], 4)
+            self.assertEqual(target.summary["sample_count"], 6)
             operation = await db.get(Operation, update["operation_id"])
             self.assertIn(measurement_id, operation.details["update"]["changeSet"]["added"])
         waiting = await self.advance(optimization_id)
@@ -394,7 +389,7 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             run = await db.get(TrainingRun, update["operation_id"])
             source = await db.get(DatasetRevision, (run.dataset_id, run.dataset_revision))
             self.assertIsNotNone(source.payload)
-            self.assertEqual(source.summary["sample_count"], 4)
+            self.assertEqual(source.summary["sample_count"], 6)
 
     async def test_shared_optimization_pin_holds_generated_copy_until_release(self):
         optimization_id = await self.optimization()

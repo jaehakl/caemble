@@ -3,11 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { createPredictionApi } from '@/api/prediction'
-import {
-  defaultPredictionQualityValidation,
-  predictionLocationIdSchema,
-  type PredictionOperation,
-} from '@/contracts/api/prediction'
+import { predictionLocationIdSchema, type PredictionOperation } from '@/contracts/api/prediction'
 import {
   buildPredictionModelDefinition,
   predictionAlgorithmSchema,
@@ -24,7 +20,7 @@ const trainingConfigSchema = z
     launcher_id: z.string().uuid(),
     record_ids: z.array(z.number().int().positive()).min(1),
     algorithm: predictionAlgorithmSchema,
-    quality_validation: z.boolean().default(false),
+    quality_validation: z.literal(true).default(true),
   })
   .strict()
 
@@ -81,7 +77,6 @@ export async function predictionTrainingCommand(command: string, context: Comman
       descriptor,
       sourceContracts: source.source_contracts,
       recordIds: config.record_ids,
-      ...(config.quality_validation ? { qualityValidation: defaultPredictionQualityValidation } : {}),
     })
     // Print the recovery ID before a request can reach the server, even if its response is lost.
     process.stderr.write(`Prediction training request: ${requestId}\n`)

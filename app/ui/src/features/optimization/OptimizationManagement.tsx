@@ -246,7 +246,9 @@ export function OptimizationManagementView({
               <p className="mt-2 text-xs text-muted-foreground" aria-label="저장된 탐색 설정">
                 {algorithm.id === 'random'
                   ? `무작위 탐색 · seed ${algorithm.config.seed} · 회차당 ${algorithm.config.candidates_per_round}개`
-                  : `좌표 탐색 · 초기 step ${algorithm.config.initial_step} · 최소 step ${algorithm.config.min_step}`}
+                  : algorithm.id === 'de'
+                    ? `DE · seed ${algorithm.config.seed} · 개체군 ${algorithm.config.population_size}개 · F ${algorithm.config.mutation_factor} · CR ${algorithm.config.crossover_rate}`
+                    : `좌표 탐색 · 초기 step ${algorithm.config.initial_step} · 최소 step ${algorithm.config.min_step}`}
               </p>
               {optimization.termination_reason ? (
                 <p className="mt-2 text-xs">

@@ -8,8 +8,9 @@ import os
 import sys
 import unittest
 import uuid
+from copy import deepcopy
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -22,8 +23,11 @@ from caemble_catalog import Catalog
 from simulation.services import recording
 from simulation.services.batches import list_batches
 from simulation.db import CaeBatch
-from optimization.db import StageSubmission, Optimization, Trial
+from optimization.db import Evaluation, StageSubmission, Optimization, Trial
+from optimization.controller import reconcile_optimization
+from optimization.evaluations import ensure_evaluation
 from optimization.schemas import OptimizationCreateRequest
+from optimization.search import advance_solver_search
 from optimization import evaluation, integration
 from optimization.service import (
     create_optimization, delete_optimization, list_optimizations, list_trials, require_optimization,
@@ -53,6 +57,18 @@ class OptimizationRequestTests(unittest.TestCase):
                       {"axes": [{"name": "x", "min": 2, "max": 1}]}):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 OptimizationCreateRequest.model_validate(self.request(**value))
+
+
+    def test_de_request_defaults_versions_and_partial_population_budget(self):
+        request = OptimizationCreateRequest.model_validate(self.request(algorithm={"id": "de"}, max_trials=1))
+        self.assertEqual(request.algorithm.model_dump(), {"id": "de", "version": 1, "config": {
+            "population_size": 8, "mutation_factor": 0.8, "crossover_rate": 0.9, "seed": 0}})
+        self.assertEqual(request.max_trials, 1)
+        for algorithm in ({"id": "de", "version": 2}, {"id": "de", "version": True},
+                          {"id": "de", "config": {"seed": "42"}},
+                          {"id": "de", "config": {"candidates_per_round": 4}}):
+            with self.subTest(algorithm=algorithm), self.assertRaises(ValidationError):
+                OptimizationCreateRequest.model_validate(self.request(algorithm=algorithm))
 
 
 @unittest.skipUnless(os.getenv("RUN_CAE_DB_TESTS") == "1", "Set RUN_CAE_DB_TESTS=1 for disposable PostgreSQL tests.")
@@ -155,6 +171,70 @@ class OptimizationPersistenceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as rejected:
                 await create_optimization(db, OptimizationCreateRequest.model_validate(changed), self.owner, self.catalog)
             self.assertEqual(rejected.exception.status_code, 409)
+
+    async def test_de_population_and_rng_replay_after_database_reload_and_rollback(self):
+        request = self.request(algorithm={"id": "de", "config": {"population_size": 4, "seed": 42}},
+                               max_trials=8, max_parallel=4)
+
+        async def submitted(db, optimization, trial, catalog):
+            # Exercise durable coordination without creating external work.
+            trial.state = "running"
+
+        self.enterContext(patch("optimization.controller.submit_stage", AsyncMock(side_effect=submitted)))
+        async with self.sessions() as db:
+            optimization = await create_optimization(db, request, self.owner, self.catalog)
+            identity = optimization.id
+            self.assertEqual(optimization.settings["algorithm"], {"id": "de", "version": 1, "config": {
+                "population_size": 4, "mutation_factor": 0.8, "crossover_rate": 0.9, "seed": 42}})
+            self.assertEqual((await create_optimization(db, request, self.owner, self.catalog)).id, identity)
+            initial, definitions, _, _ = advance_solver_search([], optimization.settings,
+                                                              optimization.optimizer_state, evaluations=[])
+            await reconcile_optimization(db, optimization, self.catalog)
+            self.assertEqual(optimization.optimizer_state, initial)
+            trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == identity).order_by(Trial.ordinal))).all())
+            self.assertEqual([item.variables for item in trials], [item["variables"] for item in definitions])
+            await db.commit()
+
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, identity)
+            self.assertEqual(optimization.optimizer_state, initial)
+            await reconcile_optimization(db, optimization, self.catalog)
+            self.assertEqual(optimization.optimizer_state, initial)
+            trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == identity).order_by(Trial.ordinal))).all())
+            self.assertEqual(len(trials), 4)
+            for trial in trials:
+                trial.state, trial.next_stage = "succeeded", "complete"
+                trial.result = {"objective": sum(value ** 2 for value in trial.variables["x"]),
+                                "feasible": True, "violation": 0}
+                await ensure_evaluation(db, optimization, trial)
+            evaluations = list((await db.scalars(select(Evaluation).where(Evaluation.optimization_id == identity))).all())
+            expected, children, _, _ = advance_solver_search(trials, optimization.settings,
+                                                            optimization.optimizer_state, evaluations=evaluations)
+            self.assertEqual(expected["algorithm_state"]["data"]["generation"], 1)
+            self.assertEqual(len(expected["algorithm_state"]["data"]["pending"]), 4)
+            await db.commit()
+
+        for commit in (False, True):
+            async with self.sessions() as db:
+                optimization = await db.get(Optimization, identity)
+                self.assertEqual(optimization.optimizer_state, initial)
+                await reconcile_optimization(db, optimization, self.catalog)
+                self.assertEqual(optimization.optimizer_state, expected)
+                trials = list((await db.scalars(select(Trial).where(Trial.optimization_id == identity).order_by(Trial.ordinal))).all())
+                self.assertEqual(len(trials), 8)
+                self.assertEqual([item.variables for item in trials[4:]], [item["variables"] for item in children])
+                if commit:
+                    await db.commit()
+                else:
+                    await db.rollback()
+
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, identity)
+            restored = deepcopy(optimization.optimizer_state)
+            self.assertEqual(restored, expected)
+            await reconcile_optimization(db, optimization, self.catalog)
+            self.assertEqual(optimization.optimizer_state, restored)
+            self.assertEqual(len(list((await db.scalars(select(Trial).where(Trial.optimization_id == identity))).all())), 8)
 
     async def stage(self, db, optimization):
         batch = JobBatch(user_id=self.owner_id, request_id=str(uuid.uuid4()), request_hash="stage", total=1,
