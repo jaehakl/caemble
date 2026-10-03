@@ -36,6 +36,25 @@ beforeEach(() => {
   vi.mocked(optimizationApi.modelUpdate).mockResolvedValue(hybridOptimizationFixture)
 })
 
+it('restores the persisted random configuration in the execution detail', async () => {
+  const saved = optimizationDetailSchema.parse({
+    ...optimizationFixture,
+    settings: {
+      ...optimizationFixture.settings,
+      algorithm: { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } },
+    },
+  })
+  vi.mocked(optimizationApi.read).mockResolvedValue(saved)
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter>
+        <OptimizationManagement selectedId={saved.id} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByLabelText('저장된 탐색 설정')).toHaveTextContent('무작위 탐색 · seed 42 · 회차당 4개')
+})
+
 it('shows initial and adopted models, disables a pending update, and keeps a lost update request idempotent', async () => {
   let current = hybridOptimizationFixture
   vi.mocked(optimizationApi.read).mockImplementation(async () => current)

@@ -35,7 +35,7 @@ from optimization.router import authenticated, router
 from calculation.db import Calculation, CalculationSource
 from simulation.db import Experiment, ExperimentRecord, Measurement, RecordedData
 from db import make_async_db_url
-from gpstation.db import APIKey, Job
+from gpstation.db import APIKey, Job, Launcher
 from gpstation.service import launcher_connection, worker_connection
 from gpstation.service.job_orchestrator import JobOrchestrator
 from gpstation.service.server_handlers import register_server_handler, server_handlers
@@ -47,11 +47,20 @@ from test_calculation_database import _create_database, _database_url, _drop_dat
 from user_auth.db import Role, UserRole
 from db import get_db
 from user_auth.utils.auth_utils import hash_token
+from hybrid_metrics_fixture import recorded_values
 
 
 @unittest.skipUnless(os.getenv("RUN_OPTIMIZATION_E2E") == "1", "Set RUN_OPTIMIZATION_E2E=1 for the small real Solver Optimization demo.")
 class OptimizationEndToEndTests(unittest.TestCase):
     def test_fiber_bundle_improves_without_browser_and_reconnects_to_saved_history(self):
+        self.run_case(random_box=False)
+
+    def test_random_box_search_without_browser_and_reconnects_to_saved_history(self):
+        self.run_case(random_box=True)
+
+    def run_case(self, *, random_box):
+        self.random_box = random_box
+        self.report_prefix = "random-solver-demo" if random_box else "optimization-demo"
         self.test_started = time.monotonic()
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         asyncio.run(_create_database(database))
@@ -62,6 +71,7 @@ class OptimizationEndToEndTests(unittest.TestCase):
             asyncio.run(_drop_database(database))
             if getattr(self, "report_path", None):
                 report = json.loads(self.report_path.read_text(encoding="utf-8"))
+                report["database_cleanup_verified"] = True
                 report["total_test_seconds"] = time.monotonic() - self.test_started
                 self.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
@@ -129,7 +139,7 @@ class OptimizationEndToEndTests(unittest.TestCase):
         logs = []
         report_dir = repo / ".work"
         report_dir.mkdir(exist_ok=True)
-        log_file = (report_dir / "optimization-demo-launcher.log").open("w", encoding="utf-8")
+        log_file = (report_dir / f"{self.report_prefix}-launcher.log").open("w", encoding="utf-8")
 
         async def execution_report(status):
             async with sessions() as db:
@@ -155,7 +165,8 @@ class OptimizationEndToEndTests(unittest.TestCase):
 
         try:
             temporary = Path(temporary_directory.name)
-            example = catalog.experiment("caemble:experiment/caemble/advanced-shapes/fiber-bundle@7.0.0")
+            example = catalog.experiment("caemble:experiment/caemble/verified/hybrid-box-conductor@1.0.0" if self.random_box
+                else "caemble:experiment/caemble/advanced-shapes/fiber-bundle@7.0.0")
             artifact_path = temporary / "artifact"
             build = await asyncio.create_subprocess_exec(
                 "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo), "--python", str(cae_python),
@@ -169,6 +180,8 @@ class OptimizationEndToEndTests(unittest.TestCase):
             built = artifact["measurement"]["experiment"]
             program = built["simulationProgram"]
             source = "export default function calculate(input) { return { dtype: 'float64', data: input.totalCurrent.data[0] }; }"
+            if self.random_box:
+                source = example["calculations"][0]["source_code"]
             token = f"optimization-demo-{uuid.uuid4().hex}"
             async with sessions() as db:
                 role = await db.scalar(select(Role).where(Role.name == "user"))
@@ -221,14 +234,28 @@ class OptimizationEndToEndTests(unittest.TestCase):
                     log_file.flush()
 
             log_task = asyncio.create_task(capture_logs())
-            initial_vars = {**built["variables"], "fiberRadius": 1.2, "taper": 0.4, "bendAngle": 0.1, "bundleRadius": 3.5}
-            axes = [{"name": name, "indices": [], "fixed": name != "fiberRadius"} for name in built["varsSchema"]]
+            initial_vars = (dict(built["variables"]) if self.random_box else
+                {**built["variables"], "fiberRadius": 1.2, "taper": 0.4, "bendAngle": 0.1, "bundleRadius": 3.5})
+            axes = [{"name": name, "indices": [], "fixed": name not in ({"width", "length"} if self.random_box else {"fiberRadius"})}
+                    for name in built["varsSchema"]]
+            count = 3 if self.random_box else 2
+            algorithm = {"id": "random", "version": 1, "config": {"seed": 42, "candidates_per_round": 8}}
+            async with asyncio.timeout(30):
+                while True:
+                    async with sessions() as db:
+                        launcher = await db.scalar(select(Launcher).where(Launcher.user_id == owner))
+                    if launcher is not None and await runtime.get_launcher(launcher.id) is not None:
+                        launcher_ids.add(launcher.id)
+                        break
+                    await asyncio.sleep(0.1)
+            launcher_processes = {(child.pid, child.create_time()) for child in psutil.Process(process.pid).children(recursive=True)}
             started = asyncio.get_running_loop().time()
             async with httpx.AsyncClient(base_url=base_url, timeout=30) as browser:
                 response = await browser.post("/cae/optimizations", json={"request_id": str(uuid.uuid4()),
                     "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
-                    "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "maximize"},
-                    "max_trials": 2, "max_parallel": 2, "name": "Fiber radius optimization acceptance"})
+                    "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "minimize" if self.random_box else "maximize"},
+                    "max_trials": count, "max_parallel": 2, "name": "Random Box acceptance" if self.random_box else "Fiber radius optimization acceptance",
+                    **({"algorithm": algorithm} if self.random_box else {})})
                 self.assertEqual(response.status_code, 200, response.text)
                 optimization_id = response.json()["id"]
             # No observer or client connection is retained while the server selects
@@ -247,36 +274,60 @@ class OptimizationEndToEndTests(unittest.TestCase):
                     self.assertIsNone(process.returncode, "Launcher exited.\n" + "".join(logs)[-6000:])
                     await asyncio.sleep(0.1)
             elapsed = asyncio.get_running_loop().time() - started
-            self.assertEqual(len(trials), 2)
+            self.assertEqual(len(trials), count)
             self.assertTrue(all(trial.state == "succeeded" for trial in trials))
-            self.assertEqual(len(jobs), 6)
+            self.assertEqual(len(jobs), count * 3)
             self.assertTrue(all(job.state == "succeeded" and job.cleaned_at is not None for job in jobs))
-            self.assertEqual(len({job.attempt_id for job in jobs}), 6)
+            self.assertEqual(len({job.attempt_id for job in jobs}), count * 3)
             baseline = trials[0].result["objective"]
             best = next(trial for trial in trials if trial.id == optimization.best_trial_id)
-            self.assertGreater(best.result["objective"], baseline)
+            if self.random_box:
+                self.assertEqual(best.result["objective"], min(trial.result["objective"] for trial in trials))
+            else:
+                self.assertGreater(best.result["objective"], baseline)
             self.assertLess(elapsed, 180)
             async with httpx.AsyncClient(base_url=base_url) as browser:
                 restored = (await browser.get(f"/cae/optimizations/{optimization_id}")).json()
                 history = (await browser.get(f"/cae/optimizations/{optimization_id}/trials")).json()
                 self.assertEqual(restored["best_trial"]["id"], best.id)
-                self.assertEqual(history["total"], 2)
+                self.assertEqual(history["total"], count)
+                if self.random_box:
+                    self.assertEqual(restored["settings"]["algorithm"], algorithm)
+                    self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"])
+                    self.assertTrue(all(len(item["evaluations"]) == 1 and item["evaluations"][0]["kind"] == "solver" for item in history["items"]))
                 self.assertTrue(all(len(item["stages"]) == 3 for item in history["items"]))
             async with sessions() as db:
-                self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 2)
-                self.assertEqual(await db.scalar(select(func.count()).select_from(RecordedData)), 4)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), count)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(RecordedData)), count * len(program["recordedData"]))
+                if self.random_box:
+                    for trial in trials:
+                        row = await db.scalar(select(RecordedData).join(ExperimentRecord, ExperimentRecord.id == RecordedData.experiment_record_id)
+                            .where(RecordedData.measurement_id == trial.measurement_id, ExperimentRecord.name == "totalCurrent"))
+                        value = recorded_values(row.data)[0]
+                        self.assertAlmostEqual(value, 0.5 * trial.variables["width"] / trial.variables["length"], delta=1e-7)
+                        self.assertAlmostEqual(trial.result["objective"], abs(value - 0.11), delta=1e-12)
+            async with asyncio.timeout(max(0, 180 - (asyncio.get_running_loop().time() - started))):
+                while True:
+                    active_launcher = await runtime.get_launcher(launcher.id)
+                    remaining = {(child.pid, child.create_time()) for child in psutil.Process(process.pid).children(recursive=True)} - launcher_processes
+                    if active_launcher is not None and not active_launcher.instances and active_launcher.resources.get("cpu_reserved") == 0 and not remaining:
+                        break
+                    await asyncio.sleep(0.1)
             report = {"example": example["coordinate"], "optimization_id": optimization_id, "trials": len(trials), "jobs": len(jobs),
-                "elapsed_seconds": elapsed, "baseline_objective": baseline, "best_objective": best.result["objective"],
+                "elapsed_seconds": elapsed, "flow_seconds": asyncio.get_running_loop().time() - started,
+                "training_solver_runs": 0, "solver_runs": count, "prediction_evaluations": 0, "verified_evaluations": count,
+                "solver_job_seconds": sum((job.finished_at-job.started_at).total_seconds() for job in jobs if job.slave_app_id == "cae"),
+                "cleanup": {"launcher_instances": 0, "cpu_reserved": 0, "worker_processes": 0}, "baseline_objective": baseline, "best_objective": best.result["objective"],
                 "best_vars": best.variables, "browser_disconnected_during_execution": True, "reconnected_history_verified": True,
                 "cleanup_verified": True, "object_storage": "local HTTP bucket with real hash/size validation"}
             report.update(await execution_report("passed"))
-            self.report_path = report_dir / "optimization-demo-acceptance.json"
+            self.report_path = report_dir / f"{self.report_prefix}-acceptance.json"
             self.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
             print(json.dumps(report), flush=True)
         except BaseException as error:
             if optimization_id is not None:
                 report = await execution_report(type(error).__name__)
-                self.report_path = report_dir / "optimization-demo-last-failure.json"
+                self.report_path = report_dir / f"{self.report_prefix}-last-failure.json"
                 self.report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report), flush=True)
             raise

@@ -266,13 +266,24 @@ callback therefore cannot leave Job completion and Optimization persistence out 
 The host adapter owns managed-job restrictions and Optimization list filtering, keeping
 those decisions out of the generic execution service.
 
-`optimization/search.py` owns pure Hybrid decisions: candidate rounds and verification selection.
+`optimization/search.py` owns pure Solver-only and Hybrid round decisions. Versioned candidate strategies
+and Solver verification policies have independent registries; neither depends on database or Job types.
 Its `advance_search` boundary returns updated JSON state, candidate definitions, selected Trial IDs
 and a termination reason. `hybrid.py` supplies persisted inputs and applies those decisions through
-the existing Evaluation/Job services. Policies never submit jobs or reserve resources. The existing
+the existing Evaluation/Job services. Solver-only uses `advance_solver_search` through its existing
+`next_round` facade. Policies never submit jobs or reserve resources. The existing
 coordinate policy keeps candidate order and tie breaks deterministic, preserves unrelated state keys
 such as `runtime_id`, and changes its incumbent only from successful Solver evaluations. A policy
 change belongs behind this boundary, with JSON save/resume tests; no second scheduler is needed.
+Frozen `settings.algorithm` identifies `coordinate@1` or `random@1` and its configuration.
+Missing descriptors use the saved legacy coordinate steps. `optimizer_state` preserves execution/model
+metadata alongside versioned algorithm state, a completed-round cursor, current candidate ordinals and
+verification selections. Random search stores its local MT19937 state as JSON; it never uses process-global
+randomness or restarts the seed after recovery. State, Trials and Evaluation selections commit together.
+Unsupported saved versions pause the run instead of resetting it. Omitted new request fields are excluded
+from receipt hashing to retain old CLI/API retries. No additional persistence tables are required.
+Hybrid verification defaults to `best_predicted_maximin@1`; prediction comparisons remain scoped to the
+pinned round model. Manual model updates keep their existing adoption/cleanup lifecycle.
 
 Prediction connects Datasets and Models through stable identifiers, revisions
 and artifact references. `shared/prediction_contracts` owns algorithm descriptors,

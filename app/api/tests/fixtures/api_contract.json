@@ -6542,6 +6542,772 @@
             }
           }
         }
+      },
+      "/cae/optimizations/{optimization_id}/model-updates": {
+        "post": {
+          "tags": [
+            "cae-optimizations"
+          ],
+          "summary": "Model Update",
+          "operationId": "model_update_cae_optimizations__optimization_id__model_updates_post",
+          "parameters": [
+            {
+              "name": "optimization_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Optimization Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptimizationModelUpdateRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/cae/optimizations/{optimization_id}/evaluations/{evaluation_id}/retry": {
+        "post": {
+          "tags": [
+            "cae-optimizations"
+          ],
+          "summary": "Retry Evaluation",
+          "operationId": "retry_evaluation_cae_optimizations__optimization_id__evaluations__evaluation_id__retry_post",
+          "parameters": [
+            {
+              "name": "optimization_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Optimization Id"
+              }
+            },
+            {
+              "name": "evaluation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Evaluation Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptimizationRetryRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/optimization/evaluation/{parent_id}/attempts/{attempt_id}/predictor-jobs": {
+        "post": {
+          "tags": [
+            "optimization-evaluation"
+          ],
+          "summary": "Create Child",
+          "operationId": "create_child_optimization_evaluation__parent_id__attempts__attempt_id__predictor_jobs_post",
+          "parameters": [
+            {
+              "name": "parent_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Parent Id"
+              }
+            },
+            {
+              "name": "attempt_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Attempt Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreateRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/optimization/evaluation/{parent_id}/attempts/{attempt_id}/predictor-jobs/{child_id}/wait-answer": {
+        "get": {
+          "tags": [
+            "optimization-evaluation"
+          ],
+          "summary": "Wait Answer",
+          "operationId": "wait_answer_optimization_evaluation__parent_id__attempts__attempt_id__predictor_jobs__child_id__wait_answer_get",
+          "parameters": [
+            {
+              "name": "parent_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Parent Id"
+              }
+            },
+            {
+              "name": "attempt_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Attempt Id"
+              }
+            },
+            {
+              "name": "child_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Child Id"
+              }
+            },
+            {
+              "name": "wait_seconds",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "number",
+                "maximum": 30,
+                "minimum": 0,
+                "default": 30,
+                "title": "Wait Seconds"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/JobAnswerWaitResult"
+                  }
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/optimization/evaluation/{parent_id}/attempts/{attempt_id}/predictor-jobs/{child_id}/kill": {
+        "post": {
+          "tags": [
+            "optimization-evaluation"
+          ],
+          "summary": "Kill Child",
+          "operationId": "kill_child_optimization_evaluation__parent_id__attempts__attempt_id__predictor_jobs__child_id__kill_post",
+          "parameters": [
+            {
+              "name": "parent_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Parent Id"
+              }
+            },
+            {
+              "name": "attempt_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Attempt Id"
+              }
+            },
+            {
+              "name": "child_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "title": "Child Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/cae/optimization-maintenance/jobs/{job_id}/attempts/{attempt_id}/access": {
+        "get": {
+          "tags": [
+            "cae-optimizations"
+          ],
+          "summary": "Access",
+          "operationId": "access_cae_optimization_maintenance_jobs__job_id__attempts__attempt_id__access_get",
+          "parameters": [
+            {
+              "name": "job_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Job Id"
+              }
+            },
+            {
+              "name": "attempt_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Attempt Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/algorithms": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Algorithms",
+          "operationId": "algorithms_prediction_algorithms_get",
+          "parameters": [
+            {
+              "name": "launcher_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Launcher Id"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/submit": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Submit Training",
+          "operationId": "submit_training_prediction_operations__operation_id__submit_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingSubmit"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/training/preflight": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Preflight Training",
+          "operationId": "preflight_training_prediction_operations__operation_id__training_preflight_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingPreflight"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/retry": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Retry Training",
+          "operationId": "retry_training_prediction_operations__operation_id__retry_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingRetry"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/training": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Training Authority",
+          "operationId": "training_authority_prediction_operations__operation_id__training_get",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/operations/{operation_id}/training/pinned": {
+        "post": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Acknowledge Training Pin",
+          "operationId": "acknowledge_training_pin_prediction_operations__operation_id__training_pinned_post",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Operation Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingPinReceipt"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/prediction/training/jobs/{job_id}/attempts/{attempt_id}/dataset": {
+        "get": {
+          "tags": [
+            "prediction"
+          ],
+          "summary": "Training Dataset",
+          "operationId": "training_dataset_prediction_training_jobs__job_id__attempts__attempt_id__dataset_get",
+          "parameters": [
+            {
+              "name": "job_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Job Id"
+              }
+            },
+            {
+              "name": "attempt_id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "format": "uuid",
+                "title": "Attempt Id"
+              }
+            },
+            {
+              "name": "authorization",
+              "in": "header",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "title": "Authorization"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              }
+            },
+            "422": {
+              "description": "Validation Error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "components": {
@@ -11640,6 +12406,31 @@
                   "type": "null"
                 }
               ]
+            },
+            "algorithm": {
+              "anyOf": [
+                {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CoordinateAlgorithm"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RandomAlgorithm"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "id",
+                    "mapping": {
+                      "coordinate": "#/components/schemas/CoordinateAlgorithm",
+                      "random": "#/components/schemas/RandomAlgorithm"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Algorithm"
             }
           },
           "additionalProperties": false,
@@ -11907,7 +12698,8 @@
                 "type": "integer"
               },
               "type": "array",
-              "title": "Calculation Ids"
+              "title": "Calculation Ids",
+              "maxItems": 0
             },
             "rules": {
               "items": {
@@ -12288,11 +13080,9 @@
             },
             "direction": {
               "type": "string",
-              "enum": [
-                "forward",
-                "inverse"
-              ],
-              "title": "Direction"
+              "title": "Direction",
+              "const": "forward",
+              "default": "forward"
             },
             "dataset_id": {
               "type": "string",
@@ -12318,6 +13108,27 @@
               "type": "string",
               "format": "uuid",
               "title": "Launcher Id"
+            },
+            "dataset_source": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "api"
+              ],
+              "title": "Dataset Source",
+              "default": "auto"
+            },
+            "training_update": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Training Update"
             }
           },
           "additionalProperties": false,
@@ -12325,7 +13136,6 @@
           "required": [
             "request_id",
             "name",
-            "direction",
             "dataset_id",
             "dataset_revision",
             "definition",
@@ -12766,6 +13576,16 @@
                 }
               ],
               "title": "Quality Requirements"
+            },
+            "verification_policy": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/VerificationPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false,
@@ -12777,6 +13597,229 @@
             "launcher_id"
           ],
           "title": "HybridSettings"
+        },
+        "CoordinateAlgorithm": {
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "coordinate",
+              "title": "Id",
+              "default": "coordinate"
+            },
+            "version": {
+              "type": "integer",
+              "maximum": 1.0,
+              "minimum": 1.0,
+              "title": "Version",
+              "default": 1
+            },
+            "config": {
+              "$ref": "#/components/schemas/CoordinateConfig"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "CoordinateAlgorithm"
+        },
+        "CoordinateConfig": {
+          "properties": {
+            "initial_step": {
+              "type": "number",
+              "maximum": 1.0,
+              "exclusiveMinimum": 0.0,
+              "title": "Initial Step",
+              "default": 0.25
+            },
+            "min_step": {
+              "type": "number",
+              "maximum": 1.0,
+              "exclusiveMinimum": 0.0,
+              "title": "Min Step",
+              "default": 0.001
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "CoordinateConfig"
+        },
+        "OptimizationModelUpdateRequest": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            },
+            "update_mode": {
+              "type": "string",
+              "enum": [
+                "rebuild",
+                "warm_start",
+                "incremental"
+              ],
+              "title": "Update Mode",
+              "default": "rebuild"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "title": "OptimizationModelUpdateRequest"
+        },
+        "RandomAlgorithm": {
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "random",
+              "title": "Id",
+              "default": "random"
+            },
+            "version": {
+              "type": "integer",
+              "maximum": 1.0,
+              "minimum": 1.0,
+              "title": "Version",
+              "default": 1
+            },
+            "config": {
+              "$ref": "#/components/schemas/RandomConfig"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "RandomAlgorithm"
+        },
+        "RandomConfig": {
+          "properties": {
+            "seed": {
+              "type": "integer",
+              "maximum": 4294967295.0,
+              "minimum": 0.0,
+              "title": "Seed",
+              "default": 0
+            },
+            "candidates_per_round": {
+              "type": "integer",
+              "maximum": 32.0,
+              "minimum": 1.0,
+              "title": "Candidates Per Round",
+              "default": 8
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "RandomConfig"
+        },
+        "TrainingPinReceipt": {
+          "properties": {
+            "pinId": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pinid"
+            },
+            "artifactSaved": {
+              "type": "boolean",
+              "title": "Artifactsaved",
+              "default": false
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "pinId"
+          ],
+          "title": "TrainingPinReceipt"
+        },
+        "TrainingPreflight": {
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "title": "TrainingPreflight"
+        },
+        "TrainingRetry": {
+          "properties": {
+            "pin_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pin Id"
+            },
+            "request_id": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "title": "TrainingRetry"
+        },
+        "TrainingSubmit": {
+          "properties": {
+            "pin_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pin Id"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "TrainingSubmit"
+        },
+        "VerificationConfig": {
+          "properties": {},
+          "additionalProperties": false,
+          "type": "object",
+          "title": "VerificationConfig"
+        },
+        "VerificationPolicy": {
+          "properties": {
+            "id": {
+              "type": "string",
+              "const": "best_predicted_maximin",
+              "title": "Id",
+              "default": "best_predicted_maximin"
+            },
+            "version": {
+              "type": "integer",
+              "maximum": 1.0,
+              "minimum": 1.0,
+              "title": "Version",
+              "default": 1
+            },
+            "config": {
+              "$ref": "#/components/schemas/VerificationConfig"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "title": "VerificationPolicy"
         }
       }
     }
@@ -13789,6 +14832,97 @@
         "POST"
       ],
       "check_replica"
+    ],
+    [
+      "/cae/optimization-maintenance/jobs/{job_id}/attempts/{attempt_id}/access",
+      [
+        "GET"
+      ],
+      "access"
+    ],
+    [
+      "/cae/optimizations/{optimization_id}/evaluations/{evaluation_id}/retry",
+      [
+        "POST"
+      ],
+      "retry_evaluation"
+    ],
+    [
+      "/cae/optimizations/{optimization_id}/model-updates",
+      [
+        "POST"
+      ],
+      "model_update"
+    ],
+    [
+      "/optimization/evaluation/{parent_id}/attempts/{attempt_id}/predictor-jobs",
+      [
+        "POST"
+      ],
+      "create_child"
+    ],
+    [
+      "/optimization/evaluation/{parent_id}/attempts/{attempt_id}/predictor-jobs/{child_id}/kill",
+      [
+        "POST"
+      ],
+      "kill_child"
+    ],
+    [
+      "/optimization/evaluation/{parent_id}/attempts/{attempt_id}/predictor-jobs/{child_id}/wait-answer",
+      [
+        "GET"
+      ],
+      "wait_answer"
+    ],
+    [
+      "/prediction/algorithms",
+      [
+        "GET"
+      ],
+      "algorithms"
+    ],
+    [
+      "/prediction/operations/{operation_id}/retry",
+      [
+        "POST"
+      ],
+      "retry_training"
+    ],
+    [
+      "/prediction/operations/{operation_id}/submit",
+      [
+        "POST"
+      ],
+      "submit_training"
+    ],
+    [
+      "/prediction/operations/{operation_id}/training",
+      [
+        "GET"
+      ],
+      "training_authority"
+    ],
+    [
+      "/prediction/operations/{operation_id}/training/pinned",
+      [
+        "POST"
+      ],
+      "acknowledge_training_pin"
+    ],
+    [
+      "/prediction/operations/{operation_id}/training/preflight",
+      [
+        "POST"
+      ],
+      "preflight_training"
+    ],
+    [
+      "/prediction/training/jobs/{job_id}/attempts/{attempt_id}/dataset",
+      [
+        "GET"
+      ],
+      "training_dataset"
     ]
   ],
   "tables": {
@@ -13840,7 +14974,11 @@
     "prediction_operation_objects": "\nCREATE TABLE prediction_operation_objects (\n\toperation_id UUID NOT NULL, \n\tslot TEXT NOT NULL, \n\tobject_id UUID NOT NULL, \n\tCONSTRAINT pk_prediction_operation_objects PRIMARY KEY (operation_id, slot), \n\tCONSTRAINT fk_prediction_operation_objects_operation_id_prediction_8255 FOREIGN KEY(operation_id) REFERENCES prediction_operations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_operation_objects_object_id_storage_objects FOREIGN KEY(object_id) REFERENCES storage_objects (id) ON DELETE RESTRICT\n)\n\n",
     "prediction_operations": "\nCREATE TABLE prediction_operations (\n\tid UUID NOT NULL, \n\tuser_id UUID NOT NULL, \n\trequest_id UUID NOT NULL, \n\trequest_hash TEXT NOT NULL, \n\tkind TEXT NOT NULL, \n\tasset_kind TEXT NOT NULL, \n\tasset_id UUID NOT NULL, \n\trevision INTEGER, \n\texperiment_id INTEGER NOT NULL, \n\tstate TEXT NOT NULL, \n\tstage TEXT NOT NULL, \n\tdetails JSONB NOT NULL, \n\terror JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE, \n\tcompleted_at TIMESTAMP WITH TIME ZONE, \n\tCONSTRAINT pk_prediction_operations PRIMARY KEY (id), \n\tCONSTRAINT uq_prediction_operations_user_id UNIQUE (user_id, request_id), \n\tCONSTRAINT fk_prediction_operations_user_id_users FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
     "prediction_replicas": "\nCREATE TABLE prediction_replicas (\n\tid UUID NOT NULL, \n\tmodel_id UUID, \n\tdataset_id UUID, \n\trevision INTEGER NOT NULL, \n\tstorage_id UUID NOT NULL, \n\tstate TEXT NOT NULL, \n\tmanifest_sha256 TEXT, \n\tartifact JSONB, \n\tobject_id UUID, \n\tdelete_id UUID, \n\tchecked_at TIMESTAMP WITH TIME ZONE, \n\tverified_at TIMESTAMP WITH TIME ZONE, \n\tCONSTRAINT pk_prediction_replicas PRIMARY KEY (id), \n\tCONSTRAINT one_asset CHECK ((model_id IS NULL) <> (dataset_id IS NULL)), \n\tCONSTRAINT fk_prediction_replicas_model_id_prediction_model_revisions FOREIGN KEY(model_id, revision) REFERENCES prediction_model_revisions (model_id, revision) ON DELETE CASCADE, \n\tCONSTRAINT fk_prediction_replicas_dataset_id_prediction_dataset_revisions FOREIGN KEY(dataset_id, revision) REFERENCES prediction_dataset_revisions (dataset_id, revision) ON DELETE CASCADE, \n\tCONSTRAINT uq_prediction_replicas_model_id UNIQUE (model_id, revision, storage_id), \n\tCONSTRAINT uq_prediction_replicas_dataset_id UNIQUE (dataset_id, revision, storage_id), \n\tCONSTRAINT fk_prediction_replicas_storage_id_prediction_storages FOREIGN KEY(storage_id) REFERENCES prediction_storages (storage_id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_prediction_replicas_object_id_storage_objects FOREIGN KEY(object_id) REFERENCES storage_objects (id) ON DELETE RESTRICT\n)\n\n",
-    "prediction_storage_accesses": "\nCREATE TABLE prediction_storage_accesses (\n\tstorage_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_storage_accesses PRIMARY KEY (storage_id, launcher_id), \n\tCONSTRAINT fk_prediction_storage_accesses_storage_id_prediction_storages FOREIGN KEY(storage_id) REFERENCES prediction_storages (storage_id) ON DELETE CASCADE\n)\n\n"
+    "prediction_storage_accesses": "\nCREATE TABLE prediction_storage_accesses (\n\tstorage_id UUID NOT NULL, \n\tlauncher_id UUID NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_storage_accesses PRIMARY KEY (storage_id, launcher_id), \n\tCONSTRAINT fk_prediction_storage_accesses_storage_id_prediction_storages FOREIGN KEY(storage_id) REFERENCES prediction_storages (storage_id) ON DELETE CASCADE\n)\n\n",
+    "cae_evaluation_submissions": "\nCREATE TABLE cae_evaluation_submissions (\n\tevaluation_id UUID NOT NULL, \n\tsubmission_id UUID NOT NULL, \n\tCONSTRAINT pk_cae_evaluation_submissions PRIMARY KEY (evaluation_id, submission_id), \n\tCONSTRAINT fk_cae_evaluation_submissions_evaluation_id_cae_evaluations FOREIGN KEY(evaluation_id) REFERENCES cae_evaluations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_evaluation_submissions_submission_id_cae_stage_s_7949 FOREIGN KEY(submission_id) REFERENCES cae_stage_submissions (id) ON DELETE CASCADE\n)\n\n",
+    "cae_evaluations": "\nCREATE TABLE cae_evaluations (\n\tid UUID NOT NULL, \n\toptimization_id UUID NOT NULL, \n\ttrial_id UUID NOT NULL, \n\tfingerprint TEXT NOT NULL, \n\tkind TEXT NOT NULL, \n\tdefinition_hash TEXT NOT NULL, \n\tsource_hash TEXT NOT NULL, \n\tsource JSONB NOT NULL, \n\tstate TEXT DEFAULT 'pending' NOT NULL, \n\tnext_stage TEXT NOT NULL, \n\tmeasurement_id INTEGER, \n\tartifact JSONB, \n\tresult JSONB, \n\terror JSONB, \n\tmanual_retry_requested BOOLEAN DEFAULT false NOT NULL, \n\tretry_request_id UUID, \n\tretry_requests JSONB DEFAULT '[]'::jsonb NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_cae_evaluations PRIMARY KEY (id), \n\tCONSTRAINT uq_cae_evaluations_identity UNIQUE (optimization_id, fingerprint, kind, definition_hash, source_hash), \n\tCONSTRAINT evaluation_kind CHECK (kind IN ('solver', 'prediction')), \n\tCONSTRAINT fk_cae_evaluations_optimization_id_cae_optimizations FOREIGN KEY(optimization_id) REFERENCES cae_optimizations (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_evaluations_trial_id_cae_trials FOREIGN KEY(trial_id) REFERENCES cae_trials (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_cae_evaluations_measurement_id_measurements FOREIGN KEY(measurement_id) REFERENCES measurements (id) ON DELETE RESTRICT\n)\n\n",
+    "cae_optimization_model_pins": "\nCREATE TABLE cae_optimization_model_pins (\n\toptimization_id UUID NOT NULL, \n\tslot TEXT NOT NULL, \n\tmodel_id UUID NOT NULL, \n\trevision INTEGER NOT NULL, \n\treplica_id UUID NOT NULL, \n\tstorage_id UUID NOT NULL, \n\tCONSTRAINT pk_cae_optimization_model_pins PRIMARY KEY (optimization_id, slot), \n\tCONSTRAINT fk_cae_optimization_model_pins_optimization_id_cae_opti_6019 FOREIGN KEY(optimization_id) REFERENCES cae_optimizations (id) ON DELETE CASCADE\n)\n\n",
+    "prediction_training_runs": "\nCREATE TABLE prediction_training_runs (\n\toperation_id UUID NOT NULL, \n\tjob_id UUID, \n\tdataset_id UUID NOT NULL, \n\tdataset_revision INTEGER NOT NULL, \n\tsource_kind TEXT NOT NULL, \n\tsource_replica_id UUID, \n\tpin_id UUID NOT NULL, \n\tresources JSONB NOT NULL, \n\tretry_requests JSONB NOT NULL, \n\tpreflight_request_id UUID, \n\tpreflight_expires_at TIMESTAMP WITH TIME ZONE, \n\tcreated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_prediction_training_runs PRIMARY KEY (operation_id), \n\tCONSTRAINT fk_prediction_training_runs_operation_id_prediction_operations FOREIGN KEY(operation_id) REFERENCES prediction_operations (id) ON DELETE CASCADE, \n\tCONSTRAINT uq_prediction_training_runs_job_id UNIQUE (job_id), \n\tCONSTRAINT fk_prediction_training_runs_job_id_jobs FOREIGN KEY(job_id) REFERENCES jobs (id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_prediction_training_runs_dataset_id_prediction_datasets FOREIGN KEY(dataset_id) REFERENCES prediction_datasets (id) ON DELETE RESTRICT, \n\tCONSTRAINT fk_prediction_training_runs_source_replica_id_predictio_80c1 FOREIGN KEY(source_replica_id) REFERENCES prediction_replicas (id) ON DELETE RESTRICT\n)\n\n"
   },
   "indexes": [
     "CREATE INDEX idx_api_keys_user_id ON api_keys (user_id)",
@@ -13849,6 +14987,11 @@
     "CREATE INDEX idx_oauth_states_created_at ON oauth_states (created_at)",
     "CREATE INDEX idx_sessions_user_id ON sessions (user_id)",
     "CREATE INDEX ix_cae_batches_experiment_id ON cae_batches (experiment_id)",
+    "CREATE INDEX ix_cae_evaluations_measurement_id ON cae_evaluations (measurement_id)",
+    "CREATE INDEX ix_cae_evaluations_optimization_id ON cae_evaluations (optimization_id)",
+    "CREATE INDEX ix_cae_evaluations_trial_id ON cae_evaluations (trial_id)",
+    "CREATE INDEX ix_cae_optimization_model_pins_model_id ON cae_optimization_model_pins (model_id)",
+    "CREATE INDEX ix_cae_optimization_model_pins_replica_id ON cae_optimization_model_pins (replica_id)",
     "CREATE INDEX ix_cae_optimizations_experiment_id ON cae_optimizations (experiment_id)",
     "CREATE INDEX ix_cae_optimizations_user_id ON cae_optimizations (user_id)",
     "CREATE INDEX ix_cae_stage_submissions_trial_id ON cae_stage_submissions (trial_id)",
@@ -13888,6 +15031,7 @@
     "CREATE INDEX ix_prediction_replicas_model_id ON prediction_replicas (model_id)",
     "CREATE INDEX ix_prediction_replicas_object_id ON prediction_replicas (object_id)",
     "CREATE INDEX ix_prediction_storages_user_id ON prediction_storages (user_id)",
+    "CREATE INDEX ix_prediction_training_runs_dataset_id ON prediction_training_runs (dataset_id)",
     "CREATE INDEX ix_recorded_data_experiment_record_id ON recorded_data (experiment_record_id)",
     "CREATE INDEX ix_recorded_data_measurement_id ON recorded_data (measurement_id)",
     "CREATE INDEX ix_storage_objects_calculation_data_id ON storage_objects (calculation_data_id)",

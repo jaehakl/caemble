@@ -150,7 +150,7 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             return result["artifact"], prediction
 
-    async def optimization(self):
+    async def optimization(self, algorithm=None):
         async with self.sessions() as db:
             dataset, model = await self.reserve(db)
         await self.train_and_publish(model["operation_id"])
@@ -169,12 +169,17 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
                 "initial_step": 0.25, "min_step": 0.01, "objective": {"direction": "minimize"},
                 "constraints": [], "hybrid": source,
                 "axes": prepare_axes(revision.source_contracts["varsSchema"], {"width": 2})}
+            if algorithm is not None:
+                settings["algorithm"] = algorithm
             optimization = Optimization(user_id=self.owner, experiment_id=self.experiment_id, name="Online kNN",
                 request_id=str(uuid4()), request_hash="fixture", state="running", settings=settings,
                 definition={"hash": "optimization-definition", "catalog_revision": "test-catalog", "catalog": {},
                     "source_bundle": experiment.source_bundle, "source_hash": experiment.source_hash,
                     "result_contracts": {}, "calculations": [], "hybrid": source},
                 optimizer_state={"round_index": 0, "round_ordinals": [1], "step": 0.25})
+            if algorithm is not None:
+                from optimization.search import prepare_search
+                _, optimization.optimizer_state, _, _ = prepare_search(settings, optimization.optimizer_state, False)
             db.add(optimization)
             await db.flush()
             trial = Trial(optimization_id=optimization.id, ordinal=1, round_index=0, variables={"width": 2},
@@ -208,7 +213,16 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             return model_state(optimization)
 
     async def test_real_knn_update_waits_then_adopts_at_next_round(self):
-        optimization_id = await self.optimization()
+        await self.verify_update_boundary()
+
+    async def test_random_stream_waits_without_consumption_then_adopts_next_round(self):
+        await self.verify_update_boundary({"id": "random", "config": {"seed": 42, "candidates_per_round": 2}})
+
+    async def verify_update_boundary(self, algorithm=None):
+        optimization_id = await self.optimization(algorithm)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            algorithm_state = deepcopy(optimization.optimizer_state.get("algorithm_state"))
         measurement_id = await self.record(3, 90)
         request_id = uuid4()
         update = await self.request(optimization_id, request_id)
@@ -227,9 +241,12 @@ class OptimizationModelUpdateTests(unittest.IsolatedAsyncioTestCase):
             operation = await db.get(Operation, update["operation_id"])
             self.assertIn(measurement_id, operation.details["update"]["changeSet"]["added"])
         waiting = await self.advance(optimization_id)
+        await self.advance(optimization_id)
         self.assertTrue(waiting["waiting"])
         self.assertEqual(waiting["active_model"]["model_revision"], 1)
         async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            self.assertEqual(optimization.optimizer_state.get("algorithm_state"), algorithm_state)
             self.assertEqual(await db.scalar(select(func.count()).select_from(Trial)
                 .where(Trial.optimization_id == optimization_id)), 1)
         artifact, prediction = await self.train_and_publish(update["operation_id"])

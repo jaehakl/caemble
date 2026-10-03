@@ -144,7 +144,8 @@ async def freeze_hybrid(db, request, user_id, experiment, calculations):
             predicted = records.get(record["name"])
             if predicted is None or predicted.get("data_schema") != record["data_schema"]:
                 raise HTTPException(422, "The model must predict compatible Records for every objective and constraint.")
-    settings = request.model_dump(mode="json", exclude_none=True)
+    # Verification policy belongs to search settings, not the pinned model source.
+    settings = request.model_dump(mode="json", exclude_none=True, exclude={"verification_policy"})
     quality = freeze_quality(revision, settings.get("quality_requirements"))
     require_quality(quality["quality_assessment"])
     resources = await validate_hybrid_capacity(db, str(request.launcher_id), user_id, revision.definition)

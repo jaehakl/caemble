@@ -134,7 +134,7 @@ export async function optimizationCommand(command: string, context: CommandConte
     const configPath = path.resolve(String(options.config))
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Pick<
       OptimizationCreateRequest,
-      'name' | 'objective' | 'constraints' | 'axes' | 'max_trials' | 'max_parallel' | 'hybrid'
+      'name' | 'objective' | 'constraints' | 'axes' | 'max_trials' | 'max_parallel' | 'hybrid' | 'algorithm'
     >
     const body = {
       ...config,

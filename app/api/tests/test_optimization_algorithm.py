@@ -90,6 +90,25 @@ class OptimizationAlgorithmTests(unittest.TestCase):
         self.assertFalse(done)
         self.assertEqual(candidates, [])
 
+    def test_coordinate_round_reuses_known_candidate_without_resubmitting_it(self):
+        settings = {"initial_vars": {"x": 0.5}, "axes": prepare_axes({"x": {"shape": [], "min": 0, "max": 1}}, {"x": 0.5}),
+                    "objective": {"direction": "minimize"}, "max_trials": 6}
+        trials, state, generated_rounds, memberships = [], {}, [], []
+        for _ in range(8):
+            state, candidates, done = next_round(trials, settings, state)
+            if candidates:
+                generated_rounds.append([item["variables"]["x"] for item in candidates])
+                memberships.append(state["round_ordinals"])
+            for item in candidates:
+                trials.append(SimpleNamespace(**item, id=str(item["ordinal"]), state="succeeded",
+                    result={"objective": (item["variables"]["x"] - 0.25) ** 2, "feasible": True, "violation": 0}))
+            if done:
+                break
+        self.assertTrue(done)
+        self.assertEqual(generated_rounds, [[0.5], [0.75, 0.25], [0], [0.375, 0.125]])
+        self.assertEqual(memberships, [[1], [2, 3], [1, 4], [5, 6]])
+        self.assertEqual((state["incumbent_ordinal"], state["step"]), (3, 0.0625))
+
 
 if __name__ == "__main__":
     unittest.main()

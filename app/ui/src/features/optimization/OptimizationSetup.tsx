@@ -5,6 +5,7 @@ import { getListRequest } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/features/auth/use-auth'
+import { optimizationAlgorithmSchema } from '@/contracts/api/optimization'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { calculationsQueryOptions } from '@/features/calculation/queryOptions'
 import { OptimizationVariables } from './OptimizationVariables'
@@ -68,6 +69,18 @@ export function OptimizationSetup({
     try {
       validateOptimizationAxes(axes, variables, schema)
       const initialVars = optimizationVariables(variables, schema)
+      const algorithm = optimizationAlgorithmSchema.safeParse({
+        id: draft.algorithmId,
+        version: 1,
+        config:
+          draft.algorithmId === 'random'
+            ? { seed: draft.randomSeed, candidates_per_round: draft.candidatesPerRound }
+            : { initial_step: draft.initialStep, min_step: draft.minStep },
+      })
+      if (!algorithm.success)
+        throw new Error(
+          '탐색 설정을 확인하세요. step은 0 초과 1 이하이고 최소 step은 초기 step 이하여야 합니다. seed는 0–4,294,967,295, 회차 후보 수는 1–32 사이의 정수여야 합니다.',
+        )
       if (!name.trim()) throw new Error('최적화 이름을 입력하세요.')
       if (!choices.some((row) => row.id === Number(objectiveId)))
         throw new Error('스칼라 Calculation을 목적함수로 선택하세요.')
@@ -121,6 +134,7 @@ export function OptimizationSetup({
         constraints: parsedConstraints,
         max_trials: maxTrials,
         max_parallel: maxParallel,
+        algorithm: algorithm.data,
         ...(draft.hybrid
           ? {
               hybrid: {
@@ -280,6 +294,73 @@ export function OptimizationSetup({
             <Plus className="size-3.5" />
             제약조건 추가
           </Button>
+        </fieldset>
+        <fieldset className="space-y-3 rounded-lg border p-4 text-sm">
+          <legend className="px-1 font-medium">탐색 알고리즘</legend>
+          <select
+            aria-label="탐색 알고리즘"
+            className="h-9 w-full rounded-md border bg-background px-2"
+            value={draft.algorithmId}
+            onChange={(event) => updateDraft({ algorithmId: event.target.value as OptimizationDraft['algorithmId'] })}
+          >
+            <option value="coordinate">좌표 탐색</option>
+            <option value="random">무작위 탐색</option>
+          </select>
+          {draft.algorithmId === 'random' ? (
+            <label className="block space-y-1">
+              <span>난수 seed</span>
+              <Input
+                aria-label="난수 seed"
+                type="number"
+                min={0}
+                max={0xffffffff}
+                step={1}
+                required
+                value={Number.isFinite(draft.randomSeed) ? draft.randomSeed : ''}
+                onChange={(event) => updateDraft({ randomSeed: event.target.valueAsNumber })}
+              />
+              <span className="block text-xs text-muted-foreground">같은 설정과 seed는 같은 후보 순서를 만듭니다.</span>
+            </label>
+          ) : null}
+          <details className="space-y-3">
+            <summary className="cursor-pointer">탐색 세부 설정</summary>
+            {draft.algorithmId === 'random' ? (
+              <label className="block space-y-1">
+                <span>회차당 후보 수</span>
+                <Input
+                  aria-label="회차당 후보 수"
+                  type="number"
+                  min={1}
+                  max={32}
+                  step={1}
+                  required
+                  value={Number.isFinite(draft.candidatesPerRound) ? draft.candidatesPerRound : ''}
+                  onChange={(event) => updateDraft({ candidatesPerRound: event.target.valueAsNumber })}
+                />
+                <span className="block text-xs text-muted-foreground">
+                  한 회차에서 비교할 후보 수입니다. 동시 실행 수와 별개입니다.
+                </span>
+              </label>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {(['initialStep', 'minStep'] as const).map((key) => (
+                  <label key={key} className="space-y-1">
+                    <span>{key === 'initialStep' ? '초기 step' : '최소 step'}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step="any"
+                      required
+                      value={Number.isFinite(draft[key]) ? draft[key] : ''}
+                      onChange={(event) => updateDraft({ [key]: event.target.valueAsNumber })}
+                    />
+                  </label>
+                ))}
+                <p className="col-span-2 text-xs text-muted-foreground">각 변수 탐색 범위에 대한 이동 비율입니다.</p>
+              </div>
+            )}
+          </details>
         </fieldset>
         <fieldset className="space-y-3 rounded-lg border p-4 text-sm">
           <legend className="px-1 font-medium">평가 방식</legend>

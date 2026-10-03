@@ -54,7 +54,7 @@ from test_calculation_database import _create_database, _database_url, _drop_dat
 from user_auth.db import Role, UserRole
 from db import get_db
 from user_auth.utils.auth_utils import hash_token
-from hybrid_metrics_fixture import recorded_solver_invocations
+from hybrid_metrics_fixture import recorded_solver_invocations, recorded_values
 
 
 THERMAL_POINTS = ((100, 12), (90, 11), (90, 13), (110, 11), (110, 13))
@@ -80,20 +80,6 @@ def prediction_artifact(reference, objects):
     return json.loads(raw)
 
 
-def recorded_values(tensor):
-    assert tensor["storage"]["kind"] == "inline"
-    pending, values = [tensor["storage"]["value"]], []
-    while pending:
-        value = pending.pop()
-        if isinstance(value, list):
-            pending.extend(reversed(value))
-        else:
-            assert type(value) in (float, int) and math.isfinite(value)
-            values.append(float(value))
-    assert len(values) == math.prod(tensor["shape"])
-    return values
-
-
 async def stop_process_tree(process):
     """Reap only the fixture's own tree, including a timed-out CLI build."""
     if process is None or process.returncode is not None:
@@ -115,13 +101,21 @@ class HybridEndToEndTests(unittest.TestCase):
     def test_fixed_knn_revision_selects_real_verified_candidates_without_browser(self):
         self.run_case(thermal=False)
 
+    @unittest.skipUnless(os.getenv("RUN_SEARCH_STRATEGY_E2E") == "1", "Set RUN_SEARCH_STRATEGY_E2E=1 for random Hybrid search.")
+    def test_random_knn_revision_selects_real_verified_candidates_without_browser(self):
+        self.run_case(thermal=False, algorithm={"id": "random", "version": 1,
+            "config": {"seed": 42, "candidates_per_round": 4}})
+
     @unittest.skipUnless(os.getenv("RUN_MLP_HYBRID_E2E") == "1", "Set RUN_MLP_HYBRID_E2E=1 for the real thermal MLP Hybrid demo.")
     def test_fixed_mlp_revision_uses_heldout_temperature_and_real_verification(self):
         self.run_case(thermal=True)
 
-    def run_case(self, *, thermal):
+    def run_case(self, *, thermal, algorithm=None):
         self.thermal = thermal
+        self.algorithm = algorithm
         self.report_prefix = "mlp-hybrid-demo" if thermal else "hybrid-demo"
+        if algorithm is not None:
+            self.report_prefix = "random-hybrid-demo"
         self.test_started = time.monotonic()
         report_dir = Path(__file__).resolve().parents[3] / ".work"
         report_dir.mkdir(exist_ok=True)
@@ -445,7 +439,8 @@ class HybridEndToEndTests(unittest.TestCase):
                     "experiment_id": experiment_id, "source_hash": example["bundleHash"], "vars_schema": built["varsSchema"],
                     "initial_vars": initial_vars, "axes": axes, "objective": {"calculation_id": calculation_id, "direction": "minimize"},
                     "max_trials": 5, "max_parallel": 2, "name": "Temperature MLP Hybrid acceptance" if self.thermal else "Small Box kNN Hybrid acceptance",
-                    "hybrid": {**hybrid, "max_solver_runs": 3}})
+                    "hybrid": {**hybrid, "max_solver_runs": 3},
+                    **({"algorithm": self.algorithm} if self.algorithm else {})})
                 self.assertEqual(response.status_code, 200, response.text)
                 optimization_id = response.json()["id"]
             # No browser connection is retained while the controller predicts,
@@ -619,6 +614,9 @@ class HybridEndToEndTests(unittest.TestCase):
                 restored = (await browser.get(f"/cae/optimizations/{optimization_id}")).json()
                 history = (await browser.get(f"/cae/optimizations/{optimization_id}/trials")).json()
                 self.assertEqual(restored["best_trial"]["id"], best.id)
+                if self.algorithm is not None:
+                    self.assertEqual(restored["settings"]["algorithm"], self.algorithm)
+                    self.assertIn("rng_state", restored["optimizer_state"]["algorithm_state"])
                 self.assertEqual(restored["best_trial"], restored["best_verified_trial"])
                 self.assertIsNotNone(restored["best_predicted_trial"])
                 self.assertIsNone(restored["best_predicted_trial"]["measurement_id"])

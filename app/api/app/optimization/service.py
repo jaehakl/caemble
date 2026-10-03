@@ -33,10 +33,14 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
 
     await serialize_events(db)
     payload = request.model_dump(mode="json")
+    if payload.get("algorithm") is None:
+        payload.pop("algorithm", None)  # Preserve create receipts predating strategy configuration.
     if payload.get("hybrid") is None:
         payload.pop("hybrid", None)  # Preserve existing Solver-only create receipts.
     elif payload["hybrid"].get("quality_requirements") is None:
         payload["hybrid"].pop("quality_requirements", None)  # Preserve Hybrid receipts made before quality limits.
+    if payload.get("hybrid") and payload["hybrid"].get("verification_policy") is None:
+        payload["hybrid"].pop("verification_policy", None)
     try:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                                           allow_nan=False).encode("utf-8")).hexdigest()
@@ -101,8 +105,13 @@ async def create_optimization(db, request: OptimizationCreateRequest, user, cata
                                 for index, item in enumerate(request.constraints)],
                 "max_trials": request.max_trials, "max_parallel": request.max_parallel,
                 "initial_step": 0.25, "min_step": 0.001}
+    from optimization.configuration import saved_algorithm, VerificationPolicy
+    settings["algorithm"] = saved_algorithm(payload)
+    if settings["algorithm"]["id"] == "coordinate":
+        settings.update(settings["algorithm"]["config"])
     if request.hybrid is not None:
-        settings["hybrid"] = payload["hybrid"]
+        settings["hybrid"] = {**payload["hybrid"], "verification_policy":
+            (request.hybrid.verification_policy or VerificationPolicy()).model_dump()}
     optimization = Optimization(user_id=user.id, experiment_id=experiment.id,
                   name=request.name.strip() if request.name and request.name.strip() else f"{experiment.name} optimization",
                   request_id=str(request.request_id), request_hash=digest, state="running", definition=definition,

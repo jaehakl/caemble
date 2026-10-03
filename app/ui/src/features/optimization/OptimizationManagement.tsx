@@ -104,6 +104,14 @@ export function OptimizationManagementView({
     optimization?.best_verified_trial === undefined ? optimization?.best_trial : optimization.best_verified_trial
   const bestPredicted = optimization?.best_predicted_trial
   const hybrid = !!optimization?.settings.hybrid
+  const algorithm = optimization?.settings.algorithm ?? {
+    id: 'coordinate',
+    version: 1,
+    config: {
+      initial_step: optimization?.settings.initial_step ?? 0.25,
+      min_step: optimization?.settings.min_step ?? 0.001,
+    },
+  }
   return (
     <section aria-label="Optimizations" className="space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -230,6 +238,11 @@ export function OptimizationManagementView({
               {optimization.pause_reason ? (
                 <p className="mt-3 rounded-md bg-muted p-3 text-xs leading-relaxed">{optimization.pause_reason}</p>
               ) : null}
+              <p className="mt-2 text-xs text-muted-foreground" aria-label="저장된 탐색 설정">
+                {algorithm.id === 'random'
+                  ? `무작위 탐색 · seed ${algorithm.config.seed} · 회차당 ${algorithm.config.candidates_per_round}개`
+                  : `좌표 탐색 · 초기 step ${algorithm.config.initial_step} · 최소 step ${algorithm.config.min_step}`}
+              </p>
               {optimization.termination_reason ? (
                 <p className="mt-2 text-xs">
                   종료 사유: {terminationLabels[optimization.termination_reason] ?? optimization.termination_reason}

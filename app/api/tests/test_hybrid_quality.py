@@ -123,7 +123,7 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
     async def test_start_checks_quality_before_resource_admission_and_freezes_exact_report(self):
         revision = saved_revision()
         request = HybridSettings(model_id=uuid4(), model_revision=1, replica_id=uuid4(), launcher_id=uuid4(),
-                                 quality_requirements=limits())
+                                 quality_requirements=limits(), verification_policy={"id": "best_predicted_maximin"})
         model = SimpleNamespace(id=str(request.model_id), user_id="owner", experiment_id=3,
                                 state="active", direction="forward")
         replica = SimpleNamespace(model_id=model.id, revision=1, state="present", manifest_sha256="checksum", storage_id="storage")
@@ -133,6 +133,7 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
                 patch("optimization.predictor_jobs.validate_hybrid_capacity", new_callable=AsyncMock, return_value={}) as capacity:
             frozen = await freeze_hybrid(db, request, "owner", experiment, [])
             assert frozen["model_revision"] == 1
+            assert "verification_policy" not in frozen
             assert frozen["quality_report"] == revision.artifact["quality_report"]
             assert frozen["quality_assessment"]["status"] == "passed"
             capacity.assert_awaited_once()
@@ -148,7 +149,9 @@ class HybridQualityTests(IsolatedAsyncioTestCase):
             vars_schema={}, initial_vars={}, objective={"calculation_id": 1}, hybrid={
                 "model_id": uuid4(), "model_revision": 1, "replica_id": uuid4(), "launcher_id": uuid4()})
         original = request.model_dump(mode="json")
+        original.pop("algorithm")
         original["hybrid"].pop("quality_requirements")
+        original["hybrid"].pop("verification_policy")
         fingerprint = hashlib.sha256(json.dumps(original, sort_keys=True, separators=(",", ":"),
                                                 ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
         existing = SimpleNamespace(request_hash=fingerprint)

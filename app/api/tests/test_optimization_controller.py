@@ -10,7 +10,7 @@ import test_optimization_api as persistence_fixture
 
 from simulation.services import recording
 from optimization import evaluation, integration
-from optimization.controller import cancel_optimization, reconcile_optimization, request_retry
+from optimization.controller import cancel_optimization, reconcile_optimization, reconcile_once, request_retry
 from optimization.db import StageSubmission, Optimization, Trial
 from optimization.service import create_optimization, list_trials, resume_optimization, optimization_detail
 from optimization.submissions import submit_stage
@@ -87,7 +87,28 @@ class OptimizationControllerTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
 
     async def test_concurrent_reconciliation_build_solve_calculate_and_budget(self):
-        optimization_id = await self.create(max_trials=3)
+        await self.verify_concurrent_search()
+
+    async def test_random_concurrent_reconciliation_and_duplicate_completion(self):
+        await self.verify_concurrent_search(algorithm={"id": "random", "config": {"seed": 42}})
+
+    async def test_unsupported_saved_version_pauses_before_creating_jobs(self):
+        optimization_id = await self.create(algorithm={"id": "random"})
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            optimization.optimizer_state = {"search_version": 2, "runtime_id": "retained"}
+            await db.commit()
+        with patch("optimization.controller.SessionLocal", self.sessions):
+            await reconcile_once(self.catalog)
+        async with self.sessions() as db:
+            optimization = await db.get(Optimization, optimization_id)
+            self.assertEqual(optimization.state, "paused")
+            self.assertIn("Unsupported Optimization search state version", optimization.pause_reason)
+            self.assertEqual(optimization.optimizer_state, {"search_version": 2, "runtime_id": "retained"})
+        self.assertEqual(await self.jobs(optimization_id), [])
+
+    async def verify_concurrent_search(self, **settings):
+        optimization_id = await self.create(max_trials=3, **settings)
         await asyncio.gather(self.advance(optimization_id), self.advance(optimization_id))
         self.assertEqual(len(await self.jobs(optimization_id)), 1)
         for _ in range(12):
@@ -188,7 +209,13 @@ class OptimizationControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(jobs[1].id, first.id)
 
     async def test_stop_resume_and_first_failure_cancel_queued_siblings(self):
-        optimization_id = await self.create(max_trials=5)
+        await self.verify_stop_resume()
+
+    async def test_random_stop_resume_and_first_failure_cancel_queued_siblings(self):
+        await self.verify_stop_resume(algorithm={"id": "random", "config": {"seed": 42, "candidates_per_round": 2}})
+
+    async def verify_stop_resume(self, **settings):
+        optimization_id = await self.create(max_trials=5, **settings)
         await self.advance(optimization_id)
         first = (await self.jobs(optimization_id))[0]
         async with self.sessions() as db:

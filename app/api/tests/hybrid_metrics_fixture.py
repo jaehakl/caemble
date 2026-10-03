@@ -1,4 +1,5 @@
 """Count successful Solver invocations from persisted Record provenance."""
+import math
 
 
 def recorded_solver_invocations(records, *, measurement_ids, task_names):
@@ -15,3 +16,17 @@ def recorded_solver_invocations(records, *, measurement_ids, task_names):
         if observed != task_names:
             raise ValueError("Every frozen example task must have recorded invocation evidence.")
     return invocations
+
+
+def recorded_values(tensor):
+    assert tensor["storage"]["kind"] == "inline"
+    pending, values = [tensor["storage"]["value"]], []
+    while pending:
+        value = pending.pop()
+        if isinstance(value, list):
+            pending.extend(reversed(value))
+        else:
+            assert type(value) in (float, int) and math.isfinite(value)
+            values.append(float(value))
+    assert len(values) == math.prod(tensor["shape"])
+    return values

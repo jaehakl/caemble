@@ -1,4 +1,4 @@
-"""Deterministic bounded coordinate search over scalar and tensor Vars."""
+"""Shared Vars, ranking and metric contracts for Optimization strategies."""
 
 from __future__ import annotations
 
@@ -127,56 +127,7 @@ def trial_rank(trial, direction: str) -> tuple:
 
 
 def next_round(trials: list, settings: dict, state: dict) -> tuple[dict, list[dict], bool]:
-    """Return persisted search state, new candidate definitions, and completion.
-
-    The caller creates every candidate and stores this state in one transaction.
-    Pending/failed trials block the current round; completion order is irrelevant.
-    """
-    state = deepcopy(state)
-    step = state.setdefault("step", settings.get("initial_step", 0.25))
-    state.setdefault("round_index", 0)
-    if not trials:
-        variables = deepcopy(settings["initial_vars"])
-        state["round_ordinals"] = [1]
-        return state, [{"ordinal": 1, "round_index": 0, "variables": variables, "fingerprint": variables_fingerprint(variables)}], False
-    by_ordinal = {trial.ordinal: trial for trial in trials}
-    round_trials = [by_ordinal[ordinal] for ordinal in state.get("round_ordinals", [1])]
-    if any(trial.state != "succeeded" for trial in round_trials):
-        return state, [], False
-    direction = settings["objective"]["direction"]
-    incumbent = by_ordinal.get(state.get("incumbent_ordinal"))
-    winner = min([*round_trials, *([incumbent] if incumbent is not None else [])], key=lambda trial: trial_rank(trial, direction))
-    if incumbent is not None and winner.id == incumbent.id:
-        step /= 2
-    state["incumbent_ordinal"] = winner.ordinal
-    state["step"] = step
-    budget = settings["max_trials"] - len(trials)
-    if budget <= 0 or step < settings.get("min_step", 0.001):
-        return state, [], True
-    known = {trial.fingerprint: trial for trial in trials}
-    # A clipped round can contain only known candidates. Reduce the step rather
-    # than evaluating the same Vars again or stalling the controller.
-    while step >= settings.get("min_step", 0.001):
-        candidates, ordinals = [], []
-        for variables, fingerprint in coordinate_candidates(winner.variables, settings["axes"], step):
-            if fingerprint in known:
-                ordinals.append(known[fingerprint].ordinal)
-                continue
-            ordinal = len(trials) + len(candidates) + 1
-            candidates.append({"ordinal": ordinal, "round_index": state["round_index"] + 1,
-                               "variables": variables, "fingerprint": fingerprint})
-            ordinals.append(ordinal)
-            if len(candidates) == budget:
-                break
-        if candidates:
-            state.update(step=step, round_index=state["round_index"] + 1, round_ordinals=ordinals)
-            return state, candidates, False
-        if ordinals:
-            previous = min([winner, *(by_ordinal[index] for index in ordinals)], key=lambda trial: trial_rank(trial, direction))
-            if previous.id != winner.id:
-                winner = previous
-                state["incumbent_ordinal"] = winner.ordinal
-                continue
-        step /= 2
-        state["step"] = step
-    return state, [], True
+    """Compatibility entry point for the pure Solver-only search coordinator."""
+    from optimization.search import advance_solver_search
+    state, candidates, _, reason = advance_solver_search(trials, settings, state)
+    return state, candidates, reason is not None

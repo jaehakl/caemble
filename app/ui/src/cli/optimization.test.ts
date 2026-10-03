@@ -133,6 +133,23 @@ it('sends a fixed Hybrid model revision, Solver budget and output quality condit
   expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).hybrid).toEqual(hybrid)
 })
 
+it('preserves strategy configuration through a lost response and rejects a changed seed on replay', async () => {
+  const algorithm = { id: 'random', version: 1, config: { seed: 42, candidates_per_round: 4 } }
+  await writeFile(String(context.options.config), JSON.stringify({ ...config, algorithm }))
+  fetch.mockRejectedValueOnce(new TypeError('response lost'))
+  await expect(optimizationCommand('create', context)).rejects.toThrow('response lost')
+  await optimizationCommand('create', context)
+  const bodies = fetch.mock.calls.map(([, request]) => JSON.parse(String(request?.body)))
+  expect(bodies[0]).toEqual(bodies[1])
+  expect(bodies[0].algorithm).toEqual(algorithm)
+  await writeFile(
+    String(context.options.config),
+    JSON.stringify({ ...config, algorithm: { ...algorithm, config: { ...algorithm.config, seed: 43 } } }),
+  )
+  await expect(optimizationCommand('create', context)).rejects.toThrow('different settings')
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
 it('replays ambiguous Evaluation retries separately from legacy Trial retries', async () => {
   context = { ...context, args: ['optimization-1'], options: { evaluation: 'evaluation-2' } }
   fetch.mockRejectedValueOnce(new TypeError('response lost'))

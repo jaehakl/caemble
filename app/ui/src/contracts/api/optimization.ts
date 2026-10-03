@@ -103,6 +103,44 @@ export const optimizationModelUpdateSchema = z.object({
   ),
   waiting: z.boolean(),
 })
+export const optimizationAlgorithmSchema = z.discriminatedUnion('id', [
+  z
+    .object({
+      id: z.literal('coordinate'),
+      version: z.literal(1).default(1),
+      config: z
+        .object({
+          initial_step: z.number().finite().positive().max(1).default(0.25),
+          min_step: z.number().finite().positive().max(1).default(0.001),
+        })
+        .strict()
+        .refine((value) => value.min_step <= value.initial_step, 'min_step must not exceed initial_step.')
+        .default({ initial_step: 0.25, min_step: 0.001 }),
+    })
+    .strict(),
+  z
+    .object({
+      id: z.literal('random'),
+      version: z.literal(1).default(1),
+      config: z
+        .object({
+          seed: z.number().int().min(0).max(0xffffffff).default(0),
+          candidates_per_round: z.number().int().min(1).max(32).default(8),
+        })
+        .strict()
+        .default({ seed: 0, candidates_per_round: 8 }),
+    })
+    .strict(),
+])
+export type OptimizationAlgorithm = z.infer<typeof optimizationAlgorithmSchema>
+export const optimizationVerificationPolicySchema = z
+  .object({
+    id: z.literal('best_predicted_maximin'),
+    version: z.literal(1).default(1),
+    config: z.object({}).strict().default({}),
+  })
+  .strict()
+
 export const optimizationHybridSchema = z
   .object({
     model_id: z.string(),
@@ -110,6 +148,7 @@ export const optimizationHybridSchema = z
     replica_id: z.string(),
     launcher_id: z.string(),
     max_solver_runs: z.number().int().positive(),
+    verification_policy: optimizationVerificationPolicySchema.optional(),
     ...qualityFields,
   })
   .passthrough()
@@ -178,6 +217,7 @@ export const optimizationDetailSchema = optimizationSummarySchema.extend({
     max_parallel: z.number().int(),
     initial_step: z.number(),
     min_step: z.number(),
+    algorithm: optimizationAlgorithmSchema.optional(),
     hybrid: optimizationHybridSchema.nullable().optional(),
   }),
   optimizer_state: z.record(z.string(), z.unknown()),
@@ -251,8 +291,9 @@ export type OptimizationCreateRequest = Readonly<{
   constraints?: { calculation_id: number; minimum?: number; maximum?: number }[]
   max_trials?: number
   max_parallel?: number
+  algorithm?: z.input<typeof optimizationAlgorithmSchema>
   hybrid?: Pick<
     OptimizationHybrid,
     'model_id' | 'model_revision' | 'replica_id' | 'launcher_id' | 'max_solver_runs' | 'quality_requirements'
-  >
+  > & { verification_policy?: z.input<typeof optimizationVerificationPolicySchema> }
 }>

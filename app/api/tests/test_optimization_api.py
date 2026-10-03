@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import sys
 import unittest
@@ -117,6 +118,10 @@ class OptimizationPersistenceTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as db:
             optimization = await create_optimization(db, request, self.owner, self.catalog)
             self.assertEqual(len(optimization.settings["axes"]), 2)
+            legacy_payload = request.model_dump(mode="json", exclude={"algorithm", "hybrid"})
+            legacy_hash = hashlib.sha256(json.dumps(legacy_payload, sort_keys=True, separators=(",", ":"),
+                                                   ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+            self.assertEqual(optimization.request_hash, legacy_hash)
             duplicate = await create_optimization(db, request, self.owner, self.catalog)
             self.assertEqual(duplicate.id, optimization.id)
             optimization_id = optimization.id
@@ -135,6 +140,21 @@ class OptimizationPersistenceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await require_optimization(db, optimization_id, self.admin)).id, optimization_id)
             self.assertEqual((await list_optimizations(db, self.other, experiment_id=None, limit=20, offset=0))["total"], 0)
             self.assertEqual((await list_optimizations(db, self.admin, experiment_id=None, limit=20, offset=0))["total"], 1)
+
+    async def test_random_configuration_is_frozen_and_replayed_without_new_identity(self):
+        request = self.request(algorithm={"id": "random", "config": {"seed": 42}})
+        async with self.sessions() as db:
+            optimization = await create_optimization(db, request, self.owner, self.catalog)
+            self.assertEqual(optimization.settings["algorithm"], {"id": "random", "version": 1,
+                "config": {"seed": 42, "candidates_per_round": 8}})
+            identity, definition = optimization.id, optimization.definition.copy()
+            again = await create_optimization(db, request, self.owner, self.catalog)
+            self.assertEqual((again.id, again.definition), (identity, definition))
+            changed = request.model_dump(mode="json")
+            changed["algorithm"]["config"]["seed"] = 43
+            with self.assertRaises(HTTPException) as rejected:
+                await create_optimization(db, OptimizationCreateRequest.model_validate(changed), self.owner, self.catalog)
+            self.assertEqual(rejected.exception.status_code, 409)
 
     async def stage(self, db, optimization):
         batch = JobBatch(user_id=self.owner_id, request_id=str(uuid.uuid4()), request_hash="stage", total=1,
