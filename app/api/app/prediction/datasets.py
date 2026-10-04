@@ -308,7 +308,8 @@ async def register_local_dataset(db, body, user_id):
         Replica.revision != body.revision, Replica.storage_id == str(body.storage_id),
         Replica.state.in_(["present", "unverified"]),
         ~func.coalesce(Replica.artifact["retained"].as_boolean(), False)).values(state="missing"))
-    row.current_revision, row.name = body.revision, body.name
+    # The registry name is editable metadata; imported artifact names are immutable.
+    row.current_revision = body.revision
     await db.commit()
     return await dataset_view(db, row)
 

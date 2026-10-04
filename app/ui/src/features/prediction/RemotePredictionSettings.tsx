@@ -140,8 +140,13 @@ export function RemotePredictionSettings(props: PredictionAssetSettingsProps) {
             >
               목록 새로고침
             </Button>
-            <a href="/settings/prediction" target="_blank" rel="noreferrer" className="text-sm underline">
-              모든 모델 파일 관리 ↗
+            <a
+              href={tab === 'datasets' ? '/settings/prediction?tab=datasets' : '/settings/prediction'}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm underline"
+            >
+              모든 모델·데이터셋 관리 ↗
             </a>
           </div>
           {state.error && (

@@ -107,7 +107,15 @@ const calculations = [
     contract_status: 'ready',
   },
 ]
-const sourceContracts = { experimentId: 1, sourceHash: 'b'.repeat(64), varsSchema, records, calculations }
+const sourceContracts = {
+  rules: [],
+  resultContracts: {},
+  experimentId: 1,
+  sourceHash: 'b'.repeat(64),
+  varsSchema,
+  records,
+  calculations,
+}
 const context = {
   experimentId: 1,
   experimentRecords: records,

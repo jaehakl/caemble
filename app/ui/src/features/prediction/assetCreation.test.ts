@@ -43,7 +43,15 @@ const calculations = [
     contract_status: 'ready',
   },
 ]
-const sourceContracts = { experimentId: 1, sourceHash: 'b'.repeat(64), varsSchema, records, calculations }
+const sourceContracts = {
+  rules: [],
+  resultContracts: {},
+  experimentId: 1,
+  sourceHash: 'b'.repeat(64),
+  varsSchema,
+  records,
+  calculations,
+}
 const algorithm = { kind: 'knn', kMode: 'auto', manualK: 1, weighting: 'distance' } as const
 const input: PredictionCreationInput = {
   context: {

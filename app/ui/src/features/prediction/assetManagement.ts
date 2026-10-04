@@ -394,6 +394,8 @@ export function predictionReplicaStatus(
   if (replica.state === 'deleting') return '파일 삭제 확인 대기'
   if (replica.state === 'missing') return '파일 없음 · 다른 복사본을 선택하거나 복원하세요'
   if (replica.state === 'corrupt') return '파일 손상 · 이 위치에서 제거한 뒤 백업에서 복원하세요'
+  if (storage?.kind === 'api_dataset')
+    return replica.state === 'present' ? '서버 원본 보관 중' : '서버 원본 상태 확인 필요'
   if (storage?.kind === 'object_backup')
     return replica.state === 'present' ? '백업 파일 검증 완료 · 실행하려면 복원하세요' : '백업 파일 확인 필요'
   if (!storage?.accesses.some((access) => access.connected))

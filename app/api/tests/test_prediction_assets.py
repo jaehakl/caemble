@@ -25,7 +25,7 @@ from prediction_contracts.quality import QUALITY_VALIDATION_V2, lineage_fingerpr
 from prediction.datasets import content_identity, freeze_dataset, register_local_dataset
 from prediction.db import Dataset, DatasetGrant, DatasetObject, DatasetRevision, ModelRevision, PredictionModel
 from prediction.grants import create_grant, read_granted_object, read_granted_revision, release_grant, renew_grant
-from prediction.lifecycle import delete_asset, register_storage
+from prediction.lifecycle import delete_asset, register_storage, rename_asset
 from prediction.models import complete_model, lease_model, reserve_model, list_models
 from prediction.schemas import DatasetSelection, DeleteRequest, LocalDatasetRegistration, ModelComplete, ModelLeaseRequest, ModelReserve, StorageRegistration
 from settings import settings
@@ -510,6 +510,25 @@ class PredictionAssetsTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as revived:
                 await register_local_dataset(db, retry, self.owner)
             self.assertEqual(revived.exception.status_code, 410)
+
+    async def test_dataset_rename_survives_local_sync_and_is_owner_scoped(self):
+        async with self.sessions() as db:
+            body = LocalDatasetRegistration(request_id=uuid4(), dataset_id=uuid4(), revision=1,
+                name="Artifact name", experiment_id=self.experiment_id, source_hash="a" * 64,
+                fingerprint="sha256:" + "d" * 64, manifest_sha256="d" * 64,
+                storage_id=self.storage_id, launcher_id=self.launcher_id, sample_count=1,
+                source_contracts={"experimentId": self.experiment_id, "sourceHash": "a" * 64,
+                    "records": [{"id": self.record_id}], "calculations": [], "varsSchema": {}})
+            local = await register_local_dataset(db, body, self.owner)
+            with self.assertRaises(HTTPException) as forbidden:
+                await rename_asset(db, "dataset", local["id"], "Not mine", self.other)
+            self.assertEqual(forbidden.exception.status_code, 404)
+            await rename_asset(db, "dataset", local["id"], "사용자가 바꾼 이름", self.owner)
+            updated = await register_local_dataset(db, body.model_copy(update={
+                "request_id": uuid4(), "revision": 2, "expected_revision": 1,
+                "fingerprint": "sha256:" + "e" * 64, "manifest_sha256": "e" * 64}), self.owner)
+            self.assertEqual(updated["current_revision"], 2)
+            self.assertEqual(updated["name"], "사용자가 바꾼 이름")
 
     async def test_released_model_lease_allows_delete_while_execution_remains_open(self):
         async with self.sessions() as db:

@@ -97,6 +97,25 @@ const operation = {
 }
 
 describe('Prediction migrated location contracts', () => {
+  it('validates Dataset source metadata without losing provenance-only inventory entries', () => {
+    const source = {
+      experimentId: 1,
+      sourceHash: 'a'.repeat(64),
+      varsSchema: { width: { shape: [], min: 0, max: 1 } },
+      records: [{ id: 1, name: 'temperature', contract_hash: 'b'.repeat(64) }],
+      rules: [],
+      resultContracts: {},
+    }
+    const response = { ...dataset, revisions: [{ ...dataset.revisions[0], source_contracts: source }] }
+    expect(predictionDatasetSchema.parse(response).revisions[0].source_contracts).toEqual(source)
+    const broken = {
+      ...dataset,
+      revisions: [{ ...dataset.revisions[0], source_contracts: { ...source, records: [{ id: 'invalid' }] } }],
+    }
+    const parsed = predictionDatasetSchema.parse(broken)
+    expect(parsed.revisions[0].replicas).toEqual([replica])
+    expect(parsed.revisions[0].source_contracts).toBeUndefined()
+  })
   it('preserves optional native batch capability while accepting legacy descriptors', () => {
     const descriptor = {
       kind: 'knn',

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { resourceRequestSchema } from './execution.ts'
+import { recordedResultContractsSchema } from '../resultValidators'
 export {
   defaultPredictionQualityValidation,
   predictionQualityValidationSchema,
@@ -151,6 +152,24 @@ const asset = {
   current_revision: revision,
   delete_id: id.nullable(),
 }
+export const predictionDatasetSourceSchema = z
+  .object({
+    experimentId: z.number().int().positive(),
+    sourceHash: z.string().regex(/^[0-9a-f]{64}$/),
+    varsSchema: z.record(
+      z.string(),
+      z.object({
+        shape: z.array(z.number().int().positive()),
+        min: z.number().finite(),
+        max: z.number().finite(),
+      }),
+    ),
+    records: z.array(z.object({ id: z.number().int().positive(), name: z.string() }).passthrough()),
+    rules: z.array(z.record(z.string(), z.unknown())),
+    resultContracts: recordedResultContractsSchema,
+  })
+  .passthrough()
+
 export const predictionDatasetSchema = z.object({
   ...asset,
   source_kind: z.enum(['server', 'local']),
@@ -162,6 +181,9 @@ export const predictionDatasetSchema = z.object({
         payload_available: z.boolean(),
         api_payload_available: z.boolean().optional(),
         sample_count: z.number().int().nonnegative().optional(),
+        source_contracts: predictionDatasetSourceSchema.optional().catch(undefined),
+        source_hash: z.string().optional(),
+        created_at: z.string().optional(),
         replicas: z.array(predictionReplicaSchema),
       })
       .passthrough(),
